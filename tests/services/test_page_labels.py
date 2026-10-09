@@ -9,15 +9,16 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.changes import PageChanges
-from bookreviver.domain.enums import PageChange, PageKind
+from bookreviver.domain.enums import ContentType, PageChange, PageKind, Side
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.events import PagesChanged
+from bookreviver.domain.values import PageAnchor
 from tests.helpers.builders import EPOCH, make_page, make_project, new_account_id
 from tests.helpers.page_services import make_page_service
 from tests.helpers.seeding import commit_project
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Collection, Sequence
     from datetime import datetime
 
     from bookreviver.adapters.clock.system import FixedClock
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Page, Project
-    from bookreviver.domain.ids import PageId
+    from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.services.pages import PageService
     from tests.helpers.fakes_jobs import RecordingEventBus
 
@@ -282,4 +283,63 @@ class TestConcurrentWrites:
         expect((stored.label, stored.kind) == (RIVAL_LABEL, PageKind.OTHER))
         expect(updated.page == stored)
         expect(stored.revision == 2)
+        assert_expectations()
+
+    async def test_a_job_writing_a_moved_page_during_a_group_move_keeps_both_changes(
+        self,
+        fx_database: InMemoryDatabase,
+        fx_asset_store: LocalAssetStore,
+        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_actor: Actor,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Verify a group move ends in the new order while a job records the content of one of the moved pages.
+
+        It replays the failure of ``pages.spec.ts`` of 2026-10-09: the job detecting the content of the pages commits
+        its write of a moved page after the move has read the pages and before it writes their order.
+
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_asset_store: Local asset store of the test.
+        :type fx_asset_store: LocalAssetStore
+        :param fx_runtime: The recording bus, the clock and the queue the service reports through.
+        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        :param monkeypatch: Fixture that restores the patched repository after the test.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        project, pages = await _commit_book(fx_database, fx_actor)
+        moved = [pages[0].id, pages[1].id]
+        uow = InMemoryUnitOfWork(fx_database)
+        read = uow.pages.list_by_ids
+        writes = 0
+
+        async def list_then_job_writes(project_id: ProjectId, page_ids: Collection[PageId]) -> Sequence[Page]:
+            """Read the pages, then let the job commit the content of the second moved page, once.
+
+            :param project_id: Identifier of the project.
+            :type project_id: ProjectId
+            :param page_ids: Identifiers of the pages to read.
+            :type page_ids: Collection[PageId]
+            :returns: The pages as they were before the job wrote.
+            :rtype: Sequence[Page]
+            """
+            nonlocal writes
+            found = await read(project_id, page_ids)
+            if not writes:
+                writes += 1
+                job = InMemoryUnitOfWork(fx_database)
+                await job.pages.update(evolve(await job.pages.get(moved[1]), content_type=ContentType.COLOR_PICTURE))
+                await job.commit()
+            return found
+
+        monkeypatch.setattr(uow.pages, 'list_by_ids', list_then_job_writes)
+        await make_page_service(uow, fx_asset_store, fx_runtime).move_group(
+            fx_actor, project.id, moved, PageAnchor(page_id=pages[3].id, side=Side.AFTER)
+        )
+
+        order = sorted(fx_database.tables.pages.values(), key=lambda page: page.order_key)
+        expect([page.id for page in order][:5] == [pages[2].id, pages[3].id, *moved, pages[4].id])
+        expect(fx_database.tables.pages[moved[1]].content_type == ContentType.COLOR_PICTURE)
         assert_expectations()
