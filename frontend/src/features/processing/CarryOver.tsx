@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import type { CarryOverSchema, CarryScope } from '@/api';
 import { useUndo } from '@/features/processing/historyQueries';
 import { useCarryShape } from '@/features/processing/queries';
@@ -22,6 +21,9 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * reader asked to write over them. The pages the value reached are one batch of the history, so the
  * undo beside the line takes it back from all of them at once. The server decides which pages the value reaches, so the
  * menu names no count for the first and the last choice.
+ *
+ * What the carry-over did is kept by the caller, so the line and the undo outlast the menu, which is drawn only while the
+ * open page has a shape set by hand and so goes away when the reader moves to another page.
  */
 
 const labels = MESSAGES.processing.steps.carry;
@@ -33,6 +35,8 @@ export function CarryOver({
   title,
   selected,
   overwrite,
+  result,
+  onResult,
 }: {
   processing: Pick<Processing, 'projectId' | 'stage'>;
   pageId: string;
@@ -43,18 +47,21 @@ export function CarryOver({
   selected: ReadonlySet<string>;
   /** Whether a page that has a shape of its own takes this one as well. */
   overwrite: boolean;
+  /** What the last carry-over of the step did, or null when there is none or it was taken back. */
+  result: CarryOverSchema | null;
+  /** Called with what a carry-over did, and with null once it was taken back. */
+  onResult: (result: CarryOverSchema | null) => void;
 }): React.JSX.Element {
   const { projectId, stage } = processing;
-  const carry = useCarryShape(projectId, stage);
+  const carry = useCarryShape(projectId, stage, onResult);
   const undo = useUndo(projectId, stage);
-  const [result, setResult] = useState<CarryOverSchema | null>(null);
   const others = [...selected].filter((id) => id !== pageId);
   const first = result?.changes[0];
 
   const send = (scope: CarryScope): void => {
     const body = { scope, overwrite, ...(scope === 'selected' ? { page_ids: others } : {}) };
     const path = { project_id: projectId, page_id: pageId, stage, step_id: stepId };
-    carry.mutate({ path, body }, { onSuccess: setResult });
+    carry.mutate({ path, body });
   };
 
   return (
@@ -112,7 +119,7 @@ export function CarryOver({
                     },
                     body: { change_id: first.id },
                   },
-                  { onSuccess: () => setResult(null) },
+                  { onSuccess: () => onResult(null) },
                 )
               }
             >

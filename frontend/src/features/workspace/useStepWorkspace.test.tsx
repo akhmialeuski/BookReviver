@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FigureState, StagePageSchema, StepFlag } from '@/api';
+import type { CarryOverSchema, FigureState, StagePageSchema, StepFlag } from '@/api';
 import { deskew, processing, processor, recipe, step } from '@/features/processing/fixtures';
 import { page, row, stepPage } from '@/features/workspace/fixtures';
 import type { StripItem } from '@/features/workspace/strip';
@@ -63,19 +63,25 @@ describe('useStepWorkspace', () => {
   function Probe({
     stepId,
     state,
+    current,
   }: {
     stepId: string | undefined;
     state: ReturnType<typeof processing>;
+    current: StripItem;
   }): null {
-    seen = useStepWorkspace(state, stepId, CURRENT);
+    seen = useStepWorkspace(state, stepId, current);
     return null;
   }
 
-  async function render(stepId: string | undefined, state = STATE): Promise<void> {
+  async function render(
+    stepId: string | undefined,
+    state = STATE,
+    current = CURRENT,
+  ): Promise<void> {
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
-          <Probe stepId={stepId} state={state} />
+          <Probe stepId={stepId} state={state} current={current} />
         </QueryClientProvider>,
       );
     });
@@ -247,6 +253,51 @@ describe('useStepWorkspace', () => {
     expect(requests()).toEqual(
       expect.arrayContaining([expect.objectContaining({ step: 'b', size: 1000 })]),
     );
+  });
+
+  describe('what a carry-over did', () => {
+    // A carry-over that reached no page, which is enough to tell one result from another by identity
+    const DONE = { batch_id: 'one', changes: [], skipped: [] } satisfies CarryOverSchema;
+    const OTHER_PAGE: StripItem = { page: page('p3', { position: 2 }), row: row('p3') };
+
+    it('stays with its step when the open page changes and changes back', async () => {
+      await render('b');
+      act(() => seen?.setCarried(DONE));
+      expect(seen?.carried).toBe(DONE);
+
+      await render('b', STATE, OTHER_PAGE);
+      expect(seen?.carried).toBe(DONE);
+
+      await render('b', STATE, CURRENT);
+      expect(seen?.carried).toBe(DONE);
+    });
+
+    it('belongs to the step it was made on and to no other', async () => {
+      await render('b');
+      act(() => seen?.setCarried(DONE));
+
+      await render('c');
+      expect(seen?.carried).toBeNull();
+
+      await render('b');
+      expect(seen?.carried).toBe(DONE);
+    });
+
+    it('is forgotten once it is taken back', async () => {
+      await render('b');
+      act(() => seen?.setCarried(DONE));
+      act(() => seen?.setCarried(null));
+
+      expect(seen?.carried).toBeNull();
+    });
+
+    it('is not kept while no step is open', async () => {
+      await render(undefined);
+      act(() => seen?.setCarried(DONE));
+      await render('b');
+
+      expect(seen?.carried).toBeNull();
+    });
   });
 
   it('reads nothing for a stage that has no bar of steps', async () => {

@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CarryOverSchema } from '@/api';
 import { CarryOver } from '@/features/processing/CarryOver';
 
 /**
@@ -17,6 +18,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPost: sdk.undo,
 }));
 
+// The component reads only the identifiers of the changes, so the other fields of a change are left out
 const CARRIED = {
   batch_id: 'batch',
   changes: [
@@ -24,20 +26,32 @@ const CARRIED = {
     { id: 'change-2', page_id: 'next-2' },
   ],
   skipped: ['own'],
-};
+} as unknown as CarryOverSchema;
 
 describe('CarryOver', () => {
   let container: HTMLDivElement;
   let root: Root;
   let client: QueryClient;
 
-  function render(
-    selected: ReadonlySet<string> = new Set(['page', 'x', 'y']),
-    overwrite = false,
-  ): void {
-    act(() =>
-      root.render(
-        <QueryClientProvider client={client}>
+  /** Holds the result as the workspace of the step does, which keeps it above the menu. */
+  function Host({
+    selected,
+    overwrite,
+    kept,
+    shown,
+  }: {
+    selected: ReadonlySet<string>;
+    overwrite: boolean;
+    /** The result the workspace already holds when the menu is drawn. */
+    kept: CarryOverSchema | null;
+    /** Whether the menu is drawn, which it is not once the reader moved to a page without a shape set by hand. */
+    shown: boolean;
+  }): React.JSX.Element {
+    const [result, setResult] = useState<CarryOverSchema | null>(kept);
+    return (
+      <>
+        <output data-testid="kept">{result?.batch_id ?? ''}</output>
+        {shown ? (
           <CarryOver
             processing={{ projectId: 'project', stage: 'geometry' }}
             pageId="page"
@@ -45,7 +59,24 @@ describe('CarryOver', () => {
             title="the shape"
             selected={selected}
             overwrite={overwrite}
+            result={result}
+            onResult={setResult}
           />
+        ) : null}
+      </>
+    );
+  }
+
+  function render(
+    selected: ReadonlySet<string> = new Set(['page', 'x', 'y']),
+    overwrite = false,
+    kept: CarryOverSchema | null = null,
+    shown = true,
+  ): void {
+    act(() =>
+      root.render(
+        <QueryClientProvider client={client}>
+          <Host selected={selected} overwrite={overwrite} kept={kept} shown={shown} />
         </QueryClientProvider>,
       ),
     );
@@ -192,6 +223,32 @@ describe('CarryOver', () => {
       body: { change_id: 'change-1' },
     });
     expect(container.querySelector('[data-testid="carry-result"]')).toBeNull();
+  });
+
+  it('shows the result and the undo the caller kept, as when the menu is drawn again for another page', () => {
+    render(new Set(), false, CARRIED);
+
+    expect(container.querySelector('[data-testid="carry-result"]')?.textContent).toContain(
+      'Carried over to 2 pages',
+    );
+    expect(container.querySelector('[data-testid="carry-undo"]')).not.toBeNull();
+    expect(sdk.carry).not.toHaveBeenCalled();
+  });
+
+  it('hands the result to the caller when the menu went away while the carry-over was on its way', async () => {
+    let answer: (value: { data: CarryOverSchema }) => void = () => undefined;
+    sdk.carry.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    render();
+    await choose('carry-following');
+
+    render(new Set(), false, null, false);
+    await act(async () => answer({ data: CARRIED }));
+
+    expect(container.querySelector('[data-testid="kept"]')?.textContent).toBe('batch');
   });
 
   it('offers no undo when no page took the shape', async () => {

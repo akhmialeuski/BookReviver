@@ -233,6 +233,8 @@ describe('the slots of the open step', () => {
           pageId="p1"
           stepId="b"
           selected={selected}
+          result={null}
+          onResult={vi.fn()}
         />,
       );
     }

@@ -1,8 +1,9 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageVersionSchema } from '@/api';
+import { listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey } from '@/api/@tanstack/react-query.gen';
 import { version } from '@/features/processing/fixtures';
 import { ResultNote } from '@/features/processing/ResultNote';
 import { ProblemError } from '@/shared/http/problem';
@@ -211,5 +212,33 @@ describe('ResultNote', () => {
 
     // The mutation reports its failure a few ticks after the click
     await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
+  });
+
+  it('reads the results again for a mark made while their first read is still in flight', async () => {
+    // The first read was asked for before the mark, and it answers after the mark is stored
+    let answerFirst: (versions: string) => void = () => undefined;
+    const firstRead = new Promise<string>((resolve) => {
+      answerFirst = resolve;
+    });
+    const read = vi.fn().mockReturnValueOnce(firstRead).mockResolvedValue('marked');
+    const observer = new QueryObserver<string>(client, {
+      queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
+        path: { project_id: 'project', page_id: 'page' },
+      }),
+      queryFn: read,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    await render(NEW);
+
+    await act(async () => {
+      byId('result-mark-good')?.click();
+    });
+    await settle();
+    answerFirst('unmarked');
+    await settle();
+
+    expect(observer.getCurrentResult().data).toBe('marked');
+    expect(read).toHaveBeenCalledTimes(2);
+    unsubscribe();
   });
 });

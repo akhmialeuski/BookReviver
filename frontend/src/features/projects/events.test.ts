@@ -46,6 +46,14 @@ function watchInvalidations(queryClient: QueryClient): () => string[] {
     });
 }
 
+/**
+ * Wait for the refreshes that cancel the reads in flight first, which ask for the new read in a later turn of the event
+ * loop than the call that started them.
+ */
+function settled(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe('applyProjectEvent', () => {
   let queryClient: QueryClient;
   let invalidated: () => string[];
@@ -98,11 +106,12 @@ describe('applyProjectEvent', () => {
     expect(invalidated()).toEqual([]);
   });
 
-  it('refreshes the book, its sources, scans and the list when a job finishes', () => {
+  it('refreshes the book, its sources, scans and the list when a job finishes', async () => {
     applyProjectEvent(queryClient, PROJECT_ID, {
       event: EventName.JobChanged,
       data: job('succeeded', 4),
     });
+    await settled();
 
     expect(invalidated().sort()).toEqual(
       [
@@ -166,11 +175,12 @@ describe('applyProjectEvent', () => {
     expect(stale(resultsOf('p-2', 'pg-3'))).toBe(false);
   });
 
-  it('keeps the version a page-version-ready event names and marks the results of that page stale', () => {
+  it('keeps the version a page-version-ready event names and marks the results of that page stale', async () => {
     applyProjectEvent(queryClient, PROJECT_ID, {
       event: EventName.PageVersionReady,
       data: { project_id: PROJECT_ID, page_id: 'pg-1', version_id: 'abc' },
     });
+    await settled();
 
     expect(queryClient.getQueryData(versionReadyKey(PROJECT_ID, 'pg-1'))).toMatchObject({
       versionId: 'abc',
@@ -236,8 +246,9 @@ describe('applyProjectEvent', () => {
       ['listProjectsApiV1ProjectsGet', 'projectApiV1ProjectsProjectIdGet'],
     ],
     [EventName.PageVersionReady, ['listPagesApiV1ProjectsProjectIdPagesGet']],
-  ])('on %s marks %j stale', (name, expected) => {
+  ])('on %s marks %j stale', async (name, expected) => {
     applyProjectEvent(queryClient, PROJECT_ID, { event: name, data: {} });
+    await settled();
 
     expect(invalidated().sort()).toEqual(expected);
   });
@@ -267,12 +278,12 @@ describe('applyProjectEvent for the events of a burst', () => {
     }
   }
 
-  it('marks the summary, the rows of that stage, the book and the list stale once for a burst of page events', () => {
+  it('marks the summary, the rows of that stage, the book and the list stale once for a burst of page events', async () => {
     // The last stage has no later one, so its rows are the only rows the burst marks
     stageChanged('burst-1', 'typesetting', 50);
     expect(invalidated()).toEqual([]);
 
-    vi.advanceTimersByTime(BURST_DELAY_MS);
+    await vi.advanceTimersByTimeAsync(BURST_DELAY_MS);
 
     expect(invalidated().sort()).toEqual([
       'listProjectsApiV1ProjectsGet',
@@ -282,9 +293,9 @@ describe('applyProjectEvent for the events of a burst', () => {
     ]);
   });
 
-  it('reads the rows of the stage that changed and of the stages after it, which draw what it made', () => {
+  it('reads the rows of the stage that changed and of the stages after it, which draw what it made', async () => {
     stageChanged('burst-2', 'geometry');
-    vi.advanceTimersByTime(BURST_DELAY_MS);
+    await vi.advanceTimersByTimeAsync(BURST_DELAY_MS);
 
     const stages = vi.mocked(queryClient.invalidateQueries).mock.calls.flatMap(([filters]) => {
       const head = filters?.queryKey?.[0];
@@ -308,7 +319,7 @@ describe('applyProjectEvent for the events of a burst', () => {
     ]);
   });
 
-  it('marks the cached rows of a later stage stale when a page changes in an earlier one', () => {
+  it('marks the cached rows of a later stage stale when a page changes in an earlier one', async () => {
     const rowsKey = (stage: Stage) =>
       listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey({
         path: { project_id: 'burst-2b', stage },
@@ -318,16 +329,16 @@ describe('applyProjectEvent for the events of a burst', () => {
     queryClient.setQueryData(keys.later, []);
 
     stageChanged('burst-2b', 'geometry');
-    vi.advanceTimersByTime(BURST_DELAY_MS);
+    await vi.advanceTimersByTimeAsync(BURST_DELAY_MS);
 
     expect(queryClient.getQueryState(keys.later)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(keys.earlier)?.isInvalidated).toBe(false);
   });
 
-  it('keeps the bursts of two stages apart', () => {
+  it('keeps the bursts of two stages apart', async () => {
     stageChanged('burst-3', 'proofreading', 3);
     stageChanged('burst-3', 'typesetting', 3);
-    vi.advanceTimersByTime(BURST_DELAY_MS);
+    await vi.advanceTimersByTimeAsync(BURST_DELAY_MS);
 
     expect(
       invalidated().filter(

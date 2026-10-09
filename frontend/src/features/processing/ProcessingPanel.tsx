@@ -74,7 +74,13 @@ export function ProcessingPanel({
     editor,
     step === undefined
       ? undefined
-      : { stepId: step.step.stepId, page: step.workspace.page, selected },
+      : {
+          stepId: step.step.stepId,
+          page: step.workspace.page,
+          selected,
+          carried: step.workspace.carried,
+          onCarried: step.workspace.setCarried,
+        },
   );
   // The history of the page is the last element of the panel on every stage. With a step open it holds the changes and the
   // results of that step. With none open it holds the results of the stage. What the page stands on is told by the current

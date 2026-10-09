@@ -9,11 +9,15 @@ import { BASE_URL, RUN_DIR, SERVER_LOG, SERVER_PORT } from './e2e/support/env';
  * Where the Chromium that Playwright expects is not installed, `BOOKREVIVER_E2E_CHROMIUM` names another one.
  */
 
+// uvicorn closes an idle connection after 5 s by default, which races the keep-alive of the HTTP client of Playwright
+// (a request reuses a socket the server is closing and fails with "socket hang up"), so the server keeps it longer
+const SERVER_KEEP_ALIVE_S = 75;
+
 const SERVER_COMMAND = [
   `rm -rf ${RUN_DIR}`,
   `mkdir -p ${RUN_DIR}`,
   'uv run bookreviver-migrate upgrade head --no-prompt',
-  `uv run uvicorn tests.helpers.e2e_app:app --port ${SERVER_PORT} 2>&1 | tee ${SERVER_LOG}`,
+  `uv run uvicorn tests.helpers.e2e_app:app --port ${SERVER_PORT} --timeout-keep-alive ${SERVER_KEEP_ALIVE_S} 2>&1 | tee ${SERVER_LOG}`,
 ].join(' && ');
 
 // Every scenario registers an account of its own, so scenarios can share the one server and its database

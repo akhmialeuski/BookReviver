@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FigureState, StepPageSchema } from '@/api';
+import type { CarryOverSchema, FigureState, StepPageSchema } from '@/api';
 import type { EditorSession } from '@/features/editors/session';
 import { SourceKind } from '@/features/processing/compare';
 import { processing, recipe, step, version } from '@/features/processing/fixtures';
@@ -82,7 +82,13 @@ describe('useThisPage', () => {
   }
 
   function openStep(pageOfStep: StepPageSchema | null): OpenStep {
-    return { stepId: 'b', page: pageOfStep, selected: new Set() };
+    return {
+      stepId: 'b',
+      page: pageOfStep,
+      selected: new Set(),
+      carried: null,
+      onCarried: vi.fn(),
+    };
   }
 
   function placed(state: FigureState, data: Record<string, unknown> = {}): StepPageSchema {
@@ -378,6 +384,24 @@ describe('useThisPage', () => {
       }
       await render(found);
       expect(container.querySelector('[data-testid="step-carry"]')).toBeNull();
+    });
+
+    it('shows what the last carry-over of the step did whenever the open page has a shape set by hand', async () => {
+      const done: CarryOverSchema = { batch_id: 'batch', changes: [], skipped: ['p9'] };
+      const carried = (state: FigureState): OpenStep => ({
+        ...openStep(placed(state)),
+        carried: done,
+      });
+
+      await render(found, null, processing(), carried('by-hand'));
+      expect(container.querySelector('[data-testid="carry-result"]')).not.toBeNull();
+
+      // On a page without a shape of its own the menu is gone, and the result comes back with it on the next such page
+      await render(found, null, processing(), carried('found'));
+      expect(container.querySelector('[data-testid="carry-result"]')).toBeNull();
+
+      await render(found, null, processing(), carried('by-hand'));
+      expect(container.querySelector('[data-testid="carry-result"]')).not.toBeNull();
     });
 
     it('draws no section when the book has no page', async () => {

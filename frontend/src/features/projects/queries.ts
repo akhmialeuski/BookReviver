@@ -1,4 +1,4 @@
-import type { QueryClient } from '@tanstack/react-query';
+import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import type { Stage } from '@/api';
 import {
   listPagesApiV1ProjectsProjectIdPagesGetQueryKey,
@@ -21,6 +21,21 @@ import { STAGES } from '@/features/stages/stages';
  * The keys come from the generated client, and a key without parameters matches every query of its endpoint, so
  * one call refreshes all pages and filters of a list. The event stream and the mutations both call these.
  */
+
+/**
+ * Mark the queries of a key stale and read them again after a change the screen has just made.
+ *
+ * `invalidateQueries` on a query whose first read is still in flight joins that read instead of starting a new one, so
+ * the answer it brings was asked for before the change and lacks it. The reads in flight are cancelled first, which
+ * leaves the query without a read, and the invalidation then starts a read that comes after the change.
+ *
+ * @param queryClient The client that holds the queries.
+ * @param queryKey The key of the queries to refresh; a key that is a prefix matches every query that extends it.
+ */
+export async function refreshQueries(queryClient: QueryClient, queryKey: QueryKey): Promise<void> {
+  await queryClient.cancelQueries({ queryKey });
+  await queryClient.invalidateQueries({ queryKey });
+}
 
 /** Refresh the list of books, whose counts and order change when a book is created, deleted or imported into. */
 export function invalidateProjectList(queryClient: QueryClient): Promise<void> {
@@ -95,11 +110,12 @@ export function invalidateStageRows(
   projectId: string,
   stage: Stage,
 ): Promise<void> {
-  return queryClient.invalidateQueries({
-    queryKey: listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey({
+  return refreshQueries(
+    queryClient,
+    listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey({
       path: { project_id: projectId, stage },
     }),
-  });
+  );
 }
 
 /**
@@ -144,11 +160,12 @@ export function invalidateVersions(
   projectId: string,
   pageId: string,
 ): Promise<void> {
-  return queryClient.invalidateQueries({
-    queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
+  return refreshQueries(
+    queryClient,
+    listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
       path: { project_id: projectId, page_id: pageId },
     }),
-  });
+  );
 }
 
 /**

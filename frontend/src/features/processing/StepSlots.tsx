@@ -1,6 +1,6 @@
 import { TriangleAlertIcon } from 'lucide-react';
 import { useState } from 'react';
-import type { ProcessorSchema } from '@/api';
+import type { CarryOverSchema, ProcessorSchema } from '@/api';
 import { isPlacement } from '@/features/editors/placement';
 import { CarryOver } from '@/features/processing/CarryOver';
 import { MeasureBook } from '@/features/processing/MeasureBook';
@@ -114,12 +114,18 @@ export function StepCarry({
   pageId,
   stepId,
   selected,
+  result,
+  onResult,
 }: {
   processing: Processing;
   pageId: string;
   stepId: string;
   /** The pages selected in the grid, which a shape set by hand can be carried over to. */
   selected: ReadonlySet<string>;
+  /** What the last carry-over of the step did, or null when there is none or it was taken back. */
+  result: CarryOverSchema | null;
+  /** Called with what a carry-over did, and with null once it was taken back. */
+  onResult: (result: CarryOverSchema | null) => void;
 }): React.JSX.Element {
   const [overwrite, setOverwrite] = useState(false);
   return (
@@ -133,6 +139,8 @@ export function StepCarry({
           title={labels.carry.title}
           selected={selected}
           overwrite={overwrite}
+          result={result}
+          onResult={onResult}
         />
       </div>
       <CheckboxField

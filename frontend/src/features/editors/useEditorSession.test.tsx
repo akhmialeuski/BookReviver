@@ -1453,6 +1453,28 @@ describe('useEditorSession', () => {
       expect(sdk.run).not.toHaveBeenCalled();
     });
 
+    it('shows no editor and asks for no preview until the row of the page is known, and does both once it is', async () => {
+      // A page the step has not run on starts the box from the whole picture, whose size its pyramid gives
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, json: async () => ({ width: 1000, height: 2000 }) }),
+      );
+      const open = { state: MARGINS_STATE, focusStepId: 'id-geometry.normalize', canvas: true };
+
+      // The rows of the stage are still loading, so the page has no row
+      await render({ ...open, items: joinRows([page('page')], []) });
+      // The preview waits for the form to stand still for 400 ms
+      await new Promise((resolve) => setTimeout(resolve, 600));
+
+      expect(state()).toBe('none');
+      expect(sdk.preview).not.toHaveBeenCalled();
+
+      await render({ ...open, items: joinRows([page('page')], [row('page')]) });
+
+      expect(state()).not.toBe('none');
+      await vi.waitFor(() => expect(sdk.preview).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    });
+
     it('asks for no preview on a page the step has run on', async () => {
       await render({
         state: MARGINS_STATE,

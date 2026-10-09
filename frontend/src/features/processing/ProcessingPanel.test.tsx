@@ -82,6 +82,8 @@ describe('ProcessingPanel', () => {
       page: stepPage(open.stepId, 'found', { version: version('step-version') }),
       counts: countStep([]),
       rows: [],
+      carried: null,
+      setCarried: vi.fn(),
     };
   }
 

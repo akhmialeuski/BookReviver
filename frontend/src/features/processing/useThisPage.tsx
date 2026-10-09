@@ -1,5 +1,5 @@
 import { TriangleAlertIcon } from 'lucide-react';
-import type { StepPageSchema } from '@/api';
+import type { CarryOverSchema, StepPageSchema } from '@/api';
 import { EditorControls } from '@/features/editors/EditorControls';
 import type { EditorSession } from '@/features/editors/session';
 import { type Fact, factsOf } from '@/features/processing/facts';
@@ -34,6 +34,10 @@ export interface OpenStep {
   page: StepPageSchema | null;
   /** The pages selected in the grid, which a shape set by hand can be carried over to. */
   selected: ReadonlySet<string>;
+  /** What the last carry-over of the step did, kept above the page so that it outlives it, or null when there is none. */
+  carried: CarryOverSchema | null;
+  /** Called with what a carry-over did, and with null once it was taken back. */
+  onCarried: (result: CarryOverSchema | null) => void;
 }
 
 /**
@@ -122,6 +126,8 @@ export function useThisPage(
             pageId={page.id}
             stepId={step.stepId}
             selected={step.selected}
+            result={step.carried}
+            onResult={step.onCarried}
           />
         ) : null}
       </>

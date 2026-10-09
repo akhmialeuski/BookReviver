@@ -8,6 +8,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import {
+  type CarryOverSchema,
   listScansApiV1ProjectsProjectIdScansGet,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet,
   type PageVersionSchema,
@@ -51,6 +52,7 @@ import {
   invalidateProject,
   invalidateStageRows,
   invalidateStageSummary,
+  invalidateVersions,
 } from '@/features/projects/queries';
 
 /**
@@ -417,12 +419,24 @@ export function useRemoveValue(projectId: string, stage: Stage) {
  *
  * It shares the mutation scope of the edits of the book, so it reaches the server after the edit of the source page that
  * was saved just before it. The edits and the histories of every page it reached are read again.
+ *
+ * What it did is handed over by the mutation itself and not by the call that sent it, so a reader who moves to another
+ * page while it is on its way, which takes the menu that sent it away, still sees the result and its undo.
+ *
+ * @param projectId The book whose pages the shape is carried over.
+ * @param stage The stage of the step.
+ * @param onCarried Called with what the carry-over did.
  */
-export function useCarryShape(projectId: string, stage: Stage) {
+export function useCarryShape(
+  projectId: string,
+  stage: Stage,
+  onCarried: (result: CarryOverSchema) => void,
+) {
   const queryClient = useQueryClient();
   return useMutation({
     ...carryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostMutation(),
     scope: { id: `page-edits:${projectId}` },
+    onSuccess: onCarried,
     onSettled: () =>
       Promise.all([
         invalidatePageLayers(queryClient),
@@ -470,11 +484,7 @@ export function useChooseVersion(projectId: string, stage: Stage) {
     onSettled: (_data, _error, variables) =>
       Promise.all([
         refreshStage(queryClient, projectId, stage),
-        queryClient.invalidateQueries({
-          queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
-            path: { project_id: projectId, page_id: variables.path.page_id },
-          }),
-        }),
+        invalidateVersions(queryClient, projectId, variables.path.page_id),
       ]),
   });
 }
@@ -492,11 +502,7 @@ export function useMarkResult(projectId: string) {
     ...putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutMutation(),
     onSettled: (_data, _error, variables) =>
       Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
-            path: { project_id: projectId, page_id: variables.path.page_id },
-          }),
-        }),
+        invalidateVersions(queryClient, projectId, variables.path.page_id),
         invalidateAllStageRows(queryClient, projectId),
       ]),
   });

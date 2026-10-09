@@ -182,11 +182,15 @@ export function useEditorSession({
   const pageSettings = usePageSettings(projectId, current?.page.id, stage, sets);
   const setting = useSetValue(projectId, stage);
   const pageSettingsOfStep = settingsOf(pageSettings.data, step?.step_id ?? null);
+  // Until the row of the page arrives it is not known whether the step has made a result on it, so nothing is shown or
+  // previewed for the page: a frame drawn from the fallback would be replaced by the one the step found
+  const rowKnown = current?.row !== undefined;
   // A page the step has not made a result on is looked at by a preview of the step, which finds what a run would find, so
   // the editor shows it as found without a run
   const wantsFound =
     sets &&
     focused &&
+    rowKnown &&
     made === null &&
     !skipped &&
     current !== undefined &&
@@ -243,6 +247,7 @@ export function useEditorSession({
   const owner = editor === undefined || context === undefined ? undefined : editor.owner(context);
   const available =
     processor !== undefined &&
+    rowKnown &&
     picture !== null &&
     !skipped &&
     (editor?.needsResult !== true || result !== null || (focused && pictureSize !== null));

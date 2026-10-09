@@ -1,6 +1,5 @@
 import {
   type Announcements,
-  closestCenter,
   DndContext,
   DragOverlay,
   type DragStartEvent,
@@ -20,9 +19,8 @@ import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
 import { MousePointerClickIcon } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PageSchema } from '@/api';
-import { carriedBy, dropPlace } from '@/features/order/drag';
+import { carriedBy, collideUnderPointer, dropPlace } from '@/features/order/drag';
 import { GapCard } from '@/features/order/GapCard';
-import { LiveDropRects } from '@/features/order/LiveDropRects';
 import { columnsOf, layoutOf, rowOfCells, rowsOf } from '@/features/order/layout';
 import { OrderTile, type TileClick } from '@/features/order/OrderTile';
 import type { SectionSpan } from '@/features/order/sections';
@@ -47,8 +45,8 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  * few around them are in the document, however long the book is. The sortable list still names every page, but only the
  * tiles in the document are registered with dnd-kit, so a drag works on what is drawn and the auto-scroll of dnd-kit
  * brings the next rows in. The row of the held page stays in the document while it is held, so the drag never loses it.
- * The virtualizer moves the rows below a row once it has measured it, which dnd-kit does not notice, so the drop targets are
- * measured again whenever the rows move (see `LiveDropRects`), and a page lands on the tile under the pointer.
+ * The virtualizer moves the rows below a row once it has measured it, which dnd-kit does not notice, so a page lands on
+ * the tile the document shows under the pointer (see `collideUnderPointer`), not on one of the rectangles dnd-kit measured.
  */
 
 /** Pixels the pointer must travel before a press is a drag, so that a click still selects. */
@@ -239,8 +237,6 @@ export function OrderGrid({
   const carriedCount = activeId === null ? 0 : carriedBy(selected, activeId).size;
 
   const virtualRows = virtualizer.getVirtualItems();
-  // Where the rows in the document stand, which changes when the virtualizer corrects the guessed height of a row
-  const rowPlaces = virtualRows.map((row) => row.start).join(',');
 
   return (
     <div
@@ -269,7 +265,7 @@ export function OrderGrid({
         ) : (
           <DndContext
             sensors={sensors}
-            collisionDetection={closestCenter}
+            collisionDetection={collideUnderPointer}
             accessibility={{
               announcements,
               screenReaderInstructions: { draggable: MESSAGES.order.drag.instructions },
@@ -292,7 +288,6 @@ export function OrderGrid({
               setTarget(null);
             }}
           >
-            <LiveDropRects key={rowPlaces} />
             <SortableContext items={ids} strategy={KEEP_IN_PLACE}>
               <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
                 {virtualRows.map((row) => (
