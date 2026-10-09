@@ -74,7 +74,8 @@ class RecipeProfiles:
     def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, processing: ProcessingService, clock: Clock) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose commit ends every changing use case.
+        :param uow: Unit of work of the request. A use case that changes the profiles of the account runs in one
+                    ``change`` block, and ``link`` runs in the ``change_book`` block of the book it changes.
         :type uow: UnitOfWork
         :param recipes: The recipes of the project, which check the steps of a profile.
         :type recipes: RecipeBook
@@ -148,20 +149,19 @@ class RecipeProfiles:
         :rtype: RecipeProfile
         :raises NotFoundError: If the account has no such profile.
         """
-        profile = await self._owned(actor, profile_id)
-        moment = self._clock.now()
-        copy = await self._uow.recipe_profiles.add(
-            evolve(
-                profile,
-                id=RecipeProfileId(uuid4()),
-                name=COPY_NAME.format(name=profile.name),
-                is_default=False,
-                created_at=moment,
-                updated_at=moment,
+        async with self._uow.change():
+            profile = await self._owned(actor, profile_id)
+            moment = self._clock.now()
+            return await self._uow.recipe_profiles.add(
+                evolve(
+                    profile,
+                    id=RecipeProfileId(uuid4()),
+                    name=COPY_NAME.format(name=profile.name),
+                    is_default=False,
+                    created_at=moment,
+                    updated_at=moment,
+                )
             )
-        )
-        await self._uow.commit()
-        return copy
 
     async def import_profile(self, actor: Actor, stage: Stage, draft: ProfileDraft) -> RecipeProfile:
         """Save the profile a file holds, which gets new identifiers for its steps and is not the default.
@@ -195,21 +195,21 @@ class RecipeProfiles:
         :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
                                         usual order.
         """
+        steps = await self._recipes.check(stage, draft.steps, order=draft.order)
         moment = self._clock.now()
-        profile = await self._uow.recipe_profiles.add(
-            RecipeProfile(
-                id=RecipeProfileId(uuid4()),
-                account_id=actor.account_id,
-                stage=stage,
-                name=draft.name,
-                steps=await self._recipes.check(stage, draft.steps, order=draft.order),
-                order=draft.order,
-                created_at=moment,
-                updated_at=moment,
+        async with self._uow.change():
+            return await self._uow.recipe_profiles.add(
+                RecipeProfile(
+                    id=RecipeProfileId(uuid4()),
+                    account_id=actor.account_id,
+                    stage=stage,
+                    name=draft.name,
+                    steps=steps,
+                    order=draft.order,
+                    created_at=moment,
+                    updated_at=moment,
+                )
             )
-        )
-        await self._uow.commit()
-        return profile
 
     async def replace(self, actor: Actor, profile_id: RecipeProfileId, draft: ProfileDraft) -> RecipeProfile:
         """Replace the name, the steps and the order of a profile, which is how a book saves its changes to its profile.
@@ -230,18 +230,17 @@ class RecipeProfiles:
         :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
                                         usual order.
         """
-        profile = await self._owned(actor, profile_id)
-        replaced = await self._uow.recipe_profiles.update(
-            evolve(
-                profile,
-                name=draft.name,
-                steps=await self._recipes.check(profile.stage, draft.steps, order=draft.order),
-                order=draft.order,
-                updated_at=self._clock.now(),
+        async with self._uow.change():
+            profile = await self._owned(actor, profile_id)
+            return await self._uow.recipe_profiles.update(
+                evolve(
+                    profile,
+                    name=draft.name,
+                    steps=await self._recipes.check(profile.stage, draft.steps, order=draft.order),
+                    order=draft.order,
+                    updated_at=self._clock.now(),
+                )
             )
-        )
-        await self._uow.commit()
-        return replaced
 
     async def link(
         self, actor: Actor, project_id: ProjectId, key: RecipeKey, profile_id: RecipeProfileId | None
@@ -265,17 +264,17 @@ class RecipeProfiles:
                                account has no such profile.
         :raises InvalidParametersError: If the profile is for another stage than the recipe.
         """
-        await owned_project(self._uow.projects, actor, project_id)
-        recipe = await self._recipes.get(project_id, key.recipe_id, stage=key.stage)
-        if profile_id is not None:
-            profile = await self._owned(actor, profile_id)
-            if profile.stage is not recipe.stage:
-                raise InvalidParametersError(
-                    OTHER_STAGE.format(name=profile.name, actual=profile.stage.label, expected=recipe.stage.label)
-                )
-        linked = await self._uow.recipes.update(evolve(recipe, profile_id=profile_id))
-        await self._uow.commit()
-        return linked
+        async with self._uow.change_book(project_id) as project:
+            if not project.is_owned_by(actor):
+                raise NotFoundError(project_id)
+            recipe = await self._recipes.get(project_id, key.recipe_id, stage=key.stage)
+            if profile_id is not None:
+                profile = await self._owned(actor, profile_id)
+                if profile.stage is not recipe.stage:
+                    raise InvalidParametersError(
+                        OTHER_STAGE.format(name=profile.name, actual=profile.stage.label, expected=recipe.stage.label)
+                    )
+            return await self._uow.recipes.update(evolve(recipe, profile_id=profile_id))
 
     async def rename(self, actor: Actor, profile_id: RecipeProfileId, name: str) -> RecipeProfile:
         """Give a profile another name.
@@ -290,10 +289,9 @@ class RecipeProfiles:
         :rtype: RecipeProfile
         :raises NotFoundError: If the account has no such profile.
         """
-        profile = await self._owned(actor, profile_id)
-        renamed = await self._uow.recipe_profiles.update(evolve(profile, name=name, updated_at=self._clock.now()))
-        await self._uow.commit()
-        return renamed
+        async with self._uow.change():
+            profile = await self._owned(actor, profile_id)
+            return await self._uow.recipe_profiles.update(evolve(profile, name=name, updated_at=self._clock.now()))
 
     async def set_default(self, actor: Actor, profile_id: RecipeProfileId, *, is_default: bool) -> RecipeProfile:
         """Choose a profile as the default of its stage, or stop it being one.
@@ -311,15 +309,16 @@ class RecipeProfiles:
         :rtype: RecipeProfile
         :raises NotFoundError: If the account has no such profile.
         """
-        profile = await self._owned(actor, profile_id)
-        if profile.is_default is is_default:
-            return profile
-        moment = self._clock.now()
-        if is_default and (current := await self._uow.recipe_profiles.find_default(actor.account_id, profile.stage)):
-            await self._uow.recipe_profiles.update(evolve(current, is_default=False, updated_at=moment))
-        changed = await self._uow.recipe_profiles.update(evolve(profile, is_default=is_default, updated_at=moment))
-        await self._uow.commit()
-        return changed
+        async with self._uow.change():
+            profile = await self._owned(actor, profile_id)
+            if profile.is_default is is_default:
+                return profile
+            moment = self._clock.now()
+            if is_default and (
+                current := await self._uow.recipe_profiles.find_default(actor.account_id, profile.stage)
+            ):
+                await self._uow.recipe_profiles.update(evolve(current, is_default=False, updated_at=moment))
+            return await self._uow.recipe_profiles.update(evolve(profile, is_default=is_default, updated_at=moment))
 
     async def remove(self, actor: Actor, profile_id: RecipeProfileId) -> None:
         """Delete a profile, which changes no recipe of any book.
@@ -330,16 +329,18 @@ class RecipeProfiles:
         :type profile_id: RecipeProfileId
         :raises NotFoundError: If the account has no such profile.
         """
-        await self._owned(actor, profile_id)
-        await self._uow.recipe_profiles.delete(profile_id)
-        await self._uow.commit()
+        async with self._uow.change():
+            await self._owned(actor, profile_id)
+            await self._uow.recipe_profiles.delete(profile_id)
 
     async def apply(
         self, actor: Actor, project_id: ProjectId, profile_id: RecipeProfileId, *, kind: RecipeKind
     ) -> AppliedProfile:
         """Put the steps of a profile into the recipe of one kind of page of the profile's stage, and link it.
 
-        The pages the recipe processed become stale, as they do for any change of a recipe.
+        The pages the recipe processed become stale, as they do for any change of a recipe. The use case holds no block
+        itself: it finds the recipe, which opens a block of its own when the stage has none, then stores the steps, and
+        then links the recipe, each in a block of its own.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -373,6 +374,7 @@ class RecipeProfiles:
         the stage would have had on its first opening. The recipe keeps its identifier and its kind, while every step is
         new, so the settings and edits the pages kept for the old steps no longer belong to any step. The recipe is
         linked to the default profile when its steps came from it, and to no profile when they came from a template.
+        The use case holds no block itself, as ``apply`` holds none.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -392,6 +394,8 @@ class RecipeProfiles:
 
     async def _put(self, actor: Actor, project_id: ProjectId, key: RecipeKey, draft: RecipeDraft) -> Recipe:
         """Put the steps of a draft into a recipe, and link the recipe to the profile the draft names, or to none.
+
+        Called outside any block, since the two steps it takes each open one.
 
         :param actor: Account acting in the current request.
         :type actor: Actor

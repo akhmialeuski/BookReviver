@@ -29,7 +29,7 @@ from bookreviver.domain.enums import (
     RecipeKind,
     Stage,
 )
-from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
+from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import RecipeId
 from bookreviver.domain.values import RecipeDraft, Step
 
@@ -189,7 +189,8 @@ class RecipeBook:
     ) -> None:
         """Work over the ports of one request or job.
 
-        :param uow: Unit of work, whose commit ends the use case.
+        :param uow: Unit of work, in which ``recipes`` opens a block of its own to store the defaults and ``rewrite``
+                    writes inside the block of its caller.
         :type uow: UnitOfWork
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
@@ -209,41 +210,41 @@ class RecipeBook:
     async def recipes(self, project_id: ProjectId, stage: Stage) -> list[Recipe]:
         """Return the recipes of a stage, one for each kind of page, creating them when the stage is first asked for.
 
+        Called outside any block. It reads without one, and opens its own ``change_book`` only when the stage has no
+        recipes yet, where it reads again, since a task that ran at the same time may have stored them first, and
+        adds the defaults only if they are still missing.
+
         :param project_id: Project owning the recipes.
         :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
         :returns: The recipes in the order of the kinds.
         :rtype: list[Recipe]
-        :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
+        :raises NotFoundError: If the project does not exist, the stage has no recipe by default, or none of its
+                               processors is installed.
         """
         if found := await self._uow.recipes.list_for_stage(project_id, stage):
             return [await self._current(recipe) for recipe in found]
-        moment = self._clock.now()
-        steps, profile = await self._starting_steps(project_id, stage)
-        built = [
-            Recipe(
-                id=RecipeId(uuid4()),
-                project_id=project_id,
-                stage=stage,
-                kind=kind,
-                steps=steps[kind],
-                profile_id=profile.id if profile is not None and kind is RecipeKind.TEXT else None,
-                # A microsecond apart, so the recipes are listed in the order of the kinds
-                created_at=moment + timedelta(microseconds=index),
-                updated_at=moment,
-            )
-            for index, kind in enumerate(RecipeKind)
-        ]
-        try:
+        async with self._uow.change_book(project_id):
+            if found := await self._uow.recipes.list_for_stage(project_id, stage):
+                return [await self._current(recipe) for recipe in found]
+            moment = self._clock.now()
+            steps, profile = await self._starting_steps(project_id, stage)
+            built = [
+                Recipe(
+                    id=RecipeId(uuid4()),
+                    project_id=project_id,
+                    stage=stage,
+                    kind=kind,
+                    steps=steps[kind],
+                    profile_id=profile.id if profile is not None and kind is RecipeKind.TEXT else None,
+                    # A microsecond apart, so the recipes are listed in the order of the kinds
+                    created_at=moment + timedelta(microseconds=index),
+                    updated_at=moment,
+                )
+                for index, kind in enumerate(RecipeKind)
+            ]
             await self._uow.recipes.add_many(built)
-            await self._uow.commit()
-        except ConflictError:
-            # A request that ran at the same time stored the recipes first, and its recipes are the ones to use
-            await self._uow.rollback()
-            if not (found := await self._uow.recipes.list_for_stage(project_id, stage)):
-                raise
-            return [await self._current(recipe) for recipe in found]
         return built
 
     async def _current(self, recipe: Recipe) -> Recipe:
@@ -267,7 +268,7 @@ class RecipeBook:
         return evolve(recipe, steps=tuple(steps))
 
     async def of_kind(self, project_id: ProjectId, stage: Stage, kind: RecipeKind) -> Recipe:
-        """Return the recipe of a stage for one kind of page.
+        """Return the recipe of a stage for one kind of page, called outside any block as ``recipes`` is.
 
         :param project_id: Project owning the recipe.
         :type project_id: ProjectId
@@ -283,6 +284,8 @@ class RecipeBook:
 
     async def for_pages(self, project_id: ProjectId, stage: Stage, pages: Sequence[Page]) -> dict[PageId, Recipe]:
         """Choose the recipe of each page of a stage, which is the recipe of the kind of the page.
+
+        Called outside any block, as ``recipes`` is.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
@@ -337,13 +340,13 @@ class RecipeBook:
         return recipe
 
     async def rewrite(self, recipe: Recipe, draft: RecipeDraft) -> Recipe:
-        """Store new steps of a recipe.
+        """Store new steps of a recipe, inside the ``change_book`` block of the caller, which this never opens.
 
         :param recipe: The recipe to change.
         :type recipe: Recipe
         :param draft: New steps, which are checked against their processors and their order.
         :type draft: RecipeDraft
-        :returns: The recipe as stored, not yet committed.
+        :returns: The recipe as stored, which the block of the caller commits.
         :rtype: Recipe
         :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
                                         usual order.
