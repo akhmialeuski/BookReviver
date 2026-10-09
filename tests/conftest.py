@@ -116,11 +116,14 @@ async def fx_app(
 async def fx_client(fx_app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
     """Open an HTTP client talking to the application in-process.
 
+    An error that leaves the application fails the request, as it would close the connection of a real server after its
+    answer, so a route that answers an expected error by a problem but lets the error go on fails its test.
+
     :param fx_app: The running application.
     :type fx_app: FastAPI
     :returns: Iterator yielding the client and closing it afterwards.
     :rtype: AsyncIterator[httpx.AsyncClient]
     """
-    transport = httpx.ASGITransport(app=fx_app, raise_app_exceptions=False)
+    transport = httpx.ASGITransport(app=fx_app)
     async with httpx.AsyncClient(transport=transport, base_url=TEST_BASE_URL) as client:
         yield client

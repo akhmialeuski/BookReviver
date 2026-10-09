@@ -17,6 +17,7 @@ from bookreviver.app.container import build_container
 from bookreviver.app.providers.accounts import account_routes
 from bookreviver.app.security import install_security, sign_in_throttle
 from bookreviver.app.settings import Settings
+from bookreviver.domain.errors import DomainError
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.pages import PageService
 
@@ -77,7 +78,12 @@ def create_app(
             await container.close()
 
     app = FastAPI(title='BookReviver', lifespan=lifespan)
-    add_exception_handler(app, problem_handler(logger))
+    problems = problem_handler(logger)
+    add_exception_handler(app, problems)
+    # fastapi-problem registers the handler for Exception, which Starlette runs in ServerErrorMiddleware: it answers and
+    # then raises the error again, and uvicorn closes the connection the answer went out on, so a client that reuses it
+    # fails with a reset. A domain error is an answer the API means to give, so ExceptionMiddleware handles it and stops
+    app.add_exception_handler(DomainError, problems)
     add_pagination(app)
     accounts = account_routes(resolved, sign_in_throttle(), social_clients)
     api = APIRouter(prefix=API_PREFIX)
