@@ -634,16 +634,18 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
         )
 
     @staticmethod
-    def _book_counts(project_id: QueryableAttribute[UUID] | ProjectId) -> tuple[ScalarSelect[int], ...]:
+    def _book_counts(
+        project_id: QueryableAttribute[UUID] | ProjectId,
+    ) -> tuple[ScalarSelect[int], ScalarSelect[int], ScalarSelect[int], ScalarSelect[int]]:
         """Return the scalar subqueries counting a project's included pages, sources and scans.
 
         :param project_id: The project's identifier, or the identifier column of the enclosing query's project rows,
                            which the subqueries then correlate with.
         :type project_id: QueryableAttribute[UUID] | ProjectId
         :returns: The count of included pages, of sources, of scans and of pages with an image, in this order.
-        :rtype: tuple[ScalarSelect[int], ...]
+        :rtype: tuple[ScalarSelect[int], ScalarSelect[int], ScalarSelect[int], ScalarSelect[int]]
         """
-        return tuple(
+        pages, sources, scans, with_image = (
             select(func.count()).where(*conditions).correlate(ProjectRow).scalar_subquery()
             for conditions in (
                 (PageRow.project_id == project_id, PageRow.included.is_(True)),
@@ -652,6 +654,7 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
                 (PageRow.project_id == project_id, PageRow.origin != PageOrigin.PLACEHOLDER),
             )
         )
+        return pages, sources, scans, with_image
 
 
 class SqlAlchemySourceRepository(SqlAlchemyRepository[Source, SourceId, SourceRow], SourceRepository):
@@ -1093,7 +1096,8 @@ class SqlAlchemyPageVersionRepository(
                 PageVersionRow.stage == Stage.PAGE_SPLIT,
             )
         )
-        sizes = (PageSize.from_data(data) for data in (await self._rows.session.scalars(statement)).all())
+        stored: Sequence[dict[str, Any]] = (await self._rows.session.scalars(statement)).all()
+        sizes = (PageSize.from_data(data) for data in stored)
         return [size for size in sizes if size is not None]
 
     @override
@@ -1215,7 +1219,10 @@ class SqlAlchemyPageVersionRepository(
             )
         ).all()
         goes = collectable_versions(
-            {PageVersionId(version_id): input_id for version_id, input_id, _ in rows},
+            {
+                PageVersionId(version_id): None if input_id is None else PageVersionId(input_id)
+                for version_id, input_id, _ in rows
+            },
             eligible=[PageVersionId(version_id) for version_id, _, can_go in rows if can_go],
             heads=[PageVersionId(head) for head in heads if head is not None],
         )
@@ -1423,7 +1430,7 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
         if not project_ids:
             return list[StageTally]()
         marked = and_(PageStageRow.state != StageState.FAILED, PageVersionRow.review.is_not(None))
-        counted = (
+        fresh_sum, stale_sum, failed_sum, review_sum, check_sum, partial_sum = (
             func.coalesce(func.sum(case((condition, 1), else_=0)), 0)
             for condition in (
                 PageStageRow.state == StageState.FRESH,
@@ -1435,7 +1442,16 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
             )
         )
         statement = (
-            select(PageRow.project_id, PageStageRow.stage, *counted)
+            select(
+                PageRow.project_id,
+                PageStageRow.stage,
+                fresh_sum,
+                stale_sum,
+                failed_sum,
+                review_sum,
+                check_sum,
+                partial_sum,
+            )
             .select_from(PageStageRow)
             .join(PageRow, PageStageRow.page_id == PageRow.id)
             .outerjoin(PageVersionRow, PageStageRow.head_version_id == PageVersionRow.id)
@@ -1481,6 +1497,7 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
         return [
             StepTally(stage=stage, through_step=through_step, pages=pages)
             for stage, through_step, pages in await self._rows.session.execute(statement)
+            if through_step is not None
         ]
 
 
@@ -2019,7 +2036,8 @@ class SqlAlchemyRecipeProfileRepository(
         )
         counted: dict[RecipeProfileId, int] = {}
         for profile_id, books in await self._rows.session.execute(statement):
-            counted[RecipeProfileId(profile_id)] = int(books)
+            if profile_id is not None:
+                counted[RecipeProfileId(profile_id)] = int(books)
         return counted
 
 

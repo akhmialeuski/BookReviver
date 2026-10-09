@@ -25,6 +25,7 @@ from advanced_alchemy.base import DefaultBase
 from sqlalchemy import event, select
 from sqlalchemy.exc import OperationalError
 
+from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountRow
 from bookreviver.adapters.persistence.sqlalchemy.database import CHANGE_BLOCK_OPTION
 from bookreviver.adapters.persistence.sqlalchemy.mappers import ProjectMapper
 from bookreviver.adapters.persistence.sqlalchemy.repositories import (
@@ -168,11 +169,13 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
 
         The session's read-only transaction is ended first, and every row of the adapter's tables it loaded is expired,
         so the block reads what has been committed since and not what an earlier read or block left in the session.
+        The account rows are the exception, as the next paragraph says.
 
         The read-only transaction ends by a commit, which sends nothing to SQLite in autocommit mode and, as the
         sessions do not expire on commit, keeps every other object loaded. A rollback, or expiring the whole session,
         would expire the account row that fastapi-users loaded for the request too, and its next attribute read would
-        need a lazy load that an async session cannot run.
+        need a lazy load that an async session cannot run. The account rows are therefore never expired here, and the
+        account database writes through the attributes of the row it holds.
 
         :raises BookBusyError: If SQLite's write lock was not free within the busy timeout.
         :raises NoChangeOpenError: If a row of the adapter's tables was left pending outside a block.
@@ -180,7 +183,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         if self._session.in_transaction():
             await self._session.commit()
         for row in list(self._session.identity_map.values()):
-            if isinstance(row, DefaultBase):
+            if isinstance(row, DefaultBase) and not isinstance(row, AccountRow):
                 self._session.expire(row)
         try:
             await self._session.connection(execution_options={CHANGE_BLOCK_OPTION: True})

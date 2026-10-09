@@ -62,9 +62,9 @@ target_metadata: MetaData = ProjectRow.metadata
 def render_item(type_: str, obj: object, autogen_context: AutogenContext) -> str | Literal[False]:
     """Render a column type from outside SQLAlchemy by its own module, and import that module in the revision.
 
-    advanced-alchemy renders such types as ``sa.<name>`` and binds its own types to those names in the revision,
-    which gives fastapi-users' ``GUID`` the ``GUID`` of advanced-alchemy and leaves its ``TIMESTAMPAware`` unbound.
-    Naming the module keeps every type the one the table declares.
+    advanced-alchemy renders such types as ``sa.<name>`` and binds its own types to those names in the revision, which
+    gives a ``GUID`` of another library the ``GUID`` of advanced-alchemy and leaves any other name unbound. Naming the
+    module keeps every type the one the table declares.
 
     :param type_: Kind of the item Alembic renders, such as ``type`` or ``column``.
     :type type_: str

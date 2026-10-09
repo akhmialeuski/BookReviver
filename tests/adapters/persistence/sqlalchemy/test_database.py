@@ -1,6 +1,6 @@
 """Tests for SqlDatabase: the engine, the sessions and the SQLite transactions the listeners of the engine own."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from attrs import evolve
@@ -89,8 +89,8 @@ class TestSqlDatabase:
         :type fx_database: SqlDatabase
         """
         async with fx_database.engine.connect() as connection:
-            timeout = (await connection.execute(text('PRAGMA busy_timeout'))).scalar_one()
-            foreign_keys = (await connection.execute(text('PRAGMA foreign_keys'))).scalar_one()
+            timeout: Any = (await connection.execute(text('PRAGMA busy_timeout'))).scalar_one()
+            foreign_keys: Any = (await connection.execute(text('PRAGMA foreign_keys'))).scalar_one()
 
         assert (timeout, foreign_keys) == (BUSY_TIMEOUT_MS, 1)
 

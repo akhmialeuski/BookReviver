@@ -8,6 +8,7 @@ run commands in a worker thread through ``_migrate``.
 import json
 import re
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 from uuid import UUID, uuid4
@@ -21,6 +22,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from sqlalchemy import func, inspect, select, text
 
+from bookreviver.adapters.persistence.sqlalchemy.accounts import AccessTokenTable, AccountTable
 from bookreviver.adapters.persistence.sqlalchemy.database import MIGRATIONS_DIR, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     JobRow,
@@ -56,7 +58,7 @@ from tests.helpers.builders import (
 from tests.helpers.seeding import commit_account, store_project
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable
+    from collections.abc import AsyncIterator, Callable, Sequence
 
     from advanced_alchemy.base import CommonTableAttributes
     from dishka import AsyncContainer
@@ -224,6 +226,30 @@ INSERT_LAYER_CHANGE: str = (
 INSERT_MARGIN_CHANGE: str = (
     'INSERT INTO page_step_changes (id, page_id, stage, step_id, layer, before, after, source, created_at, sequence) '
     "VALUES (:id, :page_id, 'geometry', :step_id, :layer, :before, :after, 'user', '2026-01-01 00:00:00', :sequence)"
+)
+# The revision that stores the identifiers of the accounts as 16 bytes and the time of a token as UTC
+ACCOUNT_TYPES_REVISION: str = '674f0fbcad00'
+# Rows of the accounts as the fastapi-users library stored them, with the identifier as text and no byte string in it
+INSERT_OLD_USER: TextClause = text(
+    'INSERT INTO "user" (id, email, hashed_password, is_active, is_superuser, is_verified)'
+    " VALUES (:id, :email, '', 1, 0, 1)"
+)
+INSERT_OLD_OAUTH: TextClause = text(
+    'INSERT INTO oauth_account (id, user_id, oauth_name, access_token, account_id, account_email)'
+    " VALUES (:id, :user_id, 'google', 'secret', 'sub-1', 'reader@example.org')"
+)
+INSERT_OLD_TOKEN: TextClause = text(
+    'INSERT INTO accesstoken (user_id, token, created_at) VALUES (:account, :token, :created_at)'
+)
+INSERT_OLD_ACCOUNT_PROJECT: TextClause = text(
+    'INSERT INTO projects (id, owner_id, title, publisher, publication_place, publication_year, edition, series,'
+    ' volume, orthography, notes, image_policy, created_at, updated_at)'
+    " VALUES (:id, :owner_id, 'A', '', '', '', '', '', '', 'unknown', '', 'compact', :moment, :moment)"
+)
+INSERT_OLD_PLACE: TextClause = text(
+    'INSERT INTO book_places (account_id, project_id, mode, stage, view, compare, filter, canvas_zoom,'
+    ' canvas_centre_x, canvas_centre_y, updated_at)'
+    " VALUES (:account_id, :project_id, 'workspace', 'geometry', 'page', 'off', 'all', :zoom, :x, :y, :moment)"
 )
 # The tables holding the rows of a book, each of which refers to the project or to a row that does
 BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (ProjectRow, SourceRow, ScanRow, PageRow, PageVersionRow, JobRow)
@@ -552,8 +578,8 @@ class TestStepIdentityRevision:
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_STATES_REVISION)
         await _migrate(fx_empty_database, migrations.downgrade, BEFORE_STEPS_REVISION)
         async with fx_empty_database.sessions() as session:
-            keys = (await session.execute(text('SELECT processor_key FROM page_edits'))).scalars().all()
-            steps = (await session.execute(text('SELECT steps FROM recipes'))).scalars().all()
+            keys: Sequence[Any] = (await session.execute(text('SELECT processor_key FROM page_edits'))).scalars().all()
+            steps: Sequence[Any] = (await session.execute(text('SELECT steps FROM recipes'))).scalars().all()
         expect(sorted(keys) == sorted([DESKEW, CROP, DESKEW, DESKEW]))
         expect(
             all('step_id' not in step and 'applies_to' not in step for stored in steps for step in json.loads(stored))
@@ -693,7 +719,9 @@ class TestUndoRevision:
             await session.commit()
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
         async with fx_empty_database.sessions() as session:
-            undoes = (await session.execute(text('SELECT undoes_id FROM page_step_changes'))).scalars().all()
+            undoes: Sequence[Any] = (
+                (await session.execute(text('SELECT undoes_id FROM page_step_changes'))).scalars().all()
+            )
         await _migrate(fx_empty_database, migrations.downgrade, BEFORE_UNDO_REVISION)
         async with fx_empty_database.engine.connect() as connection:
             columns = await connection.run_sync(
@@ -732,7 +760,7 @@ class TestProfileLinkRevision:
             )
             await session.execute(
                 text(INSERT_PROFILE),
-                {'id': profile_id.bytes, 'account_id': str(account_id), 'name': 'Photographed book', 'steps': steps},
+                {'id': profile_id.bytes, 'account_id': account_id.bytes, 'name': 'Photographed book', 'steps': steps},
             )
             await session.commit()
         return recipe_id.bytes, profile_id.bytes
@@ -1129,7 +1157,7 @@ class TestDescriptionRevision:
             for old in OLD_PROJECTS:
                 await session.execute(
                     INSERT_OLD_PROJECT,
-                    {'id': uuid4().bytes, 'owner_id': str(owner_id), 'moment': EPOCH, **old._asdict()},
+                    {'id': uuid4().bytes, 'owner_id': owner_id.bytes, 'moment': EPOCH, **old._asdict()},
                 )
             await session.commit()
 
@@ -1175,7 +1203,7 @@ class TestDescriptionRevision:
                 INSERT_OLD_PROJECT,
                 {
                     'id': project_id,
-                    'owner_id': str(await commit_account(fx_empty_database)),
+                    'owner_id': (await commit_account(fx_empty_database)).bytes,
                     'moment': EPOCH,
                     **OLD_PROJECTS[0]._asdict(),
                 },
@@ -1286,7 +1314,7 @@ class TestContentBoxRevision:
                 (row.page_id.bytes, row.step_id.bytes): row
                 for row in (await session.execute(select(PageStepStateRow))).scalars().all()
             }
-            layers = (await session.execute(text('SELECT layer FROM page_step_changes'))).scalars().all()
+            layers: Sequence[Any] = (await session.execute(text('SELECT layer FROM page_step_changes'))).scalars().all()
         expect(sorted(states) == sorted([(pages[1], margins), (pages[2], crop)]))
         expect((states[pages[1], margins].kind, states[pages[1], margins].params) == (None, {'margin_top': 5}))
         expect(states[pages[1], margins].geometry is None and states[pages[1], margins].edit_hash is None)
@@ -1395,7 +1423,7 @@ class TestMillimetresRevision:
             )
             await session.execute(
                 text(INSERT_PROFILE),
-                {'id': uuid4().bytes, 'account_id': str(account), 'name': 'Mine', 'steps': self._steps(None)},
+                {'id': uuid4().bytes, 'account_id': account.bytes, 'name': 'Mine', 'steps': self._steps(None)},
             )
             await session.execute(
                 text(INSERT_PAGE), {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': 'a0'}
@@ -1521,7 +1549,8 @@ class TestMillimetresRevision:
             await session.commit()
         await _migrate(fx_empty_database, migrations.upgrade, MILLIMETRES_REVISION)
         async with fx_empty_database.sessions() as session:
-            [recipe] = (await session.execute(select(RecipeRow.steps))).scalars().all()
+            recipes: Sequence[list[dict[str, Any]]] = (await session.execute(select(RecipeRow.steps))).scalars().all()
+        [recipe] = recipes
         expect(recipe[0]['params'] == {'margin_top': 50.0})
         assert_expectations()
 
@@ -1569,7 +1598,7 @@ class TestRecipeKindsRevision:
                 )
             await session.execute(
                 text(INSERT_PROFILE),
-                {'id': ids['profile'], 'account_id': str(account_id), 'name': 'Own', 'steps': json.dumps([step])},
+                {'id': ids['profile'], 'account_id': account_id.bytes, 'name': 'Own', 'steps': json.dumps([step])},
             )
             await session.execute(
                 text(INSERT_RULE), {'id': uuid4().bytes, 'project_id': project.id.bytes, 'recipe_id': ids['plates']}
@@ -1931,7 +1960,200 @@ class TestFilesRemovedRevision:
         await _commit_book(fx_empty_database)
         await _migrate(fx_empty_database, migrations.downgrade, KEYED_REVISION)
         async with fx_empty_database.engine.connect() as connection:
-            stored = (await connection.execute(text('SELECT files_removed_at FROM page_versions'))).scalars().all()
+            stored: Sequence[Any] = (
+                (await connection.execute(text('SELECT files_removed_at FROM page_versions'))).scalars().all()
+            )
         expect(FILES_REMOVED_COLUMN in await self._columns(fx_empty_database))
         expect(stored == [None])
+        assert_expectations()
+
+
+class OldAccount(NamedTuple):
+    """The identifiers and times of the account rows a test writes in the format before the revision."""
+
+    user: UUID
+    oauth: UUID
+    project: UUID
+    profile: UUID
+    created_at: str
+
+
+class StoredAccounts(NamedTuple):
+    """The rows of every column the revision touches as SQLite stores them, each value after its storage class."""
+
+    user: list[tuple[Any, ...]]
+    oauth: list[tuple[Any, ...]]
+    token: list[tuple[Any, ...]]
+    project: list[tuple[Any, ...]]
+    profile: list[tuple[Any, ...]]
+    place: list[tuple[Any, ...]]
+
+
+class TestAccountTypesRevision:
+    """Tests for the revision that stores the identifiers of the accounts as 16 bytes and the time of a token as UTC."""
+
+    OLD_TOKEN: ClassVar[str] = 'token-in-the-old-format'
+    OLD_TIME: ClassVar[datetime] = datetime(2026, 10, 1, 12, 30, 45, 123456, tzinfo=UTC)
+    CANVAS: ClassVar[tuple[float, float, float]] = (1.5, 120.25, 80.75)
+    # The storage classes SQLite names for a byte string and for text
+    BLOB: ClassVar[str] = 'blob'
+    TEXT: ClassVar[str] = 'text'
+    # The statements that read every column the revision touches as stored, in the order of the fields of StoredAccounts
+    STORED: ClassVar[tuple[str, ...]] = (
+        'SELECT typeof(id), id FROM "user"',
+        'SELECT typeof(id), id, typeof(user_id), user_id FROM oauth_account',
+        'SELECT typeof(user_id), user_id, typeof(created_at), created_at FROM accesstoken',
+        'SELECT typeof(owner_id), owner_id FROM projects',
+        'SELECT typeof(account_id), account_id FROM recipe_profiles',
+        'SELECT typeof(account_id), account_id, canvas_zoom, canvas_centre_x, canvas_centre_y FROM book_places',
+    )
+
+    @classmethod
+    async def _seed(cls, database: SqlDatabase) -> OldAccount:
+        """Write an account with a provider account, a token, a project, a profile and a place, as the library did.
+
+        Every identifier is the text with dashes and the time of the token is text, as the fastapi-users library
+        stored them, so the rows are the ones a database holds before the revision.
+
+        :param database: Database migrated to the revision before.
+        :type database: SqlDatabase
+        :returns: The identifiers of the rows and the stored time of the token.
+        :rtype: OldAccount
+        """
+        old = OldAccount(uuid4(), uuid4(), uuid4(), uuid4(), cls.OLD_TIME.strftime('%Y-%m-%d %H:%M:%S.%f'))
+        rows: tuple[tuple[TextClause, dict[str, Any]], ...] = (
+            (INSERT_OLD_USER, {'id': str(old.user), 'email': 'reader@example.org'}),
+            (INSERT_OLD_OAUTH, {'id': str(old.oauth), 'user_id': str(old.user)}),
+            (INSERT_OLD_TOKEN, {'account': str(old.user), 'token': cls.OLD_TOKEN, 'created_at': old.created_at}),
+            (INSERT_OLD_ACCOUNT_PROJECT, {'id': old.project.bytes, 'owner_id': str(old.user), 'moment': EPOCH}),
+            (
+                text(INSERT_PROFILE),
+                {'id': old.profile.bytes, 'account_id': str(old.user), 'name': 'Mine', 'steps': json.dumps([])},
+            ),
+            (
+                INSERT_OLD_PLACE,
+                {
+                    'account_id': str(old.user),
+                    'project_id': old.project.bytes,
+                    **dict(zip(('zoom', 'x', 'y'), cls.CANVAS, strict=True)),
+                    'moment': EPOCH,
+                },
+            ),
+        )
+        async with database.sessions() as session:
+            for statement, values in rows:
+                await session.execute(statement, values)
+            await session.commit()
+        return old
+
+    @classmethod
+    async def _stored(cls, database: SqlDatabase) -> StoredAccounts:
+        """Read every column the revision touches as SQLite stores it, with the storage class of each value.
+
+        :param database: Migrated database.
+        :type database: SqlDatabase
+        :returns: The rows of each statement of ``STORED``, as tuples.
+        :rtype: StoredAccounts
+        """
+        async with database.engine.connect() as connection:
+            return StoredAccounts(
+                *[[tuple(row) for row in (await connection.execute(text(statement))).all()] for statement in cls.STORED]
+            )
+
+    async def test_every_identifier_is_read_back_through_the_new_tables(self, fx_empty_database: SqlDatabase) -> None:
+        """Verify the user, the provider account, the token, the project and the profile keep their identifiers and times.
+
+        The rows are written as text with dashes before the revision, so every value is found by the identifier the
+        new tables read, and the values that refer to one another still match, as ``PRAGMA foreign_key_check`` that
+        runs after the migration needs.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, FILES_REMOVED_REVISION)
+        old = await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, ACCOUNT_TYPES_REVISION)
+        async with fx_empty_database.sessions() as session:
+            user = (await session.execute(select(AccountTable))).unique().scalar_one()
+            token = await session.scalar(select(AccessTokenTable))
+            owner_id = await session.scalar(select(ProjectRow.owner_id))
+            account_id = await session.scalar(select(RecipeProfileRow.account_id))
+        stored = await self._stored(fx_empty_database)
+        expect(user.id == old.user)
+        expect([link.id for link in user.oauth_accounts] == [old.oauth])
+        expect([link.user_id for link in user.oauth_accounts] == [old.user])
+        expect(token is not None and (token.user_id, token.created_at) == (old.user, self.OLD_TIME))
+        expect(owner_id == old.user)
+        expect(account_id == old.user)
+        expect(stored.user == [(self.BLOB, old.user.bytes)])
+        expect(stored.oauth == [(self.BLOB, old.oauth.bytes, self.BLOB, old.user.bytes)])
+        expect(stored.project == [(self.BLOB, old.user.bytes)])
+        expect(stored.profile == [(self.BLOB, old.user.bytes)])
+        expect(stored.place == [(self.BLOB, old.user.bytes, *self.CANVAS)])
+        assert_expectations()
+
+    async def test_the_time_of_a_token_is_not_rewritten(self, fx_empty_database: SqlDatabase) -> None:
+        """Verify a token keeps the text it was stored with, which the new type reads as the same UTC time.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, FILES_REMOVED_REVISION)
+        old = await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, ACCOUNT_TYPES_REVISION)
+        [(kind, _user, time_kind, created_at)] = (await self._stored(fx_empty_database)).token
+        expect((kind, time_kind, created_at) == (self.BLOB, self.TEXT, old.created_at))
+        assert_expectations()
+
+    async def test_a_downgrade_gives_back_the_text_of_every_identifier(self, fx_empty_database: SqlDatabase) -> None:
+        """Verify a downgrade leaves every column of the accounts as the rows were before the revision, byte for byte.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, FILES_REMOVED_REVISION)
+        old = await self._seed(fx_empty_database)
+        before = await self._stored(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, ACCOUNT_TYPES_REVISION)
+        await _migrate(fx_empty_database, migrations.downgrade, FILES_REMOVED_REVISION)
+        expect(await self._stored(fx_empty_database) == before)
+        expect(before.user == [(self.TEXT, str(old.user))])
+        assert_expectations()
+
+    async def test_an_identifier_already_in_bytes_is_left_as_it_is(self, fx_empty_database: SqlDatabase) -> None:
+        """Verify a database whose account rows hold bytes before the revision, as a test seeds it, keeps its values.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, FILES_REMOVED_REVISION)
+        account = await commit_account(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, ACCOUNT_TYPES_REVISION)
+        expect((await self._stored(fx_empty_database)).user == [(self.BLOB, account.bytes)])
+        assert_expectations()
+
+    async def test_a_project_of_no_account_rolls_the_migration_back(self, fx_empty_database: SqlDatabase) -> None:
+        """Verify an owner that matches no user fails the foreign key check, and leaves the rows as they were.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, FILES_REMOVED_REVISION)
+        await self._seed(fx_empty_database)
+        async with fx_empty_database.engine.connect() as connection:
+            # Keys are on in every connection of the application, so the stray owner is written with them off
+            await connection.exec_driver_sql('PRAGMA foreign_keys=OFF')
+            await connection.execute(
+                INSERT_OLD_ACCOUNT_PROJECT, {'id': uuid4().bytes, 'owner_id': str(uuid4()), 'moment': EPOCH}
+            )
+            await connection.commit()
+        before = await self._stored(fx_empty_database)
+        with pytest.raises(RuntimeError, match='foreign key to no row'):
+            await _migrate(fx_empty_database, migrations.upgrade, ACCOUNT_TYPES_REVISION)
+        expect(await self._stored(fx_empty_database) == before)
         assert_expectations()

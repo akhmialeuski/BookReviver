@@ -1,5 +1,7 @@
 """Provider of the SQL database, used by the SQLAlchemy persistence backend and by the account tables.
 
+The session of a request carries one unit of work, which is built here so that the books and the accounts share it.
+
 The application never changes the schema. Migrations are applied by hand, after a copy of the data directory if it
 matters, and the provider only compares the revision of the database with the head of the migrations the code
 ships. A mismatch stops the start with the command that fixes it, because running against another schema would fail
@@ -14,6 +16,7 @@ from dishka import Provider, Scope, provide
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.app.settings import Settings
 
 # The command applying the migrations to the database the settings name, a script of pyproject.toml
@@ -74,3 +77,17 @@ class DatabaseProvider(Provider):
             yield session
         finally:
             await session.close()
+
+    @provide(scope=Scope.REQUEST)
+    def unit_of_work(self, session: AsyncSession) -> SqlAlchemyUnitOfWork:
+        """Build the one unit of work of the session of a request or job.
+
+        Two units of work over one session would each guard against the block of the other, so the repositories of
+        the books and the account database both take this one, whatever backend the books are stored in.
+
+        :param session: Session of the current request or job.
+        :type session: AsyncSession
+        :returns: Unit of work whose repositories share ``session``.
+        :rtype: SqlAlchemyUnitOfWork
+        """
+        return SqlAlchemyUnitOfWork(session)
