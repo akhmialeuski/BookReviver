@@ -4,12 +4,13 @@ A use case of processing writes recipes and stage records, follows jobs and star
 the objects that do these over one unit of work, so ``ProcessingService`` and ``ProcessingJobs`` take one value for them
 and are built the same way.
 
-A job is recorded and committed before it is queued, so the worker finds it. A queue that refuses it leaves the job
-stored as failed and announced, which tells the client it never ran, and the request that asked for it still answers,
-since the rows it wrote are committed. A project processes one thing at a time. The user asks for a run, a preview or a
-measure of the book, of which the project has one, and the application queues a tile cutting and a collection of old
-versions for itself, of which it has one too. A request for a second of the first kind is refused, except that a run or
-a measure takes the project from a preview by cancelling it, since a preview is a look that changes nothing. A request
+A job is recorded in a block that has committed before it is queued, so the worker finds it. A queue that refuses it
+leaves the job stored as failed and announced, which tells the client it never ran, and the request that asked for it
+still answers, since the rows it wrote are committed. A project processes one thing at a time. The user asks for a run,
+a preview or a measure of the book, of which the project has one, and the application queues a tile cutting and a
+collection of old versions for itself, of which it has one too. A request for a second of the first kind is refused,
+except that a run or a measure takes the project from a preview by cancelling it, since a preview is a look that
+changes nothing. A request
 that comes while a job of the other kind is active is stored as queued and waits, and the end of that job queues it to
 a worker, so the tile cutting of the viewer never refuses a run and a run never waits on a collection with a 409. The
 collection that every run queues is stored with the end of the run, and is left out while another job waits.
@@ -80,12 +81,16 @@ class ProcessingConfig:
 
 
 class JobStarter:
-    """Records jobs of a project and queues them."""
+    """Records jobs of a project and queues them.
+
+    Every public method that writes opens its own ``change`` block and is called only outside a block, and the one that
+    only reads opens none.
+    """
 
     def __init__(self, *, uow: UnitOfWork, runtime: ProcessingRuntime, config: ProcessingConfig) -> None:
         """Start jobs through the unit of work and the queue.
 
-        :param uow: Unit of work, committed when a job is recorded.
+        :param uow: Unit of work, whose ``change`` block holds the recording of a job.
         :type uow: UnitOfWork
         :param runtime: The publisher, the clock and the queue.
         :type runtime: ProcessingRuntime
@@ -105,25 +110,22 @@ class JobStarter:
         A project has one run, preview or measure at a time, and one tile cutting or collection at a time, and only one
         of them runs. A job whose own group is free is stored whatever the other group is doing. It is queued to a
         worker at once when no job of the project is active, and otherwise it waits as queued until ``hand_off``
-        queues it when the job before it ends. The check is a read and the insert a second step, so the unique indexes
-        of the database decide when two requests pass the check together, and the one that loses is refused like the
-        one that found its group taken.
+        queues it when the job before it ends. The check and the insert are one ``change`` block, so two requests
+        cannot pass the check together, and the unique indexes of the database stay the last line of defence.
 
         A run or a measure of the book does not wait for a preview of the project, queued or running, nor is it refused
-        by one: the preview is cancelled the way an account holder cancels a job, committed and announced, and the
-        request goes on as if the project had been free of it. This is safe for the preview whose worker has begun,
-        because that worker never reads its own state before the end of its steps. It goes on to make the preview of the
-        steps it started, which are versions of the preview scale under identifiers that name that scale and which
-        nothing current or full-scale refers to, so it writes no version the run or the measure reads or writes. When it
-        ends, its final write finds the job cancelled and changes nothing, and ``hand_off`` queues only a job stored
-        before the cancellation, which the run, stored after it, is not, so the run is queued to a worker once, here. A
-        preview that was still queued is never started, since a worker that takes a finished job passes it by. A
-        preview asked for while a run or a measure is active, and a run or a measure asked for while another run or
-        measure is, are refused as before. A preview that another request stores after the check and before the insert
-        makes the insert fail on the unique index, and a run or a measure then reads the project again once, to cancel
-        that preview too, before it is refused like a request that lost the race to a run. A measure takes a preview's
-        place like a run does, as the measure is the other button the reader presses while the editor of the step is
-        looking at the page.
+        by one: the preview is cancelled the way an account holder cancels a job, in the same block as the insert and
+        announced after it, and the request goes on as if the project had been free of it. This is safe for the preview
+        whose worker has begun, because that worker never reads its own state before the end of its steps. It goes on
+        to make the preview of the steps it started, which are versions of the preview scale under identifiers that
+        name that scale and which nothing current or full-scale refers to, so it writes no version the run or the
+        measure reads or writes. When it ends, its final write finds the job cancelled and changes nothing, and
+        ``hand_off`` queues only a job stored before the cancellation, which the run, stored after it, is not, so the
+        run is queued to a worker once, here. A preview that was still queued is never started, since a worker that
+        takes a finished job passes it by. A preview asked for while a run or a measure is active, and a run or a
+        measure asked for while another run or measure is, are refused as before. A measure takes a preview's place
+        like a run does, as the measure is the other button the reader presses while the editor of the step is looking
+        at the page.
 
         :param project_id: Project the job works on.
         :type project_id: ProjectId
@@ -137,21 +139,14 @@ class JobStarter:
                                running, or while a preview is, unless the request is a run or a measure, or a tile
                                cutting or a collection while one is.
         """
-        try:
-            job, active = await self._store(project_id, kind, params)
-        except ConflictError:
-            if kind not in JobKind.preemptive():
-                raise
-            # A preview stored between the check and the insert took the place the insert needs, which the unique index
-            # tells, so the project is read once more, and the preview cancelled too
-            job, active = await self._store(project_id, kind, params)
-        if active:
-            await self._publisher.publish(JobChanged(project_id=project_id, job=job))
-            return job
-        return await self.dispatch(job)
+        if (job := await self._place(project_id, kind, params)) is None:
+            raise ConflictError(PROJECT_BUSY)
+        return job
 
-    async def _store(self, project_id: ProjectId, kind: JobKind, params: MetadataMap) -> tuple[Job, list[Job]]:
-        """Read the project, free it of the previews a run or a measure takes it from, and store the job.
+    async def _place(self, project_id: ProjectId, kind: JobKind, params: MetadataMap) -> Job | None:
+        """Record a job in one block with the check of the project and the cancellation of its previews, and queue it.
+
+        Opens its own ``change`` block, so it is called outside any block.
 
         :param project_id: Project the job works on.
         :type project_id: ProjectId
@@ -159,31 +154,34 @@ class JobStarter:
         :type kind: JobKind
         :param params: What the job was asked to do.
         :type params: MetadataMap
-        :returns: The job as committed, and the jobs that were active when it was stored.
-        :rtype: tuple[Job, list[Job]]
-        :raises ConflictError: If a job of its group is active, or another request took the group before the insert.
+        :returns: The job as stored, queued, waiting or failed, or None when a job of its group is active, in which
+                  case nothing is stored.
+        :rtype: Job | None
         """
         group = JobKind.requested() if kind in JobKind.requested() else JobKind.housekeeping()
-        active = await (self.free_of_previews(project_id) if kind in JobKind.preemptive() else self._active(project_id))
-        if any(other.kind in group for other in active):
-            raise ConflictError(PROJECT_BUSY)
         job = Job(id=JobId(uuid4()), project_id=project_id, kind=kind, params=params, created_at=self._clock.now())
-        try:
-            await self._uow.jobs.add(job)
-            await self._uow.commit()
-        except ConflictError:
-            await self._uow.rollback()
-            raise ConflictError(PROJECT_BUSY) from None
-        return job, active
+        async with self._uow.change():
+            if kind in JobKind.preemptive():
+                active, cancelled = await self._clear_previews(project_id)
+            else:
+                active, cancelled = await self._active(project_id), []
+            busy = any(other.kind in group for other in active)
+            if not busy:
+                await self._uow.jobs.add(job)
+        await self._announce(cancelled)
+        if busy:
+            return None
+        if active:
+            await self._announce([job])
+            return job
+        return await self.dispatch(job)
 
     async def free_of_previews(self, project_id: ProjectId) -> list[Job]:
         """Cancel the previews of the project that are queued or running, and return the jobs that are still active.
 
-        A preview is cancelled the way an account holder cancels a job, committed and announced, so a request that
-        would be refused by a preview alone, a run, a measure of the book or the clear of a page, goes on as if the
-        project had been free of it. A preview that has ended since it was read is not in the way either, so a
-        cancellation that finds it ended is no failure. The unit of work is committed by each cancellation, so a caller
-        has no change of its own pending when it calls this.
+        A preview is cancelled the way an account holder cancels a job, in a ``change`` block of its own and announced
+        after it, so a request that would be refused by a preview alone, a run, a measure of the book or the clear of a
+        page, goes on as if the project had been free of it. Opens its own block, so it is called outside any block.
 
         :param project_id: Project whose previews are cancelled.
         :type project_id: ProjectId
@@ -191,11 +189,36 @@ class JobStarter:
                   are none when the project was free of them.
         :rtype: list[Job]
         """
+        async with self._uow.change():
+            active, cancelled = await self._clear_previews(project_id)
+        await self._announce(cancelled)
+        return active
+
+    async def _clear_previews(self, project_id: ProjectId) -> tuple[list[Job], list[Job]]:
+        """Cancel the previews of the project that are queued or running, and announce nothing.
+
+        Writes inside the block of its caller and never opens one, so the caller announces the cancelled previews after
+        its block committed.
+
+        :param project_id: Project whose previews are cancelled.
+        :type project_id: ProjectId
+        :returns: The jobs of the project that are still active, and the previews that were cancelled, which leave out a
+                  preview that had ended since it was read.
+        :rtype: tuple[list[Job], list[Job]]
+        """
         active = await self._active(project_id)
         previews = [other for other in active if other.kind is JobKind.PREVIEW_STEP]
-        for preview in previews:
-            await self._cancellation.cancel(preview)
-        return [other for other in active if other not in previews]
+        cancelled = [done for preview in previews if (done := await self._cancellation.mark_cancelled(preview))]
+        return [other for other in active if other not in previews], cancelled
+
+    async def _announce(self, jobs: Sequence[Job]) -> None:
+        """Publish the state of jobs a block has committed.
+
+        :param jobs: The jobs, which may be none.
+        :type jobs: Sequence[Job]
+        """
+        for job in jobs:
+            await self._publisher.publish(JobChanged(project_id=job.project_id, job=job))
 
     async def hand_off(self, ended: Job, collection: Job | None) -> None:
         """Queue to a worker the job the project goes on with after a job that processes its versions has ended.
@@ -204,7 +227,8 @@ class JobStarter:
         of the project is running already. A job waits when it was stored before the ended job ended, since one stored
         later found the project free and was queued to a worker at once. The end of a job is when it was finished or
         cancelled, as the database holds it, because an account holder may cancel a running job, which frees the
-        project before its worker notices.
+        project before its worker notices. It reads outside any block and writes only through ``dispatch``, which opens
+        its own, so it is called outside any block.
 
         :param ended: The job that ended, or that its worker found cancelled.
         :type ended: Job
@@ -236,7 +260,8 @@ class JobStarter:
     async def dispatch(self, job: Job) -> Job:
         """Announce a job that is stored as queued and hand it to the queue, which a worker takes it from.
 
-        A queue that refuses the job leaves it stored as failed and announced, so the client learns it never ran.
+        A queue that refuses the job leaves it stored as failed and announced, so the client learns it never ran. That
+        write is a ``change`` block of its own, so this is called outside any block.
 
         :param job: The queued job, committed already.
         :type job: Job
@@ -249,8 +274,8 @@ class JobStarter:
         except Exception:
             logger.exception('The %s job %s could not be queued', job.kind, job.id)
             failed = evolve(job, state=JobState.FAILED, error=NOT_QUEUED, finished_at=self._clock.now())
-            stored = await self._uow.jobs.update_if_state(failed, expected=(JobState.QUEUED,))
-            await self._uow.commit()
+            async with self._uow.change():
+                stored = await self._uow.jobs.update_if_state(failed, expected=(JobState.QUEUED,))
             if stored is not None:
                 await self._publisher.publish(JobChanged(project_id=job.project_id, job=stored))
                 return stored
@@ -294,19 +319,23 @@ class JobStarter:
                   own end, through ``JobTracker.finish``, and not through this method.
         :rtype: Job | None
         """
-        if active := await self.free_of_previews(project_id):
+        collection = self.new_collection(project_id)
+        async with self._uow.change():
+            active, cancelled = await self._clear_previews(project_id)
+            if not active:
+                await self._uow.jobs.add(collection)
+        await self._announce(cancelled)
+        if active:
             return active[0] if active[0].kind is JobKind.COLLECT_VERSIONS else None
-        try:
-            return await self.enqueue(project_id, JobKind.COLLECT_VERSIONS, self.new_collection(project_id).params)
-        except ConflictError:
-            return None
+        return await self.dispatch(collection)
 
     async def enqueue_tiles(self, project_id: ProjectId, version_ids: Sequence[PageVersionId]) -> Job | None:
         """Queue the cutting of the pyramids of versions that were just made the current ones of their stages.
 
         The change that made them current is committed already, so a job of another request that took the project in
         the meantime does not undo it. The viewer asks for the pyramid of a current version, and only the last step of
-        a run cuts one, so the version of a step in the middle of a recipe has none until it is cut here.
+        a run cuts one, so the version of a step in the middle of a recipe has none until it is cut here. Opens its own
+        ``change`` block, so it is called outside any block.
 
         :param project_id: Project whose versions are cut.
         :type project_id: ProjectId
@@ -318,10 +347,7 @@ class JobStarter:
         """
         if not version_ids:
             return None
-        try:
-            return await self.enqueue(project_id, JobKind.CUT_TILES, TileCut(version_ids=tuple(version_ids)).to_map())
-        except ConflictError:
-            return None
+        return await self._place(project_id, JobKind.CUT_TILES, TileCut(version_ids=tuple(version_ids)).to_map())
 
 
 @frozen(kw_only=True)

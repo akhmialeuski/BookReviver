@@ -14,7 +14,7 @@ The run reads the current version of the nearest earlier stage of a page, finds 
 identifier, makes only what is new, and makes the last version the current one of the stage. A page that fails is
 recorded as failed and the job goes on to the next, and the job succeeds when it processed at least one page. When it
 ends it queues a collection of the project's versions that are no longer current, so their files go as soon as the run
-has replaced them, without the user asking. The collection is stored in the same commit as the end of the run, so the
+has replaced them, without the user asking. The collection is stored in the same block as the end of the run, so the
 project is never free between the two.
 
 A measure of the book reads the content boxes the normalize step recorded on every page and writes the parameters of
@@ -32,8 +32,8 @@ import logging
 from itertools import batched
 from typing import TYPE_CHECKING, ClassVar
 
-from bookreviver.domain.enums import JobState, RunOutcome, VersionState
-from bookreviver.domain.errors import DomainError
+from bookreviver.domain.enums import JobState, Rendition, RunOutcome, VersionState
+from bookreviver.domain.errors import DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import StageRun, StepPreview, TileCut, VersionCollection
@@ -76,7 +76,7 @@ class ProcessingJobs:
     def __init__(self, *, uow: UnitOfWork, assets: AssetStore, runtime: StageRuntime, parts: ProcessingParts) -> None:
         """Work over the ports of one job.
 
-        :param uow: Unit of work of the job, which the work commits as it goes.
+        :param uow: Unit of work of the job, whose blocks hold the work as it goes.
         :type uow: UnitOfWork
         :param assets: Store of the derived files, from which a collection removes directories.
         :type assets: AssetStore
@@ -111,7 +111,6 @@ class ProcessingJobs:
         try:
             outcomes = await self._run_pages(job)
         except DomainError as error:
-            await self._uow.rollback()
             await self._tracker.finish(job, JobState.FAILED, error=str(error))
         except Exception:
             logger.exception('The run-stage job %s stopped', job_id)
@@ -144,7 +143,6 @@ class ProcessingJobs:
         try:
             await self._preview(job)
         except DomainError as error:
-            await self._uow.rollback()
             await self._tracker.finish(job, JobState.FAILED, error=str(error))
         except Exception:
             logger.exception('The preview-step job %s stopped', job_id)
@@ -164,7 +162,6 @@ class ProcessingJobs:
         try:
             total = await self._cut(job)
         except DomainError as error:
-            await self._uow.rollback()
             await self._tracker.finish(job, JobState.FAILED, error=str(error))
         except Exception:
             logger.exception('The cut-tiles job %s stopped', job_id)
@@ -185,7 +182,6 @@ class ProcessingJobs:
         try:
             outcome = await self._collect(job)
         except DomainError as error:
-            await self._uow.rollback()
             await self._tracker.finish(job, JobState.FAILED, error=str(error))
         except Exception:
             logger.exception('The collect-versions job %s stopped', job_id)
@@ -212,7 +208,6 @@ class ProcessingJobs:
         try:
             total = await self._measure.run(job.project_id)
         except DomainError as error:
-            await self._uow.rollback()
             await self._tracker.finish(job, JobState.FAILED, error=str(error))
         except Exception:
             logger.exception('The measure-book job %s stopped', job_id)
@@ -232,7 +227,6 @@ class ProcessingJobs:
         try:
             outcome = await self._detector.run(job)
         except DomainError as error:
-            await self._uow.rollback()
             await self._tracker.finish(job, JobState.FAILED, error=str(error))
         except Exception:
             logger.exception('The detect-content job %s stopped', job_id)
@@ -314,7 +308,6 @@ class ProcessingJobs:
                 box = await executor.measure(page, recipes[page.id], through_step=run.through_step)
             except Exception:
                 logger.exception('The content box of page %s could not be measured', page.id)
-                await self._uow.rollback()
                 box = None
             if box is not None:
                 boxes.setdefault(recipes[page.id].id, {})[page.id] = box
@@ -333,17 +326,24 @@ class ProcessingJobs:
         :type recipe: Recipe
         :param run: What the job was asked to run, whose confirmation and last step apply to the page.
         :type run: StageRun
-        :returns: What the run came to.
+        :returns: What the run came to. A page that was deleted while its stage ran is failed without a record, since
+                  there is no page to hold one.
         :rtype: RunOutcome
         """
         try:
             return await executor.run(page, recipe, confirmed=run.confirm_unsplit, through_step=run.through_step)
         except Exception:
             logger.exception('The stage %s failed on page %s', recipe.stage, page.id)
-            await self._uow.rollback()
-            record = await self._records.mark_failed(page.id, recipe.stage, recipe_id=recipe.id)
-            await self._uow.commit()
-            await self._records.announce(page.project_id, [record])
+            record = None
+            async with self._uow.change_book(page.project_id):
+                try:
+                    await self._uow.pages.get(page.id)
+                except NotFoundError:
+                    logger.warning('Page %s was deleted while its stage %s ran', page.id, recipe.stage)
+                else:
+                    record = await self._records.mark_failed(page.id, recipe.stage, recipe_id=recipe.id)
+            if record is not None:
+                await self._records.announce(page.project_id, [record])
             return RunOutcome.FAILED
 
     async def _preview(self, job: Job) -> None:
@@ -361,6 +361,10 @@ class ProcessingJobs:
 
     async def _cut(self, job: Job) -> int | None:
         """Cut the pyramids of a ``cut-tiles`` job.
+
+        A pyramid is cut outside any block, and the version is marked in a short ``change_book`` that reads it again.
+        A version that is gone or has changed since it was read keeps no mark, and a pyramid left for a version that is
+        gone is removed.
 
         :param job: The running job.
         :type job: Job
@@ -380,9 +384,14 @@ class ProcessingJobs:
             if version.renditions is None:
                 continue
             cut_version = await self._runtime.runner.cut_tiles(keys, version)
-            await self._uow.page_versions.update(cut_version)
-            await self._uow.commit()
-            await self._runtime.publisher.publish(PageVersionReady(project_id=job.project_id, version=cut_version))
+            async with self._uow.change_book(job.project_id):
+                current = await self._uow.page_versions.find(version_id)
+                if stored := current == version:
+                    await self._uow.page_versions.update(cut_version)
+            if stored:
+                await self._runtime.publisher.publish(PageVersionReady(project_id=job.project_id, version=cut_version))
+            elif current is None:
+                await self._assets.delete_prefix(keys.version_rendition(version, Rendition.TILES))
         return len(cut.version_ids)
 
     async def _collect(self, job: Job) -> tuple[int, int] | None:
@@ -405,7 +414,7 @@ class ProcessingJobs:
         deleted = 0
         for group in readers_first(old):
             for batch in batched(group, self.COLLECTION_BATCH_SIZE, strict=False):
-                # The progress is recorded before the batch, since a cancelled job rolls back what is not committed yet
+                # The progress is recorded before the batch, which is also the check that the job was not cancelled
                 if (saved := await self._tracker.advance(job, done=deleted, total=len(old))) is None:
                     return None
                 job = saved
