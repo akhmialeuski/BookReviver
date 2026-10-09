@@ -58,7 +58,7 @@ export function RotationCanvas({
 }: CanvasProps<RotationShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
   const { stroke, dash } = FIGURE_STYLE[figure];
-  const { latest, change, release } = useShapeEditing(
+  const { latest, change, commitLater, release } = useShapeEditing(
     frame,
     shape,
     onChange,
@@ -107,7 +107,7 @@ export function RotationCanvas({
   const turnTo = (degrees: number): void => {
     const next = { degrees };
     change(next);
-    onCommitLater(next);
+    commitLater(next);
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {

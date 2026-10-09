@@ -12,6 +12,7 @@ import {
   writeSheetsFolder,
 } from './support/account';
 import { runPages } from './support/page-work';
+import { versionIdOf } from './support/steps';
 
 /**
  * The strip of pages and the canvas show one picture of a page on every stage and at every step of it: the picture the
@@ -28,8 +29,6 @@ const SAMPLE_MS = 100;
 // How many rows one request of the strip asks for, which tells it from the single row the step bar reads for a dot
 const ROWS_PAGE_SIZE = '1000';
 const STEP_ADDRESS = /\/stages\/[a-z-]+\/steps\/[0-9a-f-]{36}(\?|$)/;
-// An asset of a page version: `.../assets/pages/<page>/<stage>/<processor>/<version>/...`, the version being 16 hex digits
-const VERSION_IN_PATH = /\/assets\/pages\/[^/]+\/[^/]+\/[^/]+\/([0-9a-f]{16})\//;
 
 /**
  * The stages with a step bar, the step of each that is shown in the pictures of the run, and the steps whose picture is
@@ -39,11 +38,6 @@ const BAR_STAGES: readonly { stage: string; picture: string; apart: readonly str
   { stage: 'geometry', picture: 'Margins', apart: ['Select content', 'Margins'] },
   { stage: 'cleanup', picture: 'Binarization', apart: [] },
 ];
-
-/** Read the identifier of the version an asset path belongs to, or null for a path of no version. */
-function versionIdOf(assetPath: string | null | undefined): string | null {
-  return VERSION_IN_PATH.exec(assetPath ?? '')?.[1] ?? null;
-}
 
 /** One page version as the rows of a stage list it, with the images the scenario reads. */
 type Versioned = { images: { thumbnail: string } | null } | null;

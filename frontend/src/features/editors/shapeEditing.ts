@@ -11,6 +11,9 @@ import { MESSAGES } from '@/shared/messages';
  *
  * The canvases differ in what a handle or a key moves, and say so with a function each; the rest is done once here. Which
  * save is the newest of a step on a page is decided by the editor session that makes them, not here.
+ *
+ * A shape still in motion when the editor goes away, such as a stroke or a handle held while the canvas swaps its picture,
+ * is saved at once, as the session does for a save that was still waiting.
  */
 
 /** The editing of one shape on the canvas of a scene. */
@@ -19,10 +22,21 @@ export interface ShapeEditing<S> {
    * The shape the handlers build on. They run between renders, so it is the latest one and not the one they closed over.
    */
   latest: RefObject<S>;
-  /** Take a shape the reader is still moving as the latest and tell the editor. */
+  /** Whether the reader holds a shape that was changed and not yet released, for a canvas that moves it without a handle. */
+  inMotion: RefObject<boolean>;
+  /** Take a shape the reader is still moving as the latest and tell the editor. The shape is in motion until released. */
   change: (next: S) => void;
-  /** Save the latest shape at once, for a handle the reader let go. The session drops a save that was still waiting. */
+  /**
+   * Save the latest shape at once, for a handle the reader let go, and do nothing when no shape is in motion. The session
+   * drops a save that was still waiting.
+   */
   release: () => void;
+  /**
+   * Hand a shape to the delayed save. The session owns it from then on, so it is no longer in motion here.
+   *
+   * @param next The shape to save once the reader pauses.
+   */
+  commitLater: (next: S) => void;
   /**
    * Make the drag handler of a handle.
    *
@@ -69,15 +83,43 @@ export function useShapeEditing<S>(
   }, [shape]);
   const { mapping } = frame;
 
+  // A shape the reader is moving and has not let go. The cleanup of the effect below reads it when the editor goes away
+  const inMotion = useRef(false);
+  const commit = useRef(onCommit);
+  useEffect(() => {
+    commit.current = onCommit;
+  }, [onCommit]);
+  useEffect(
+    () => () => {
+      if (inMotion.current) {
+        inMotion.current = false;
+        commit.current(latest.current);
+      }
+    },
+    [],
+  );
+
   const change = (next: S): void => {
+    inMotion.current = true;
     latest.current = next;
     onChange(next);
+  };
+  const commitLater = (next: S): void => {
+    inMotion.current = false;
+    onCommitLater(next);
   };
 
   return {
     latest,
+    inMotion,
     change,
-    release: () => onCommit(latest.current),
+    commitLater,
+    release: () => {
+      if (inMotion.current) {
+        inMotion.current = false;
+        onCommit(latest.current);
+      }
+    },
     drag: (move, anchor, grab) => (event) => {
       grab?.();
       const next = move(
@@ -101,7 +143,7 @@ export function useShapeEditing<S>(
       }
       event.preventDefault();
       change(next);
-      onCommitLater(next);
+      commitLater(next);
     },
   };
 }

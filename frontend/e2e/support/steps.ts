@@ -59,3 +59,28 @@ export async function processorsInWindow(page: Page): Promise<string[]> {
 export function barStepAt(page: Page, index: number): Locator {
   return page.getByTestId('bar-step').nth(index);
 }
+
+// An asset of a page version: `.../assets/pages/<page>/<stage>/<processor>/<version>/...`, the version being 16 hex digits
+const VERSION_IN_PATH = /\/assets\/pages\/[^/]+\/[^/]+\/[^/]+\/([0-9a-f]{16})\//;
+
+/** Read the identifier of the version an asset path belongs to, or null for a path of no version. */
+export function versionIdOf(assetPath: string | null | undefined): string | null {
+  return VERSION_IN_PATH.exec(assetPath ?? '')?.[1] ?? null;
+}
+
+/**
+ * Wait until the canvas has settled on the picture of the open step: it is ready, and the first picture it loaded is the
+ * version the strip shows for the open page, which is the one the open step reads. An editor drawn over the canvas is
+ * mounted again whenever the canvas swaps pictures, so a drag started before this holds a shape the swap would cut off.
+ */
+export async function waitForStepPicture(page: Page, timeout: number): Promise<void> {
+  const canvas = page.getByTestId('viewer-canvas');
+  const thumbnail = page.locator('[data-testid="strip-page"][aria-pressed="true"] img');
+  await expect(canvas).toHaveAttribute('data-state', 'ready', { timeout });
+  await expect(async () => {
+    const shown = versionIdOf(await thumbnail.getAttribute('src'));
+    const drawn = versionIdOf((await canvas.getAttribute('data-sources'))?.split(' ')[0] ?? null);
+    expect(shown).not.toBeNull();
+    expect(drawn).toBe(shown);
+  }).toPass({ timeout });
+}

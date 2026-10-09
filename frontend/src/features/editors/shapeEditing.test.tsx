@@ -8,7 +8,8 @@ import { type ShapeEditing, useShapeEditing } from '@/features/editors/shapeEdit
 /**
  * What the editing of a shape asks for while the reader moves it with the keys or a handle: a key press asks for a save
  * that waits for a pause, with the shape it made, and a handle let go asks for a save at once of the latest shape. When
- * the two are made, and which one wins, is decided by the editor session and tested with it.
+ * the two are made, and which one wins, is decided by the editor session and tested with it. A shape still in motion when
+ * the editor goes away is saved at once, once.
  */
 
 const SIZE = { width: 100, height: 100 };
@@ -105,5 +106,48 @@ describe('useShapeEditing', () => {
 
     expect(commit).toHaveBeenCalledExactlyOnceWith({ x: 50 });
     expect(commitLater).not.toHaveBeenCalled();
+  });
+
+  it('saves nothing for a release when no shape is in motion', () => {
+    const commit = vi.fn();
+    render(commit, vi.fn());
+
+    editing.release();
+
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('saves a shape still in motion when the editor goes away, with the latest one', () => {
+    const commit = vi.fn();
+    render(commit, vi.fn());
+
+    act(() => editing.change({ x: 20 }));
+    act(() => editing.change({ x: 50 }));
+    act(() => root.unmount());
+
+    expect(commit).toHaveBeenCalledExactlyOnceWith({ x: 50 });
+  });
+
+  it('saves a shape let go once, and not again when the editor goes away', () => {
+    const commit = vi.fn();
+    render(commit, vi.fn());
+
+    act(() => editing.change({ x: 50 }));
+    editing.release();
+    act(() => root.unmount());
+
+    expect(commit).toHaveBeenCalledExactlyOnceWith({ x: 50 });
+  });
+
+  it('leaves a shape moved by the keys to the delayed save when the editor goes away', () => {
+    const commit = vi.fn();
+    const commitLater = vi.fn();
+    render(commit, commitLater);
+
+    pressRight();
+    act(() => root.unmount());
+
+    expect(commitLater).toHaveBeenCalledExactlyOnceWith({ x: 1 });
+    expect(commit).not.toHaveBeenCalled();
   });
 });

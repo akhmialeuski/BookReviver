@@ -1,10 +1,10 @@
 import type { KonvaEventObject } from 'konva/lib/Node';
-import { useEffect, useRef } from 'react';
 import { Circle, Line, Rect } from 'react-konva';
 import { extendStroke, radiusOf, startStroke, useBrushPercent } from '@/features/editors/brush';
 import { EditorLayer } from '@/features/editors/EditorLayer';
 import { clampToScan } from '@/features/editors/line';
 import { useSceneFrame } from '@/features/editors/scene';
+import { useShapeEditing } from '@/features/editors/shapeEditing';
 import type { BrushShape, Point } from '@/features/editors/shapes';
 import type { CanvasProps } from '@/features/editors/types';
 import { MESSAGES } from '@/shared/messages';
@@ -28,16 +28,18 @@ export function BrushCanvas({
   size,
   onChange,
   onCommit,
+  onCommitLater,
 }: CanvasProps<BrushShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
   const [percent] = useBrushPercent();
-  // The pointer handlers run between renders, so the strokes they build on are the latest ones and not the ones they
-  // closed over
-  const latest = useRef(shape);
-  useEffect(() => {
-    latest.current = shape;
-  }, [shape]);
-  const painting = useRef(false);
+  // A stroke is a shape in motion until the pointer is let go, and one cut short by the canvas going away is saved
+  const { latest, inMotion, change, release } = useShapeEditing(
+    frame,
+    shape,
+    onChange,
+    onCommit,
+    onCommitLater,
+  );
 
   const { mapping } = frame;
   const pixel = mapping.pixelLength();
@@ -58,27 +60,16 @@ export function BrushCanvas({
     if (at === null) {
       return;
     }
-    painting.current = true;
-    const next: BrushShape = {
+    change({
       strokes: [...latest.current.strokes, startStroke(at, radiusOf(percent, frame.size))],
-    };
-    latest.current = next;
-    onChange(next);
+    });
   };
   const move = (event: KonvaEventObject<PointerEvent>): void => {
     const at = pointerAt(event);
-    if (!painting.current || at === null) {
+    if (!inMotion.current || at === null) {
       return;
     }
-    const next = extendStroke(latest.current, at);
-    latest.current = next;
-    onChange(next);
-  };
-  const end = (): void => {
-    if (painting.current) {
-      painting.current = false;
-      onCommit(latest.current);
-    }
+    change(extendStroke(latest.current, at));
   };
 
   const entries = shape.strokes.map((stroke, place) => ({ id: `stroke-${place}`, stroke }));
@@ -103,8 +94,8 @@ export function BrushCanvas({
         fill={HIT_COLOR}
         onPointerDown={begin}
         onPointerMove={move}
-        onPointerUp={end}
-        onPointerLeave={end}
+        onPointerUp={release}
+        onPointerLeave={release}
       />
       {entries.map(({ id, stroke }) => {
         const [first] = stroke.points;

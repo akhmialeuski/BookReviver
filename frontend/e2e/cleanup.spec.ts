@@ -15,6 +15,7 @@ import {
 } from './support/account';
 import { dragFrom } from './support/layer';
 import { runPages } from './support/page-work';
+import { waitForStepPicture } from './support/steps';
 
 /**
  * The Cleanup stage on scans of a sheet of paper: the default recipe of a new book has four steps in the bar and one
@@ -242,6 +243,8 @@ test('the Cleanup stage binarizes, despeckles and erases, with a recipe for plat
     await expect(layer).toHaveAttribute('aria-label', 'Eraser brush');
     await expect(layer).toHaveAttribute('data-strokes', '0');
     await expect(page.getByTestId('brush-size')).toContainText('% of the page width');
+    // The canvas swaps to the picture of the step after the editor opens, and the editor is mounted again with it
+    await waitForStepPicture(page, RUN_TIMEOUT_MS);
     await snap(page, 'cleanup-despeckled');
     const [eraserStep] = await stepIdsOf(page, 'cleanup', 'cleanup.eraser');
     const putBody = page.waitForRequest(
