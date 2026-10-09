@@ -67,13 +67,24 @@ export function useStageRows(projectId: string, stage: Stage): UseQueryResult<St
   return useQuery(stageRowsOptions(projectId, stage));
 }
 
-/** Read where every page of the book stands at one step of a stage; nothing is read while no step is open. */
+/**
+ * Read where every page of the book stands at one step of a stage; nothing is read while no step is open.
+ *
+ * The rows of a step change with every run of a step before it, and the rows of a step nobody looks at are only marked
+ * stale by those runs, not read again. Kept in the cache, they would be shown as current when the step opens again, and
+ * an editor would start from a step that had not run yet. So they are dropped as soon as their step closes, and a step
+ * that opens again has no rows until the server answers.
+ */
 export function useStepRows(
   projectId: string,
   stage: Stage,
   step: string | undefined,
 ): UseQueryResult<StagePageSchema[]> {
-  return useQuery({ ...stageRowsOptions(projectId, stage, step), enabled: step !== undefined });
+  return useQuery({
+    ...stageRowsOptions(projectId, stage, step),
+    enabled: step !== undefined,
+    gcTime: 0,
+  });
 }
 
 /** Read the summary of every stage of the book, in the order of the pipeline. */
