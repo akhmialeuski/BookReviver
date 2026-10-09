@@ -15,9 +15,10 @@ in a worker thread.
 
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from functools import partial
 from typing import TYPE_CHECKING, ClassVar, override
 
-from asyncer import asyncify
+from anyio import to_thread
 
 from bookreviver.domain.enums import FileType, SourceKind, UploadProblem
 from bookreviver.domain.errors import UploadRejectedError
@@ -126,7 +127,7 @@ class SourceReader(SourceInspector, PageRasterizer):
         groups = [
             (kind, source_files)
             for kind, paths in by_kind.items()
-            for source_files in await asyncify(self._formats[kind].group)(paths)
+            for source_files in await to_thread.run_sync(self._formats[kind].group, paths)
         ]
         position = {path: index for index, path in enumerate(ordered)}
         groups.sort(key=lambda group: position[group[1][0]])
@@ -151,7 +152,7 @@ class SourceReader(SourceInspector, PageRasterizer):
         :raises UnsupportedSourceError: If the files are not a readable source of this kind.
         :raises ValueError: If the number of files does not fit the kind.
         """
-        return await asyncify(self._formats[kind].inspect)(files)
+        return await to_thread.run_sync(self._formats[kind].inspect, files)
 
     @override
     async def extract(
@@ -173,4 +174,4 @@ class SourceReader(SourceInspector, PageRasterizer):
         :raises IndexError: If the source has no scan ``number``.
         :raises ValueError: If the number of files does not fit the kind, or ``full`` is not a format of the full image.
         """
-        await asyncify(self._formats[kind].extract)(files, number=number, target=target, full=full)
+        await to_thread.run_sync(partial(self._formats[kind].extract, files, number=number, target=target, full=full))

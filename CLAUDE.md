@@ -60,8 +60,9 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   Handlers never check raw input by hand.
 - HTTP status codes come from `fastapi.status` or `http.HTTPStatus`, never as number literals, in code and in tests.
 - Everything is async: ports, API, SQLAlchemy `AsyncSession`, files, HTTP. Blocking library calls go through
-  `asyncer.asyncify` inside adapters. Heavy work (parsing, rasterising, tiling, OCR, LLM calls) runs only in
-  background jobs, whose entry points live in `app` and call one service method.
+  `anyio.to_thread.run_sync` inside adapters, keyword arguments through `functools.partial`. Heavy work (parsing,
+  rasterising, tiling, OCR, LLM calls) runs only in background jobs, whose entry points live in `app` and call one
+  service method.
 - Every new port gets an in-memory adapter and a contract test suite that runs against all its adapters.
 
 ## Types and classes
