@@ -17,6 +17,7 @@ from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import BookPlaceKey, CanvasPosition
 from tests.helpers.builders import make_book_place, make_project
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from bookreviver.domain.ids import ProjectId
@@ -29,7 +30,7 @@ LATER: timedelta = timedelta(minutes=5)
 
 
 async def _store_project(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory) -> ProjectId:
-    """Store a project and commit.
+    """Store a project in its own block.
 
     :param uow_factory: Function opening a new unit of work of the backend under test.
     :type uow_factory: UnitOfWorkFactory
@@ -38,10 +39,8 @@ async def _store_project(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory
     :returns: The identifier of the project.
     :rtype: ProjectId
     """
-    uow = await uow_factory()
     project = make_project(owner_id=await new_owner())
-    await uow.projects.add(project)
-    await uow.commit()
+    await store_project(await uow_factory(), project)
     return project.id
 
 
@@ -61,8 +60,8 @@ class TestBookPlaceRepository:
         project_id = await _store_project(fx_uow_factory, fx_new_owner)
         place = make_book_place(account_id=await fx_new_owner(), project_id=project_id, page_id=PageId(uuid4()))
         uow = await fx_uow_factory()
-        assert await uow.book_places.save(place) == place
-        await uow.commit()
+        async with uow.change():
+            assert await uow.book_places.save(place) == place
         assert await (await fx_uow_factory()).book_places.find(place.key) == place
 
     async def test_a_place_without_a_canvas_position_reads_back_without_one(
@@ -83,8 +82,8 @@ class TestBookPlaceRepository:
             strip_page_id=None,
         )
         uow = await fx_uow_factory()
-        await uow.book_places.save(place)
-        await uow.commit()
+        async with uow.change():
+            await uow.book_places.save(place)
         assert await (await fx_uow_factory()).book_places.get(place.key) == place
 
     async def test_save_replaces_the_place_of_the_same_account_and_book(
@@ -102,8 +101,8 @@ class TestBookPlaceRepository:
         second = evolve(first, stage=Stage.CLEANUP, page_id=PageId(uuid4()), canvas=None)
         for place in (first, second):
             uow = await fx_uow_factory()
-            await uow.book_places.save(place)
-            await uow.commit()
+            async with uow.change():
+                await uow.book_places.save(place)
         assert await (await fx_uow_factory()).book_places.find(first.key) == second
 
     async def test_interleaved_saves_leave_the_later_place_whole(
@@ -134,14 +133,14 @@ class TestBookPlaceRepository:
             updated_at=stored.updated_at + 2 * LATER,
         )
         seeding = await fx_uow_factory()
-        await seeding.book_places.save(stored)
-        await seeding.commit()
+        async with seeding.change():
+            await seeding.book_places.save(stored)
         uow_first, uow_second = await fx_uow_factory(), await fx_uow_factory()
         assert await uow_second.book_places.find(stored.key) == stored
-        await uow_first.book_places.save(first)
-        await uow_first.commit()
-        await uow_second.book_places.save(second)
-        await uow_second.commit()
+        async with uow_first.change():
+            await uow_first.book_places.save(first)
+        async with uow_second.change():
+            await uow_second.book_places.save(second)
         assert await (await fx_uow_factory()).book_places.find(stored.key) == second
 
     async def test_save_of_an_older_place_leaves_the_newer_one(
@@ -158,11 +157,11 @@ class TestBookPlaceRepository:
         older = make_book_place(account_id=await fx_new_owner(), project_id=project_id)
         newer = evolve(older, stage=Stage.CLEANUP, page_id=PageId(uuid4()), updated_at=older.updated_at + LATER)
         seeding = await fx_uow_factory()
-        await seeding.book_places.save(newer)
-        await seeding.commit()
+        async with seeding.change():
+            await seeding.book_places.save(newer)
         late = await fx_uow_factory()
-        assert await late.book_places.save(older) == newer
-        await late.commit()
+        async with late.change():
+            assert await late.book_places.save(older) == newer
         assert await (await fx_uow_factory()).book_places.find(older.key) == newer
 
     async def test_places_of_two_accounts_in_one_book_are_apart(
@@ -179,9 +178,9 @@ class TestBookPlaceRepository:
         mine = make_book_place(account_id=await fx_new_owner(), project_id=project_id, stage=Stage.GEOMETRY)
         theirs = make_book_place(account_id=await fx_new_owner(), project_id=project_id, stage=Stage.LAYOUT)
         uow = await fx_uow_factory()
-        await uow.book_places.save(mine)
-        await uow.book_places.save(theirs)
-        await uow.commit()
+        async with uow.change():
+            await uow.book_places.save(mine)
+            await uow.book_places.save(theirs)
         reading = await fx_uow_factory()
         assert (await reading.book_places.find(mine.key), await reading.book_places.find(theirs.key)) == (mine, theirs)
 
@@ -227,7 +226,8 @@ class TestBookPlaceRepository:
         place = make_book_place(account_id=await fx_new_owner(), project_id=project.id)
         uow = await fx_uow_factory()
         with pytest.raises(NotFoundError):
-            await uow.book_places.save(place)
+            async with uow.change():
+                await uow.book_places.save(place)
 
     async def test_deleting_a_book_removes_its_places(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -242,9 +242,9 @@ class TestBookPlaceRepository:
         project_id = await _store_project(fx_uow_factory, fx_new_owner)
         place = make_book_place(account_id=await fx_new_owner(), project_id=project_id)
         uow = await fx_uow_factory()
-        await uow.book_places.save(place)
-        await uow.commit()
+        async with uow.change():
+            await uow.book_places.save(place)
         uow = await fx_uow_factory()
-        await uow.projects.delete(project_id)
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.delete(project_id)
         assert await (await fx_uow_factory()).book_places.find(place.key) is None

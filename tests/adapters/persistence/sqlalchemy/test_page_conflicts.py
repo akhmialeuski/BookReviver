@@ -24,6 +24,7 @@ from bookreviver.domain.values import SliceRequest
 from tests.helpers.builders import EPOCH, make_page, make_project
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.page_services import make_page_service
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -81,6 +82,7 @@ class Race:
     """A book of three pages on SQLite, a service that reads it, and a rival that rewrites a page the service read.
 
     :ivar actor: The account owning the book.
+    :ivar project: The project the book belongs to.
     :ivar pages: The stored pages in book order.
     :ivar rival_writes: How many times the rival has committed its change.
     :ivar racing: The page repository of the last service built, whose reads are counted.
@@ -112,20 +114,21 @@ class Race:
     async def store(self) -> None:
         """Commit the project and its pages."""
         async with self._database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            await uow.projects.add(self.project)
-            await uow.pages.add_many(self.pages)
-            await session.commit()
+            await store_project(SqlAlchemyUnitOfWork(session), self.project, *self.pages)
 
     async def rival(self) -> None:
-        """Commit a new label of the middle page in a session of its own, while the budget lasts."""
+        """Commit a new label of the middle page in a block of a session of its own, while the budget lasts.
+
+        The block waits for the write lock, so it may run only while no block of the service's session is open.
+        """
         if self.rival_writes == self._rival_budget:
             return
         self.rival_writes += 1
         async with self._database.sessions() as session:
-            pages = SqlAlchemyUnitOfWork(session).pages
-            await pages.update(evolve(await pages.get(self.pages[1].id), label=f'{RIVAL_LABEL}{self.rival_writes}'))
-            await session.commit()
+            uow = SqlAlchemyUnitOfWork(session)
+            async with uow.change_book(self.project.id):
+                page = await uow.pages.get(self.pages[1].id)
+                await uow.pages.update(evolve(page, label=f'{RIVAL_LABEL}{self.rival_writes}'))
 
     def service(self, session: AsyncSession) -> PageService:
         """Build the page service over a unit of work whose page reads give the rival a turn.

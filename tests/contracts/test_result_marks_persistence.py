@@ -18,9 +18,10 @@ from tests.helpers.builders import (
     make_project,
     make_result_mark_change,
 )
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
-    from bookreviver.domain.ids import PageId
+    from bookreviver.domain.ids import PageId, ProjectId
     from tests.contracts.conftest import OwnerFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
@@ -28,25 +29,23 @@ pytestmark = pytest.mark.anyio
 COMMENT: str = 'Too tight on the left.\nTry the other method.'
 
 
-async def _store_version(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory) -> tuple[PageId, PageVersionId]:
-    """Store a project with one page and one version of it, and commit.
+async def _store_version(
+    uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory
+) -> tuple[ProjectId, PageId, PageVersionId]:
+    """Store a project with one page and one version of it, each in the block that owns it.
 
     :param uow_factory: Function opening a new unit of work of the backend under test.
     :type uow_factory: UnitOfWorkFactory
     :param new_owner: Function creating an account the backend accepts as an owner.
     :type new_owner: OwnerFactory
-    :returns: The identifiers of the page and its version.
-    :rtype: tuple[PageId, PageVersionId]
+    :returns: The identifiers of the project, its page and the version of the page.
+    :rtype: tuple[ProjectId, PageId, PageVersionId]
     """
-    uow = await uow_factory()
     project = make_project(owner_id=await new_owner())
     page = make_page(project_id=project.id)
     version = make_page_version(page_id=page.id)
-    await uow.projects.add(project)
-    await uow.pages.add(page)
-    await uow.page_versions.add(version)
-    await uow.commit()
-    return page.id, version.id
+    await store_project(await uow_factory(), project, page, versions=[version])
+    return project.id, page.id, version.id
 
 
 class TestResultMarkColumns:
@@ -62,7 +61,7 @@ class TestResultMarkColumns:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
+        _, _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
         version = await (await fx_uow_factory()).page_versions.get(version_id)
         assert (version.mark, version.comment) == (None, '')
 
@@ -76,15 +75,15 @@ class TestResultMarkColumns:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
+        project_id, _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         version = await uow.page_versions.get(version_id)
-        await uow.page_versions.update(evolve(version, mark=ResultMark.BAD, comment=COMMENT))
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_versions.update(evolve(version, mark=ResultMark.BAD, comment=COMMENT))
         uow = await fx_uow_factory()
         marked = await uow.page_versions.get(version_id)
-        await uow.page_versions.update(evolve(marked, mark=None, comment=''))
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_versions.update(evolve(marked, mark=None, comment=''))
         cleared = await (await fx_uow_factory()).page_versions.get(version_id)
         assert ((marked.mark, marked.comment), (cleared.mark, cleared.comment)) == (
             (ResultMark.BAD, COMMENT),
@@ -105,7 +104,7 @@ class TestResultMarkChangeRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
+        project_id, _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
         change = make_result_mark_change(
             version_id=version_id,
             mark_before=ResultMark.GOOD,
@@ -113,8 +112,8 @@ class TestResultMarkChangeRepository:
             comment_after=COMMENT,
         )
         uow = await fx_uow_factory()
-        stored = await uow.result_mark_changes.add(change)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            stored = await uow.result_mark_changes.add(change)
         assert (await (await fx_uow_factory()).result_mark_changes.get(change.id), stored) == (
             stored,
             evolve(change, sequence=1),
@@ -130,16 +129,16 @@ class TestResultMarkChangeRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
+        project_id, _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
         written = [make_result_mark_change(version_id=version_id, created_at=EPOCH) for _ in range(5)]
         uow = await fx_uow_factory()
-        for change in written[:2]:
-            await uow.result_mark_changes.add(change)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            for change in written[:2]:
+                await uow.result_mark_changes.add(change)
         uow = await fx_uow_factory()
-        for change in written[2:]:
-            await uow.result_mark_changes.add(change)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            for change in written[2:]:
+                await uow.result_mark_changes.add(change)
         listed = await (await fx_uow_factory()).result_mark_changes.list_for_version(version_id)
         assert ([change.id for change in listed], [change.sequence for change in listed]) == (
             [change.id for change in written],
@@ -156,14 +155,15 @@ class TestResultMarkChangeRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        page_id, first_id = await _store_version(fx_uow_factory, fx_new_owner)
+        project_id, page_id, first_id = await _store_version(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         second = make_page_version(page_id=page_id, minutes=1)
-        await uow.page_versions.add(second)
         first_change = make_result_mark_change(version_id=first_id)
         second_change = make_result_mark_change(version_id=second.id)
-        await uow.result_mark_changes.add(first_change)
-        await uow.result_mark_changes.add(second_change)
+        async with uow.change_book(project_id):
+            await uow.page_versions.add(second)
+            await uow.result_mark_changes.add(first_change)
+            await uow.result_mark_changes.add(second_change)
         listed = await uow.result_mark_changes.list_for_version(second.id)
         assert [(change.id, change.sequence) for change in listed] == [(second_change.id, 1)]
 
@@ -175,7 +175,8 @@ class TestResultMarkChangeRepository:
         """
         uow = await fx_uow_factory()
         with pytest.raises(NotFoundError):
-            await uow.result_mark_changes.add(make_result_mark_change(version_id=PageVersionId('0' * 16)))
+            async with uow.change():
+                await uow.result_mark_changes.add(make_result_mark_change(version_id=PageVersionId('0' * 16)))
 
     async def test_change_is_stored_once(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
         """Verify a change with an identifier that is stored already is a conflict.
@@ -185,13 +186,15 @@ class TestResultMarkChangeRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
+        project_id, _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
         change = make_result_mark_change(version_id=version_id)
         uow = await fx_uow_factory()
-        await uow.result_mark_changes.add(change)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.result_mark_changes.add(change)
+        again = await fx_uow_factory()
         with pytest.raises(ConflictError):
-            await (await fx_uow_factory()).result_mark_changes.add(change)
+            async with again.change_book(project_id):
+                await again.result_mark_changes.add(change)
 
     async def test_deleting_the_version_deletes_its_log(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -203,13 +206,13 @@ class TestResultMarkChangeRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
+        project_id, _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
-        await uow.result_mark_changes.add(make_result_mark_change(version_id=version_id))
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.result_mark_changes.add(make_result_mark_change(version_id=version_id))
         uow = await fx_uow_factory()
-        await uow.page_versions.delete_many([version_id])
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_versions.delete_many([version_id])
         assert await (await fx_uow_factory()).result_mark_changes.list_for_version(version_id) == []
 
     async def test_deleting_the_page_deletes_the_log_of_its_versions(
@@ -222,11 +225,11 @@ class TestResultMarkChangeRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        page_id, version_id = await _store_version(fx_uow_factory, fx_new_owner)
+        project_id, page_id, version_id = await _store_version(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
-        await uow.result_mark_changes.add(make_result_mark_change(version_id=version_id))
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.result_mark_changes.add(make_result_mark_change(version_id=version_id))
         uow = await fx_uow_factory()
-        await uow.pages.delete(page_id)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.pages.delete(page_id)
         assert await (await fx_uow_factory()).result_mark_changes.list_for_version(version_id) == []
