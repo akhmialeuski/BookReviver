@@ -4,10 +4,11 @@ import enum
 from functools import cached_property
 from pathlib import Path
 
-from pydantic import BaseModel, Field, PositiveInt, SecretStr
+from pydantic import BaseModel, Field, PositiveFloat, PositiveInt, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from bookreviver.domain.enums import WorkerPool
+from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 
 
 class PersistenceBackend(enum.StrEnum):
@@ -128,6 +129,8 @@ class Settings(BaseSettings):
     :ivar max_upload_bytes: Largest total size of one upload, 4 GiB by default.
     :ivar max_upload_files: Largest number of files in one upload, 10000 by default.
     :ivar event_queue_size: Undelivered events each event subscriber keeps before dropping the oldest.
+    :ivar change_wait_seconds: How long a change of a book waits for another change of the same book, 30 seconds by
+                               default, before the request is refused as busy.
     :ivar auth: Accounts, sessions and social sign-in; required, since it holds the signing secret.
     :ivar mail: Outgoing mail.
     :ivar imaging: Page extraction and tiling.
@@ -152,6 +155,7 @@ class Settings(BaseSettings):
     max_upload_bytes: PositiveInt = 4 * 1024**3
     max_upload_files: PositiveInt = 10_000
     event_queue_size: PositiveInt = 256
+    change_wait_seconds: PositiveFloat = DEFAULT_CHANGE_WAIT_SECONDS
     auth: AuthSettings
     mail: MailSettings = MailSettings()
     imaging: ImagingSettings = ImagingSettings()

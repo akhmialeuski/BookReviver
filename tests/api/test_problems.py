@@ -10,6 +10,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.api.problems import NOT_FOUND_DETAIL, UNEXPECTED_DETAIL
 from bookreviver.domain.enums import UploadProblem
 from bookreviver.domain.errors import (
+    BookBusyError,
     ConcurrentChangeError,
     ConflictError,
     NotFoundError,
@@ -36,6 +37,7 @@ FORBIDDEN_MESSAGE: str = 'not yours'
 CONFLICT_MESSAGE: str = 'import running'
 UNSUPPORTED_MESSAGE: str = 'broken pdf'
 CONCURRENT_MESSAGE: str = 'The pages changed while this ran. The book now shows them as they are. Try again.'
+BOOK_BUSY_MESSAGE: str = 'The book is being changed by something else right now. Try again in a moment.'
 
 
 class ProblemCase(NamedTuple):
@@ -90,6 +92,7 @@ class TestProblemHandler:
             ProblemCase(PermissionDeniedError(FORBIDDEN_MESSAGE), HTTPStatus.FORBIDDEN, FORBIDDEN_MESSAGE),
             ProblemCase(ConflictError(CONFLICT_MESSAGE), HTTPStatus.CONFLICT, CONFLICT_MESSAGE),
             ProblemCase(ConcurrentChangeError(), HTTPStatus.CONFLICT, CONCURRENT_MESSAGE),
+            ProblemCase(BookBusyError(), HTTPStatus.SERVICE_UNAVAILABLE, BOOK_BUSY_MESSAGE),
             ProblemCase(UnsupportedSourceError(UNSUPPORTED_MESSAGE), HTTPStatus.BAD_REQUEST, UNSUPPORTED_MESSAGE),
             ProblemCase(
                 UploadRejectedError(UploadProblem.UNSUPPORTED_TYPE),
@@ -112,6 +115,7 @@ class TestProblemHandler:
             'forbidden',
             'conflict',
             'concurrent-change',
+            'book-busy',
             'unsupported',
             'upload-rule',
             'too-large',

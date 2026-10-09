@@ -3,6 +3,11 @@
 Services never see a database. They open a ``UnitOfWork``, read and change entities through its repositories, and
 commit, so every change of one use case lands in one transaction. The in-memory and SQLAlchemy adapters both run the
 contract suite in ``tests/contracts``, which is what makes them interchangeable.
+
+The book is the aggregate. Every change of a book runs in one block of the unit of work, ``change_book``, which waits
+for any other change of that book, holds it until the block commits, and so reads only what the previous change
+committed. A change outside the content of a book runs in ``change``. A repository write outside both blocks is a
+programming error, reported as ``NoChangeOpenError``.
 """
 
 from abc import ABC, abstractmethod
@@ -42,6 +47,7 @@ from bookreviver.domain.values import BookPlaceKey, PageStageKey, PageStepKey
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
+    from contextlib import AbstractAsyncContextManager
     from datetime import datetime
 
     from bookreviver.domain.entities import ProjectOverview
@@ -49,6 +55,33 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
     from bookreviver.domain.stage_summaries import StageTally, StepTally
     from bookreviver.domain.values import PageSize, ProcessorRef, Slice, SliceRequest
+
+# How long, in seconds, a change waits for another change of the same book before it gives up with ``BookBusyError``
+DEFAULT_CHANGE_WAIT_SECONDS: float = 30.0
+
+
+class NoChangeOpenError(RuntimeError):
+    """A repository wrote while no ``change_book`` or ``change`` block was open.
+
+    It is a programming error and not a ``DomainError``, so it reaches the caller as a failure and no request can
+    cause it.
+    """
+
+    def __init__(self) -> None:
+        """Report the write with its fixed sentence."""
+        super().__init__('A repository write needs an open change_book or change block.')
+
+
+class NestedChangeError(RuntimeError):
+    """A ``change_book`` or ``change`` block was opened inside another one of the same unit of work.
+
+    It is a programming error and not a ``DomainError``. A second block inside the first would wait for a lock the
+    first one holds, so it is refused at once instead.
+    """
+
+    def __init__(self) -> None:
+        """Report the nesting with its fixed sentence."""
+        super().__init__('A change_book or change block is already open on this unit of work.')
 
 
 class Repository[EntityT, IdT](ABC):
@@ -995,7 +1028,10 @@ class BookPlaceRepository(Repository[BookPlace, BookPlaceKey]):
 
 
 class UnitOfWork(ABC):
-    """One transaction over every repository; nothing is visible to others before ``commit``.
+    """One transaction over every repository; nothing is visible to others before it commits.
+
+    Every write goes through a ``change_book`` or a ``change`` block, which commits when it ends normally. ``commit``
+    and ``rollback`` remain only until every caller has moved to the blocks, and a later change removes them.
 
     :ivar projects: Project repository of this transaction.
     :ivar sources: Source repository of this transaction.
@@ -1030,6 +1066,42 @@ class UnitOfWork(ABC):
     recipe_profiles: RecipeProfileRepository
     jobs: JobRepository
     book_places: BookPlaceRepository
+
+    @abstractmethod
+    def change_book(self, project_id: ProjectId) -> AbstractAsyncContextManager[Project]:
+        """Open a block that changes the book of a project, alone among the changes of that book.
+
+        Entering waits for any other ``change_book`` of the same project to exit, then reads and locks the project, so
+        a change that began earlier has committed or rolled back by then. Reads inside the block see everything
+        committed before entry plus the block's own writes. Leaving the block normally commits it, and leaving it by
+        an exception rolls it back and lets the exception through. Reads outside any block take no lock and wait for
+        nothing. The port promises no ordering between the changes of different books, nor between a ``change_book``
+        and a ``change`` block, though a database with one write lock, such as SQLite, makes every block wait for any
+        other that writes.
+
+        :param project_id: Project whose book is changed.
+        :type project_id: ProjectId
+        :returns: Context manager yielding the project as it stands at entry.
+        :rtype: AbstractAsyncContextManager[Project]
+        :raises NotFoundError: On entry, if the project is not stored.
+        :raises BookBusyError: On entry, if another change of the book did not end within the wait limit of the adapter.
+        :raises NestedChangeError: On entry, if a block of this unit of work is open already.
+        """
+
+    @abstractmethod
+    def change(self) -> AbstractAsyncContextManager[None]:
+        """Open a block that writes outside the content of a book, alone among the blocks of its kind.
+
+        The block is for the rows that belong to no book or to many: jobs, the places accounts left books at, a new
+        project, and the recipe profiles of an account. Entering waits for any other ``change`` block to exit.
+        Leaving the block normally commits it, and leaving it by an exception rolls it back and lets the exception
+        through. Reads inside the block see everything committed before entry plus the block's own writes.
+
+        :returns: Context manager yielding nothing.
+        :rtype: AbstractAsyncContextManager[None]
+        :raises BookBusyError: On entry, if another block did not end within the wait limit of the adapter.
+        :raises NestedChangeError: On entry, if a block of this unit of work is open already.
+        """
 
     @abstractmethod
     async def commit(self) -> None:

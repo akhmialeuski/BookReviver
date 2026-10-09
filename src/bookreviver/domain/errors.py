@@ -54,6 +54,18 @@ class ConcurrentChangeError(ConflictError):
         super().__init__('The pages changed while this ran. The book now shows them as they are. Try again.')
 
 
+class BookBusyError(DomainError):
+    """Another change of the same book held it for longer than a change waits, so this one did not start.
+
+    The message is a sentence for the person whose request had to wait, which the API sends as the detail of the
+    problem.
+    """
+
+    def __init__(self) -> None:
+        """Report the wait with its fixed sentence."""
+        super().__init__('The book is being changed by something else right now. Try again in a moment.')
+
+
 class ReversedRangeError(ConflictError):
     """A numbering runs from a page that stands after its last page.
 

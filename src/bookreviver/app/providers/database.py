@@ -31,14 +31,15 @@ class DatabaseProvider(Provider):
     async def database(self, settings: Settings) -> AsyncIterator[SqlDatabase]:
         """Open the configured database, check its schema revision, and close it with the application.
 
-        :param settings: Application settings, of which the database URL and the data directory are read.
+        :param settings: Application settings, of which the database URL, the data directory and the wait limit of a
+                         change are read.
         :type settings: Settings
         :returns: Iterator yielding the open database and disposing of its engine afterwards.
         :rtype: AsyncIterator[SqlDatabase]
         :raises RuntimeError: When the database is not at the head revision of the migrations, naming the upgrade to
             run, or the downgrade when the database is at a revision the code does not ship.
         """
-        database = SqlDatabase(settings.resolved_database_url)
+        database = SqlDatabase(settings.resolved_database_url, wait_seconds=settings.change_wait_seconds)
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         try:
             revisions = await database.schema_revisions()

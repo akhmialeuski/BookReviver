@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
-from bookreviver.app.settings import PersistenceBackend
+from bookreviver.app.settings import PersistenceBackend, Settings
 from bookreviver.ports.persistence import UnitOfWork
 
 
@@ -13,13 +13,15 @@ class MemoryPersistenceProvider(Provider):
     """In-memory persistence: one database per application, one unit of work per request."""
 
     @provide(scope=Scope.APP)
-    def database(self) -> InMemoryDatabase:
+    def database(self, settings: Settings) -> InMemoryDatabase:
         """Create the empty in-memory database of the application.
 
+        :param settings: Application settings, of which the wait limit of a change is read.
+        :type settings: Settings
         :returns: Database shared by every unit of work of the application.
         :rtype: InMemoryDatabase
         """
-        return InMemoryDatabase()
+        return InMemoryDatabase(wait_seconds=settings.change_wait_seconds)
 
     @provide(scope=Scope.REQUEST)
     def unit_of_work(self, database: InMemoryDatabase) -> UnitOfWork:

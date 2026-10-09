@@ -167,9 +167,10 @@ def do_run_migrations(connection: Connection) -> None:
     if on_sqlite:
         connection.exec_driver_sql('PRAGMA foreign_keys=OFF')
         connection.commit()
-        # Python's sqlite3 begins a transaction only before a row change, so every CREATE, DROP and ALTER of a
-        # migration would commit on its own. An explicit BEGIN puts all of them in one transaction; Alembic, which
-        # takes SQLite for a database without transactional DDL, then leaves the commit to this function
+        # The engine connects to SQLite in autocommit mode, so the driver begins no transaction and every CREATE, DROP
+        # and ALTER of a migration would commit on its own. An explicit BEGIN puts all of them in one transaction, which
+        # the commit and rollback listeners of the engine end with COMMIT and ROLLBACK; Alembic, which takes SQLite for
+        # a database without transactional DDL, then leaves the commit to this function
         connection.exec_driver_sql('BEGIN')
     context.configure(
         connection=connection,
