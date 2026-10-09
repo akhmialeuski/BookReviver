@@ -202,11 +202,12 @@ class TestProjectRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        owner_id = await fx_new_owner()
+        owner_id, other_owner_id = await fx_new_owner(), await fx_new_owner()
         older, newer = make_project(owner_id=owner_id, minutes=1), make_project(owner_id=owner_id, minutes=2)
         uow = await fx_uow_factory()
+        # The owners are stored before the block, because storing one is a write of its own that waits for the block
         async with uow.change():
-            for project in (older, newer, make_project(owner_id=await fx_new_owner())):
+            for project in (older, newer, make_project(owner_id=other_owner_id)):
                 await uow.projects.add(project)
         await _add_book(uow, older)
         repository = (await fx_uow_factory()).projects

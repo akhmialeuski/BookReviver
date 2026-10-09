@@ -488,7 +488,9 @@ class TestBlockWait:
         :param fx_project: Stored project that owns the jobs the blocks add.
         :type fx_project: Project
         """
-        first_job, second_job = make_job(project_id=fx_project.id), make_job(project_id=fx_project.id, minutes=1)
+        # Finished jobs, because a project may have only one active job of a kind
+        first_job = make_job(project_id=fx_project.id, state=JobState.SUCCEEDED)
+        second_job = make_job(project_id=fx_project.id, state=JobState.SUCCEEDED, minutes=1)
         first, second = await fx_uow_factory(), await fx_uow_factory()
         order: list[str] = []
         while_first_holds: list[str] = []
@@ -582,7 +584,7 @@ class TestNesting:
 class TestWriteGuard:
     """Contract of NoChangeOpenError: no repository writes while no block is open."""
 
-    def test_every_repository_has_its_rows(self, fx_rows: dict[str, Row]) -> None:
+    async def test_every_repository_has_its_rows(self, fx_rows: dict[str, Row]) -> None:
         """Verify the rows of the guard test cover every repository the port declares.
 
         :param fx_rows: Rows by the name of the repository that holds them.
