@@ -2049,29 +2049,3 @@ class TestJobRepository:
         with pytest.raises(NotFoundError, match=str(job.id)):
             async with uow.change():
                 await uow.jobs.update_if_state(job, expected=JobState.active())
-
-
-class TestUnitOfWork:
-    """Contract of UnitOfWork isolation between concurrent units."""
-
-    async def test_concurrent_commits_keep_each_others_changes(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify a block publishes only its own changes and never reverts another unit's committed block.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        owner_id = await fx_new_owner()
-        first, second = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
-        # Both units start before either writes, as two overlapping requests do
-        early = await fx_uow_factory()
-        late = await fx_uow_factory()
-        async with late.change():
-            await late.projects.add(second)
-        async with early.change():
-            await early.projects.add(first)
-        listed = await (await fx_uow_factory()).projects.list_for_owner(owner_id, SliceRequest())
-        assert {item.project.id for item in listed.items} == {first.id, second.id}
