@@ -3560,7 +3560,7 @@
           "processing"
         ],
         "summary": "Measure Book",
-        "description": "Measure the book in the background, and answer with the queued job.\n\nThe job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and\nwrites the median line height and a page size of the median block with its margins into the parameters of the\n``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A run, a\npreview, a tile cutting or a collection of the project that is queued or running answers 409.",
+        "description": "Measure the book in the background, and answer with the queued job.\n\nThe job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and\nwrites the median line height and a page size of the median block with its margins into the parameters of the\n``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A preview of the\nproject is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.",
         "operationId": "measure_book_api_v1_projects__project_id__stages_geometry_measure_post",
         "parameters": [
           {
@@ -6427,7 +6427,7 @@
           "page-history"
         ],
         "summary": "Clear History",
-        "description": "Return a step to its initial state on a page: delete its history, its settings, its edit and its results.\n\nThe results are the versions the step made on the page and the versions that read them, with their files and their\nmarks. The stage of the page stands on the version the step read, marked stale, and has no current version when the\nstep is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The\nchanges of a batch on other pages stay. The answer is 409 while a run, a preview, a tile cutting or a collection of\nthe project is queued or running, and 404 when no recipe of the stage has the step.",
+        "description": "Return a step to its initial state on a page: delete its history, its settings, its edit and its results.\n\nThe results are the versions the step made on the page and the versions that read them, with their files and their\nmarks. The stage of the page stands on the version the step read, marked stale, and has no current version when the\nstep is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The\nchanges of a batch on other pages stay. A preview of the project, queued or running, is cancelled first. The answer\nis 409 while a run, a measure of the book, a tile cutting or a collection of the project is queued or running, and\n404 when no recipe of the stage has the step.",
         "operationId": "clear_history_api_v1_projects__project_id__pages__page_id__history__stage___step_id__delete",
         "parameters": [
           {

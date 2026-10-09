@@ -292,8 +292,8 @@ async def measure_book(
 
     The job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and
     writes the median line height and a page size of the median block with its margins into the parameters of the
-    ``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A run, a
-    preview, a tile cutting or a collection of the project that is queued or running answers 409.
+    ``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A preview of the
+    project is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.
 
     \N{FORM FEED}
     :param project_id: Identifier of the project.

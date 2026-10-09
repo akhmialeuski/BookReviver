@@ -174,6 +174,11 @@ class PageHistoryService:
         page is shown by the pyramid of the current version of its stage. So the cutting of that pyramid is queued once
         the clear is committed, which a project busy with another tile cutting or collection leaves undone.
 
+        A preview of the project, queued or running, is cancelled first, since the reader asked for the clear and a
+        preview is disposable: the editor of a step asks for one by itself when the step is opened, so a clear a moment
+        later would otherwise be refused by a job the reader never started. It writes versions of the preview scale
+        only, and its last write finds the job cancelled and changes nothing, as for a run.
+
         The files of the deleted versions are removed after the transaction committed, so a store that fails to remove
         them leaves them without a row for the next collection and does not fail the clear.
 
@@ -188,15 +193,15 @@ class PageHistoryService:
         :rtype: ClearedStep
         :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the stage
                                has the step.
-        :raises ConflictError: If a run, a preview, a tile cutting or a collection of the project is queued or running,
-                               which may be reading or deleting the versions the clear deletes.
+        :raises ConflictError: If a run, a measure of the book, a tile cutting or a collection of the project is queued
+                               or running, which may be reading or deleting the versions the clear deletes.
         """
         await owned_page(self._uow, actor, project_id, key.page_id)
-        if await self._starter.busy(project_id) is not None:
-            raise ConflictError(PROJECT_BUSY)
         recipes = await self._uow.recipes.list_for_stage(project_id, key.stage)
         if not any(step.step_id == key.step_id for recipe in recipes for step in recipe.steps):
             raise NotFoundError(key.step_id)
+        if await self._starter.free_of_previews(project_id):
+            raise ConflictError(PROJECT_BUSY)
         stored = await self._uow.page_step_states.find(key)
         if stored is not None:
             await self._uow.page_step_states.delete(key)

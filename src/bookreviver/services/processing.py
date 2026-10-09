@@ -246,6 +246,11 @@ class ProcessingService:
         The version must be ready, made by a full run of this page in this stage. If its tile pyramid is not cut yet, a
         job is queued to cut it, since the viewer opens the current version.
 
+        A preview of the project, queued or running, is cancelled first, since the reader asked for the choice and a
+        preview is disposable: the editor of a step asks for one by itself, so a choice made a moment later would
+        otherwise be refused by a job the reader never started. A request for a version that cannot be chosen is
+        refused before any preview is cancelled.
+
         :param actor: Account acting in the current request.
         :type actor: Actor
         :param project_id: Identifier of the project.
@@ -261,16 +266,16 @@ class ProcessingService:
         :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no such
                                version.
         :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage, or a run, a
-                               preview, a tile cutting or a collection of the project is queued or running, which
-                               may be reading or deleting the versions the choice depends on.
+                               measure of the book, a tile cutting or a collection of the project is queued or
+                               running, which may be reading or deleting the versions the choice depends on.
         """
         await owned_project(self._uow.projects, actor, project_id)
         await self._page(project_id, page_id)
-        if await self._starter.busy(project_id) is not None:
-            raise ConflictError(PROJECT_BUSY)
         version = await self._version_of(page_id, version_id)
         if (reason := self._why_not_choosable(version, stage)) is not None:
             raise ConflictError(NOT_CHOOSABLE.format(version_id=version_id, reason=reason))
+        if await self._starter.free_of_previews(project_id):
+            raise ConflictError(PROJECT_BUSY)
         key = PageStageKey(page_id, stage)
         previous = await self._uow.page_stages.find(key)
         changed = await self._records.set_head(
@@ -413,7 +418,7 @@ class ProcessingService:
         :returns: The queued job, or the collection that is queued or running already.
         :rtype: Job
         :raises NotFoundError: If the actor has no such project.
-        :raises ConflictError: If a run, a preview or a tile cutting of the project is queued or running.
+        :raises ConflictError: If a run, a measure of the book or a tile cutting of the project is queued or running.
         """
         await owned_project(self._uow.projects, actor, project_id)
         if (job := await self._starter.enqueue_collection(project_id)) is None:

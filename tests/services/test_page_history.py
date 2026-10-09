@@ -9,9 +9,18 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import EDIT_HASH_FIELD, Actor, PageStepChange
-from bookreviver.domain.enums import ChangeSource, EditorKind, JobKind, RecipeKind, Stage, StageState, StepLayer
+from bookreviver.domain.enums import (
+    ChangeSource,
+    EditorKind,
+    JobKind,
+    JobState,
+    RecipeKind,
+    Stage,
+    StageState,
+    StepLayer,
+)
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.events import PageStageChanged
+from bookreviver.domain.events import JobChanged, PageStageChanged
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import ChangeBatchId, PageStepChangeId, StepId
 from bookreviver.domain.keys import ProjectKeys
@@ -690,6 +699,80 @@ class TestClear:
         expect(await stored.page_versions.find(version.id) is not None)
         expect(await has_files(fx_kit, project, version))
         assert_expectations()
+
+    @pytest.mark.parametrize('state', [JobState.QUEUED, JobState.RUNNING])
+    async def test_a_preview_of_the_project_is_cancelled_and_the_clear_goes_on(
+        self, fx_kit: ProcessingKit, state: JobState
+    ) -> None:
+        """Verify a clear takes the project from a preview, queued or running, instead of being refused by it.
+
+        The editor of a step asks for a preview when the step is opened, so a clear a moment later finds one. The
+        preview is cancelled and announced, as a run cancels it, and the clear deletes what it was asked to.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param state: Whether the preview is queued, or a worker has taken it and it is running.
+        :type state: JobState
+        """
+        actor, project, page, version = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, page)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
+        parts = fx_kit.parts(fx_kit.uow())
+        preview = await parts.starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
+        if state is JobState.RUNNING:
+            assert await parts.tracker.start(preview.id) is not None
+        cleared = await fx_kit.page_history().clear(actor, project.id, key)
+        stored = fx_kit.uow()
+        announced = [
+            (event.job.id, event.job.state) for event in fx_kit.events.published if isinstance(event, JobChanged)
+        ]
+        expect((await stored.jobs.get(preview.id)).state is JobState.CANCELLED)
+        expect((preview.id, JobState.CANCELLED) in announced)
+        expect([deleted.id for deleted in cleared.versions] == [version.id])
+        expect(await history_of(fx_kit, actor, project, key) == [])
+        expect(await stored.page_step_states.find(key) is None)
+        assert_expectations()
+
+    @pytest.mark.parametrize('active', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    async def test_a_clear_is_still_refused_while_a_run_or_a_measure_is_active_and_the_job_stays(
+        self, fx_kit: ProcessingKit, active: JobKind
+    ) -> None:
+        """Reject a clear while a run or a measure of the book is queued, which may read the versions it deletes.
+
+        This covers the refusal the fix keeps, and is not a test that fails without the fix.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param active: The kind of the job that is queued.
+        :type active: JobKind
+        """
+        actor, project, page, version = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, page)
+        await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
+        written = len(await history_of(fx_kit, actor, project, key))
+        job = await fx_kit.parts(fx_kit.uow()).starter.enqueue(
+            project.id, active, StageRun(stage=Stage.GEOMETRY).to_map()
+        )
+        with pytest.raises(ConflictError, match='project is busy'):
+            await fx_kit.page_history().clear(actor, project.id, key)
+        stored = fx_kit.uow()
+        expect((await stored.jobs.get(job.id)).state is JobState.QUEUED)
+        expect(len(await history_of(fx_kit, actor, project, key)) == written)
+        expect(await stored.page_versions.find(version.id) is not None)
+        assert_expectations()
+
+    async def test_a_step_that_is_in_no_recipe_does_not_cancel_the_preview(self, fx_kit: ProcessingKit) -> None:
+        """Reject a clear of an unknown step as not found before it takes the project from a preview.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, _ = await ran_geometry(fx_kit)
+        key = await step_key(fx_kit, page)
+        preview = await fx_kit.parts(fx_kit.uow()).starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
+        with pytest.raises(NotFoundError):
+            await fx_kit.page_history().clear(actor, project.id, evolve(key, step_id=StepId(uuid4())))
+        assert (await fx_kit.uow().jobs.get(preview.id)).state is JobState.QUEUED
 
     async def test_a_step_that_no_recipe_of_the_stage_has_is_not_found_and_deletes_nothing(
         self, fx_kit: ProcessingKit

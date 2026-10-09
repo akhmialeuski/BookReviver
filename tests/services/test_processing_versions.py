@@ -23,7 +23,7 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
-from bookreviver.domain.events import PageStageChanged, PageVersionReady
+from bookreviver.domain.events import JobChanged, PageStageChanged, PageVersionReady
 from bookreviver.domain.geometry import Point, Quad, Transform
 from bookreviver.domain.ids import PageVersionId, StepId
 from bookreviver.domain.keys import ProjectKeys
@@ -176,6 +176,69 @@ class TestChooseVersion:
         await fx_kit.service().start_collection(actor, project.id)
         with pytest.raises(ConflictError, match='project is busy'):
             await fx_kit.service().choose_version(actor, project.id, page.id, Stage.GEOMETRY, first.id)
+
+    @pytest.mark.parametrize('state', [JobState.QUEUED, JobState.RUNNING])
+    async def test_a_preview_of_the_project_is_cancelled_and_the_choice_goes_on(
+        self, fx_kit: ProcessingKit, state: JobState
+    ) -> None:
+        """Verify choosing a version takes the project from a preview, queued or running, instead of being refused.
+
+        The editor of a step asks for a preview by itself, so a choice made a moment later finds one.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param state: Whether the preview is queued, or a worker has taken it and it is running.
+        :type state: JobState
+        """
+        actor, project, page, first = await ran_geometry(fx_kit)
+        parts = fx_kit.parts(fx_kit.uow())
+        preview = await parts.starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
+        if state is JobState.RUNNING:
+            assert await parts.tracker.start(preview.id) is not None
+        chosen = await fx_kit.service().choose_version(actor, project.id, page.id, Stage.GEOMETRY, first.id)
+        announced = [
+            (event.job.id, event.job.state) for event in fx_kit.events.published if isinstance(event, JobChanged)
+        ]
+        expect(chosen.head_version_id == first.id)
+        expect((await fx_kit.uow().jobs.get(preview.id)).state is JobState.CANCELLED)
+        expect((preview.id, JobState.CANCELLED) in announced)
+        assert_expectations()
+
+    @pytest.mark.parametrize('active', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    async def test_choice_is_still_refused_while_a_run_or_a_measure_is_active(
+        self, fx_kit: ProcessingKit, active: JobKind
+    ) -> None:
+        """Reject the choice while a run or a measure of the book is queued, and leave the job and the stage alone.
+
+        This covers the refusal the fix keeps, and is not a test that fails without the fix.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param active: The kind of the job that is queued.
+        :type active: JobKind
+        """
+        actor, project, page, first = await ran_geometry(fx_kit)
+        before = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        job = await fx_kit.parts(fx_kit.uow()).starter.enqueue(
+            project.id, active, StageRun(stage=Stage.GEOMETRY).to_map()
+        )
+        with pytest.raises(ConflictError, match='project is busy'):
+            await fx_kit.service().choose_version(actor, project.id, page.id, Stage.GEOMETRY, first.id)
+        expect((await fx_kit.uow().jobs.get(job.id)).state is JobState.QUEUED)
+        expect(await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)) == before)
+        assert_expectations()
+
+    async def test_a_version_that_cannot_be_current_does_not_cancel_the_preview(self, fx_kit: ProcessingKit) -> None:
+        """Reject a version of another stage as it is refused when the project is free, and keep the preview queued.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page, first = await ran_geometry(fx_kit)
+        preview = await fx_kit.parts(fx_kit.uow()).starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
+        with pytest.raises(ConflictError, match='another stage'):
+            await fx_kit.service().choose_version(actor, project.id, page.id, Stage.CLEANUP, first.id)
+        assert (await fx_kit.uow().jobs.get(preview.id)).state is JobState.QUEUED
 
     async def test_old_versions_are_kept_when_a_later_one_is_chosen(self, fx_kit: ProcessingKit) -> None:
         """Verify choosing a version deletes no other version of the page.
@@ -453,6 +516,28 @@ class TestCollection:
         await uow.page_versions.add(old)
         await uow.commit()
         return actor, project, page, current, old
+
+    @pytest.mark.parametrize('state', [JobState.QUEUED, JobState.RUNNING])
+    async def test_a_preview_of_the_project_is_cancelled_and_the_collection_is_queued(
+        self, fx_kit: ProcessingKit, state: JobState
+    ) -> None:
+        """Verify a collection takes the project from a preview, queued or running, instead of being refused by it.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param state: Whether the preview is queued, or a worker has taken it and it is running.
+        :type state: JobState
+        """
+        actor, project = await fx_kit.seed_project()
+        parts = fx_kit.parts(fx_kit.uow())
+        preview = await parts.starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
+        if state is JobState.RUNNING:
+            assert await parts.tracker.start(preview.id) is not None
+        job = await fx_kit.service().start_collection(actor, project.id)
+        expect(job.kind is JobKind.COLLECT_VERSIONS)
+        expect(fx_kit.recording.enqueued == [preview, job])
+        expect((await fx_kit.uow().jobs.get(preview.id)).state is JobState.CANCELLED)
+        assert_expectations()
 
     async def test_old_version_nothing_needs_is_deleted_with_its_files_its_row_and_the_log_of_its_marks(
         self, fx_kit: ProcessingKit

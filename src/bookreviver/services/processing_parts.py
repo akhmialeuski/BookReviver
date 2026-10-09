@@ -99,17 +99,6 @@ class JobStarter:
         self._config = config
         self._cancellation = JobCancellation(uow=uow, publisher=runtime.publisher, clock=runtime.clock)
 
-    async def busy(self, project_id: ProjectId) -> Job | None:
-        """Return the job that is processing the versions of the project, if one is queued or running.
-
-        :param project_id: Project whose jobs are read.
-        :type project_id: ProjectId
-        :returns: The newest queued or running run, preview, tile cutting, collection or measure, or None.
-        :rtype: Job | None
-        """
-        active = await self._uow.jobs.list_for_project(project_id, JobState.active())
-        return next((job for job in active if job.kind in JobKind.processing()), None)
-
     async def enqueue(self, project_id: ProjectId, kind: JobKind, params: MetadataMap) -> Job:
         """Record a job that processes the versions of the project, and queue it unless another job goes first.
 
@@ -175,14 +164,7 @@ class JobStarter:
         :raises ConflictError: If a job of its group is active, or another request took the group before the insert.
         """
         group = JobKind.requested() if kind in JobKind.requested() else JobKind.housekeeping()
-        active = await self._active(project_id)
-        if kind in JobKind.preemptive():
-            # A preview that has ended since it was read is not in the way either, so a cancellation that finds it ended
-            # is no failure
-            previews = [other for other in active if other.kind is JobKind.PREVIEW_STEP]
-            for preview in previews:
-                await self._cancellation.cancel(preview)
-            active = [other for other in active if other not in previews]
+        active = await (self.free_of_previews(project_id) if kind in JobKind.preemptive() else self._active(project_id))
         if any(other.kind in group for other in active):
             raise ConflictError(PROJECT_BUSY)
         job = Job(id=JobId(uuid4()), project_id=project_id, kind=kind, params=params, created_at=self._clock.now())
@@ -193,6 +175,27 @@ class JobStarter:
             await self._uow.rollback()
             raise ConflictError(PROJECT_BUSY) from None
         return job, active
+
+    async def free_of_previews(self, project_id: ProjectId) -> list[Job]:
+        """Cancel the previews of the project that are queued or running, and return the jobs that are still active.
+
+        A preview is cancelled the way an account holder cancels a job, committed and announced, so a request that
+        would be refused by a preview alone, a run, a measure of the book or the clear of a page, goes on as if the
+        project had been free of it. A preview that has ended since it was read is not in the way either, so a
+        cancellation that finds it ended is no failure. The unit of work is committed by each cancellation, so a caller
+        has no change of its own pending when it calls this.
+
+        :param project_id: Project whose previews are cancelled.
+        :type project_id: ProjectId
+        :returns: The queued or running run, tile cutting, collection or measure of the project, newest first, which
+                  are none when the project was free of them.
+        :rtype: list[Job]
+        """
+        active = await self._active(project_id)
+        previews = [other for other in active if other.kind is JobKind.PREVIEW_STEP]
+        for preview in previews:
+            await self._cancellation.cancel(preview)
+        return [other for other in active if other not in previews]
 
     async def hand_off(self, ended: Job, collection: Job | None) -> None:
         """Queue to a worker the job the project goes on with after a job that processes its versions has ended.
@@ -280,6 +283,10 @@ class JobStarter:
     async def enqueue_collection(self, project_id: ProjectId) -> Job | None:
         """Queue a collection of the project's old versions, unless the project is processing something.
 
+        A preview, queued or running, does not count as processing: it is cancelled first, since the collection is what
+        the reader asked for and a preview is disposable. A preview younger than its retention is kept by the
+        collection itself.
+
         :param project_id: Project whose versions are collected.
         :type project_id: ProjectId
         :returns: The collection job, new or the one that is queued or running already, or None when another job
@@ -287,8 +294,8 @@ class JobStarter:
                   own end, through ``JobTracker.finish``, and not through this method.
         :rtype: Job | None
         """
-        if (active := await self.busy(project_id)) is not None:
-            return active if active.kind is JobKind.COLLECT_VERSIONS else None
+        if active := await self.free_of_previews(project_id):
+            return active[0] if active[0].kind is JobKind.COLLECT_VERSIONS else None
         try:
             return await self.enqueue(project_id, JobKind.COLLECT_VERSIONS, self.new_collection(project_id).params)
         except ConflictError:

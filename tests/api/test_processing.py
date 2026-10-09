@@ -65,6 +65,7 @@ pytestmark = pytest.mark.anyio
 
 PROJECTS_PATH: str = '/api/v1/projects'
 PROCESSORS_PATH: str = '/api/v1/processors'
+JOBS_PATH: str = '/api/v1/jobs'
 MEASURE_SUFFIX: str = '/stages/geometry/measure'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
@@ -201,6 +202,21 @@ async def run_stage(client: httpx.AsyncClient, broker: InMemoryBroker, book: Boo
     assert response.status_code == status.HTTP_202_ACCEPTED
     await broker.wait_all()
     return JobSchema.model_validate_json(response.content)
+
+
+def preview_body(book: Book) -> dict[str, object]:
+    """Build the body of a preview of the fake processor on the page of the book.
+
+    :param book: Book of the signed-in account.
+    :type book: Book
+    :returns: The body.
+    :rtype: dict[str, object]
+    """
+    return {
+        'page_id': str(book.page.id),
+        'steps': [{'processor_key': FAKE_KEY, 'params': {'strength': 3}}],
+        'step_index': 0,
+    }
 
 
 class TestProcessors:
@@ -526,6 +542,50 @@ class TestRunAndVersions:
         expect(wrong.status_code == status.HTTP_409_CONFLICT)
         assert_expectations()
 
+    async def test_choosing_a_version_while_a_preview_is_active_cancels_it_and_makes_the_version_current(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify PUT on a stage answers 200 while a preview is queued, which it cancels.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the job.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        version_id = (await fx_client.get(f'{fx_book.page_path}/versions')).json()[ITEMS][0]['id']
+        preview = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
+        chosen = await fx_client.put(f'{fx_book.page_path}/stages/page-split', json={'version_id': version_id})
+        job = await fx_client.get(f'{JOBS_PATH}/{preview.json()["id"]}')
+        expect(preview.status_code == status.HTTP_202_ACCEPTED)
+        expect(chosen.status_code == status.HTTP_200_OK)
+        expect(job.json()['state'] == JobState.CANCELLED.value)
+        assert_expectations()
+
+    async def test_choosing_a_version_while_a_run_is_active_is_a_409(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify PUT on a stage answers 409 while a run is queued, which a preview would not cause.
+
+        This covers the refusal the fix keeps, and is not a test that fails without the fix.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the job.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        version_id = (await fx_client.get(f'{fx_book.page_path}/versions')).json()[ITEMS][0]['id']
+        run = await fx_client.post(f'{fx_book.path}/stages/geometry/run', json={})
+        chosen = await fx_client.put(f'{fx_book.page_path}/stages/page-split', json={'version_id': version_id})
+        expect(run.status_code == status.HTTP_202_ACCEPTED)
+        expect(chosen.status_code == status.HTTP_409_CONFLICT)
+        assert_expectations()
+
     async def test_preview_makes_a_preview_version_that_has_only_its_preview_path(
         self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
     ) -> None:
@@ -539,12 +599,7 @@ class TestRunAndVersions:
         :type fx_book: Book
         """
         await run_stage(fx_client, fx_broker, fx_book, 'page-split')
-        body = {
-            'page_id': str(fx_book.page.id),
-            'steps': [{'processor_key': FAKE_KEY, 'params': {'strength': 3}}],
-            'step_index': 0,
-        }
-        response = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=body)
+        response = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
         await fx_broker.wait_all()
         previews = await fx_client.get(f'{fx_book.page_path}/versions', params={'scale': 'preview'})
         [version] = [PageVersionSchema.model_validate(item) for item in previews.json()[ITEMS]]
@@ -594,6 +649,27 @@ class TestRunAndVersions:
         job = JobSchema.model_validate_json(response.content)
         expect(response.status_code == status.HTTP_202_ACCEPTED)
         expect(job.kind is JobKind.COLLECT_VERSIONS)
+        assert_expectations()
+
+    async def test_collection_while_a_preview_is_active_cancels_it_and_is_a_202_job(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify a collection is answered 202 while a preview is queued, which it cancels.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the job.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        preview = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
+        response = await fx_client.post(f'{fx_book.path}/versions/collect')
+        job = await fx_client.get(f'{JOBS_PATH}/{preview.json()["id"]}')
+        expect(response.status_code == status.HTTP_202_ACCEPTED)
+        expect(JobSchema.model_validate_json(response.content).kind is JobKind.COLLECT_VERSIONS)
+        expect(job.json()['state'] == JobState.CANCELLED.value)
         assert_expectations()
 
     async def test_collectable_versions_are_counted_with_their_bytes_and_nothing_is_deleted(
@@ -972,6 +1048,36 @@ class TestPageHistory:
         expect(run.status_code == status.HTTP_202_ACCEPTED)
         expect(cleared.status_code == status.HTTP_409_CONFLICT)
         expect(listed.json()['total'] == 1)
+        assert_expectations()
+
+    async def test_clear_while_a_preview_is_active_cancels_it_and_deletes_the_history(
+        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+    ) -> None:
+        """Verify a clear answers 200 while a preview is queued, which it cancels, and the step has no history left.
+
+        The editor of a step asks for a preview when the step is opened, so a reader who clears the history a moment
+        later finds one that holds the project.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_broker: In-process broker running the jobs.
+        :type fx_broker: InMemoryBroker
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
+        history = f'{fx_book.page_path}/history/geometry/{step_id}'
+        await set_strength(fx_client, fx_book, step_id, 2)
+        preview = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
+        cleared = await fx_client.delete(history)
+        listed = await fx_client.get(history)
+        job = await fx_client.get(f'{JOBS_PATH}/{preview.json()["id"]}')
+        expect(preview.status_code == status.HTTP_202_ACCEPTED)
+        # The clear goes on and deletes the one change of the step; the results it deletes are not what this checks
+        expect((cleared.status_code, cleared.json()['changes']) == (status.HTTP_200_OK, 1))
+        expect(listed.json()['total'] == 0)
+        expect(job.json()['state'] == JobState.CANCELLED.value)
         assert_expectations()
 
     async def test_clear_of_a_step_no_recipe_has_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:

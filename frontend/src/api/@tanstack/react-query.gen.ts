@@ -1170,8 +1170,8 @@ export const previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation = (
  *
  * The job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and
  * writes the median line height and a page size of the median block with its margins into the parameters of the
- * ``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A run, a
- * preview, a tile cutting or a collection of the project that is queued or running answers 409.
+ * ``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A preview of the
+ * project is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.
  */
 export const measureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostMutation = (options?: Partial<Options<MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostData>>): UseMutationOptions<MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostResponse, MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostError, Options<MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostData>> => {
     const mutationOptions: UseMutationOptions<MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostResponse, MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostError, Options<MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostData>> = {
@@ -1921,8 +1921,9 @@ export const putValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutMu
  * The results are the versions the step made on the page and the versions that read them, with their files and their
  * marks. The stage of the page stands on the version the step read, marked stale, and has no current version when the
  * step is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The
- * changes of a batch on other pages stay. The answer is 409 while a run, a preview, a tile cutting or a collection of
- * the project is queued or running, and 404 when no recipe of the stage has the step.
+ * changes of a batch on other pages stay. A preview of the project, queued or running, is cancelled first. The answer
+ * is 409 while a run, a measure of the book, a tile cutting or a collection of the project is queued or running, and
+ * 404 when no recipe of the stage has the step.
  */
 export const clearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteMutation = (options?: Partial<Options<ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteData>>): UseMutationOptions<ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteResponse, ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteError, Options<ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteData>> => {
     const mutationOptions: UseMutationOptions<ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteResponse, ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteError, Options<ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteData>> = {
