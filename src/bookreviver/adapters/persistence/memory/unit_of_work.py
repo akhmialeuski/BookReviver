@@ -2154,6 +2154,33 @@ class InMemoryUnitOfWork(UnitOfWork):
         """
         self._database = database
         self._change = ChangeState()
+        # The repositories are built once and keep these tables for the life of the unit of work, as the repositories
+        # of a database adapter keep their session; every transaction refills the tables in place
+        self._snapshot = InMemoryTables()
+        self._tables = InMemoryTables()
+        self._guards: dict[JobId, Job | None] = {}
+        change, committed = self._change, self._database.tables
+        self.projects = InMemoryProjectRepository(self._tables, change=change)
+        self.sources = InMemorySourceRepository(self._tables, change=change)
+        self.scans = InMemoryScanRepository(self._tables, change=change)
+        self.pages = InMemoryPageRepository(self._tables, change=change, snapshot=self._snapshot, committed=committed)
+        self.pagination_sections = InMemoryPaginationSectionRepository(self._tables, change=change)
+        self.page_versions = InMemoryPageVersionRepository(
+            self._tables, change=change, snapshot=self._snapshot, committed=committed
+        )
+        self.page_stages = InMemoryPageStageRepository(self._tables, change=change)
+        self.page_step_states = InMemoryPageStepStateRepository(self._tables, change=change)
+        self.page_step_changes = InMemoryPageStepChangeRepository(self._tables, change=change)
+        self.step_values = InMemoryStepValuesRepository(self._tables, change=change)
+        self.result_mark_changes = InMemoryResultMarkChangeRepository(self._tables, change=change)
+        self.recipes = InMemoryRecipeRepository(self._tables, change=change)
+        self.recipe_profiles = InMemoryRecipeProfileRepository(self._tables, change=change)
+        self.jobs = InMemoryJobRepository(
+            self._tables, change=change, snapshot=self._snapshot, committed=committed, guards=self._guards
+        )
+        self.book_places = InMemoryBookPlaceRepository(
+            self._tables, change=change, snapshot=self._snapshot, committed=committed
+        )
         self._begin()
 
     @override
@@ -2218,44 +2245,17 @@ class InMemoryUnitOfWork(UnitOfWork):
             finally:
                 self._change.is_open = False
 
-    @staticmethod
-    def _copy(tables: InMemoryTables) -> InMemoryTables:
-        """Copy every table; the rows themselves are immutable and shared.
-
-        :param tables: Tables to copy.
-        :type tables: InMemoryTables
-        :returns: New tables holding the same rows.
-        :rtype: InMemoryTables
-        """
-        return InMemoryTables(**{table.name: dict(getattr(tables, table.name)) for table in fields(InMemoryTables)})
-
     def _begin(self) -> None:
-        """Start a transaction from the committed state."""
-        self._snapshot = self._copy(self._database.tables)
-        self._tables = self._copy(self._database.tables)
-        self._guards: dict[JobId, Job | None] = {}
-        change, committed = self._change, self._database.tables
-        self.projects = InMemoryProjectRepository(self._tables, change=change)
-        self.sources = InMemorySourceRepository(self._tables, change=change)
-        self.scans = InMemoryScanRepository(self._tables, change=change)
-        self.pages = InMemoryPageRepository(self._tables, change=change, snapshot=self._snapshot, committed=committed)
-        self.pagination_sections = InMemoryPaginationSectionRepository(self._tables, change=change)
-        self.page_versions = InMemoryPageVersionRepository(
-            self._tables, change=change, snapshot=self._snapshot, committed=committed
-        )
-        self.page_stages = InMemoryPageStageRepository(self._tables, change=change)
-        self.page_step_states = InMemoryPageStepStateRepository(self._tables, change=change)
-        self.page_step_changes = InMemoryPageStepChangeRepository(self._tables, change=change)
-        self.step_values = InMemoryStepValuesRepository(self._tables, change=change)
-        self.result_mark_changes = InMemoryResultMarkChangeRepository(self._tables, change=change)
-        self.recipes = InMemoryRecipeRepository(self._tables, change=change)
-        self.recipe_profiles = InMemoryRecipeProfileRepository(self._tables, change=change)
-        self.jobs = InMemoryJobRepository(
-            self._tables, change=change, snapshot=self._snapshot, committed=committed, guards=self._guards
-        )
-        self.book_places = InMemoryBookPlaceRepository(
-            self._tables, change=change, snapshot=self._snapshot, committed=committed
-        )
+        """Start a transaction from the committed state, refilling in place the tables the repositories hold.
+
+        The rows themselves are immutable and shared with the committed state, only the tables are copied.
+        """
+        for table in fields(InMemoryTables):
+            committed = getattr(self._database.tables, table.name)
+            for copy in (getattr(self._snapshot, table.name), getattr(self._tables, table.name)):
+                copy.clear()
+                copy.update(committed)
+        self._guards.clear()
 
     @override
     async def commit(self) -> None:

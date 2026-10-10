@@ -351,6 +351,34 @@ class TestBlockEnd:
         expect(await (await fx_uow_factory()).jobs.get(job.id) == job)
         assert_expectations()
 
+    @pytest.mark.parametrize(OPENER_ARG, OPENER_PARAMS, ids=OPENER_IDS)
+    async def test_repository_taken_before_a_block_reads_and_writes_inside_it(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_project: Project, opener: Opener
+    ) -> None:
+        """Verify a repository of a unit of work stays the one its blocks read and write through.
+
+        The repository is taken before another unit of work commits a job, so a repository bound to the state of an
+        earlier transaction would miss that job inside the block and write the new one where no commit reaches it.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_project: Stored project the block changes.
+        :type fx_project: Project
+        :param opener: Opens the kind of block under test.
+        :type opener: Opener
+        """
+        committed, written = make_job(project_id=fx_project.id), make_job(project_id=fx_project.id, minutes=1)
+        uow = await fx_uow_factory()
+        jobs = uow.jobs
+        other = await fx_uow_factory()
+        async with other.change():
+            await other.jobs.add(committed)
+        async with opener(uow, fx_project):
+            expect(await jobs.get(committed.id) == committed)
+            await jobs.add(evolve(written, state=JobState.SUCCEEDED))
+        expect(await (await fx_uow_factory()).jobs.get(written.id) == evolve(written, state=JobState.SUCCEEDED))
+        assert_expectations()
+
 
 class TestChangeBook:
     """Contract of ChangeBook.change_book() on the project it opens."""
