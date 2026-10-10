@@ -39,6 +39,7 @@ from bookreviver.domain.enums import (
     PageChange,
     PageOrigin,
     ProcessorScope,
+    RunOutcome,
     Side,
     Stage,
     VersionData,
@@ -58,7 +59,7 @@ from bookreviver.services.steps import StepRun
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import PageEdit, PageStage, Project, Recipe
+    from bookreviver.domain.entities import PageEdit, PageStage, PageStepState, Project, Recipe
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import Processor, StepOutput
@@ -71,7 +72,6 @@ UNSPLIT_NOT_CONFIRMED: str = (
 WRONG_HALVES: str = 'The step {key} made {count} outputs, and a split into the halves of a spread makes two.'
 UNEXPECTED_FAILURE: str = 'The split failed because of an unexpected error. It has been logged.'
 NO_SCAN: str = 'The page {page_id} has no scan to split.'
-SPLIT_OUTDATED: str = 'The scan of the page was split again while this split ran, so it was not stored.'
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +93,24 @@ class Halves:
 
 
 @frozen(kw_only=True)
+class SplitBasis:
+    """What a split read before its step ran, which the block that stores the halves reads again.
+
+    :ivar halves: The two pages of the spread as they were worked out.
+    :ivar stored: The version of each half's identifier an earlier run stored, or None.
+    :ivar recipe: The recipe whose first step splits, which both halves record as the one that made them.
+    :ivar state_key: Key of the settings and the cut line of the step on the page.
+    :ivar state: The settings and the cut line as they were read, or None for a step the page has none for.
+    """
+
+    halves: Halves
+    stored: Sequence[PageVersion | None]
+    recipe: Recipe
+    state_key: PageStepKey
+    state: PageStepState | None
+
+
+@frozen(kw_only=True)
 class Unsplit:
     """A split that is undone: the left half that becomes the whole scan, and the right halves it deletes.
 
@@ -102,6 +120,16 @@ class Unsplit:
 
     page: Page
     rights: Sequence[Page]
+
+    def deletes_as(self, other: Unsplit | None) -> bool:
+        """Tell whether another undoing, read later, deletes the same right halves.
+
+        :param other: The undoing as it reads now, or None when the page undoes no split any more.
+        :type other: Unsplit | None
+        :returns: True when ``other`` exists and its right halves are the right halves of this one.
+        :rtype: bool
+        """
+        return other is not None and {right.id for right in other.rights} == {right.id for right in self.rights}
 
 
 class SpreadSplit:
@@ -144,15 +172,17 @@ class SpreadSplit:
             return False
         return self._catalogue.get(steps[0].processor_key).spec.scope is ProcessorScope.SPLIT
 
-    async def split(self, page: Page, recipe: Recipe, source: StepSource, *, confirmed: bool = False) -> bool:
+    async def split(self, page: Page, recipe: Recipe, source: StepSource, *, confirmed: bool = False) -> RunOutcome:
         """Split the scan of a page into two pages, and make the base version of each half the current one.
 
         A step that decides for each scan, such as ``split.auto``, may keep the scan whole and make one output. The
         page then is the whole scan, and a spread it was split into before is undone as by a step of the scope ``page``:
         the right half is deleted, which needs the confirmation of the user.
 
-        Called outside any block, and it opens its own: one stores the split after the step ran, reading the page and
-        its scan again, and one stores a failed version when the split failed.
+        Called outside any block, and it opens its own: one stores the split after the step ran, and one stores a
+        failed version when the step failed. The first reads again what the split went by: the page, the halves of its
+        scan, the settings and the cut line of the step, and the recipe. A split whose basis changed meanwhile is
+        skipped and writes nothing, and the files the step wrote are discarded.
 
         :param page: The page that runs the step, which becomes the left half.
         :type page: Page
@@ -162,10 +192,10 @@ class SpreadSplit:
         :type source: StepSource
         :param confirmed: Whether the user confirmed that keeping the scan whole deletes the right half of a spread.
         :type confirmed: bool
-        :returns: True when the pages are made and current, and False when the step failed, or the page was deleted or
-                  its scan split again meanwhile, which leaves the book as it was, and a failed version on the page
-                  when it is still there.
-        :rtype: bool
+        :returns: Done when the pages are made and current, failed when the step failed, which leaves the book as it
+                  was and a failed version on the page, and skipped when the page was deleted or what the split went by
+                  changed meanwhile.
+        :rtype: RunOutcome
         :raises NotFoundError: If the processor is not in the catalogue.
         :raises InvalidParametersError: If the parameters do not fit the processor.
         :raises ConflictError: If the page has no scan.
@@ -179,29 +209,34 @@ class SpreadSplit:
         edit = None if state is None else state.edit
         halves = await self._halves(page)
         templates = [self._template(half, processor, params, edit) for half in (halves.left, halves.right)]
-        stored = [await self._uow.page_versions.find(template.id) for template in templates]
+        basis = SplitBasis(
+            halves=halves,
+            stored=[await self._uow.page_versions.find(template.id) for template in templates],
+            recipe=recipe,
+            state_key=PageStepKey(page.id, Stage.PAGE_SPLIT, step.step_id),
+            state=state,
+        )
         run = StepRun(
             processor_key=step.processor_key, params=params, input_data=source.data, image=source.image, edit=edit
         )
         try:
-            made = await self._cached(stored)
+            made = await self._cached(basis.stored)
             if made is None:
                 made = await self._make(templates, run)
             undoing = await self.undoing(page, recipe, confirmed=confirmed) if len(made) == 1 else None
         except DomainError as error:
             await self._fail(templates[0], str(error))
-            return False
+            return RunOutcome.FAILED
         except Exception:
             logger.exception('The split %s of page %s failed', run.processor_key, page.id)
             await self._fail(templates[0], UNEXPECTED_FAILURE)
-            return False
-        if (changed := await self._commit(halves, made, stored, recipe, undoing)) is None:
-            await self._fail(templates[0], SPLIT_OUTDATED)
-            return False
-        await self._announce(halves, made, stored, changed)
+            return RunOutcome.FAILED
+        if (changed := await self._commit(basis, made, undoing)) is None:
+            return RunOutcome.SKIPPED
+        await self._announce(basis, made, changed)
         if undoing is not None:
             await self.finish_unsplit(undoing)
-        return True
+        return RunOutcome.DONE
 
     async def undoing(self, page: Page, recipe: Recipe, *, confirmed: bool) -> Unsplit | None:
         """Find what undoing a split deletes, when a recipe that does not split runs on a left half.
@@ -399,56 +434,49 @@ class SpreadSplit:
         return version if version.tiles_ready else await self._runner.cut_tiles(self._keys, version)
 
     async def _commit(
-        self,
-        planned: Halves,
-        made: Sequence[PageVersion],
-        stored: Sequence[PageVersion | None],
-        recipe: Recipe,
-        undoing: Unsplit | None,
+        self, basis: SplitBasis, made: Sequence[PageVersion], undoing: Unsplit | None
     ) -> list[PageStage] | None:
-        """Store the pages, the versions and the heads of a split in one block.
+        """Store the pages, the versions and the heads of a split in one block, if what the split went by still holds.
 
-        Called outside any block, and it opens a ``change_book`` of its own, in which the page and the halves of its
-        scan are read again. A page that was deleted meanwhile, or whose scan got another right half, is not split.
+        Called outside any block, and it opens a ``change_book`` of its own, in which the page, the halves of its scan,
+        the settings and the cut line of the step, and the recipe are read again. A split whose page was deleted
+        meanwhile, whose scan got another right half, or whose step, edit, recipe or undoing changed, stores nothing.
         The pages are written as the block reads them, so a move of the page since the step began is kept. The files
         of the versions the step made are discarded when nothing is stored.
 
         A scan that was split gets the new page, the change of the left page, and the versions and heads of both halves.
         A scan kept whole gets the version and head of its page, and the undoing of an earlier split.
 
-        :param planned: The two pages of the spread as they were worked out before the step ran, which the versions were
-                        made under.
-        :type planned: Halves
+        :param basis: What the split read before its step ran.
+        :type basis: SplitBasis
         :param made: The versions of the left and the right half, ready, or of the whole page alone.
         :type made: Sequence[PageVersion]
-        :param stored: The version of each identifier an earlier run stored, or None, which tells the versions the step
-                       made from those it found ready.
-        :type stored: Sequence[PageVersion | None]
-        :param recipe: The recipe that made the pages.
-        :type recipe: Recipe
         :param undoing: The earlier split that keeping the scan whole undoes, or None.
         :type undoing: Unsplit | None
-        :returns: The stage records that changed, which the caller announces, or None when the page is gone or its scan
-                  was split again, and nothing is stored.
+        :returns: The stage records that changed, which the caller announces, or None when what the split went by
+                  changed and nothing is stored.
         :rtype: list[PageStage] | None
         """
         async with AsyncExitStack() as cleanup:
             # What the step wrote belongs to no stored version unless the block commits, except the versions an
             # earlier run made ready
-            for version, earlier in zip(made, stored, strict=False):
+            for version, earlier in zip(made, basis.stored, strict=False):
                 if earlier is None or earlier.state is not VersionState.READY:
                     cleanup.push_async_callback(self._runner.discard, self._keys.version_directory(version))
             async with self._uow.change_book(self._project.id):
                 try:
-                    fresh = await self._uow.pages.get(planned.left.id)
+                    fresh = await self._uow.pages.get(basis.halves.left.id)
                 except NotFoundError:
                     return None
-                halves = await self._halves(fresh, right_id=planned.right.id)
-                if (halves.right.id, halves.right_is_new) != (planned.right.id, planned.right_is_new):
+                halves = await self._halves(fresh, right_id=basis.halves.right.id)
+                again = None if undoing is None else await self.undoing(fresh, basis.recipe, confirmed=True)
+                if (
+                    (halves.right.id, halves.right_is_new) != (basis.halves.right.id, basis.halves.right_is_new)
+                    or await self._uow.page_step_states.find(basis.state_key) != basis.state
+                    or (await self._uow.recipes.get(basis.recipe.id)).updated_at != basis.recipe.updated_at
+                ) or (undoing is not None and not undoing.deletes_as(again)):
                     return None
-                changed = await self._write(
-                    halves, made, recipe, None if undoing is None else evolve(undoing, page=fresh)
-                )
+                changed = await self._write(halves, made, basis.recipe, again)
             cleanup.pop_all()
         return changed
 
@@ -500,29 +528,22 @@ class SpreadSplit:
             changed.extend(await self.unsplit(undoing))
         return changed
 
-    async def _announce(
-        self,
-        halves: Halves,
-        made: Sequence[PageVersion],
-        stored: Sequence[PageVersion | None],
-        changed: Sequence[PageStage],
-    ) -> None:
-        """Tell the browser what the split changed, after the commit.
+    async def _announce(self, basis: SplitBasis, made: Sequence[PageVersion], changed: Sequence[PageStage]) -> None:
+        """Tell the browser what the split changed, after the block.
 
-        :param halves: The two pages of the spread.
-        :type halves: Halves
+        :param basis: What the split read before its step ran, which holds the halves and the versions an earlier run
+                      stored, which were not made again when ready.
+        :type basis: SplitBasis
         :param made: The versions of the left and the right half, ready, or of the whole page alone.
         :type made: Sequence[PageVersion]
-        :param stored: The version of each identifier an earlier run stored, which were not made again when ready.
-        :type stored: Sequence[PageVersion | None]
         :param changed: The stage records the split changed.
         :type changed: Sequence[PageStage]
         """
-        if len(made) > 1 and halves.right_is_new:
+        if len(made) > 1 and basis.halves.right_is_new:
             await self._publisher.publish(
-                PagesChanged(project_id=self._project.id, page_ids=[halves.right.id], change=PageChange.ADDED)
+                PagesChanged(project_id=self._project.id, page_ids=[basis.halves.right.id], change=PageChange.ADDED)
             )
-        for version, earlier in zip(made, stored, strict=False):
+        for version, earlier in zip(made, basis.stored, strict=False):
             if earlier is None or earlier.state is not VersionState.READY:
                 await self._publisher.publish(PageVersionReady(project_id=self._project.id, version=version))
         await self._records.announce(self._project.id, changed)
