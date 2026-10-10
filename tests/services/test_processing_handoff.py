@@ -1,10 +1,12 @@
-"""Tests for the end of a run, which stores its final state and the collection it queues in one commit."""
+"""Tests for the end of a run, which stores its final state and the collection it queues in one block."""
 
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
+import anyio
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
@@ -21,15 +23,19 @@ from tests.helpers.builders import EPOCH
 from tests.helpers.fakes_imports import TickingClock
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Sequence
+    from collections.abc import AsyncIterator, Collection, Sequence
 
     from bookreviver.domain.entities import Actor, Job, Project
     from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.values import MetadataMap
+    from bookreviver.services.processing_parts import JobStarter
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 
+# Names of the test arguments that the parametrized kinds of job are passed in
+REQUESTED_ARGUMENT: str = 'requested'
+ACTIVE_ARGUMENT: str = 'active'
 BUSY_REASON: str = 'project is busy'
 # A tile cutting of a version that is not stored, which a worker passes over
 NO_SUCH_TILES: MetadataMap = TileCut(version_ids=(PageVersionId(str(uuid4())),)).to_map()
@@ -69,28 +75,32 @@ class TestRunHandOff:
     async def test_project_is_never_free_between_the_run_and_its_collection(
         self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Verify every commit of the worker leaves a processing job active, down to the one that ends the run.
+        """Verify every block of the worker leaves a processing job active, down to the one that ends the run.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param monkeypatch: Fixture patching the unit of work to read the database after each commit.
+        :param monkeypatch: Fixture patching the unit of work to read the database after each block.
         :type monkeypatch: pytest.MonkeyPatch
         """
         actor, project = await prepared_page(fx_kit)
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        committed = InMemoryUnitOfWork.commit
         seen: list[list[JobKind]] = []
+        changed = InMemoryUnitOfWork.change
 
-        async def commit_and_look(self: InMemoryUnitOfWork) -> None:
-            """Commit, then record which processing jobs the database shows as active.
+        @asynccontextmanager
+        async def change_and_look(self: InMemoryUnitOfWork) -> AsyncIterator[None]:
+            """Open a ``change`` block, then record which processing jobs the database shows as active once it ended.
 
-            :param self: The unit of work that commits.
+            :param self: The unit of work that opens the block.
             :type self: InMemoryUnitOfWork
+            :returns: Iterator yielding once the block is open.
+            :rtype: AsyncIterator[None]
             """
-            await committed(self)
+            async with changed(self):
+                yield
             seen.append(await processing_kinds(fx_kit, project.id))
 
-        monkeypatch.setattr(InMemoryUnitOfWork, 'commit', commit_and_look)
+        monkeypatch.setattr(InMemoryUnitOfWork, 'change', change_and_look)
         await fx_kit.jobs().run_stage(job.id)
 
         stored = await fx_kit.uow().jobs.get(job.id)
@@ -130,7 +140,7 @@ class TestRunHandOff:
         with pytest.raises(ConflictError, match=BUSY_REASON):
             await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
 
-    @pytest.mark.parametrize('requested', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    @pytest.mark.parametrize(REQUESTED_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
     @pytest.mark.parametrize('housekeeping', [JobKind.CUT_TILES, JobKind.COLLECT_VERSIONS])
     async def test_request_waits_behind_housekeeping_and_is_queued_when_it_ends(
         self, fx_kit: ProcessingKit, requested: JobKind, housekeeping: JobKind
@@ -206,8 +216,8 @@ class TestRunHandOff:
         # The account holder cancels the run, and a new run of another stage takes the project before the worker ends
         canceller = fx_kit.uow()
         cancelled = evolve(running, state=JobState.CANCELLED, finished_at=fx_kit.clock.now())
-        await canceller.jobs.update_if_state(cancelled, expected=(JobState.RUNNING,))
-        await canceller.commit()
+        async with canceller.change():
+            await canceller.jobs.update_if_state(cancelled, expected=(JobState.RUNNING,))
         fx_kit.clock.moment += timedelta(seconds=1)
         replacement = await fx_kit.service().start_run(actor, project.id, Stage.CLEANUP, StageRun(stage=Stage.CLEANUP))
 
@@ -221,7 +231,7 @@ class TestRunHandOff:
 class TestRunTakesTheProjectFromAPreview:
     """Tests for a run or a measure of the book that finds a preview of the project queued or running."""
 
-    @pytest.mark.parametrize('requested', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    @pytest.mark.parametrize(REQUESTED_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
     async def test_queued_preview_is_cancelled_and_the_request_is_queued(
         self, fx_kit: ProcessingKit, requested: JobKind
     ) -> None:
@@ -244,7 +254,7 @@ class TestRunTakesTheProjectFromAPreview:
         expect(await processing_kinds(fx_kit, project.id) == [requested])
         assert_expectations()
 
-    @pytest.mark.parametrize('requested', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    @pytest.mark.parametrize(REQUESTED_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
     async def test_running_preview_is_cancelled_and_the_request_is_queued_once(
         self, fx_kit: ProcessingKit, requested: JobKind
     ) -> None:
@@ -317,8 +327,8 @@ class TestRunTakesTheProjectFromAPreview:
         )
         assert_expectations()
 
-    @pytest.mark.parametrize('requested', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
-    @pytest.mark.parametrize('active', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    @pytest.mark.parametrize(REQUESTED_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    @pytest.mark.parametrize(ACTIVE_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
     async def test_run_or_measure_is_refused_while_another_is_active(
         self, fx_kit: ProcessingKit, requested: JobKind, active: JobKind
     ) -> None:
@@ -339,7 +349,7 @@ class TestRunTakesTheProjectFromAPreview:
         expect(await processing_kinds(fx_kit, project.id) == [active])
         assert_expectations()
 
-    @pytest.mark.parametrize('active', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    @pytest.mark.parametrize(ACTIVE_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
     async def test_preview_is_refused_while_a_run_or_a_measure_is_active(
         self, fx_kit: ProcessingKit, active: JobKind
     ) -> None:
@@ -358,50 +368,158 @@ class TestRunTakesTheProjectFromAPreview:
         expect(await processing_kinds(fx_kit, project.id) == [active])
         assert_expectations()
 
-    @pytest.mark.parametrize('requested', [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
-    async def test_preview_stored_between_the_check_and_the_insert_is_cancelled_too(
-        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch, requested: JobKind
-    ) -> None:
-        """Verify a run or a measure that loses the insert to a preview of another request cancels it and goes on.
 
-        The editor of a step asks for a preview by itself at about the time the reader presses Run, so the preview may be
-        stored after the project was read as free and before the run is inserted, where the unique index refuses it. The
-        race is made at the port: the first listing of the active jobs of the unit of work returns what it found, and
-        then stores a preview, so the starter acts on a read that the preview has made out of date.
+def params_of(starter: JobStarter, project_id: ProjectId, kind: JobKind) -> MetadataMap:
+    """Give the parameters a job of a kind is asked for with.
+
+    :param starter: Starter whose collection is described.
+    :type starter: JobStarter
+    :param project_id: Project the job works on.
+    :type project_id: ProjectId
+    :param kind: The kind of job.
+    :type kind: JobKind
+    :returns: The parameters, which the worker is never asked to read in these tests.
+    :rtype: MetadataMap
+    """
+    match kind:
+        case JobKind.CUT_TILES:
+            return NO_SUCH_TILES
+        case JobKind.COLLECT_VERSIONS:
+            return starter.new_collection(project_id).params
+        case JobKind.PREVIEW_STEP:
+            return {}
+        case _:
+            return StageRun(stage=Stage.GEOMETRY).to_map()
+
+
+class TestConcurrentRequests:
+    """Tests for two requests of one project that meet at the check of the active jobs.
+
+    The first request is held inside its block after it read the active jobs, the second request is let in, and the test
+    proves the second one waits for the first to commit before it reads anything, so the check and the insert of the
+    first cannot be split by the second.
+    """
+
+    async def ask_while_the_first_waits(
+        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch, first: JobKind, second: JobKind
+    ) -> tuple[Project, list[Job | ConflictError | None]]:
+        """Let two requests meet at the check, the first held after its read, and give what each of them got.
+
+        What they got is given by the order of the requests, since both may ask for the same kind of job.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param monkeypatch: Fixture putting the racing listing in the job repository of the unit of work.
+        :param monkeypatch: Fixture holding the first request after it read the active jobs.
         :type monkeypatch: pytest.MonkeyPatch
-        :param requested: The kind of job the user asks for.
-        :type requested: JobKind
+        :param first: The kind of job the first request asks for.
+        :type first: JobKind
+        :param second: The kind of job the second request asks for.
+        :type second: JobKind
+        :returns: The project, and the job or the refusal of the first request and of the second, in that order.
+        :rtype: tuple[Project, list[Job | ConflictError | None]]
         """
         _, project = await prepared_page(fx_kit)
-        uow = fx_kit.uow()
-        starter = fx_kit.parts(uow).starter
-        listing = uow.jobs.list_for_project
-        raced: list[None] = []
+        first_uow = fx_kit.uow()
+        first_starter = fx_kit.parts(first_uow).starter
+        second_starter = fx_kit.parts(fx_kit.uow()).starter
+        listed = anyio.Event()
+        resume = anyio.Event()
+        listing = first_uow.jobs.list_for_project
 
-        async def list_then_store_a_preview(project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
-            """List the jobs as they are, and the first time store a preview right after, as a rival request does.
+        async def list_then_wait(project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
+            """List the active jobs as they are, then hold the first request until the test lets it go.
 
             :param project_id: Project whose jobs are listed.
             :type project_id: ProjectId
             :param states: States a listed job may be in.
             :type states: Collection[JobState]
-            :returns: The jobs found before the preview was stored.
+            :returns: The jobs found.
             :rtype: Sequence[Job]
             """
             found = await listing(project_id, states)
-            if not raced:
-                raced.append(None)
-                await starter.enqueue(project_id, JobKind.PREVIEW_STEP, {})
+            listed.set()
+            await resume.wait()
             return found
 
-        monkeypatch.setattr(uow.jobs, 'list_for_project', list_then_store_a_preview)
-        asked = await starter.enqueue(project.id, requested, StageRun(stage=Stage.GEOMETRY).to_map())
+        monkeypatch.setattr(first_uow.jobs, 'list_for_project', list_then_wait)
+        outcomes: list[Job | ConflictError | None] = [None, None]
 
-        preview = fx_kit.recording.enqueued[0]
+        async def ask(starter: JobStarter, kind: JobKind, order: int) -> None:
+            """Ask for a job and keep the job, or the refusal, in the place of the request.
+
+            :param starter: Starter of the request.
+            :type starter: JobStarter
+            :param kind: The kind of job asked for.
+            :type kind: JobKind
+            :param order: Place of the request, 0 for the first and 1 for the second.
+            :type order: int
+            """
+            try:
+                outcomes[order] = await starter.enqueue(project.id, kind, params_of(starter, project.id, kind))
+            except ConflictError as error:
+                outcomes[order] = error
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(ask, first_starter, first, 0)
+            await listed.wait()
+            group.start_soon(ask, second_starter, second, 1)
+            await anyio.wait_all_tasks_blocked()
+            expect(await fx_kit.uow().jobs.list_for_project(project.id, set(JobState)) == [])
+            expect(outcomes[1] is None)
+            resume.set()
+        return project, outcomes
+
+    @pytest.mark.parametrize(
+        ('first', 'second'),
+        [
+            pytest.param(JobKind.RUN_STAGE, JobKind.RUN_STAGE, id='run-then-run'),
+            pytest.param(JobKind.RUN_STAGE, JobKind.MEASURE_BOOK, id='run-then-measure'),
+            pytest.param(JobKind.MEASURE_BOOK, JobKind.RUN_STAGE, id='measure-then-run'),
+            pytest.param(JobKind.RUN_STAGE, JobKind.PREVIEW_STEP, id='run-then-preview'),
+            pytest.param(JobKind.CUT_TILES, JobKind.COLLECT_VERSIONS, id='tiles-then-collection'),
+            pytest.param(JobKind.COLLECT_VERSIONS, JobKind.CUT_TILES, id='collection-then-tiles'),
+        ],
+    )
+    async def test_second_request_for_a_group_the_first_took_is_refused(
+        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch, first: JobKind, second: JobKind
+    ) -> None:
+        """Verify the second request waits for the first, reads its job, and is refused as busy, storing nothing.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param monkeypatch: Fixture holding the first request after it read the active jobs.
+        :type monkeypatch: pytest.MonkeyPatch
+        :param first: The kind of job the first request asks for.
+        :type first: JobKind
+        :param second: The kind of job the second request asks for, whose group the first took.
+        :type second: JobKind
+        """
+        project, (won, lost) = await self.ask_while_the_first_waits(fx_kit, monkeypatch, first, second)
+        expect(won is not None and not isinstance(won, ConflictError))
+        expect(isinstance(lost, ConflictError))
+        expect(await processing_kinds(fx_kit, project.id) == [first])
+        assert_expectations()
+
+    @pytest.mark.parametrize(REQUESTED_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
+    async def test_run_that_waited_for_a_preview_of_a_rival_request_cancels_it(
+        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch, requested: JobKind
+    ) -> None:
+        """Verify a run or a measure that finds the preview of a rival request in its way cancels it and is queued.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param monkeypatch: Fixture holding the preview request after it read the active jobs.
+        :type monkeypatch: pytest.MonkeyPatch
+        :param requested: The kind of job the second request asks for.
+        :type requested: JobKind
+        """
+        project, (preview, asked) = await self.ask_while_the_first_waits(
+            fx_kit, monkeypatch, JobKind.PREVIEW_STEP, requested
+        )
+        assert preview is not None
+        assert not isinstance(preview, ConflictError)
+        assert asked is not None
+        assert not isinstance(asked, ConflictError)
         expect((await fx_kit.uow().jobs.get(preview.id)).state is JobState.CANCELLED)
         expect(asked.state is JobState.QUEUED)
         expect(fx_kit.recording.enqueued == [preview, asked])

@@ -45,9 +45,8 @@ async def store_profile(kit: ProcessingKit, profile: RecipeProfile) -> RecipePro
     :rtype: RecipeProfile
     """
     uow = kit.uow()
-    stored = await uow.recipe_profiles.add(profile)
-    await uow.commit()
-    return stored
+    async with uow.change():
+        return await uow.recipe_profiles.add(profile)
 
 
 async def second_project(kit: ProcessingKit, actor: Actor) -> Project:
@@ -61,9 +60,8 @@ async def second_project(kit: ProcessingKit, actor: Actor) -> Project:
     :rtype: Project
     """
     uow = kit.uow()
-    project = await uow.projects.add(make_project(owner_id=actor.account_id, title='Another book'))
-    await uow.commit()
-    return project
+    async with uow.change():
+        return await uow.projects.add(make_project(owner_id=actor.account_id, title='Another book'))
 
 
 async def saved(kit: ProcessingKit, actor: Actor, name: str = PROFILE_NAME) -> RecipeProfile:
@@ -249,8 +247,8 @@ class TestApplyProfile:
         page, _ = await fx_kit.seed_scan_page(project)
         recipe = await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)
         uow = fx_kit.uow()
-        await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id))
         profile = await saved(fx_kit, actor)
         await fx_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
         record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))

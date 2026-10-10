@@ -131,15 +131,15 @@ async def _commit_book(database: InMemoryDatabase, actor: Actor, valued: tuple[V
     pages = [make_page(project_id=project.id, order_key=f'a{number}') for number in range(PAGE_COUNT)]
     await commit_project(database, project, *pages)
     uow = InMemoryUnitOfWork(database)
-    for page in pages:
-        for stage in CHECKED_STAGES:
-            await uow.page_stages.save(make_page_stage(page_id=page.id, stage=stage))
-    if valued is not None:
-        scope, stage = valued
-        group_label = GROUP if scope is ValueScope.GROUP else ''
-        values = make_step_values(project_id=project.id, scope=scope, group_label=group_label)
-        await uow.step_values.save(evolve(values, stage=stage))
-    await uow.commit()
+    async with uow.change_book(project.id):
+        for page in pages:
+            for stage in CHECKED_STAGES:
+                await uow.page_stages.save(make_page_stage(page_id=page.id, stage=stage))
+        if valued is not None:
+            scope, stage = valued
+            group_label = GROUP if scope is ValueScope.GROUP else ''
+            values = make_step_values(project_id=project.id, scope=scope, group_label=group_label)
+            await uow.step_values.save(evolve(values, stage=stage))
     return Book(project=project, pages=pages)
 
 

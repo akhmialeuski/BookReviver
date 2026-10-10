@@ -126,6 +126,8 @@ test('a reader arranges the pages of a book', async ({ page }) => {
     await expect(anchorTile(page, ids[1] ?? '')).toBeDisabled();
     await anchorTile(page, ids[3] ?? '').click();
     await page.getByRole('button', { name: 'Move after #5' }).click();
+    // A refusal of the server keeps the dialog open, so it fails on this line and not in the order below
+    await expect(page.getByRole('heading', { name: 'Move 2 pages' })).toBeHidden();
     await expect.poll(() => tileOrder(page)).toEqual([ids[2], ids[4], ids[3], ids[0], ids[1]]);
     await page.getByRole('button', { name: 'Clear the selection' }).click();
   });

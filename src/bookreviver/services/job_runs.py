@@ -5,7 +5,8 @@ leaves it in a final state. Every write is guarded by the state of the job, beca
 any moment: the write that records a step finds the job cancelled and changes nothing, which is how a running job learns
 to stop before its next step, and the write that concludes it leaves a cancelled job cancelled.
 
-The tracker commits what it writes, so a job reads as it is, and publishes ``JobChanged`` after each commit.
+Each write is a ``change`` block of its own, so a job reads as it is, and the tracker publishes ``JobChanged`` after
+the block has committed. Every method opens its own block and is called only outside one.
 """
 
 from typing import TYPE_CHECKING
@@ -13,7 +14,6 @@ from typing import TYPE_CHECKING
 from attrs import evolve
 
 from bookreviver.domain.enums import JobKind, JobState
-from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.events import JobChanged
 from bookreviver.domain.values import Progress
 
@@ -36,7 +36,7 @@ class JobTracker:
     ) -> None:
         """Track jobs through the unit of work of the worker.
 
-        :param uow: Unit of work of the job, committed after each write.
+        :param uow: Unit of work of the job, whose ``change`` block holds each write.
         :type uow: UnitOfWork
         :param publisher: Publisher of the job events the browser follows.
         :type publisher: EventPublisher
@@ -54,6 +54,8 @@ class JobTracker:
     async def start(self, job_id: JobId) -> Job | None:
         """Move a queued job to running, or pick up a job found running, which is a delivery repeated after a crash.
 
+        Opens its own ``change`` block, so it is called outside any block.
+
         :param job_id: Identifier of the job.
         :type job_id: JobId
         :returns: The running job, or None when the job has finished already or left the queue since it was read, which
@@ -61,21 +63,22 @@ class JobTracker:
         :rtype: Job | None
         :raises NotFoundError: If there is no such job.
         """
-        job = await self._uow.jobs.get(job_id)
-        if job.state.is_final:
-            return None
-        if job.state is JobState.QUEUED:
-            started = evolve(job, state=JobState.RUNNING, started_at=self._clock.now())
-            if (running := await self._uow.jobs.update_if_state(started, expected=(JobState.QUEUED,))) is None:
-                await self._uow.rollback()
+        async with self._uow.change():
+            job = await self._uow.jobs.get(job_id)
+            if job.state.is_final:
                 return None
-            job = running
-            await self._uow.commit()
+            if job.state is JobState.QUEUED:
+                started = evolve(job, state=JobState.RUNNING, started_at=self._clock.now())
+                if (running := await self._uow.jobs.update_if_state(started, expected=(JobState.QUEUED,))) is None:
+                    return None
+                job = running
         await self._publisher.publish(JobChanged(project_id=job.project_id, job=job))
         return job
 
     async def advance(self, job: Job, *, done: int, total: int) -> Job | None:
         """Record how far the job has come, which also tells whether it was cancelled.
+
+        Opens its own ``change`` block, so it is called outside any block.
 
         :param job: The running job as last stored.
         :type job: Job
@@ -86,14 +89,13 @@ class JobTracker:
         :returns: The job as stored, or None when it was cancelled, which stops it before its next step.
         :rtype: Job | None
         """
-        saved = await self._uow.jobs.update_if_state(
-            evolve(job, progress=Progress(done=done, total=total)), expected=(JobState.RUNNING,)
-        )
+        async with self._uow.change():
+            saved = await self._uow.jobs.update_if_state(
+                evolve(job, progress=Progress(done=done, total=total)), expected=(JobState.RUNNING,)
+            )
         if saved is None:
-            await self._uow.rollback()
             await self._pass_on(job, None)
             return None
-        await self._uow.commit()
         await self._publisher.publish(JobChanged(project_id=saved.project_id, job=saved))
         return saved
 
@@ -119,11 +121,11 @@ class JobTracker:
     ) -> None:
         """Store the final state of a running job, unless it was cancelled meanwhile, and announce it.
 
-        Whatever the worker left uncommitted is discarded first. A follow-up job is stored in the same commit as the
-        final state, so the project is never seen free between the two, and a client that reacts to the end of the job
-        finds the project busy with the follow-up. The follow-up is left out when another processing job of the project
-        is queued or running already, which then is the one the project waits for. After the commit the hand-off queues
-        to a worker the follow-up, or else the job that waited for this one to end.
+        Opens its own ``change`` block, so it is called outside any block. A follow-up job is stored in the same block
+        as the final state, so the project is never seen free between the two, and a client that reacts to the end of
+        the job finds the project busy with the follow-up. The follow-up is left out when another processing job of the
+        project is queued or running already, which then is the one the project waits for. After the block the hand-off
+        queues to a worker the follow-up, or else the job that waited for this one to end.
 
         :param job: The job as last stored by this run.
         :type job: Job
@@ -137,23 +139,15 @@ class JobTracker:
         :param follow_up: A queued job to store with the final state, or None for no job.
         :type follow_up: Job | None
         """
-        await self._uow.rollback()
         progress = job.progress if total is None else Progress(done=total, total=total)
         final = evolve(job, state=state, error=error, progress=progress, finished_at=self._clock.now())
-        stored = await self._uow.jobs.update_if_state(final, expected=(JobState.RUNNING,))
         queued: Job | None = None
-        try:
+        async with self._uow.change():
+            stored = await self._uow.jobs.update_if_state(final, expected=(JobState.RUNNING,))
             if follow_up is not None:
                 active = await self._uow.jobs.list_for_project(job.project_id, JobState.active())
                 if not any(other.kind in JobKind.processing() for other in active):
                     queued = await self._uow.jobs.add(follow_up)
-            await self._uow.commit()
-        except ConflictError:
-            # Another request took the project between the check and the insert, so only the final state is kept
-            await self._uow.rollback()
-            queued = None
-            stored = await self._uow.jobs.update_if_state(final, expected=(JobState.RUNNING,))
-            await self._uow.commit()
         if stored is not None:
             await self._publisher.publish(JobChanged(project_id=stored.project_id, job=stored))
         await self._pass_on(job, queued)

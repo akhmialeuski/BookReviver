@@ -10,8 +10,8 @@ into a hidden sibling directory, which one rename then publishes as the source's
 directory is written under a hidden sibling name and moved onto its key once complete. The move is a hard link for a
 file and a rename for a directory, because the operating system refuses both when the target exists, which a check
 followed by a write could not guarantee against a second writer. Every blocking call goes through ``anyio.Path`` or
-``asyncify``, and cleanup after a failure runs in a shielded cancel scope, so a cancelled job still removes what it
-half wrote.
+``anyio.to_thread.run_sync``, and cleanup after a failure runs in a shielded cancel scope, so a cancelled job still
+removes what it half wrote.
 """
 
 import errno
@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, override
 from uuid import uuid4
 
 import anyio
-from asyncer import asyncify
 
 from bookreviver.domain.enums import UploadProblem
 from bookreviver.domain.errors import ConflictError, NotFoundError, UploadRejectedError
@@ -330,7 +329,7 @@ class LocalAssetStore(_LocalTree, AssetStore):
         :raises ValueError: If either key does not lie under ``projects/<id>/assets/``.
         """
         async with self.readable(source) as origin, self.writable(target) as destination:
-            await asyncify(_copy_tree)(origin, destination)
+            await anyio.to_thread.run_sync(_copy_tree, origin, destination)
 
     @override
     async def delete_prefix(self, prefix: StorageKey) -> None:
@@ -352,7 +351,7 @@ class LocalAssetStore(_LocalTree, AssetStore):
         :rtype: int
         :raises ValueError: If the prefix does not lie under ``projects/<id>/assets/``.
         """
-        return await asyncify(_tree_size)(Path(self._asset_path(prefix)))
+        return await anyio.to_thread.run_sync(_tree_size, Path(self._asset_path(prefix)))
 
     @override
     async def delete_project(self, project_id: ProjectId) -> None:
@@ -458,7 +457,7 @@ async def _staged_paths(directory: anyio.Path) -> dict[str, Path]:
     :returns: Path of every file by its ``/`` separated path relative to ``directory``, in the order of the paths.
     :rtype: dict[str, Path]
     """
-    return await asyncify(_list_files)(Path(directory))
+    return await anyio.to_thread.run_sync(_list_files, Path(directory))
 
 
 async def _publish(staged: anyio.Path, *, target: anyio.Path, conflict_message: str) -> None:
@@ -523,7 +522,7 @@ async def _remove(path: anyio.Path) -> None:
     :type path: anyio.Path
     """
     if await path.is_dir():
-        # typeshed declares rmtree as a callable protocol, whose parameters mypy cannot carry through asyncify
-        await asyncify(partial(shutil.rmtree, path))()
+        # typeshed declares rmtree as a callable protocol, whose parameters mypy cannot carry through run_sync
+        await anyio.to_thread.run_sync(partial(shutil.rmtree, path))
     else:
         await path.unlink(missing_ok=True)

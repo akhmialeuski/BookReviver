@@ -1,6 +1,7 @@
 """Tests for the current version of a stage, the list of versions, tiles on request, collection and coordinates."""
 
 from datetime import timedelta
+from functools import partial
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -41,12 +42,13 @@ from bookreviver.services.job_runs import JobTracker
 from bookreviver.services.processing_jobs import VERSIONS_LEFT, ProcessingJobs
 from bookreviver.services.version_clearing import BEING_COLLECTED
 from tests.helpers.builders import EPOCH, make_page_stage, make_result_mark_change
+from tests.helpers.meanwhile import change_when_published
 from tests.helpers.processing import IMAGE_CONTENT
 from tests.helpers.processors import FakeProcessor
 from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from bookreviver.domain.entities import Job, Page, PageVersion, Project
     from bookreviver.domain.ids import StorageKey
@@ -135,8 +137,8 @@ async def mark_version(kit: ProcessingKit, version: PageVersion, mark: ResultMar
     :type mark: ResultMark
     """
     uow = kit.uow()
-    await uow.page_versions.update(evolve(version, mark=mark))
-    await uow.commit()
+    async with uow.change_book((await uow.pages.get(version.page_id)).project_id):
+        await uow.page_versions.update(evolve(version, mark=mark))
 
 
 class TestChooseVersion:
@@ -151,9 +153,9 @@ class TestChooseVersion:
         actor, project, page, first = await ran_geometry(fx_kit)
         second = evolve(first, id=PageVersionId('0123456789abcdef'), params={'strength': 7})
         uow = fx_kit.uow()
-        await uow.page_versions.add(second)
-        await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.CLEANUP, head_version_id=first.id))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(second)
+            await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.CLEANUP, head_version_id=first.id))
         chosen = await fx_kit.service().choose_version(actor, project.id, page.id, Stage.GEOMETRY, second.id)
         later = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.CLEANUP))
         expect((chosen.head_version_id, chosen.state) == (second.id, StageState.FRESH))
@@ -275,8 +277,8 @@ class TestChooseVersion:
         actor, project, page, first = await ran_geometry(fx_kit)
         unfit = evolve(make_unfit(first), id=PageVersionId('fedcba9876543210'))
         uow = fx_kit.uow()
-        await uow.page_versions.add(unfit)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(unfit)
         with pytest.raises(ConflictError, match=match):
             await fx_kit.service().choose_version(actor, project.id, page.id, Stage.GEOMETRY, unfit.id)
 
@@ -300,8 +302,8 @@ class TestChooseVersion:
         actor, project, page, first = await ran_geometry(fx_kit)
         untiled = evolve(first, id=PageVersionId('0011223344556677'), tiles_ready=False)
         uow = fx_kit.uow()
-        await uow.page_versions.add(untiled)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(untiled)
         await fx_kit.service().choose_version(actor, project.id, page.id, Stage.GEOMETRY, untiled.id)
         assert fx_kit.recording.enqueued[-1].kind is JobKind.CUT_TILES
 
@@ -447,8 +449,8 @@ class TestStartTiles:
         actor, project, page, first = await ran_geometry(fx_kit)
         untiled = evolve(first, id=PageVersionId('8899aabbccddeeff'), tiles_ready=False)
         uow = fx_kit.uow()
-        await uow.page_versions.add(untiled)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(untiled)
         await fx_kit.store_files(untiled)
         job = await fx_kit.service().start_tiles(actor, project.id, page.id, untiled.id)
         await fx_kit.jobs().cut_tiles(job.id)
@@ -475,8 +477,8 @@ class TestStartTiles:
         actor, project, page, first = await ran_geometry(fx_kit)
         failed = evolve(first, id=PageVersionId('1122334455667788'), state=VersionState.FAILED)
         uow = fx_kit.uow()
-        await uow.page_versions.add(failed)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(failed)
         with pytest.raises(ConflictError):
             await fx_kit.service().start_tiles(actor, project.id, page.id, failed.id)
 
@@ -513,8 +515,8 @@ class TestCollection:
         async with kit.assets.writable(keys.version_rendition(old, Rendition.FULL_JPEG)) as target:
             target.write_bytes(IMAGE_CONTENT)
         uow = kit.uow()
-        await uow.page_versions.add(old)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(old)
         return actor, project, page, current, old
 
     @pytest.mark.parametrize('state', [JobState.QUEUED, JobState.RUNNING])
@@ -549,9 +551,9 @@ class TestCollection:
         """
         actor, project, page, current, old = await self.collectable_book(fx_kit)
         uow = fx_kit.uow()
-        await uow.page_versions.update(evolve(old, mark=ResultMark.BAD))
-        await uow.result_mark_changes.add(make_result_mark_change(version_id=old.id, mark_after=ResultMark.BAD))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.update(evolve(old, mark=ResultMark.BAD))
+            await uow.result_mark_changes.add(make_result_mark_change(version_id=old.id, mark_after=ResultMark.BAD))
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.jobs().collect_versions(job.id)
         remaining = (await fx_kit.uow().page_versions.list_for_stage(page.id, None, None, EVERYTHING)).items
@@ -577,8 +579,8 @@ class TestCollection:
         actor, project, page, current, old = await self.collectable_book(fx_kit)
         # The version was made a moment ago, so only the end of a run, and not its age, can clear it
         uow = fx_kit.uow()
-        await uow.page_versions.update(evolve(old, created_at=EPOCH))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.update(evolve(old, created_at=EPOCH))
         run = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         await fx_kit.jobs().run_stage(run.id)
         await fx_kit.work_queue()
@@ -617,8 +619,8 @@ class TestCollection:
         async with fx_kit.assets.writable(keys.version_rendition(preview, Rendition.PREVIEW)) as target:
             target.write_bytes(IMAGE_CONTENT)
         uow = fx_kit.uow()
-        await uow.page_versions.add(preview)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(preview)
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.jobs().collect_versions(job.id)
         with pytest.raises(NotFoundError):
@@ -646,8 +648,8 @@ class TestCollection:
         async with fx_kit.assets.writable(keys.version_rendition(preview, Rendition.PREVIEW)) as target:
             target.write_bytes(IMAGE_CONTENT)
         uow = fx_kit.uow()
-        await uow.page_versions.add(preview)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(preview)
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.jobs().collect_versions(job.id)
         async with fx_kit.assets.readable(keys.version_rendition(preview, Rendition.PREVIEW)):
@@ -730,9 +732,9 @@ class TestCollection:
         async with fx_kit.assets.writable(keys.version_rendition(other, Rendition.FULL_JPEG)) as target:
             target.write_bytes(IMAGE_CONTENT)
         uow = fx_kit.uow()
-        await uow.page_versions.add(other)
-        await uow.result_mark_changes.add(make_result_mark_change(version_id=old.id))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(other)
+            await uow.result_mark_changes.add(make_result_mark_change(version_id=old.id))
         refused = keys.version_directory(old)
         removing = fx_kit.assets.delete_prefix
 
@@ -779,8 +781,8 @@ class TestCollection:
         async with fx_kit.assets.writable(keys.version_rendition(reader, Rendition.FULL_JPEG)) as target:
             target.write_bytes(IMAGE_CONTENT)
         uow = fx_kit.uow()
-        await uow.page_versions.add(reader)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(reader)
         refused = keys.version_directory(reader)
         removing = fx_kit.assets.delete_prefix
 
@@ -822,10 +824,10 @@ class TestCollection:
         async with fx_kit.assets.writable(keys.version_rendition(commented, Rendition.FULL_JPEG)) as target:
             target.write_bytes(IMAGE_CONTENT)
         uow = fx_kit.uow()
-        await uow.page_versions.update(good)
-        await uow.page_versions.add(commented)
-        await uow.result_mark_changes.add(make_result_mark_change(version_id=old.id))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.update(good)
+            await uow.page_versions.add(commented)
+            await uow.result_mark_changes.add(make_result_mark_change(version_id=old.id))
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.jobs().collect_versions(job.id)
         for kept in (good, commented):
@@ -845,8 +847,8 @@ class TestCollection:
         actor, project, _, _, old = await self.collectable_book(fx_kit)
         reader = evolve(old, id=OTHER_VERSION_ID, input_id=old.id)
         uow = fx_kit.uow()
-        await uow.page_versions.add(reader)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(reader)
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.jobs().collect_versions(job.id)
         expect(await fx_kit.uow().page_versions.find(old.id) is None)
@@ -938,11 +940,11 @@ class TestCollection:
             current, id=PageVersionId('1234123412341234'), input_id=old.id, created_at=EPOCH, stage=Stage.CLEANUP
         )
         uow = fx_kit.uow()
-        await uow.page_versions.add(reader)
-        await uow.page_stages.save(
-            make_page_stage(page_id=reader.page_id, stage=Stage.CLEANUP, head_version_id=reader.id)
-        )
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(reader)
+            await uow.page_stages.save(
+                make_page_stage(page_id=reader.page_id, stage=Stage.CLEANUP, head_version_id=reader.id)
+            )
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.jobs().collect_versions(job.id)
         stored = await fx_kit.uow().page_versions.get(reader.id)
@@ -973,8 +975,88 @@ class TestMapToScan:
             geometry, transform=Transform(kind=TransformKind.CROP, quad=HALF, matrix=(1, 0, -10, 0, 1, -20, 0, 0, 1))
         )
         uow = fx_kit.uow()
-        await uow.page_versions.update(cropped)
-        await uow.page_versions.update(shifted)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.update(cropped)
+            await uow.page_versions.update(shifted)
         [mapped] = await fx_kit.service().map_to_scan(actor, project.id, page.id, shifted.id, [Point(x=5, y=7)])
         assert mapped == Point(x=1115, y=27)
+
+
+async def fail_the_chosen_version(kit: ProcessingKit, version: PageVersion) -> None:
+    """Store the version as failed, as a run that made it again and failed would.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param version: The version a user chose.
+    :type version: PageVersion
+    """
+    uow = kit.uow()
+    project_id = (await uow.pages.get(version.page_id)).project_id
+    async with uow.change_book(project_id):
+        await uow.page_versions.update(evolve(version, state=VersionState.FAILED))
+
+
+async def delete_the_page_of_the_version(kit: ProcessingKit, version: PageVersion) -> None:
+    """Delete the page the version belongs to, as a request of the user does.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param version: The version a user chose, which goes with its page.
+    :type version: PageVersion
+    """
+    uow = kit.uow()
+    project_id = (await uow.pages.get(version.page_id)).project_id
+    async with uow.change_book(project_id):
+        await uow.pages.delete(version.page_id)
+
+
+class TestChooseVersionApplyStep:
+    """Tests for the block that makes a chosen version current, which checks the version again inside it."""
+
+    @pytest.mark.parametrize(
+        ('change', 'refusal'),
+        [
+            pytest.param(fail_the_chosen_version, ConflictError, id='version-failed-meanwhile'),
+            pytest.param(delete_the_page_of_the_version, NotFoundError, id='page-deleted-meanwhile'),
+        ],
+    )
+    async def test_a_choice_whose_version_changed_while_a_preview_was_cancelled_changes_nothing(
+        self,
+        fx_kit: ProcessingKit,
+        monkeypatch: pytest.MonkeyPatch,
+        change: Callable[[ProcessingKit, PageVersion], Awaitable[None]],
+        refusal: type[Exception],
+    ) -> None:
+        """Verify the version is checked again inside the block, after the cancelling that comes before it.
+
+        The cancelling of the preview is a block of its own, and the use case announces it before its own block opens,
+        so the version may have failed, or the page may have gone, in between. The stage is not given the version, and
+        nothing is announced for the choice.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param monkeypatch: Fixture that restores the event bus.
+        :type monkeypatch: pytest.MonkeyPatch
+        :param change: The change another request makes while the preview is cancelled.
+        :type change: Callable[[ProcessingKit, PageVersion], Awaitable[None]]
+        :param refusal: What the use case refuses with.
+        :type refusal: type[Exception]
+        """
+        actor, project, page, first = await ran_geometry(fx_kit)
+        second = evolve(first, id=PageVersionId('0123456789abcdef'), params={'strength': 7})
+        uow = fx_kit.uow()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(second)
+        await fx_kit.parts(fx_kit.uow()).starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
+        change_when_published(fx_kit, monkeypatch, partial(change, fx_kit, second))
+        with pytest.raises(refusal):
+            await fx_kit.service().choose_version(actor, project.id, page.id, Stage.GEOMETRY, second.id)
+        record = await fx_kit.uow().page_stages.find(PageStageKey(page.id, Stage.GEOMETRY))
+        announced = [
+            event
+            for event in fx_kit.events.published
+            if isinstance(event, PageStageChanged) and event.stage.head_version_id == second.id
+        ]
+        expect(record is None or record.head_version_id != second.id)
+        expect(announced == [])
+        assert_expectations()

@@ -100,22 +100,25 @@ class RunPlan:
         )
 
     async def apply_mode(self) -> Sequence[PageStepChange]:
-        """Take the work the mode names away from the steps of the run on its pages, as one batch, and commit.
+        """Take the work the mode names away from the steps of the run on its pages, as one batch, in one block.
 
-        A run that keeps the work changes nothing. The stage of a page is not marked stale, since the run that follows
-        makes it again.
+        Called outside any block, and it opens a ``change_book`` of its own. The recipes are chosen before the block,
+        since choosing them may store the defaults in a block of its own, and the states of the steps are read inside
+        it, so a page that was deleted meanwhile has none left to remove and a state a user changed is removed as it
+        stands. A run that keeps the work changes nothing. The stage of a page is not marked stale, since the run that
+        follows makes it again.
 
         :returns: The changes written, one for each layer removed, which are none when no page had any.
         :rtype: Sequence[PageStepChange]
         """
         if self._run.mode is not RunMode.DROP_OWN:
             return ()
-        batch = PageBatch(uow=self._uow, source=ChangeSource.RUN, moment=self._clock.now())
-        for state in await self._states():
-            await batch.clear_work(state)
-        written = await batch.flush()
-        await self._uow.commit()
-        return written
+        await self._picked()
+        async with self._uow.change_book(self._project_id):
+            batch = PageBatch(uow=self._uow, source=ChangeSource.RUN, moment=self._clock.now())
+            for state in await self._states():
+                await batch.clear_work(state)
+            return await batch.flush()
 
     async def _named(self) -> Sequence[Page]:
         """Choose the pages the run names, or every page of the book that has an image, before any is left out.

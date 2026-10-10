@@ -27,7 +27,7 @@ async def create_schema(settings: Settings) -> None:
     :type settings: Settings
     """
     settings.data_dir.mkdir(parents=True, exist_ok=True)
-    database = SqlDatabase(settings.resolved_database_url)
+    database = SqlDatabase(settings.resolved_database_url, wait_seconds=settings.change_wait_seconds)
     script = ScriptDirectory.from_config(database.migrations.config)
     options = {'version_table': database.config.alembic_config.version_table_name}
 

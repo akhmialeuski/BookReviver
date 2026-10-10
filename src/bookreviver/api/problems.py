@@ -8,6 +8,7 @@ from fastapi_problem.handler import new_exception_handler
 
 from bookreviver.domain.enums import UploadProblem
 from bookreviver.domain.errors import (
+    BookBusyError,
     ConflictError,
     DomainError,
     InvalidParametersError,
@@ -86,6 +87,12 @@ class ContentTooLarge(ApiProblem):
     http_status = HTTPStatus.CONTENT_TOO_LARGE
 
 
+class ServiceUnavailable(ApiProblem):
+    """The server cannot take the request now, but may be able to a moment later."""
+
+    http_status = HTTPStatus.SERVICE_UNAVAILABLE
+
+
 class Unexpected(ApiProblem):
     """An unhandled error, reported without its message so internals never reach the client."""
 
@@ -109,6 +116,7 @@ PROBLEM_BY_ERROR: dict[type[DomainError], type[ApiProblem]] = {
     UnsupportedTransformError: Conflict,
     UnsupportedSourceError: BadRequest,
     UploadRejectedError: BadRequest,
+    BookBusyError: ServiceUnavailable,
 }
 
 

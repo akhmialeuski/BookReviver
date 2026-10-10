@@ -2,8 +2,8 @@
 
 A version is deleted with its files, its row and the log of its marks, in this order: the mark first, so a version whose
 files are half removed is never taken for a result, then the directory, and the row only when the directory is gone. A
-batch is committed as a whole, so a version whose directory cannot be removed keeps its mark and its row and takes back
-nothing of the others.
+batch is written by two blocks, one for the marks and one for the rows, so a version whose directory cannot be removed
+keeps its mark and its row and takes back nothing of the others.
 
 The versions of a collection are given to ``VersionClearing`` readers first, as ``readers_first`` groups them. A version
 that stays, because its files could not be removed, holds the version it reads, and so does every version that is held,
@@ -38,7 +38,7 @@ class VersionClearing:
     def __init__(self, *, uow: UnitOfWork, assets: AssetStore, project_id: ProjectId) -> None:
         """Work over the ports of one collection of one project.
 
-        :param uow: Unit of work of the job, which each batch commits.
+        :param uow: Unit of work of the job, whose blocks write each batch.
         :type uow: UnitOfWork
         :param assets: Store of the derived files, from which the directories of the versions are removed.
         :type assets: AssetStore
@@ -47,11 +47,16 @@ class VersionClearing:
         """
         self._uow = uow
         self._assets = assets
+        self._project_id = project_id
         self._keys = ProjectKeys(project_id)
         self._held: set[PageVersionId] = set()
 
     async def clear(self, batch: Sequence[PageVersion]) -> int:
-        """Delete the versions of a batch that no version which stays reads, and commit.
+        """Delete the versions of a batch that no version which stays reads.
+
+        It opens two ``change_book`` blocks, the first marking the versions and the second deleting the rows of those
+        whose files are gone, with the removal of the files between them, outside any block. So it is called only
+        outside a block.
 
         :param batch: Versions that read none of each other and are read by none of the versions cleared later, taken
                       from one group of ``readers_first``.
@@ -61,13 +66,15 @@ class VersionClearing:
         """
         going = [version for version in batch if version.id not in self._held]
         self._hold(version for version in batch if version.id in self._held)
-        for version in going:
-            if version.state is VersionState.READY:
-                marked = evolve(
-                    version, state=VersionState.FAILED, data={**version.data, VersionData.ERROR: BEING_COLLECTED}
-                )
-                await self._uow.page_versions.update(marked)
-        await self._uow.commit()
+        async with self._uow.change_book(self._project_id):
+            # The versions are read again, so a version deleted meanwhile is left out and a mark or a comment a user
+            # put on one since the collection chose it is kept
+            for version in await self._uow.page_versions.list_by_ids([version.id for version in going]):
+                if version.state is VersionState.READY:
+                    marked = evolve(
+                        version, state=VersionState.FAILED, data={**version.data, VersionData.ERROR: BEING_COLLECTED}
+                    )
+                    await self._uow.page_versions.update(marked)
         gone: list[PageVersionId] = []
         for version in going:
             try:
@@ -77,8 +84,8 @@ class VersionClearing:
                 self._hold([version])
             else:
                 gone.append(version.id)
-        await self._uow.page_versions.delete_many(gone)
-        await self._uow.commit()
+        async with self._uow.change_book(self._project_id):
+            await self._uow.page_versions.delete_many(gone)
         return len(gone)
 
     def _hold(self, staying: Iterable[PageVersion]) -> None:

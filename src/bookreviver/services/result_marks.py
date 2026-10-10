@@ -36,7 +36,7 @@ class ResultMarksService:
     def __init__(self, *, uow: UnitOfWork, clock: Clock) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose commit ends every changing use case.
+        :param uow: Unit of work of the request, whose blocks end every changing use case.
         :type uow: UnitOfWork
         :param clock: Clock stamping the changes.
         :type clock: Clock
@@ -70,25 +70,25 @@ class ResultMarksService:
                                version.
         :raises ConflictError: If the version is a preview.
         """
-        version = await self._version(actor, project_id, page_id, version_id)
-        if version.scale is not VersionScale.FULL:
-            raise ConflictError(PREVIEW_TAKES_NO_MARK.format(version_id=version_id))
-        if (note.mark, note.comment) == (version.mark, version.comment):
-            return version
-        changed = evolve(version, mark=note.mark, comment=note.comment)
-        await self._uow.page_versions.update(changed)
-        await self._uow.result_mark_changes.add(
-            ResultMarkChange(
-                id=ResultMarkChangeId(uuid4()),
-                version_id=version.id,
-                mark_before=version.mark,
-                mark_after=note.mark,
-                comment_before=version.comment,
-                comment_after=note.comment,
-                created_at=self._clock.now(),
+        async with self._uow.change_book(project_id):
+            version = await self._version(actor, project_id, page_id, version_id)
+            if version.scale is not VersionScale.FULL:
+                raise ConflictError(PREVIEW_TAKES_NO_MARK.format(version_id=version_id))
+            if (note.mark, note.comment) == (version.mark, version.comment):
+                return version
+            changed = evolve(version, mark=note.mark, comment=note.comment)
+            await self._uow.page_versions.update(changed)
+            await self._uow.result_mark_changes.add(
+                ResultMarkChange(
+                    id=ResultMarkChangeId(uuid4()),
+                    version_id=version.id,
+                    mark_before=version.mark,
+                    mark_after=note.mark,
+                    comment_before=version.comment,
+                    comment_after=note.comment,
+                    created_at=self._clock.now(),
+                )
             )
-        )
-        await self._uow.commit()
         return changed
 
     async def changes(

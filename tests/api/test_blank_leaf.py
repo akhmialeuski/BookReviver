@@ -144,9 +144,11 @@ async def fx_book(fx_database: InMemoryDatabase, fx_asset_store: AssetStore, fx_
     await commit_project(fx_database, project, *pages, sources=[source], scans=scans, versions=versions)
     # The import makes the base version of each page the current version of the page split
     uow = InMemoryUnitOfWork(fx_database)
-    for page, version in zip(pages, versions, strict=True):
-        await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=version.id))
-    await uow.commit()
+    async with uow.change_book(project.id):
+        for page, version in zip(pages, versions, strict=True):
+            await uow.page_stages.save(
+                make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=version.id)
+            )
     keys = ProjectKeys(project.id)
     for scan in scans:
         async with fx_asset_store.writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:

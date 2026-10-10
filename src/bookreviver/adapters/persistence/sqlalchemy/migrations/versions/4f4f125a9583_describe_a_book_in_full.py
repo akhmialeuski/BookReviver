@@ -24,7 +24,6 @@ import warnings
 from typing import TYPE_CHECKING, Any
 
 import advanced_alchemy.types.guid
-import advanced_alchemy.types.json
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import Text
@@ -45,7 +44,6 @@ depends_on: str | Sequence[str] | None = None
 JSON_LIST = (
     sa.JSON()
     .with_variant(postgresql.JSONB(astext_type=Text()), 'cockroachdb')
-    .with_variant(advanced_alchemy.types.json.ORA_JSONB(), 'oracle')
     .with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql')
 )
 # What the old ``language`` column had to look like to become a language code

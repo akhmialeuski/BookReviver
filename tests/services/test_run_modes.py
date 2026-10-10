@@ -10,6 +10,7 @@ from bookreviver.domain.enums import ChangeSource, EditorKind, RunMode, Stage, S
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.values import NewPageEdit, PageStageKey, StageRun
+from bookreviver.services.run_plans import RunPlan
 from tests.helpers.builders import new_account_id
 from tests.helpers.page_batches import PageValues, run_impact
 from tests.helpers.processors import STRENGTH_PARAMETER, FakeProcessor
@@ -281,4 +282,55 @@ class TestSkipOwn:
         expect(
             [record is not None and record.head_version_id is not None for record in records] == [False, False, True]
         )
+        assert_expectations()
+
+
+class TestApplyModeBlock:
+    """Tests for the block that takes the work away, which reads the states of the steps inside it."""
+
+    async def test_the_work_of_a_page_deleted_after_the_plan_was_made_is_not_taken_and_not_written_about(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify a page that went away between the plan and the block has no state left, so no change is written.
+
+        The plan chooses the pages and their recipes outside the block, as a job does when it starts, and the states
+        are read inside the block, so a page deleted in between is not counted, and the other pages lose their work.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, project, pages, keys = await worked_book(fx_kit)
+        uow = fx_kit.uow()
+        run = StageRun(stage=Stage.GEOMETRY, mode=RunMode.DROP_OWN)
+        plan = RunPlan(uow=uow, recipes=fx_kit.parts(uow).recipes, clock=fx_kit.clock, project_id=project.id, run=run)
+        await plan.recipes()
+        other = fx_kit.uow()
+        async with other.change_book(project.id):
+            await other.pages.delete(pages[1].id)
+        written = await plan.apply_mode()
+        remaining = await fx_kit.uow().page_step_states.list_for_step([pages[0].id], Stage.GEOMETRY, keys[0].step_id)
+        expect(len(written) > 0)
+        expect({change.page_id for change in written} == {pages[0].id})
+        expect(all(state.is_empty for state in remaining))
+        assert_expectations()
+
+    async def test_a_run_that_keeps_the_work_writes_no_change(self, fx_kit: ProcessingKit) -> None:
+        """Verify the mode that keeps the work returns at once, with the states and the history as they were.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, project, _, keys = await worked_book(fx_kit)
+        uow = fx_kit.uow()
+        plan = RunPlan(
+            uow=uow,
+            recipes=fx_kit.parts(uow).recipes,
+            clock=fx_kit.clock,
+            project_id=project.id,
+            run=StageRun(stage=Stage.GEOMETRY, mode=RunMode.KEEP),
+        )
+        written = await plan.apply_mode()
+        state = await fx_kit.uow().page_step_states.get(keys[0])
+        expect(written == ())
+        expect(state.edit is not None and state.params == {STRENGTH_PARAMETER: STRONGER})
         assert_expectations()

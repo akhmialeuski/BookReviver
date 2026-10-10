@@ -22,6 +22,7 @@ from bookreviver.adapters.persistence.sqlalchemy.accounts import (
     AccountDatabase,
     AccountTable,
 )
+from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.api.routers.accounts import AccountRoutes
 from bookreviver.app.settings import Settings
 from bookreviver.domain.entities import Actor
@@ -286,12 +287,19 @@ class AccountsProvider(Provider):
 
     @provide(scope=Scope.REQUEST)
     def user_manager(
-        self, session: AsyncSession, mailer: Mailer, projects: ProjectService, settings: Settings
+        self,
+        session: AsyncSession,
+        uow: SqlAlchemyUnitOfWork,
+        mailer: Mailer,
+        projects: ProjectService,
+        settings: Settings,
     ) -> UserManager:
-        """Build the user manager over the request's session.
+        """Build the user manager over the request's session and the unit of work that guards it.
 
         :param session: Database session of the request.
         :type session: AsyncSession
+        :param uow: Unit of work of that session, whose blocks the account writes run in.
+        :type uow: SqlAlchemyUnitOfWork
         :param mailer: Port the account messages go through.
         :type mailer: Mailer
         :param projects: Project service of the request, which deletes the projects of a deleted account.
@@ -301,20 +309,24 @@ class AccountsProvider(Provider):
         :returns: The user manager of the request.
         :rtype: UserManager
         """
-        return UserManager(AccountDatabase(session), mailer=mailer, projects=projects, settings=settings)
+        return UserManager(AccountDatabase(session, uow), mailer=mailer, projects=projects, settings=settings)
 
     @provide(scope=Scope.REQUEST)
-    def session_strategy(self, session: AsyncSession, settings: Settings) -> SessionStrategy:
+    def session_strategy(self, session: AsyncSession, uow: SqlAlchemyUnitOfWork, settings: Settings) -> SessionStrategy:
         """Build the strategy that keeps session tokens in the database, so signing out revokes them.
 
         :param session: Database session of the request.
         :type session: AsyncSession
+        :param uow: Unit of work of that session, whose blocks the token writes run in.
+        :type uow: SqlAlchemyUnitOfWork
         :param settings: Application settings holding the session lifetime.
         :type settings: Settings
         :returns: The session strategy of the request.
         :rtype: SessionStrategy
         """
-        return DatabaseStrategy(AccessTokenDatabase(session), lifetime_seconds=settings.auth.session_lifetime_seconds)
+        return DatabaseStrategy(
+            AccessTokenDatabase(session, uow), lifetime_seconds=settings.auth.session_lifetime_seconds
+        )
 
 
 @inject

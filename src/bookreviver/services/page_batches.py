@@ -3,8 +3,8 @@
 A run that takes the work of the pages away, a value set for several pages, a value set for the odd pages, the even
 pages or a group, and a carry-over of a shape write the same thing: a layer of a step on many pages, each change in the
 history with the same batch and the source that made it. A state with neither a setting nor an edit left is deleted.
-The batch commits nothing and marks no stage stale, which the use case that owns the transaction does once the batch is
-flushed.
+The batch opens no block and marks no stage stale. Every method writes in the ``change_book`` block of the use case
+that owns it, which marks the stages stale once the batch is flushed.
 """
 
 from typing import TYPE_CHECKING
@@ -42,7 +42,7 @@ class PageBatch:
     def __init__(self, *, uow: UnitOfWork, source: ChangeSource, moment: datetime) -> None:
         """Write through a unit of work, as one source, at one moment.
 
-        :param uow: Unit of work of the use case, whose commit makes the batch durable.
+        :param uow: Unit of work of the use case, whose block makes the batch durable when it ends.
         :type uow: UnitOfWork
         :param source: What makes the changes of the batch.
         :type source: ChangeSource
@@ -126,6 +126,8 @@ class PageBatch:
 
     async def flush(self) -> Sequence[PageStepChange]:
         """Add the changes of the batch to the history, which numbers them, and forget them.
+
+        It writes in the block of the caller and opens none.
 
         :returns: The changes as stored, in the order they were written.
         :rtype: Sequence[PageStepChange]

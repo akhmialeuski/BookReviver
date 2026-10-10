@@ -14,7 +14,7 @@ from operator import itemgetter
 from typing import TYPE_CHECKING, Any, override
 
 import pymupdf
-from asyncer import asyncify
+from anyio import to_thread
 
 from bookreviver.domain.enums import LabelStyle
 from bookreviver.domain.page_label_rules import PageLabelRule
@@ -155,7 +155,7 @@ class PdfLabelWriter(PageLabelWriter):
         :type labeling: BookLabeling
         :raises ValueError: If a rule starts past the last page of the file.
         """
-        await asyncify(self._write)(target, labeling.rules)
+        await to_thread.run_sync(self._write, target, labeling.rules)
 
     @staticmethod
     def _write(target: Path, rules: Sequence[PageLabelRule]) -> None:

@@ -105,10 +105,11 @@ class JobFakes:
         :type jobs: Job
         """
         uow = InMemoryUnitOfWork(self.database)
-        await uow.projects.add(project)
-        for job in jobs:
-            await uow.jobs.add(job)
-        await uow.commit()
+        # The project and the rows of its jobs are writes outside the content of a book
+        async with uow.change():
+            await uow.projects.add(project)
+            for job in jobs:
+                await uow.jobs.add(job)
 
     async def stored_job(self, job: Job) -> Job:
         """Read a job back as committed.

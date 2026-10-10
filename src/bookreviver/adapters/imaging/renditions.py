@@ -11,10 +11,11 @@ page into memory.
 """
 
 import shutil
+from functools import partial
 from typing import TYPE_CHECKING, override
 
 import pyvips
-from asyncer import asyncify
+from anyio import to_thread
 
 from bookreviver.domain.enums import ColorMode, Rendition
 from bookreviver.domain.values import RenditionInfo, Renditions
@@ -69,7 +70,7 @@ class VipsRenditionWriter(RenditionWriter):
         if full not in Renditions.FULL_FORMATS:
             err_msg = f'{full} is not a format of the full image.'
             raise ValueError(err_msg)
-        return await asyncify(self._write)(image, target_dir, full=full, color_mode=color_mode)
+        return await to_thread.run_sync(partial(self._write, image, target_dir, full=full, color_mode=color_mode))
 
     def _write(self, image: Path, target_dir: Path, *, full: Rendition, color_mode: ColorMode) -> RenditionInfo:
         """Write the three files of one image into a new directory.

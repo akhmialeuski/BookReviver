@@ -182,9 +182,8 @@ async def _store(database: InMemoryDatabase, profile: RecipeProfile) -> RecipePr
     :rtype: RecipeProfile
     """
     uow = InMemoryUnitOfWork(database)
-    stored = await uow.recipe_profiles.add(profile)
-    await uow.commit()
-    return stored
+    async with uow.change():
+        return await uow.recipe_profiles.add(profile)
 
 
 class TestProfiles:

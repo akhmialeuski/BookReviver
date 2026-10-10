@@ -41,12 +41,16 @@ async def _commit_books(database: SqlDatabase, owner_id: AccountId, count: int) 
     """
     async with database.sessions() as session:
         uow = SqlAlchemyUnitOfWork(session)
-        for minutes in range(count):
-            project = await uow.projects.add(make_project(owner_id=owner_id, minutes=minutes))
-            page = await uow.pages.add(make_page(project_id=project.id))
-            await uow.page_stages.add(make_page_stage(page_id=page.id))
-            await uow.jobs.add(make_job(project_id=project.id, state=JobState.RUNNING, minutes=minutes))
-        await uow.commit()
+        projects = []
+        async with uow.change():
+            for minutes in range(count):
+                project = await uow.projects.add(make_project(owner_id=owner_id, minutes=minutes))
+                await uow.jobs.add(make_job(project_id=project.id, state=JobState.RUNNING, minutes=minutes))
+                projects.append(project)
+        for project in projects:
+            async with uow.change_book(project.id):
+                page = await uow.pages.add(make_page(project_id=project.id))
+                await uow.page_stages.add(make_page_stage(page_id=page.id))
 
 
 async def _statements_of_list(database: SqlDatabase, owner_id: AccountId, root: Path) -> int:

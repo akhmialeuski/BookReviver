@@ -1,10 +1,11 @@
 """Use cases of the processing framework a request makes: recipes, runs, previews and page versions.
 
 A stage has one recipe for each kind of page, and a page is processed by the recipe of its kind. The use cases here
-change a recipe or the current version of a stage, which writes rows, commits and marks the pages they affect stale, or
-start heavy
-work, a run, a preview, a cut of tiles, a collection or a measure of the book, which records a job with its parameters,
-queues it and answers at once, since a request handler never blocks on CPU-bound work. Neither runs a processor. The
+change a recipe or the current version of a stage, which writes rows in one ``change_book`` block and marks the pages
+they affect stale, or start heavy work, a run, a preview, a cut of tiles, a collection or a measure of the book, which
+records a job with its parameters, queues it and answers at once, since a request handler never blocks on CPU-bound
+work. A use case that starts heavy work holds no block itself: it finds the recipes, which opens a block of its own
+when the stage has none, and then the job starter records the job in a block of its own. Neither runs a processor. The
 workers do, through ``ProcessingJobs``, and the files of a step are written by ``steps.py``.
 
 Editing a recipe does not process any page again. It marks the stage stale on every page the recipe processed, and the
@@ -61,7 +62,7 @@ class ProcessingService:
     ) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose commit ends every changing use case.
+        :param uow: Unit of work of the request, in whose ``change_book`` blocks the changing use cases write.
         :type uow: UnitOfWork
         :param assets: Store of the derived files, whose size a report of a collection reads.
         :type assets: AssetStore
@@ -106,7 +107,10 @@ class ProcessingService:
         return Slice(items=recipes[request.offset : request.offset + request.limit], total=len(recipes))
 
     async def save_recipe(self, actor: Actor, project_id: ProjectId, key: RecipeKey, draft: RecipeDraft) -> Recipe:
-        """Replace the steps of a recipe of a stage, and mark the pages it processed stale.
+        """Replace the steps of a recipe of a stage, and mark the pages it processed stale, in one block.
+
+        Called outside any block, and it opens a ``change_book`` of its own, in which the ownership, the recipe and
+        the stale marks are read and written together. The browser is told after the block.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -122,8 +126,14 @@ class ProcessingService:
         :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
                                         usual order.
         """
-        await owned_project(self._uow.projects, actor, project_id)
-        return await self._rewrite(await self._recipes.get(project_id, key.recipe_id, stage=key.stage), draft)
+        async with self._uow.change_book(project_id) as project:
+            if not project.is_owned_by(actor):
+                raise NotFoundError(project_id)
+            recipe = await self._recipes.get(project_id, key.recipe_id, stage=key.stage)
+            changed = await self._recipes.rewrite(recipe, draft)
+            stale = await self._records.mark_recipe_stale(recipe.id)
+        await self._records.announce(project_id, stale)
+        return changed
 
     async def start_run(self, actor: Actor, project_id: ProjectId, stage: Stage, run: StageRun) -> Job:
         """Record a job that runs a stage over some pages, each by the recipe of its kind, and queue it.
@@ -249,7 +259,9 @@ class ProcessingService:
         A preview of the project, queued or running, is cancelled first, since the reader asked for the choice and a
         preview is disposable: the editor of a step asks for one by itself, so a choice made a moment later would
         otherwise be refused by a job the reader never started. A request for a version that cannot be chosen is
-        refused before any preview is cancelled.
+        refused before any preview is cancelled. The version is checked again inside the block that makes it current,
+        since the cancelling is a block of its own, and a version that stopped being choosable meanwhile is refused with
+        nothing written.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -270,18 +282,18 @@ class ProcessingService:
                                running, which may be reading or deleting the versions the choice depends on.
         """
         await owned_project(self._uow.projects, actor, project_id)
-        await self._page(project_id, page_id)
-        version = await self._version_of(page_id, version_id)
-        if (reason := self._why_not_choosable(version, stage)) is not None:
-            raise ConflictError(NOT_CHOOSABLE.format(version_id=version_id, reason=reason))
+        await self._choosable(project_id, page_id, stage, version_id)
         if await self._starter.free_of_previews(project_id):
             raise ConflictError(PROJECT_BUSY)
         key = PageStageKey(page_id, stage)
-        previous = await self._uow.page_stages.find(key)
-        changed = await self._records.set_head(
-            key, head_version_id=version_id, recipe_id=None if previous is None else previous.recipe_id
-        )
-        await self._uow.commit()
+        async with self._uow.change_book(project_id) as project:
+            if not project.is_owned_by(actor):
+                raise NotFoundError(project_id)
+            version = await self._choosable(project_id, page_id, stage, version_id)
+            previous = await self._uow.page_stages.find(key)
+            changed = await self._records.set_head(
+                key, head_version_id=version_id, recipe_id=None if previous is None else previous.recipe_id
+            )
         await self._records.announce(project_id, changed)
         if version.renditions is not None and not version.tiles_ready:
             await self._starter.enqueue_tiles(project_id, [version_id])
@@ -464,24 +476,6 @@ class ProcessingService:
                 return mapped
             version = await self._version_of(page_id, version.input_id)
 
-    async def _rewrite(self, recipe: Recipe, draft: RecipeDraft) -> Recipe:
-        """Change the name and the steps of a recipe, and mark the pages it processed stale.
-
-        :param recipe: The recipe to change.
-        :type recipe: Recipe
-        :param draft: New name and steps, which are checked against their processors and their order.
-        :type draft: RecipeDraft
-        :returns: The recipe as stored.
-        :rtype: Recipe
-        :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
-                                        usual order.
-        """
-        changed = await self._recipes.rewrite(recipe, draft)
-        stale = await self._records.mark_recipe_stale(recipe.id)
-        await self._uow.commit()
-        await self._records.announce(recipe.project_id, stale)
-        return changed
-
     async def _page(self, project_id: ProjectId, page_id: PageId) -> Page:
         """Return a page of the project.
 
@@ -497,6 +491,33 @@ class ProcessingService:
         if page.project_id != project_id:
             raise NotFoundError(page_id)
         return page
+
+    async def _choosable(
+        self, project_id: ProjectId, page_id: PageId, stage: Stage, version_id: PageVersionId
+    ) -> PageVersion:
+        """Return a version of a page of the project, if it can be made the current one of a stage.
+
+        Reads only, so it is called before the block that makes the version current, where it refuses a request early,
+        and inside the block, where it decides.
+
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param page_id: Identifier of the page.
+        :type page_id: PageId
+        :param stage: The stage.
+        :type stage: Stage
+        :param version_id: Identifier of the version.
+        :type version_id: PageVersionId
+        :returns: The version.
+        :rtype: PageVersion
+        :raises NotFoundError: If the project has no such page, or the page has no such version.
+        :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage.
+        """
+        await self._page(project_id, page_id)
+        version = await self._version_of(page_id, version_id)
+        if (reason := self._why_not_choosable(version, stage)) is not None:
+            raise ConflictError(NOT_CHOOSABLE.format(version_id=version_id, reason=reason))
+        return version
 
     async def _version_of(self, page_id: PageId, version_id: PageVersionId) -> PageVersion:
         """Return a version of a page.

@@ -28,7 +28,9 @@ def migrate(context: click.Context) -> None:
     # SQLite creates the database file but not the directory holding it
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     context.ensure_object(dict)
-    context.obj['configs'] = [SqlDatabase(settings.resolved_database_url).config]
+    context.obj['configs'] = [
+        SqlDatabase(settings.resolved_database_url, wait_seconds=settings.change_wait_seconds).config
+    ]
 
 
 add_migration_commands(migrate)

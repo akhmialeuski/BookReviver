@@ -418,10 +418,10 @@ class TestStageSummaries:
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
         plate = make_page(project_id=fx_book.project.id, order_key='a1', scan=scan, kind=PageKind.PLATE)
         uow = InMemoryUnitOfWork(fx_database)
-        await uow.sources.add(source)
-        await uow.scans.add(scan)
-        await uow.pages.add(plate)
-        await uow.commit()
+        async with uow.change_book(fx_book.project.id):
+            await uow.sources.add(source)
+            await uow.scans.add(scan)
+            await uow.pages.add(plate)
         await store_scan_images(fx_asset_store, fx_book.project, scan)
         await run_stage(fx_client, fx_broker, fx_book, 'geometry')
         recipes = await recipes_of(fx_client, fx_book, 'geometry')
@@ -707,8 +707,8 @@ class TestRunAndVersions:
             ProjectKeys(fx_book.project.id).version_rendition(old, Rendition.FULL_JPEG)
         ) as path:
             path.write_bytes(OLD_VERSION_CONTENT)
-        await uow.page_versions.add(old)
-        await uow.commit()
+        async with uow.change_book(fx_book.project.id):
+            await uow.page_versions.add(old)
 
         first = await fx_client.get(f'{fx_book.path}{COLLECTABLE_PATH}')
         second = await fx_client.get(f'{fx_book.path}{COLLECTABLE_PATH}')
@@ -1119,10 +1119,10 @@ async def add_page(database: InMemoryDatabase, book: Book, order_key: str) -> Pa
     scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
     page = make_page(project_id=book.project.id, order_key=order_key, scan=scan)
     uow = InMemoryUnitOfWork(database)
-    await uow.sources.add(source)
-    await uow.scans.add(scan)
-    await uow.pages.add(page)
-    await uow.commit()
+    async with uow.change_book(book.project.id):
+        await uow.sources.add(source)
+        await uow.scans.add(scan)
+        await uow.pages.add(page)
     return page
 
 

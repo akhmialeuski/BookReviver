@@ -47,6 +47,7 @@ from tests.helpers.builders import (
     make_step_values,
     new_account_id,
 )
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, PageVersion
@@ -65,7 +66,7 @@ PREVIEW_CUTOFF = NOW - timedelta(hours=1)
 
 
 async def _store_page(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory) -> tuple[ProjectId, PageId]:
-    """Store a project with one page and commit.
+    """Store a project with one page, each in the block that owns it.
 
     :param uow_factory: Function opening a new unit of work of the backend under test.
     :type uow_factory: UnitOfWorkFactory
@@ -74,12 +75,9 @@ async def _store_page(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory) -
     :returns: The identifiers of the project and its page.
     :rtype: tuple[ProjectId, PageId]
     """
-    uow = await uow_factory()
     project = make_project(owner_id=await new_owner())
     page = make_page(project_id=project.id)
-    await uow.projects.add(project)
-    await uow.pages.add(page)
-    await uow.commit()
+    await store_project(await uow_factory(), project, page)
     return project.id, page.id
 
 
@@ -99,16 +97,17 @@ def _blank_page(project_id: ProjectId, order_key: str) -> Page:
 async def _add_marked_head(uow: UnitOfWork, page: Page) -> PageVersionId:
     """Store a base version of a page and a version of the geometry stage marked for review.
 
-    :param uow: Unit of work to add to, in which the page is stored.
+    :param uow: Unit of work to add to, with no block open, in which the project of the page is stored.
     :type uow: UnitOfWork
-    :param page: The page.
+    :param page: The page, which is stored.
     :type page: Page
     :returns: The identifier of the marked version.
     :rtype: PageVersionId
     """
     base = make_page_version(page_id=page.id)
     head = evolve(_version(base), review=ReviewReason.LOW_CONFIDENCE)
-    await uow.page_versions.add_many([base, head])
+    async with uow.change_book(page.project_id):
+        await uow.page_versions.add_many([base, head])
     return head.id
 
 
@@ -162,10 +161,12 @@ class TestRecipeRepository:
         """
         uow = await fx_uow_factory()
         project = make_project(owner_id=await fx_new_owner())
-        await uow.projects.add(project)
-        await uow.recipes.add(make_recipe(project_id=project.id, kind=RecipeKind.BLANK))
+        await store_project(uow, project)
+        async with uow.change_book(project.id):
+            await uow.recipes.add(make_recipe(project_id=project.id, kind=RecipeKind.BLANK))
         with pytest.raises(ConflictError):
-            await uow.recipes.add(make_recipe(project_id=project.id, kind=RecipeKind.BLANK, minutes=1))
+            async with uow.change_book(project.id):
+                await uow.recipes.add(make_recipe(project_id=project.id, kind=RecipeKind.BLANK, minutes=1))
 
     async def test_every_kind_and_other_stages_may_be_added_beside_a_recipe(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -179,13 +180,13 @@ class TestRecipeRepository:
         """
         uow = await fx_uow_factory()
         project = make_project(owner_id=await fx_new_owner())
-        await uow.projects.add(project)
+        await store_project(uow, project)
         recipes = [
             make_recipe(project_id=project.id, kind=kind, minutes=index) for index, kind in enumerate(RecipeKind)
         ]
         other_stage = make_recipe(project_id=project.id, stage=Stage.CLEANUP)
-        await uow.recipes.add_many([*reversed(recipes), other_stage])
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.recipes.add_many([*reversed(recipes), other_stage])
         listed = await (await fx_uow_factory()).recipes.list_for_stage(project.id, Stage.GEOMETRY)
         assert [recipe.id for recipe in listed] == [recipe.id for recipe in recipes]
 
@@ -206,10 +207,12 @@ class TestRecipeRepository:
         picture = make_recipe(project_id=project.id, kind=RecipeKind.BW_PICTURE, minutes=1)
         uow = await fx_uow_factory()
         for owned in (project, other):
-            await uow.projects.add(owned)
-        for recipe in (cleanup, picture, geometry, make_recipe(project_id=other.id)):
-            await uow.recipes.add(recipe)
-        await uow.commit()
+            await store_project(uow, owned)
+        async with uow.change_book(project.id):
+            for recipe in (cleanup, picture, geometry):
+                await uow.recipes.add(recipe)
+        async with uow.change_book(other.id):
+            await uow.recipes.add(make_recipe(project_id=other.id))
         recipes = (await fx_uow_factory()).recipes
         assert [recipe.id for recipe in await recipes.list_for_project(project.id)] == [
             geometry.id,
@@ -230,9 +233,9 @@ class TestRecipeRepository:
         plain = make_recipe(project_id=project.id)
         other = Step(processor_key='geometry.other', params={}, enabled=False)
         recipe = evolve(plain, steps=(*plain.steps, other, evolve(plain.steps[0], step_id=StepId(uuid4()))))
-        await uow.projects.add(project)
-        await uow.recipes.add(recipe)
-        await uow.commit()
+        await store_project(uow, project)
+        async with uow.change_book(project.id):
+            await uow.recipes.add(recipe)
         assert await (await fx_uow_factory()).recipes.get(recipe.id) == recipe
 
     async def test_recipe_of_a_missing_project_is_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
@@ -243,7 +246,8 @@ class TestRecipeRepository:
         """
         uow = await fx_uow_factory()
         with pytest.raises(NotFoundError):
-            await uow.recipes.add(make_recipe(project_id=ProjectId(new_account_id())))
+            async with uow.change():
+                await uow.recipes.add(make_recipe(project_id=ProjectId(new_account_id())))
 
     async def test_deleting_a_recipe_leaves_its_pages_without_it(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -258,12 +262,12 @@ class TestRecipeRepository:
         project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         recipe = make_recipe(project_id=project_id)
-        await uow.recipes.add(recipe)
-        await uow.page_stages.save(make_page_stage(page_id=page_id, recipe_id=recipe.id))
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.recipes.add(recipe)
+            await uow.page_stages.save(make_page_stage(page_id=page_id, recipe_id=recipe.id))
         uow = await fx_uow_factory()
-        await uow.recipes.delete(recipe.id)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.recipes.delete(recipe.id)
         kept = await (await fx_uow_factory()).page_stages.get(PageStageKey(page_id, Stage.GEOMETRY))
         assert kept.recipe_id is None
 
@@ -280,11 +284,11 @@ class TestRecipeRepository:
         project_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         recipe = make_recipe(project_id=project_id)
-        await uow.recipes.add(recipe)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.recipes.add(recipe)
         uow = await fx_uow_factory()
-        await uow.projects.delete(project_id)
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.delete(project_id)
         with pytest.raises(NotFoundError):
             await (await fx_uow_factory()).recipes.get(recipe.id)
 
@@ -302,12 +306,12 @@ class TestPageStageRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
-        await uow.page_stages.save(make_page_stage(page_id=page_id))
         stale = make_page_stage(page_id=page_id, state=StageState.STALE)
-        await uow.page_stages.save(stale)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_stages.save(make_page_stage(page_id=page_id))
+            await uow.page_stages.save(stale)
         assert await (await fx_uow_factory()).page_stages.find(PageStageKey(page_id, Stage.GEOMETRY)) == stale
 
     async def test_find_returns_none_for_a_stage_that_has_not_run(
@@ -335,7 +339,8 @@ class TestPageStageRepository:
         """
         uow = await fx_uow_factory()
         with pytest.raises(NotFoundError):
-            await uow.page_stages.save(make_page_stage(page_id=PageId(new_account_id())))
+            async with uow.change():
+                await uow.page_stages.save(make_page_stage(page_id=PageId(new_account_id())))
 
     async def test_list_for_page_follows_the_order_of_the_stages(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -347,10 +352,11 @@ class TestPageStageRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
-        for stage in (Stage.CLEANUP, Stage.PAGE_SPLIT, Stage.GEOMETRY):
-            await uow.page_stages.save(make_page_stage(page_id=page_id, stage=stage))
+        async with uow.change_book(project_id):
+            for stage in (Stage.CLEANUP, Stage.PAGE_SPLIT, Stage.GEOMETRY):
+                await uow.page_stages.save(make_page_stage(page_id=page_id, stage=stage))
         assert [record.stage for record in await uow.page_stages.list_for_page(page_id)] == [
             Stage.PAGE_SPLIT,
             Stage.GEOMETRY,
@@ -367,13 +373,13 @@ class TestPageStageRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, first = await _store_page(fx_uow_factory, fx_new_owner)
-        _, second = await _store_page(fx_uow_factory, fx_new_owner)
-        _, other = await _store_page(fx_uow_factory, fx_new_owner)
+        first_book, second_book, other_book = [await _store_page(fx_uow_factory, fx_new_owner) for _ in range(3)]
+        first, second, other = first_book[1], second_book[1], other_book[1]
         uow = await fx_uow_factory()
-        for page_id in (first, second, other):
-            for stage in (Stage.GEOMETRY, Stage.PAGE_SPLIT):
-                await uow.page_stages.save(make_page_stage(page_id=page_id, stage=stage))
+        for project_id, page_id in (first_book, second_book, other_book):
+            async with uow.change_book(project_id):
+                for stage in (Stage.GEOMETRY, Stage.PAGE_SPLIT):
+                    await uow.page_stages.save(make_page_stage(page_id=page_id, stage=stage))
         found = await uow.page_stages.list_for_pages([first, second])
         by_page = {page_id: [r.stage for r in found if r.page_id == page_id] for page_id in (first, second, other)}
         assert by_page == {
@@ -392,10 +398,11 @@ class TestPageStageRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         with pytest.raises(NotFoundError):
-            await uow.page_stages.save(make_page_stage(page_id=page_id, head_version_id=PageVersionId('0' * 16)))
+            async with uow.change_book(project_id):
+                await uow.page_stages.save(make_page_stage(page_id=page_id, head_version_id=PageVersionId('0' * 16)))
 
     async def test_queries_by_recipe_and_by_stage_of_a_project(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -411,12 +418,13 @@ class TestPageStageRepository:
         other_project_id, other_page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         recipe = make_recipe(project_id=project_id)
-        await uow.recipes.add(recipe)
         mine = make_page_stage(page_id=page_id, recipe_id=recipe.id)
-        await uow.page_stages.save(mine)
-        await uow.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.CLEANUP))
-        await uow.page_stages.save(make_page_stage(page_id=other_page_id))
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.recipes.add(recipe)
+            await uow.page_stages.save(mine)
+            await uow.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.CLEANUP))
+        async with uow.change_book(other_project_id):
+            await uow.page_stages.save(make_page_stage(page_id=other_page_id))
         uow = await fx_uow_factory()
         assert (
             await uow.page_stages.list_for_recipe(recipe.id),
@@ -434,19 +442,23 @@ class TestPageStageRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
-        _, other_page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        other_project_id, other_page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         fresh = [
             make_page_stage(page_id=page_id, stage=Stage.CLEANUP),
             make_page_stage(page_id=page_id, stage=Stage.GEOMETRY),
             make_page_stage(page_id=other_page_id, stage=Stage.GEOMETRY),
         ]
-        for record in fresh:
-            await uow.page_stages.save(record)
-        await uow.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.PAGE_SPLIT, state=StageState.STALE))
-        await uow.page_stages.save(make_page_stage(page_id=other_page_id, stage=Stage.CLEANUP, state=StageState.FAILED))
-        await uow.commit()
+        async with uow.change_book(project_id):
+            for record in fresh[:2]:
+                await uow.page_stages.save(record)
+            await uow.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.PAGE_SPLIT, state=StageState.STALE))
+        async with uow.change_book(other_project_id):
+            await uow.page_stages.save(fresh[2])
+            await uow.page_stages.save(
+                make_page_stage(page_id=other_page_id, stage=Stage.CLEANUP, state=StageState.FAILED)
+            )
         order = list(Stage)
         expected = sorted(fresh, key=lambda record: (str(record.page_id), order.index(record.stage)))
 
@@ -466,7 +478,8 @@ class TestPageStageRepository:
         :type fx_new_owner: OwnerFactory
         """
         installed = ProcessorRef(key='pages.blank', version='2')
-        pages = [(await _store_page(fx_uow_factory, fx_new_owner))[1] for _ in range(4)]
+        books = [await _store_page(fx_uow_factory, fx_new_owner) for _ in range(4)]
+        pages = [page_id for _, page_id in books]
         made_by = [
             ProcessorRef(key='pages.blank', version='1'),
             installed,
@@ -475,21 +488,20 @@ class TestPageStageRepository:
         ]
         uow = await fx_uow_factory()
         records = []
-        for page_id, processor in zip(pages, made_by, strict=True):
+        for (project_id, page_id), processor in zip(books, made_by, strict=True):
             version = evolve(make_page_version(page_id=page_id), stage=Stage.PAGE_ORDER, processor=processor)
-            await uow.page_versions.add(version)
             state = StageState.STALE if page_id == pages[0] else StageState.FRESH
-            records.append(
-                make_page_stage(page_id=page_id, stage=Stage.PAGE_ORDER, head_version_id=version.id, state=state)
-            )
-        for record in records:
-            await uow.page_stages.save(record)
+            record = make_page_stage(page_id=page_id, stage=Stage.PAGE_ORDER, head_version_id=version.id, state=state)
+            records.append(record)
+            async with uow.change_book(project_id):
+                await uow.page_versions.add(version)
+                await uow.page_stages.save(record)
         other_stage = evolve(make_page_version(page_id=pages[3]), stage=Stage.GEOMETRY, processor=made_by[0])
-        await uow.page_versions.add(other_stage)
-        await uow.page_stages.save(
-            make_page_stage(page_id=pages[3], stage=Stage.GEOMETRY, head_version_id=other_stage.id)
-        )
-        await uow.commit()
+        async with uow.change_book(books[3][0]):
+            await uow.page_versions.add(other_stage)
+            await uow.page_stages.save(
+                make_page_stage(page_id=pages[3], stage=Stage.GEOMETRY, head_version_id=other_stage.id)
+            )
 
         found = await (await fx_uow_factory()).page_stages.list_replaced(Stage.PAGE_ORDER, installed)
 
@@ -509,9 +521,10 @@ class TestPageStageRepository:
         uow = await fx_uow_factory()
         base = make_page_version(page_id=page_id)
         version = _version(base)
-        await uow.page_versions.add_many([base, version])
-        await uow.page_stages.save(make_page_stage(page_id=page_id, head_version_id=version.id))
-        await uow.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.CLEANUP))
+        async with uow.change_book(project_id):
+            await uow.page_versions.add_many([base, version])
+            await uow.page_stages.save(make_page_stage(page_id=page_id, head_version_id=version.id))
+            await uow.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.CLEANUP))
         assert set(await uow.page_stages.head_ids(project_id)) == {version.id}
 
     async def test_tally_counts_the_records_of_each_stage_by_state_and_review(
@@ -529,24 +542,24 @@ class TestPageStageRepository:
         owner_id = await fx_new_owner()
         project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         uow = await fx_uow_factory()
-        for owned in (project, other):
-            await uow.projects.add(owned)
         marked, stale, failed = (_blank_page(project.id, f'a{number}') for number in range(3))
         placeholder = make_page(project_id=project.id, order_key='b0')
         elsewhere = _blank_page(other.id, 'a0')
-        await uow.pages.add_many([marked, stale, failed, placeholder, elsewhere])
+        await store_project(uow, project, marked, stale, failed, placeholder)
+        await store_project(uow, other, elsewhere)
         marked_head = await _add_marked_head(uow, marked)
         failed_head = await _add_marked_head(uow, failed)
-        for record in (
-            make_page_stage(page_id=marked.id, head_version_id=marked_head),
-            make_page_stage(page_id=stale.id, state=StageState.STALE),
-            make_page_stage(page_id=failed.id, head_version_id=failed_head, state=StageState.FAILED),
-            make_page_stage(page_id=placeholder.id),
-            make_page_stage(page_id=marked.id, stage=Stage.CLEANUP),
-            make_page_stage(page_id=elsewhere.id),
-        ):
-            await uow.page_stages.save(record)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            for record in (
+                make_page_stage(page_id=marked.id, head_version_id=marked_head),
+                make_page_stage(page_id=stale.id, state=StageState.STALE),
+                make_page_stage(page_id=failed.id, head_version_id=failed_head, state=StageState.FAILED),
+                make_page_stage(page_id=placeholder.id),
+                make_page_stage(page_id=marked.id, stage=Stage.CLEANUP),
+            ):
+                await uow.page_stages.save(record)
+        async with uow.change_book(other.id):
+            await uow.page_stages.save(make_page_stage(page_id=elsewhere.id))
         repository = (await fx_uow_factory()).page_stages
         tallies = await repository.tally({project.id})
         counts = {(tally.stage, tally.fresh, tally.stale, tally.failed, tally.review, tally.check) for tally in tallies}
@@ -566,13 +579,14 @@ class TestPageStageRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
         both, clean = (_blank_page(project.id, f'a{number}') for number in range(2))
-        await uow.pages.add_many([both, clean])
+        await store_project(uow, project, both, clean)
         head_id = await _add_marked_head(uow, both)
-        await uow.page_stages.save(make_page_stage(page_id=both.id, head_version_id=head_id, state=StageState.STALE))
-        await uow.page_stages.save(make_page_stage(page_id=clean.id))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_stages.save(
+                make_page_stage(page_id=both.id, head_version_id=head_id, state=StageState.STALE)
+            )
+            await uow.page_stages.save(make_page_stage(page_id=clean.id))
         [tally] = await (await fx_uow_factory()).page_stages.tally({project.id})
         assert (tally.fresh, tally.stale, tally.review, tally.check) == (1, 1, 1, 1)
 
@@ -591,23 +605,22 @@ class TestPageStageRepository:
         owner_id = await fx_new_owner()
         project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         uow = await fx_uow_factory()
-        for owned in (project, other):
-            await uow.projects.add(owned)
         first, second, whole, failed = (_blank_page(project.id, f'a{number}') for number in range(4))
         placeholder = make_page(project_id=project.id, order_key='b1')
         elsewhere = _blank_page(other.id, 'a1')
-        await uow.pages.add_many([first, second, whole, failed, placeholder, elsewhere])
-        for page, through_step, state in (
-            (first, 0, StageState.FRESH),
-            (second, 0, StageState.STALE),
-            (whole, None, StageState.FRESH),
-            (failed, 1, StageState.FAILED),
-            (placeholder, 0, StageState.FRESH),
-            (elsewhere, 0, StageState.FRESH),
+        await store_project(uow, project, first, second, whole, failed, placeholder)
+        await store_project(uow, other, elsewhere)
+        for owned, page, through_step, state in (
+            (project, first, 0, StageState.FRESH),
+            (project, second, 0, StageState.STALE),
+            (project, whole, None, StageState.FRESH),
+            (project, failed, 1, StageState.FAILED),
+            (project, placeholder, 0, StageState.FRESH),
+            (other, elsewhere, 0, StageState.FRESH),
         ):
             record = make_page_stage(page_id=page.id, state=state)
-            await uow.page_stages.save(evolve(record, through_step=through_step))
-        await uow.commit()
+            async with uow.change_book(owned.id):
+                await uow.page_stages.save(evolve(record, through_step=through_step))
         repository = (await fx_uow_factory()).page_stages
         [tally] = await repository.tally({project.id})
         assert await repository.step_tally(project.id) == [StepTally(stage=Stage.GEOMETRY, through_step=0, pages=2)]
@@ -623,16 +636,16 @@ class TestPageStageRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         base = make_page_version(page_id=page_id)
         version = _version(base)
-        await uow.page_versions.add_many([base, version])
-        await uow.page_stages.save(make_page_stage(page_id=page_id, head_version_id=version.id))
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_versions.add_many([base, version])
+            await uow.page_stages.save(make_page_stage(page_id=page_id, head_version_id=version.id))
         uow = await fx_uow_factory()
-        await uow.page_versions.delete(version.id)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_versions.delete(version.id)
         kept = await (await fx_uow_factory()).page_stages.get(PageStageKey(page_id, Stage.GEOMETRY))
         assert kept.head_version_id is None
 
@@ -646,15 +659,15 @@ class TestPageStageRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
-        await uow.page_stages.save(make_page_stage(page_id=page_id))
-        await uow.page_step_states.save(make_page_step_state(page_id=page_id, edit=make_page_edit(page_id=page_id)))
-        await uow.page_step_changes.add(make_page_step_change(page_id=page_id))
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_stages.save(make_page_stage(page_id=page_id))
+            await uow.page_step_states.save(make_page_step_state(page_id=page_id, edit=make_page_edit(page_id=page_id)))
+            await uow.page_step_changes.add(make_page_step_change(page_id=page_id))
         uow = await fx_uow_factory()
-        await uow.pages.delete(page_id)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.pages.delete(page_id)
         uow = await fx_uow_factory()
         assert (
             await uow.page_stages.find(PageStageKey(page_id, Stage.GEOMETRY)),
@@ -676,12 +689,12 @@ class TestPageStepStateRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
-        await uow.page_step_states.save(make_page_step_state(page_id=page_id, params={'max_angle_deg': 3}))
         replacement = make_page_step_state(page_id=page_id, params={'max_angle_deg': 7})
-        await uow.page_step_states.save(replacement)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_step_states.save(make_page_step_state(page_id=page_id, params={'max_angle_deg': 3}))
+            await uow.page_step_states.save(replacement)
         found = await (await fx_uow_factory()).page_step_states.find(
             PageStepKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID)
         )
@@ -697,7 +710,7 @@ class TestPageStepStateRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         both = make_page_step_state(
             page_id=page_id, params={'max_angle_deg': 3, 'method': 'projection'}, edit=make_page_edit(page_id=page_id)
         )
@@ -706,9 +719,9 @@ class TestPageStepStateRepository:
             page_id=page_id, stage=Stage.LAYOUT, edit=make_page_edit(page_id=page_id, stage=Stage.LAYOUT)
         )
         uow = await fx_uow_factory()
-        for state in (both, settings_only, edit_only):
-            await uow.page_step_states.save(state)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            for state in (both, settings_only, edit_only):
+                await uow.page_step_states.save(state)
         states = (await fx_uow_factory()).page_step_states
         assert [await states.get(state.key) for state in (both, settings_only, edit_only)] == [
             both,
@@ -726,7 +739,7 @@ class TestPageStepStateRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         geometry = Line(start=Point(x=1100.5, y=0), end=Point(x=1104, y=1561))
         edit = PageEdit(
             page_id=page_id,
@@ -740,8 +753,8 @@ class TestPageStepStateRepository:
         )
         state = make_page_step_state(page_id=page_id, stage=Stage.PAGE_SPLIT, step_id=edit.step_id, edit=edit)
         uow = await fx_uow_factory()
-        await uow.page_step_states.save(state)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_step_states.save(state)
         assert await (await fx_uow_factory()).page_step_states.get(state.key) == state
 
     async def test_list_for_page_filters_by_stage(
@@ -754,12 +767,13 @@ class TestPageStepStateRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         geometry = make_page_step_state(page_id=page_id, params={'max_angle_deg': 3})
         cleanup = evolve(geometry, stage=Stage.CLEANUP)
-        await uow.page_step_states.save(cleanup)
-        await uow.page_step_states.save(geometry)
+        async with uow.change_book(project_id):
+            await uow.page_step_states.save(cleanup)
+            await uow.page_step_states.save(geometry)
         assert (
             await uow.page_step_states.list_for_page(page_id, Stage.GEOMETRY),
             await uow.page_step_states.list_for_page(page_id),
@@ -775,13 +789,13 @@ class TestPageStepStateRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         first = make_page_step_state(page_id=page_id, params={'max_angle_deg': 1})
         second = make_page_step_state(page_id=page_id, step_id=StepId(uuid4()), params={'max_angle_deg': 2})
         uow = await fx_uow_factory()
-        await uow.page_step_states.save(first)
-        await uow.page_step_states.save(second)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_step_states.save(first)
+            await uow.page_step_states.save(second)
         states = (await fx_uow_factory()).page_step_states
         assert (await states.find(first.key), await states.find(second.key)) == (first, second)
 
@@ -795,15 +809,17 @@ class TestPageStepStateRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, first_page = await _store_page(fx_uow_factory, fx_new_owner)
-        _, second_page = await _store_page(fx_uow_factory, fx_new_owner)
+        first_project, first_page = await _store_page(fx_uow_factory, fx_new_owner)
+        second_project, second_page = await _store_page(fx_uow_factory, fx_new_owner)
         on_first = make_page_step_state(page_id=first_page, params={'max_angle_deg': 1})
         on_second = make_page_step_state(page_id=second_page, params={'max_angle_deg': 2})
         other_step = make_page_step_state(page_id=first_page, step_id=StepId(uuid4()), params={'max_angle_deg': 3})
         uow = await fx_uow_factory()
-        for state in (on_first, on_second, other_step):
-            await uow.page_step_states.save(state)
-        await uow.commit()
+        async with uow.change_book(first_project):
+            for state in (on_first, other_step):
+                await uow.page_step_states.save(state)
+        async with uow.change_book(second_project):
+            await uow.page_step_states.save(on_second)
         states = (await fx_uow_factory()).page_step_states
         listed = await states.list_for_step([first_page], Stage.GEOMETRY, DESKEW_STEP_ID)
         both = await states.list_for_step([first_page, second_page], Stage.GEOMETRY, DESKEW_STEP_ID)
@@ -822,7 +838,8 @@ class TestPageStepStateRepository:
         """
         uow = await fx_uow_factory()
         with pytest.raises(NotFoundError):
-            await uow.page_step_states.save(make_page_step_state(page_id=PageId(new_account_id())))
+            async with uow.change():
+                await uow.page_step_states.save(make_page_step_state(page_id=PageId(new_account_id())))
 
     async def test_delete_removes_a_state(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
         """Verify a deleted state is gone, and deleting it again is a NotFoundError.
@@ -832,13 +849,15 @@ class TestPageStepStateRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         state = make_page_step_state(page_id=page_id, params={'max_angle_deg': 3})
-        await uow.page_step_states.save(state)
-        await uow.page_step_states.delete(state.key)
-        with pytest.raises(NotFoundError):
+        async with uow.change_book(project_id):
+            await uow.page_step_states.save(state)
             await uow.page_step_states.delete(state.key)
+        with pytest.raises(NotFoundError):
+            async with uow.change_book(project_id):
+                await uow.page_step_states.delete(state.key)
 
 
 class TestStepValuesRepository:
@@ -856,10 +875,10 @@ class TestStepValuesRepository:
         """
         project_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
-        await uow.step_values.save(make_step_values(project_id=project_id, params={'max_angle_deg': 3}))
         replacement = make_step_values(project_id=project_id, params={'max_angle_deg': 7, 'method': 'projection'})
-        await uow.step_values.save(replacement)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.step_values.save(make_step_values(project_id=project_id, params={'max_angle_deg': 3}))
+            await uow.step_values.save(replacement)
         found = await (await fx_uow_factory()).step_values.find(replacement.key)
         assert found == replacement
 
@@ -881,9 +900,9 @@ class TestStepValuesRepository:
             make_step_values(project_id=project_id, scope=ValueScope.GROUP, group_label='Appendix'),
         ]
         uow = await fx_uow_factory()
-        for values in parts:
-            await uow.step_values.save(values)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            for values in parts:
+                await uow.step_values.save(values)
         listed = await (await fx_uow_factory()).step_values.list_for_step(project_id, DESKEW_STEP_ID)
         assert [(values.scope, values.group_label) for values in listed] == [
             (ValueScope.GROUP, 'Appendix'),
@@ -909,9 +928,11 @@ class TestStepValuesRepository:
         other_stage = evolve(make_step_values(project_id=project_id, step_id=StepId(uuid4())), stage=Stage.CLEANUP)
         other_book = make_step_values(project_id=other_project_id, step_id=StepId(uuid4()))
         uow = await fx_uow_factory()
-        for values in (mine, other_step, other_stage, other_book):
-            await uow.step_values.save(values)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            for values in (mine, other_step, other_stage):
+                await uow.step_values.save(values)
+        async with uow.change_book(other_project_id):
+            await uow.step_values.save(other_book)
         reading = (await fx_uow_factory()).step_values
         assert (
             await reading.list_for_step(project_id, DESKEW_STEP_ID),
@@ -936,17 +957,18 @@ class TestStepValuesRepository:
         first = make_step_values(project_id=first_id, params={'max_angle_deg': 3})
         second = make_step_values(project_id=second_id, params={'max_angle_deg': 9})
         uow = await fx_uow_factory()
-        await uow.step_values.save(first)
-        await uow.step_values.save(second)
-        await uow.commit()
+        async with uow.change_book(first_id):
+            await uow.step_values.save(first)
+        async with uow.change_book(second_id):
+            await uow.step_values.save(second)
         reading = (await fx_uow_factory()).step_values
         expect(await reading.list_for_step(first_id, DESKEW_STEP_ID) == [first])
         expect(await reading.list_for_step(second_id, DESKEW_STEP_ID) == [second])
         expect(await reading.find(first.key) == first)
         expect(await reading.find(second.key) == second)
         uow = await fx_uow_factory()
-        await uow.step_values.delete(first.key)
-        await uow.commit()
+        async with uow.change_book(first_id):
+            await uow.step_values.delete(first.key)
         reading = (await fx_uow_factory()).step_values
         expect(await reading.find(first.key) is None)
         expect(await reading.find(second.key) == second)
@@ -966,14 +988,15 @@ class TestStepValuesRepository:
         even = make_step_values(project_id=project_id)
         odd = make_step_values(project_id=project_id, scope=ValueScope.ODD)
         uow = await fx_uow_factory()
-        await uow.step_values.save(even)
-        await uow.step_values.save(odd)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.step_values.save(even)
+            await uow.step_values.save(odd)
         uow = await fx_uow_factory()
-        await uow.step_values.delete(even.key)
-        with pytest.raises(NotFoundError):
+        async with uow.change_book(project_id):
             await uow.step_values.delete(even.key)
-        await uow.commit()
+        with pytest.raises(NotFoundError):
+            async with uow.change_book(project_id):
+                await uow.step_values.delete(even.key)
         reading = (await fx_uow_factory()).step_values
         assert (await reading.find(even.key), await reading.find(odd.key)) == (None, odd)
 
@@ -985,7 +1008,8 @@ class TestStepValuesRepository:
         """
         uow = await fx_uow_factory()
         with pytest.raises(NotFoundError):
-            await uow.step_values.save(make_step_values(project_id=ProjectId(uuid4())))
+            async with uow.change():
+                await uow.step_values.save(make_step_values(project_id=ProjectId(uuid4())))
 
     async def test_deleting_the_project_deletes_its_values(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1000,13 +1024,14 @@ class TestStepValuesRepository:
         project_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
         other_project_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
-        await uow.step_values.save(make_step_values(project_id=project_id))
         kept = make_step_values(project_id=other_project_id, scope=ValueScope.ODD)
-        await uow.step_values.save(kept)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.step_values.save(make_step_values(project_id=project_id))
+        async with uow.change_book(other_project_id):
+            await uow.step_values.save(kept)
         uow = await fx_uow_factory()
-        await uow.projects.delete(project_id)
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.delete(project_id)
         assert await (await fx_uow_factory()).step_values.list_for_step(other_project_id, DESKEW_STEP_ID) == [kept]
 
 
@@ -1023,7 +1048,7 @@ class TestPageStepChangeRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         change = evolve(
             make_page_step_change(page_id=page_id, before=None, after={'method': 'otsu'}),
             scope=ValueScope.GROUP,
@@ -1033,8 +1058,8 @@ class TestPageStepChangeRepository:
             undoes=PageStepChangeId(uuid4()),
         )
         uow = await fx_uow_factory()
-        stored = await uow.page_step_changes.add(change)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            stored = await uow.page_step_changes.add(change)
         assert (await (await fx_uow_factory()).page_step_changes.get(change.id), stored) == (
             stored,
             evolve(change, sequence=1),
@@ -1050,16 +1075,16 @@ class TestPageStepChangeRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         written = [make_page_step_change(page_id=page_id, created_at=EPOCH) for _ in range(6)]
         uow = await fx_uow_factory()
-        for change in written[:2]:
-            await uow.page_step_changes.add(change)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            for change in written[:2]:
+                await uow.page_step_changes.add(change)
         uow = await fx_uow_factory()
-        await uow.page_step_changes.add_many(written[2:5])
-        await uow.page_step_changes.add(written[5])
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_step_changes.add_many(written[2:5])
+            await uow.page_step_changes.add(written[5])
         listed = await (await fx_uow_factory()).page_step_changes.list_for_page(page_id)
         assert ([change.id for change in listed], [change.sequence for change in listed]) == (
             [change.id for change in written],
@@ -1076,12 +1101,13 @@ class TestPageStepChangeRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         later = make_page_step_change(page_id=page_id, created_at=EPOCH + RECENT)
         earlier = make_page_step_change(page_id=page_id, created_at=EPOCH)
         cleanup = make_page_step_change(page_id=page_id, stage=Stage.CLEANUP, created_at=EPOCH + OLD)
         uow = await fx_uow_factory()
-        await uow.page_step_changes.add_many([earlier, later, cleanup])
+        async with uow.change_book(project_id):
+            await uow.page_step_changes.add_many([earlier, later, cleanup])
         listed = await uow.page_step_changes.list_for_page(page_id)
         in_stage = await uow.page_step_changes.list_for_page(page_id, Stage.GEOMETRY)
         assert ([change.id for change in listed], [change.id for change in in_stage]) == (
@@ -1102,7 +1128,6 @@ class TestPageStepChangeRepository:
         project_id, first_page = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         second_page = make_page(project_id=project_id, order_key=SECOND_ORDER_KEY)
-        await uow.pages.add(second_page)
         batch = ChangeBatchId(uuid4())
         members = [
             evolve(make_page_step_change(page_id=page_id), batch_id=batch)
@@ -1112,8 +1137,9 @@ class TestPageStepChangeRepository:
             make_page_step_change(page_id=first_page),
             evolve(make_page_step_change(page_id=first_page), batch_id=ChangeBatchId(uuid4())),
         ]
-        stored = await uow.page_step_changes.add_many([*members, *outside])
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.pages.add(second_page)
+            stored = await uow.page_step_changes.add_many([*members, *outside])
         listed = await (await fx_uow_factory()).page_step_changes.list_for_batch(batch)
         expected = sorted(stored[: len(members)], key=attrgetter('page_id', 'sequence'))
         assert listed == expected
@@ -1128,13 +1154,13 @@ class TestPageStepChangeRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         taken, standing, other = (make_page_step_change(page_id=page_id) for _ in range(3))
         undo = evolve(make_page_step_change(page_id=page_id), source=ChangeSource.UNDO, undoes=taken.id)
         unrelated = evolve(make_page_step_change(page_id=page_id), source=ChangeSource.UNDO, undoes=other.id)
         uow = await fx_uow_factory()
-        await uow.page_step_changes.add_many([taken, standing, other, undo, unrelated])
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_step_changes.add_many([taken, standing, other, undo, unrelated])
         found = await (await fx_uow_factory()).page_step_changes.list_undoing([taken.id, standing.id])
         nothing = await (await fx_uow_factory()).page_step_changes.list_undoing([])
         assert ([change.id for change in found], nothing) == ([undo.id], [])
@@ -1152,7 +1178,6 @@ class TestPageStepChangeRepository:
         project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         other_page = make_page(project_id=project_id, order_key=SECOND_ORDER_KEY)
-        await uow.pages.add(other_page)
         doomed = [make_page_step_change(page_id=page_id) for _ in range(3)]
         undo = evolve(make_page_step_change(page_id=page_id), source=ChangeSource.UNDO, undoes=doomed[0].id)
         carried = evolve(
@@ -1161,11 +1186,12 @@ class TestPageStepChangeRepository:
         other_step = evolve(make_page_step_change(page_id=page_id), step_id=StepId(uuid4()))
         other_stage = make_page_step_change(page_id=page_id, stage=Stage.CLEANUP)
         elsewhere = make_page_step_change(page_id=other_page.id)
-        await uow.page_step_changes.add_many([*doomed, undo, carried, other_step, other_stage, elsewhere])
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.pages.add(other_page)
+            await uow.page_step_changes.add_many([*doomed, undo, carried, other_step, other_stage, elsewhere])
         uow = await fx_uow_factory()
-        deleted = await uow.page_step_changes.delete_for_step(PageStepKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID))
-        await uow.commit()
+        async with uow.change_book(project_id):
+            deleted = await uow.page_step_changes.delete_for_step(PageStepKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID))
         reading = await fx_uow_factory()
         assert (
             deleted,
@@ -1183,9 +1209,11 @@ class TestPageStepChangeRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
-        assert await uow.page_step_changes.delete_for_step(PageStepKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID)) == 0
+        async with uow.change_book(project_id):
+            deleted = await uow.page_step_changes.delete_for_step(PageStepKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID))
+        assert deleted == 0
 
     async def test_a_change_added_after_delete_for_step_is_numbered_above_every_remaining_one(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1197,7 +1225,7 @@ class TestPageStepChangeRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         other_step = StepId(uuid4())
         uow = await fx_uow_factory()
         written = [
@@ -1205,12 +1233,12 @@ class TestPageStepChangeRepository:
             evolve(make_page_step_change(page_id=page_id), step_id=other_step),
             make_page_step_change(page_id=page_id),
         ]
-        await uow.page_step_changes.add_many(written)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_step_changes.add_many(written)
         uow = await fx_uow_factory()
-        await uow.page_step_changes.delete_for_step(PageStepKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID))
-        added = await uow.page_step_changes.add(make_page_step_change(page_id=page_id))
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_step_changes.delete_for_step(PageStepKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID))
+            added = await uow.page_step_changes.add(make_page_step_change(page_id=page_id))
         listed = await (await fx_uow_factory()).page_step_changes.list_for_page(page_id)
         assert ([change.sequence for change in listed], added.sequence) == ([2, 3], 3)
 
@@ -1222,7 +1250,8 @@ class TestPageStepChangeRepository:
         """
         uow = await fx_uow_factory()
         with pytest.raises(NotFoundError):
-            await uow.page_step_changes.add(make_page_step_change(page_id=PageId(new_account_id())))
+            async with uow.change():
+                await uow.page_step_changes.add(make_page_step_change(page_id=PageId(new_account_id())))
 
     async def test_change_is_stored_once(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
         """Verify a change with an identifier that is stored already is a conflict.
@@ -1232,13 +1261,15 @@ class TestPageStepChangeRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         change = make_page_step_change(page_id=page_id)
         uow = await fx_uow_factory()
-        await uow.page_step_changes.add(change)
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_step_changes.add(change)
+        again = await fx_uow_factory()
         with pytest.raises(ConflictError):
-            await (await fx_uow_factory()).page_step_changes.add(change)
+            async with again.change_book(project_id):
+                await again.page_step_changes.add(change)
 
 
 class TestPageVersionProcessing:
@@ -1254,15 +1285,15 @@ class TestPageVersionProcessing:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         base = make_page_version(page_id=page_id)
         version = evolve(
             _version(base, scale=VersionScale.PREVIEW, edit_hash='0123456789abcdef', tiles_ready=True),
             review=ReviewReason.LOW_CONFIDENCE,
         )
-        await uow.page_versions.add_many([base, version])
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_versions.add_many([base, version])
         assert await (await fx_uow_factory()).page_versions.get(version.id) == version
 
     async def test_find_returns_a_version_by_its_identifier_or_none(
@@ -1275,10 +1306,11 @@ class TestPageVersionProcessing:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         base = make_page_version(page_id=page_id)
-        await uow.page_versions.add(base)
+        async with uow.change_book(project_id):
+            await uow.page_versions.add(base)
         assert (await uow.page_versions.find(base.id), await uow.page_versions.find(PageVersionId('f' * 16))) == (
             base,
             None,
@@ -1294,12 +1326,13 @@ class TestPageVersionProcessing:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         older = make_page_version(page_id=page_id, minutes=1)
         newer = make_page_version(page_id=page_id, minutes=2)
         unwanted = make_page_version(page_id=page_id, minutes=3)
-        await uow.page_versions.add_many([newer, older, unwanted])
+        async with uow.change_book(project_id):
+            await uow.page_versions.add_many([newer, older, unwanted])
         found = await uow.page_versions.list_by_ids([newer.id, older.id, PageVersionId('f' * 16)])
         assert [version.id for version in found] == [older.id, newer.id]
 
@@ -1313,14 +1346,15 @@ class TestPageVersionProcessing:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         base = make_page_version(page_id=page_id)
         first = evolve(_version(base), created_at=EPOCH + timedelta(minutes=1))
         second = evolve(_version(base), created_at=EPOCH + timedelta(minutes=2))
         preview = evolve(_version(base, scale=VersionScale.PREVIEW), created_at=EPOCH + timedelta(minutes=3))
         cleanup = evolve(_version(base, stage=Stage.CLEANUP), created_at=EPOCH + timedelta(minutes=4))
-        await uow.page_versions.add_many([base, first, second, preview, cleanup])
+        async with uow.change_book(project_id):
+            await uow.page_versions.add_many([base, first, second, preview, cleanup])
         repository = uow.page_versions
         everything = SliceRequest(limit=10)
         full_geometry = await repository.list_for_stage(page_id, Stage.GEOMETRY, VersionScale.FULL, everything)
@@ -1342,13 +1376,14 @@ class TestPageVersionProcessing:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         base = make_page_version(page_id=page_id)
         bad = evolve(_version(base), mark=ResultMark.BAD, created_at=EPOCH + timedelta(minutes=1))
         good = evolve(_version(base), mark=ResultMark.GOOD, created_at=EPOCH + timedelta(minutes=2))
         unmarked = evolve(_version(base), created_at=EPOCH + timedelta(minutes=3))
-        await uow.page_versions.add_many([base, bad, good, unmarked])
+        async with uow.change_book(project_id):
+            await uow.page_versions.add_many([base, bad, good, unmarked])
         repository = uow.page_versions
         everything = SliceRequest(limit=10)
         listed_bad = await repository.list_for_stage(page_id, Stage.GEOMETRY, None, everything, ResultMark.BAD)
@@ -1382,8 +1417,9 @@ class TestPageVersionProcessing:
         recent = evolve(_version(base), created_at=NOW - RECENT)
         old_preview = _version(base, scale=VersionScale.PREVIEW)
         young_preview = evolve(_version(base, scale=VersionScale.PREVIEW), created_at=NOW - timedelta(minutes=5))
-        await uow.page_versions.add_many([base, feeder, head, orphan, recent, old_preview, young_preview])
-        await uow.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.CLEANUP, head_version_id=head.id))
+        async with uow.change_book(project_id):
+            await uow.page_versions.add_many([base, feeder, head, orphan, recent, old_preview, young_preview])
+            await uow.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.CLEANUP, head_version_id=head.id))
         found = await uow.page_versions.collectable(project_id, PREVIEW_CUTOFF)
         assert {version.id for version in found} == {orphan.id, recent.id, old_preview.id}
 
@@ -1408,7 +1444,8 @@ class TestPageVersionProcessing:
         commented_bad = evolve(_version(base), mark=ResultMark.BAD, comment='Too dark.')
         plain_bad = evolve(_version(base), mark=ResultMark.BAD)
         unjudged = _version(base)
-        await uow.page_versions.add_many([base, input_of_good, good, commented, commented_bad, plain_bad, unjudged])
+        async with uow.change_book(project_id):
+            await uow.page_versions.add_many([base, input_of_good, good, commented, commented_bad, plain_bad, unjudged])
         found = await uow.page_versions.collectable(project_id, PREVIEW_CUTOFF)
         assert {version.id for version in found} == {plain_bad.id, unjudged.id}
 
@@ -1433,8 +1470,9 @@ class TestPageVersionProcessing:
         reader = evolve(_version(base, stage=Stage.CLEANUP), input_id=second.id)
         chain_start = _version(base)
         chain_end = evolve(_version(base), input_id=chain_start.id)
-        await uow.page_versions.add_many([base, first, second, reader, chain_start, chain_end])
-        await uow.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.CLEANUP, head_version_id=reader.id))
+        async with uow.change_book(project_id):
+            await uow.page_versions.add_many([base, first, second, reader, chain_start, chain_end])
+            await uow.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.CLEANUP, head_version_id=reader.id))
         found = await uow.page_versions.collectable(project_id, PREVIEW_CUTOFF)
         assert {version.id for version in found} == {chain_start.id, chain_end.id}
 
@@ -1448,15 +1486,15 @@ class TestPageVersionProcessing:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        _, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         base = make_page_version(page_id=page_id)
         doomed = [_version(base), _version(base)]
-        await uow.page_versions.add_many([base, *doomed])
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_versions.add_many([base, *doomed])
         uow = await fx_uow_factory()
-        await uow.page_versions.delete_many([*(version.id for version in doomed), PageVersionId('f' * 16)])
-        await uow.commit()
+        async with uow.change_book(project_id):
+            await uow.page_versions.delete_many([*(version.id for version in doomed), PageVersionId('f' * 16)])
         assert [version.id for version in await (await fx_uow_factory()).page_versions.list_for_page(page_id)] == [
             base.id
         ]
@@ -1478,6 +1516,6 @@ class TestJobParams:
         project_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
         uow = await fx_uow_factory()
         with_params = evolve(make_job(project_id=project_id), params={'stage': 'geometry', 'page_ids': []})
-        await uow.jobs.add(with_params)
-        await uow.commit()
+        async with uow.change():
+            await uow.jobs.add(with_params)
         assert (await (await fx_uow_factory()).jobs.get(with_params.id)).params == with_params.params

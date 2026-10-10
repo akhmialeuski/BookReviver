@@ -19,8 +19,11 @@ are laid over its parameters from the content boxes the book has: a run of the w
 boxes its pages were just placed by, and a run of a page or a preview works them out from the box of that page and the
 boxes the other pages hold. The version holds the parameters the step ran with, so the size reaches its identifier.
 
-Both classes read and write through one unit of work and commit after each version, so the viewer shows the first
-results while the rest are made.
+Both classes read through one unit of work and hold no block while a processor computes. Each version is stored in two
+short ``change_book`` blocks, the mark that it is running and then its result, so the viewer shows the first results
+while the rest are made. Each block reads the page again, so a page that was deleted while its steps ran gets nothing
+written, and the files of a version whose block failed are discarded. A page deleted before a run ends is reported as
+skipped, and nothing of the run is stored.
 """
 
 import logging
@@ -53,8 +56,9 @@ from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from datetime import datetime
 
-    from bookreviver.domain.entities import Project, Recipe
+    from bookreviver.domain.entities import PageStepState, Project, Recipe
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StorageKey
     from bookreviver.domain.values import MetadataMap, Step
     from bookreviver.ports.ordering import OrderKeys
@@ -62,6 +66,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock, EventPublisher
     from bookreviver.services.recipes import RecipeBook
+    from bookreviver.services.spread_splits import Unsplit
     from bookreviver.services.stage_records import StageRecords
     from bookreviver.services.steps import StepRunner
 
@@ -99,6 +104,22 @@ class StepSource:
 
 
 @frozen(kw_only=True)
+class RunBasis:
+    """What a run of a recipe read to decide what to make, which the block that makes its result current reads again.
+
+    :ivar input_id: Version the first step read, or None when it read a scan.
+    :ivar recipe_updated_at: When the recipe the run followed was last saved.
+    :ivar states: The settings and the manual edits of the steps of the stage on the page.
+    :ivar undoing: The split the run undoes, or None.
+    """
+
+    input_id: PageVersionId | None
+    recipe_updated_at: datetime
+    states: tuple[PageStepState, ...]
+    undoing: Unsplit | None
+
+
+@frozen(kw_only=True)
 class StageRuntime:
     """What a run of a stage works with, apart from the project and the unit of work of the job.
 
@@ -126,7 +147,7 @@ class StageWork:
 
         :param project: Project owning the pages, whose image policy chooses the format of a version's ``full``.
         :type project: Project
-        :param uow: Unit of work, committed after each version.
+        :param uow: Unit of work, whose blocks are opened for each version and never held while a step runs.
         :type uow: UnitOfWork
         :param runtime: The runner, the catalogue, the publisher, the clock and the size of a preview.
         :type runtime: StageRuntime
@@ -385,6 +406,11 @@ class StageWork:
         A page that shows a leaf the program drew is not run through the processor: its version holds the image of the
         source as it is, with no parameters, no settings and no edit, so every step that skips the same input shares it.
 
+        Called outside any block, and it opens two of its own: the first marks the version as running, and reads the
+        page and the version again, so a version that another change made ready meanwhile is used as it is. The
+        processor and the file store run between the blocks. The second block stores the result, after it reads the
+        page again, and discards the files if it fails.
+
         :param stage: Stage of the recipe.
         :type stage: Stage
         :param step: The step to run.
@@ -397,11 +423,10 @@ class StageWork:
         :type layers: PageLayers
         :returns: The version, in the state ready or failed.
         :rtype: PageVersion
-        :raises NotFoundError: If the processor is not in the catalogue.
+        :raises NotFoundError: If the processor is not in the catalogue, or the page was deleted.
         :raises InvalidParametersError: If the parameters do not fit the processor.
         :raises ConflictError: If the step is one that splits a scan, which this run cannot apply.
         """
-        scale = source.scale
         processor = self._catalogue.get(step.processor_key)
         if processor.spec.scope is ProcessorScope.SPLIT:
             raise ConflictError(SPLIT_NOT_AVAILABLE.format(key=step.processor_key))
@@ -426,37 +451,44 @@ class StageWork:
             params=params,
             input_id=source.version_id,
             edit_hash='' if edit is None else edit.edit_hash,
-            scale=scale,
+            scale=source.scale,
             side=side,
             skipped=skipped,
         )
         existing = await self._uow.page_versions.find(inputs.identify())
         if existing is not None and existing.state is VersionState.READY:
             return existing
-        version = PageVersion(
-            id=inputs.identify(),
-            page_id=layers.page.id,
-            stage=stage,
-            processor=processor.spec.ref,
-            input_id=source.version_id,
-            params=params,
-            renditions=None,
-            state=VersionState.RUNNING,
-            scale=scale,
-            edit_hash=inputs.edit_hash,
-            created_at=self._clock.now() if existing is None else existing.created_at,
-            mark=None if existing is None else existing.mark,
-            comment='' if existing is None else existing.comment,
-        )
-        await (self._uow.page_versions.add(version) if existing is None else self._uow.page_versions.update(version))
-        await self._uow.commit()
+        async with self._uow.change_book(self._project.id):
+            # The earlier steps took time, so the page may be gone and the version may have been made by another change
+            await self._uow.pages.get(layers.page.id)
+            existing = await self._uow.page_versions.find(inputs.identify())
+            if existing is not None and existing.state is VersionState.READY:
+                return existing
+            version = PageVersion(
+                id=inputs.identify(),
+                page_id=layers.page.id,
+                stage=stage,
+                processor=processor.spec.ref,
+                input_id=source.version_id,
+                params=params,
+                renditions=None,
+                state=VersionState.RUNNING,
+                scale=source.scale,
+                edit_hash=inputs.edit_hash,
+                created_at=self._clock.now() if existing is None else existing.created_at,
+                mark=None if existing is None else existing.mark,
+                comment='' if existing is None else existing.comment,
+            )
+            await (
+                self._uow.page_versions.add(version) if existing is None else self._uow.page_versions.update(version)
+            )
         run = StepRun(
             processor_key=step.processor_key,
             params=params,
             input_data=source.data,
             image=source.image,
             edit=edit,
-            scale=scale,
+            scale=source.scale,
             ratio=source.ratio,
             side=side,
             skipped=skipped,
@@ -468,8 +500,16 @@ class StageWork:
         except Exception:
             logger.exception('The step %s on page %s failed', step.processor_key, layers.page.id)
             made = evolve(version, state=VersionState.FAILED, data={VersionData.ERROR: UNEXPECTED_FAILURE})
-        await self._uow.page_versions.update(made)
-        await self._uow.commit()
+        try:
+            async with self._uow.change_book(self._project.id):
+                await self._uow.pages.get(layers.page.id)
+                # A mark or a comment the user put on the version while it ran is kept
+                stored = await self._uow.page_versions.get(version.id)
+                await self._uow.page_versions.update(evolve(made, mark=stored.mark, comment=stored.comment))
+        except Exception:
+            # The files of the version belong to no stored result when its block failed
+            await self._runner.discard(self._keys.version_directory(version))
+            raise
         if made.state is VersionState.READY:
             await self._publisher.publish(PageVersionReady(project_id=layers.page.project_id, version=made))
         return made
@@ -485,7 +525,7 @@ class RecipeRun(StageWork):
 
         :param project: Project owning the pages.
         :type project: Project
-        :param uow: Unit of work, committed after each version.
+        :param uow: Unit of work, whose blocks are opened for each version and never held while a step runs.
         :type uow: UnitOfWork
         :param runtime: The runner, the catalogue, the publisher, the clock and the size of a preview.
         :type runtime: StageRuntime
@@ -515,6 +555,10 @@ class RecipeRun(StageWork):
         change, and records the page as stopped there, so the stage after it does not read the page until the rest is
         run.
 
+        Called outside any block. The earlier stages are brought up to date and the steps are run before the one block
+        that makes the version current, which reads the page and what the run went by again. A page deleted meanwhile,
+        or a run whose basis changed, is skipped and nothing of the run is made current.
+
         :param page: Page to process.
         :type page: Page
         :param recipe: Recipe of the stage to run.
@@ -523,44 +567,60 @@ class RecipeRun(StageWork):
         :type confirmed: bool
         :param through_step: Index in the recipe of the last step to run, or None for every step that is on.
         :type through_step: int | None
-        :returns: Whether the page was processed, skipped for lack of an image, or failed.
+        :returns: Whether the page was processed, failed, or skipped for lack of an image, because it was deleted, or
+                  because the input, the recipe, the settings or the edits it went by changed meanwhile.
         :rtype: RunOutcome
         """
         stage = recipe.stage
         if stage is Stage.PAGE_SPLIT and page.slot > Page.LEFT_HALF:
             return RunOutcome.SKIPPED
-        steps = [step for _, step in recipe.indexed_steps_through(through_step)]
         try:
             if (source := await self._source(page, stage, VersionScale.FULL)) is None:
                 return RunOutcome.SKIPPED
             if self._splits.splits(recipe):
-                return (
-                    RunOutcome.DONE
-                    if await self._splits.split(page, recipe, source, confirmed=confirmed)
-                    else await self._fail(page, recipe)
-                )
-            undoing = await self._splits.undoing(page, recipe, confirmed=confirmed)
-            version = await self._run_steps(
-                page, stage, steps, evolve(source, book=await self._book_for(page, recipe, steps, source))
-            )
+                outcome = await self._splits.split(page, recipe, source, confirmed=confirmed)
+            else:
+                outcome = await self._process(page, recipe, source, confirmed=confirmed, through_step=through_step)
         except DomainError:
-            await self._uow.rollback()
             return await self._fail(page, recipe)
-        if version is None:
-            return await self._fail(page, recipe)
-        changed = await self._records.set_head(
-            PageStageKey(page.id, stage),
-            head_version_id=version.id,
-            recipe_id=recipe.id,
-            through_step=recipe.stopped_at(through_step),
+        return await self._fail(page, recipe) if outcome is RunOutcome.FAILED else outcome
+
+    async def _process(
+        self, page: Page, recipe: Recipe, source: StepSource, *, confirmed: bool, through_step: int | None
+    ) -> RunOutcome:
+        """Make the versions of the steps of a recipe that does not split, and make the last one current.
+
+        What the run goes by is read once before the steps run, and read again by the block that makes the last version
+        current. A run whose input, recipe, settings or edits changed meanwhile is skipped and writes nothing, since the
+        change marked the stage stale and the version just made is not the one it asks for.
+
+        :param page: Page to process.
+        :type page: Page
+        :param recipe: Recipe of the stage to run.
+        :type recipe: Recipe
+        :param source: What the first step reads.
+        :type source: StepSource
+        :param confirmed: Whether the user confirmed that undoing a split deletes the right half of a spread.
+        :type confirmed: bool
+        :param through_step: Index in the recipe of the last step to run, or None for every step that is on.
+        :type through_step: int | None
+        :returns: Done when the version of the last step is current now, failed when a step failed, and skipped when
+                  what the run read changed meanwhile.
+        :rtype: RunOutcome
+        :raises DomainError: If a processor is missing, its parameters do not fit, an unconfirmed undoing would delete a
+                             right half, or the page or the version was deleted meanwhile.
+        """
+        steps = [step for _, step in recipe.indexed_steps_through(through_step)]
+        basis = RunBasis(
+            input_id=source.version_id,
+            recipe_updated_at=recipe.updated_at,
+            states=tuple(await self._uow.page_step_states.list_for_page(page.id, recipe.stage)),
+            undoing=await self._splits.undoing(page, recipe, confirmed=confirmed),
         )
-        if undoing is not None:
-            changed = [*changed, *await self._splits.unsplit(undoing)]
-        await self._uow.commit()
-        if undoing is not None:
-            await self._splits.finish_unsplit(undoing)
-        await self._records.announce(page.project_id, changed)
-        return RunOutcome.DONE
+        source = evolve(source, book=await self._book_for(page, recipe, steps, source))
+        if (version := await self._run_steps(page, recipe.stage, steps, source)) is None:
+            return RunOutcome.FAILED
+        return await self._apply(page, recipe, version, basis, through_step=through_step)
 
     async def _run_steps(
         self,
@@ -570,6 +630,9 @@ class RecipeRun(StageWork):
         source: StepSource,
     ) -> PageVersion | None:
         """Make the version of each step, and cut the pyramid of the last.
+
+        The files of the pyramid are written here, and the row of the version learns that they are cut in the block of
+        ``_apply``, which makes the version current.
 
         :param page: Page to process.
         :type page: Page
@@ -588,14 +651,74 @@ class RecipeRun(StageWork):
             return None
         if version.renditions is not None and not version.tiles_ready:
             version = await self._runner.cut_tiles(self._keys, version)
-            await self._uow.page_versions.update(version)
         return version
+
+    async def _apply(
+        self,
+        page: Page,
+        recipe: Recipe,
+        version: PageVersion,
+        basis: RunBasis,
+        *,
+        through_step: int | None,
+    ) -> RunOutcome:
+        """Make the version of the last step the current one of the stage, in one block, and tell the browser after it.
+
+        Called outside any block, and it opens a ``change_book`` of its own. The page and the version are read again,
+        so a page deleted while the steps ran writes nothing, and the page that undoes a split is the one the block
+        reads, not the one the run started with. What the run went by is read again too: a change of the input, of the
+        recipe, or of the settings and the edits of the page's steps marked the stage stale while the steps ran, and
+        making the version current would hide that mark, so the run is skipped and nothing is written. Whatever this
+        stores is rolled back if the block fails.
+
+        :param page: Page that was processed.
+        :type page: Page
+        :param recipe: Recipe the page was run by.
+        :type recipe: Recipe
+        :param version: Version of the last step, with its pyramid cut.
+        :type version: PageVersion
+        :param basis: What the run read before it computed, including the split it undoes.
+        :type basis: RunBasis
+        :param through_step: Index in the recipe of the last step the run went through, or None for all of them.
+        :type through_step: int | None
+        :returns: Done when the version is current, and skipped when what the run read changed meanwhile.
+        :rtype: RunOutcome
+        :raises NotFoundError: If the page or the version was deleted meanwhile.
+        """
+        async with self._uow.change_book(page.project_id):
+            fresh = await self._uow.pages.get(page.id)
+            current = (await self._inputs.of([page.id], recipe.stage)).get(page.id)
+            undoing = None if basis.undoing is None else await self._splits.undoing(fresh, recipe, confirmed=True)
+            if basis.input_id is not None and (current is None or current.id != basis.input_id):
+                return RunOutcome.SKIPPED
+            if (await self._uow.recipes.get(recipe.id)).updated_at != basis.recipe_updated_at or tuple(
+                await self._uow.page_step_states.list_for_page(page.id, recipe.stage)
+            ) != basis.states:
+                return RunOutcome.SKIPPED
+            if basis.undoing is not None and not basis.undoing.deletes_as(undoing):
+                return RunOutcome.SKIPPED
+            stored = await self._uow.page_versions.get(version.id)
+            if version.tiles_ready and not stored.tiles_ready:
+                await self._uow.page_versions.update(evolve(stored, tiles_ready=True))
+            changed = await self._records.set_head(
+                PageStageKey(page.id, recipe.stage),
+                head_version_id=version.id,
+                recipe_id=recipe.id,
+                through_step=recipe.stopped_at(through_step),
+            )
+            if undoing is not None:
+                changed = [*changed, *await self._splits.unsplit(undoing)]
+        if undoing is not None:
+            await self._splits.finish_unsplit(undoing)
+        await self._records.announce(page.project_id, changed)
+        return RunOutcome.DONE
 
     async def measure(self, page: Page, recipe: Recipe, *, through_step: int | None = None) -> BlockMeasure | None:
         """Make the steps of the recipe up to the normalize step, and read the content box the step recorded.
 
         A run of the whole book places every page by a page size that is the largest of the boxes of all of them, so it
-        asks every page for its box first. The versions this makes are the ones the run finds again.
+        asks every page for its box first. The versions this makes are the ones the run finds again. Called outside any
+        block, and the versions are stored in the blocks of ``_make_version``.
 
         :param page: Page to measure.
         :type page: Page
@@ -668,6 +791,9 @@ class RecipeRun(StageWork):
     async def _refresh(self, page: Page, stage: Stage) -> None:
         """Run an earlier stage again by the recipe of the kind of the page, which finds its versions in the cache.
 
+        Called before the run opens any block, since the recipes may store the defaults and the run stores its own
+        versions, each in a block of its own.
+
         :param page: Page whose earlier stage is stale.
         :type page: Page
         :param stage: The stale stage.
@@ -681,17 +807,25 @@ class RecipeRun(StageWork):
         await self.run(page, recipe)
 
     async def _fail(self, page: Page, recipe: Recipe) -> RunOutcome:
-        """Record that the stage failed on the page.
+        """Record that the stage failed on the page, or that the page is gone.
+
+        Called outside any block, and it opens a ``change_book`` of its own, in which the page is read again. A page
+        that was deleted while it ran has nothing to record, so the files the run left for it are discarded.
 
         :param page: Page whose stage failed.
         :type page: Page
         :param recipe: Recipe that failed.
         :type recipe: Recipe
-        :returns: The outcome failed.
+        :returns: The outcome failed, or skipped when the page was deleted.
         :rtype: RunOutcome
         """
-        record = await self._records.mark_failed(page.id, recipe.stage, recipe_id=recipe.id)
-        await self._uow.commit()
+        try:
+            async with self._uow.change_book(page.project_id):
+                await self._uow.pages.get(page.id)
+                record = await self._records.mark_failed(page.id, recipe.stage, recipe_id=recipe.id)
+        except NotFoundError:
+            await self._runner.discard(self._keys.page(page.id))
+            return RunOutcome.SKIPPED
         await self._records.announce(page.project_id, [record])
         return RunOutcome.FAILED
 
@@ -701,6 +835,9 @@ class PreviewRun(StageWork):
 
     async def run(self, page: Page, stage: Stage, steps: Sequence[Step], step_index: int) -> PageVersion:
         """Run the steps up to one of them, each on the preview the one before made.
+
+        Called outside any block. The previews are stored in the blocks of ``_make_version``, and the page that was
+        deleted meanwhile is reported as not found.
 
         :param page: Page to preview on.
         :type page: Page
@@ -713,6 +850,7 @@ class PreviewRun(StageWork):
         :type step_index: int
         :returns: The preview version of the last step that is on.
         :rtype: PageVersion
+        :raises NotFoundError: If the page was deleted while the steps ran.
         :raises ConflictError: If the page has no image to preview on, every step up to the index is off, or a step
                                failed.
         """

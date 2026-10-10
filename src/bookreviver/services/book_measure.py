@@ -53,6 +53,10 @@ NO_NORMALIZE_STEP: str = 'No recipe of the Geometry stage has a {key} step to wr
 NOTHING_TO_MEASURE: str = (
     'Margins has not placed any page of the book yet, so there is nothing to measure. Run the Geometry stage first.'
 )
+MEASURE_OUTDATED: str = (
+    'A recipe of the Geometry stage was changed or deleted while the book was measured, so nothing was written. '
+    'Measure the book again.'
+)
 PERCENT: float = 100.0
 # The fields of the normalize step that are 0 until the book gives them a value
 BOOK_FIELDS: tuple[NormalizeParam, ...] = (
@@ -420,7 +424,7 @@ class BookMeasure:
     def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, records: StageRecords) -> None:
         """Work over the ports of one job.
 
-        :param uow: Unit of work whose commit ends the job.
+        :param uow: Unit of work, in whose ``change_book`` block the job writes the measures once it has them.
         :type uow: UnitOfWork
         :param recipes: The recipes of the project, which supply the Geometry recipes and rewrite them.
         :type recipes: RecipeBook
@@ -440,12 +444,17 @@ class BookMeasure:
         any of them, so the pages of every kind are placed on one page size and each still holds its content with its
         own margins.
 
+        The job reads and computes without a block, since the boxes of the pages take long to read, and writes in one
+        short ``change_book`` block that reads the recipes again. A recipe that was changed meanwhile, which a user
+        may have done by hand while the pages were measured, is left as it is and nothing is written.
+
         :param project_id: Project whose pages are measured.
         :type project_id: ProjectId
         :returns: The number of pages that were measured.
         :rtype: int
         :raises NotFoundError: If the Geometry stage has no recipe.
-        :raises ConflictError: If no recipe has a normalize step, or the step has placed no page yet.
+        :raises ConflictError: If no recipe has a normalize step, the step has placed no page yet, or a recipe was
+                               changed or deleted while the pages were measured.
         :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
         """
         holders: list[tuple[Recipe, int]] = []
@@ -466,16 +475,23 @@ class BookMeasure:
             for name in (NormalizeParam.PAGE_WIDTH, NormalizeParam.PAGE_HEIGHT)
         }
         stale: list[PageStage] = []
-        for (recipe, position), step, own in zip(holders, steps, measured, strict=True):
-            written = evolve(step, params={**step.params, **own, **page})
-            if written.params != step.params:
-                stale.extend(await self._write(recipe, position, written))
-        await self._uow.commit()
+        async with self._uow.change_book(project_id):
+            # The steps were measured from the recipes as they were read, so a recipe saved or deleted since is not
+            # written over
+            stored = {r.id: r.updated_at for r in await self._uow.recipes.list_for_stage(project_id, Stage.GEOMETRY)}
+            if any(stored.get(recipe.id) != recipe.updated_at for recipe, _ in holders):
+                raise ConflictError(MEASURE_OUTDATED)
+            for (recipe, position), step, own in zip(holders, steps, measured, strict=True):
+                written = evolve(step, params={**step.params, **own, **page})
+                if written.params != step.params:
+                    stale.extend(await self._write(recipe, position, written))
         await self._records.announce(project_id, stale)
         return len(measures)
 
     async def _write(self, recipe: Recipe, position: int, step: Step) -> list[PageStage]:
-        """Store the recipe with the measured step, and mark the pages it processed stale.
+        """Store the recipe with the measured step, and mark the pages it processed stale, in the block of the caller.
+
+        Never opens a block.
 
         :param recipe: A recipe of the Geometry stage.
         :type recipe: Recipe
@@ -483,7 +499,7 @@ class BookMeasure:
         :type position: int
         :param step: The normalize step with the measured parameters.
         :type step: Step
-        :returns: The records of the pages that became stale, which the caller announces after it commits.
+        :returns: The records of the pages that became stale, which the caller announces after its block.
         :rtype: list[PageStage]
         :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
         """

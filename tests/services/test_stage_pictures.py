@@ -120,8 +120,8 @@ async def seed_staged_book(kit: ProcessingKit, case: StageCase) -> StagedBook:
     full, partial, idle, other = pages
     uow = kit.uow()
     other = evolve(other, kind=PageKind.PLATE)
-    await uow.pages.update(other)
-    await uow.commit()
+    async with uow.change_book(project.id):
+        await uow.pages.update(other)
     if case.stage is Stage.CLEANUP:
         await run_stage(kit, actor, project, StageRun(stage=Stage.GEOMETRY))
     steps = [Step(processor_key=case.processor_key) for _ in range(STEP_COUNT)]

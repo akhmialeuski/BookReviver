@@ -27,7 +27,7 @@ class PlaceService:
     def __init__(self, *, uow: UnitOfWork, clock: Clock) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose commit ends the use case that changes data.
+        :param uow: Unit of work of the request, whose ``change`` block ends the use case that changes data.
         :type uow: UnitOfWork
         :param clock: Clock stamping the places.
         :type clock: Clock
@@ -53,7 +53,8 @@ class PlaceService:
         """Replace the place the actor left one of their books at.
 
         The request is stamped when it starts, and the store keeps the place of the later stamp whole, so two requests
-        writing together never leave a mixture of the two and a late one never overwrites a newer one.
+        writing together never leave a mixture of the two and a late one never overwrites a newer one. A place belongs
+        to an account and a book together, so it is written in a ``change`` block, not in one of the book.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -66,14 +67,13 @@ class PlaceService:
         :raises NotFoundError: If the actor has no such book.
         """
         updated_at = self._clock.now()
-        await owned_project(self._uow.projects, actor, project_id)
-        stored = await self._uow.book_places.save(
-            BookPlace(
-                account_id=actor.account_id,
-                project_id=project_id,
-                updated_at=updated_at,
-                **asdict(place, recurse=False),
+        async with self._uow.change():
+            await owned_project(self._uow.projects, actor, project_id)
+            return await self._uow.book_places.save(
+                BookPlace(
+                    account_id=actor.account_id,
+                    project_id=project_id,
+                    updated_at=updated_at,
+                    **asdict(place, recurse=False),
+                )
             )
-        )
-        await self._uow.commit()
-        return stored

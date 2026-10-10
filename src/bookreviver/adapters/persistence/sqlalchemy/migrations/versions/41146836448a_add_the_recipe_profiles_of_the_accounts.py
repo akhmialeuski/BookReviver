@@ -10,8 +10,6 @@ from typing import TYPE_CHECKING
 
 import advanced_alchemy.types.datetime
 import advanced_alchemy.types.guid
-import advanced_alchemy.types.json
-import fastapi_users_db_sqlalchemy.generics
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import Text
@@ -27,6 +25,9 @@ revision: str = '41146836448a'
 down_revision: str | Sequence[str] | None = '13662fc5c17e'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+# The identifier of an account, as the fastapi-users library declared it: CHAR(36) on SQLite and UUID on PostgreSQL
+ACCOUNT_GUID = sa.CHAR(36).with_variant(postgresql.UUID(), 'postgresql')
 
 
 def upgrade() -> None:
@@ -51,7 +52,7 @@ def schema_upgrades() -> None:
     op.create_table(
         'recipe_profiles',
         sa.Column('id', advanced_alchemy.types.guid.GUID(length=16), nullable=False),
-        sa.Column('account_id', fastapi_users_db_sqlalchemy.generics.GUID(), nullable=False),
+        sa.Column('account_id', ACCOUNT_GUID, nullable=False),
         sa.Column(
             'stage',
             sa.Enum(
@@ -75,7 +76,6 @@ def schema_upgrades() -> None:
             'steps',
             sa.JSON()
             .with_variant(postgresql.JSONB(astext_type=Text()), 'cockroachdb')
-            .with_variant(advanced_alchemy.types.json.ORA_JSONB(), 'oracle')
             .with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql'),
             nullable=False,
         ),

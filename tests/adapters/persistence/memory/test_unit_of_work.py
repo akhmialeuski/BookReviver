@@ -1,45 +1,36 @@
 """Tests for the in-memory unit of work where it cannot share the contract suite with a database.
 
-A database keeps a row changed by a guarded write locked until the transaction ends, so a second writer waits. The
-in-memory adapter has no locks and refuses the first transaction's commit instead, which only this adapter can show
-without blocking the test.
+A database with one write lock, such as SQLite, makes every block wait for any other that writes, so the contract
+cannot require that changes of two books run at the same time. The in-memory adapter holds one lock for each book,
+which only this adapter can show.
 """
 
 import pytest
-from attrs import evolve
-from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
-from bookreviver.domain.enums import JobState
-from bookreviver.domain.errors import ConflictError
-from tests.helpers.builders import make_job, make_project, new_account_id
+from tests.helpers.builders import make_project, new_account_id
+from tests.helpers.seeding import store_project
 
 pytestmark = pytest.mark.anyio
 
+# Short enough to fail a test that waits, and long enough that nothing else makes it fail
+WAIT_SECONDS: float = 0.2
 
-class TestCommit:
-    """Tests for InMemoryUnitOfWork.commit()."""
 
-    async def test_guarded_write_changed_meanwhile_refuses_commit(self) -> None:
-        """Verify a commit is refused, and nothing of it kept, when another unit committed its guarded job meanwhile.
+class TestChangeBook:
+    """Tests for InMemoryUnitOfWork.change_book()."""
 
-        The canceller passes its guard while the job runs, then the worker finishes the job and commits first. The
-        cancellation must not replace the finished job.
+    async def test_changes_of_two_books_do_not_wait_for_each_other(self) -> None:
+        """Verify a block of one book opens at once while a block of another book is open.
+
+        Both blocks are opened by one task, one inside the other, so a block that waited for the lock of the other
+        book would wait for the limit and raise ``BookBusyError`` instead of entering.
         """
-        database = InMemoryDatabase()
-        project = make_project(owner_id=new_account_id())
-        job = make_job(project_id=project.id, state=JobState.RUNNING)
-        setup = InMemoryUnitOfWork(database)
-        await setup.projects.add(project)
-        await setup.jobs.add(job)
-        await setup.commit()
-        canceller, worker = InMemoryUnitOfWork(database), InMemoryUnitOfWork(database)
-        await canceller.jobs.update_if_state(evolve(job, state=JobState.CANCELLED), expected=JobState.active())
-        await worker.jobs.update_if_state(evolve(job, state=JobState.SUCCEEDED), expected=JobState.active())
-        await worker.commit()
-        with pytest.raises(ConflictError, match=str(job.id)):
-            await canceller.commit()
-        expect((await InMemoryUnitOfWork(database).jobs.get(job.id)).state is JobState.SUCCEEDED)
-        # The refused transaction is discarded, so the unit starts again from the committed state
-        expect((await canceller.jobs.get(job.id)).state is JobState.SUCCEEDED)
-        assert_expectations()
+        database = InMemoryDatabase(wait_seconds=WAIT_SECONDS)
+        owner_id = new_account_id()
+        first_book, second_book = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        await store_project(InMemoryUnitOfWork(database), first_book)
+        await store_project(InMemoryUnitOfWork(database), second_book)
+        first, second = InMemoryUnitOfWork(database), InMemoryUnitOfWork(database)
+        async with first.change_book(first_book.id), second.change_book(second_book.id) as project:
+            assert project == second_book
