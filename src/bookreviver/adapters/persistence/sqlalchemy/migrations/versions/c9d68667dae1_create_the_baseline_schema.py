@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 
 import advanced_alchemy.types.datetime
 import advanced_alchemy.types.guid
-import advanced_alchemy.types.json
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import Text
@@ -168,7 +167,6 @@ def schema_upgrades() -> None:
             'files',
             sa.JSON()
             .with_variant(postgresql.JSONB(astext_type=Text()), 'cockroachdb')
-            .with_variant(advanced_alchemy.types.json.ORA_JSONB(), 'oracle')
             .with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql'),
             nullable=False,
         ),
@@ -179,7 +177,6 @@ def schema_upgrades() -> None:
             'metadata',
             sa.JSON()
             .with_variant(postgresql.JSONB(astext_type=Text()), 'cockroachdb')
-            .with_variant(advanced_alchemy.types.json.ORA_JSONB(), 'oracle')
             .with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql'),
             nullable=False,
         ),
@@ -187,7 +184,6 @@ def schema_upgrades() -> None:
             'suggestion',
             sa.JSON()
             .with_variant(postgresql.JSONB(astext_type=Text()), 'cockroachdb')
-            .with_variant(advanced_alchemy.types.json.ORA_JSONB(), 'oracle')
             .with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql'),
             nullable=False,
         ),
@@ -231,7 +227,6 @@ def schema_upgrades() -> None:
             'extra',
             sa.JSON()
             .with_variant(postgresql.JSONB(astext_type=Text()), 'cockroachdb')
-            .with_variant(advanced_alchemy.types.json.ORA_JSONB(), 'oracle')
             .with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql'),
             nullable=False,
         ),
@@ -325,7 +320,6 @@ def schema_upgrades() -> None:
             'params',
             sa.JSON()
             .with_variant(postgresql.JSONB(astext_type=Text()), 'cockroachdb')
-            .with_variant(advanced_alchemy.types.json.ORA_JSONB(), 'oracle')
             .with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql'),
             nullable=False,
         ),
@@ -333,7 +327,6 @@ def schema_upgrades() -> None:
             'transform',
             sa.JSON()
             .with_variant(postgresql.JSONB(astext_type=Text()), 'cockroachdb')
-            .with_variant(advanced_alchemy.types.json.ORA_JSONB(), 'oracle')
             .with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql'),
             nullable=False,
         ),
@@ -341,7 +334,6 @@ def schema_upgrades() -> None:
             'data',
             sa.JSON()
             .with_variant(postgresql.JSONB(astext_type=Text()), 'cockroachdb')
-            .with_variant(advanced_alchemy.types.json.ORA_JSONB(), 'oracle')
             .with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql'),
             nullable=False,
         ),

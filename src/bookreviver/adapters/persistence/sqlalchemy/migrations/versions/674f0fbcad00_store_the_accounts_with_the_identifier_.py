@@ -2,7 +2,7 @@
 
 The tables of the accounts were declared by the fastapi-users library, which keeps an identifier as ``CHAR(36)`` text
 with dashes and the time of a token as ``TIMESTAMP``. The adapter now declares them with the types of every other
-table, ``GUID`` and ``DateTimeUTC`` of advanced-alchemy.
+table, ``GUID`` and ``DateTimeUTC`` of advanced-alchemy, and SQLAlchemy 2.1 maps a Python ``float`` to ``DOUBLE``.
 
 On SQLite the upgrade changes the declared type of every column that holds the identifier of an account, which are
 ``user.id``, ``oauth_account.id``, ``oauth_account.user_id``, ``accesstoken.user_id``, ``projects.owner_id``,
@@ -10,7 +10,9 @@ On SQLite the upgrade changes the declared type of every column that holds the i
 16 bytes ``GUID`` stores (``GUID.process_bind_param`` writes ``UUID.bytes``). The declared type of
 ``accesstoken.created_at`` becomes ``DATETIME`` with no change of the value, because ``TIMESTAMP`` and ``DATETIME``
 both store the UTC time as ``YYYY-MM-DD HH:MM:SS.ffffff`` text (``DATETIME`` of SQLite's dialect writes that format
-for either type, and ``DateTimeUTC.process_bind_param`` converts to UTC first), and the library wrote the UTC time.
+for either type, and ``DateTimeUTC.process_bind_param`` converts to UTC first), and the library wrote the UTC time. The
+six columns of ``scans`` and ``book_places`` that hold a ``float`` change their declared name from ``FLOAT`` to
+``DOUBLE``, which both give the REAL affinity.
 
 Alembic's batch mode copies a table with ``CAST(column AS type)`` when it is asked to change the type of a column to
 one of another affinity, and ``CAST(text AS BINARY(16))`` turns the text of an identifier into the number its first
@@ -21,8 +23,8 @@ The downgrade is the exact inverse: the 16 bytes become the text with dashes, an
 keys are off while a migration runs and ``PRAGMA foreign_key_check`` runs after it, so the rewritten values have to
 match on both sides of every key, and a key left pointing nowhere rolls the migration back.
 
-PostgreSQL stores an identifier as ``UUID`` and a time as ``TIMESTAMP WITH TIME ZONE`` under either declaration, so on
-PostgreSQL the revision changes nothing.
+PostgreSQL stores an identifier as ``UUID`` and a time as ``TIMESTAMP WITH TIME ZONE`` under either declaration, and
+``FLOAT`` and ``DOUBLE PRECISION`` are one type there, so on PostgreSQL the revision changes nothing.
 
 Revision ID: 674f0fbcad00
 Revises: ba28fd6fb352
@@ -61,13 +63,20 @@ ACCOUNT_ID: str = 'account_id'
 # The declaration before this revision, which the fastapi-users library wrote, and the one after it
 IDENTIFIER: Declaration = (sa.CHAR(36), GUID)
 TIME: Declaration = (sa.TIMESTAMP(), advanced_alchemy.types.datetime.DateTimeUTC(timezone=True))
+REAL: Declaration = (sa.FLOAT(), sa.Double())
 # The columns whose declared type changes, by table and column
 RETYPED: dict[str, dict[str, Declaration]] = {
     'accesstoken': {'created_at': TIME, 'user_id': IDENTIFIER},
-    'book_places': {ACCOUNT_ID: IDENTIFIER},
+    'book_places': {
+        ACCOUNT_ID: IDENTIFIER,
+        'canvas_zoom': REAL,
+        'canvas_centre_x': REAL,
+        'canvas_centre_y': REAL,
+    },
     'oauth_account': {'id': IDENTIFIER, 'user_id': IDENTIFIER},
     'projects': {'owner_id': IDENTIFIER},
     'recipe_profiles': {ACCOUNT_ID: IDENTIFIER},
+    'scans': {'dpi_x': REAL, 'dpi_y': REAL, 'width_mm': REAL, 'height_mm': REAL},
     'user': {'id': IDENTIFIER},
 }
 

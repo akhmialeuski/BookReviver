@@ -140,11 +140,11 @@ class AccountDatabase(BaseUserDatabase[AccountTable, UUID]):
         self.session = session
         self.uow = uow
 
-    async def _one(self, statement: Select[tuple[AccountTable]]) -> AccountTable | None:
+    async def _one(self, statement: Select[AccountTable]) -> AccountTable | None:
         """Run ``statement`` and return its only user, loaded with the linked provider accounts.
 
         :param statement: Select of users.
-        :type statement: Select[tuple[AccountTable]]
+        :type statement: Select[AccountTable]
         :returns: The user, or None when the statement finds none.
         :rtype: AccountTable | None
         """
