@@ -376,8 +376,8 @@ class TestDelete:
         :type fx_actor: Actor
         """
         uow = InMemoryUnitOfWork(fx_database)
-        await uow.jobs.add(make_job(project_id=fx_book.project.id, state=JobState.RUNNING))
-        await uow.commit()
+        async with uow.change():
+            await uow.jobs.add(make_job(project_id=fx_book.project.id, state=JobState.RUNNING))
 
         with pytest.raises(ConflictError):
             await fx_service().delete(fx_actor, fx_book.project.id, fx_book.first.id)
@@ -401,8 +401,8 @@ class TestDelete:
         :type fx_actor: Actor
         """
         uow = InMemoryUnitOfWork(fx_database)
-        await uow.jobs.add(make_job(project_id=fx_book.project.id, state=JobState.FAILED))
-        await uow.commit()
+        async with uow.change():
+            await uow.jobs.add(make_job(project_id=fx_book.project.id, state=JobState.FAILED))
 
         await fx_service().delete(fx_actor, fx_book.project.id, fx_book.first.id)
 

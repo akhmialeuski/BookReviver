@@ -98,8 +98,8 @@ async def _add_job(database: InMemoryDatabase, book: Book, state: JobState) -> N
     :type state: JobState
     """
     uow = InMemoryUnitOfWork(database)
-    await uow.jobs.add(make_job(project_id=book.project.id, state=state))
-    await uow.commit()
+    async with uow.change():
+        await uow.jobs.add(make_job(project_id=book.project.id, state=state))
 
 
 class TestListSources:

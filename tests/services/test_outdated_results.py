@@ -15,10 +15,11 @@ from tests.helpers.builders import EPOCH, make_page_stage, make_page_version
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from datetime import datetime
 
     from bookreviver.domain.entities import Page, PageStage, PageVersion
-    from bookreviver.domain.ids import PageVersionId
+    from bookreviver.domain.ids import PageId, PageVersionId
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -99,10 +100,10 @@ class SeededPage:
             input_id=input_id,
             state=VersionState.READY,
         )
-        await uow.page_versions.add(version)
         record = make_page_stage(page_id=self.page.id, stage=stage, head_version_id=version.id, state=state)
-        await uow.page_stages.save(record)
-        await uow.commit()
+        async with uow.change_book(self.page.project_id):
+            await uow.page_versions.add(version)
+            await uow.page_stages.save(record)
         return version
 
     async def stored(self, stage: Stage) -> PageStage:
@@ -130,6 +131,72 @@ async def mark_stale(kit: ProcessingKit) -> list[PageStage]:
 
 class TestMarkStale:
     """Tests for ``OutdatedResults.mark_stale``."""
+
+    @pytest.mark.parametrize(
+        'meanwhile',
+        [
+            pytest.param(
+                lambda record, _: evolve(record, state=StageState.STALE, updated_at=EPOCH + timedelta(minutes=30)),
+                id='marked-stale',
+            ),
+            pytest.param(lambda record, base_id: evolve(record, head_version_id=base_id), id='run-again'),
+            pytest.param(lambda _record, _base_id: None, id='deleted'),
+        ],
+    )
+    async def test_a_record_changed_between_the_check_and_the_block_is_left_as_the_request_wrote_it(
+        self,
+        fx_kit: ProcessingKit,
+        monkeypatch: pytest.MonkeyPatch,
+        meanwhile: Callable[[PageStage, PageVersionId], PageStage | None],
+    ) -> None:
+        """Verify the check marks nothing when its block finds the record not fresh, replaced or gone.
+
+        The outdated record is found by reads outside any block, and the request changes it before the block of the
+        book opens, which is what the re-read in the block is for.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param monkeypatch: Fixture that restores the patched repository after the test.
+        :type monkeypatch: pytest.MonkeyPatch
+        :param meanwhile: The record a request leaves after it was found outdated, or None when it deletes it.
+        :type meanwhile: Callable[[PageStage, PageVersionId], PageStage | None]
+        """
+        page = await SeededPage.seed(fx_kit)
+        await page.result(Stage.GEOMETRY, OUTDATED_GEOMETRY)
+        record = await page.stored(Stage.GEOMETRY)
+        base = (await fx_kit.uow().page_versions.list_for_page(page.page.id))[0]
+        left = meanwhile(record, base.id)
+        uow = fx_kit.uow()
+        read = uow.pages.get
+        changed = False
+
+        async def get_then_change(page_id: PageId) -> Page:
+            """Read the page of the record, then let a request change the record in a block of its own, once.
+
+            :param page_id: Identifier of the page.
+            :type page_id: PageId
+            :returns: The page.
+            :rtype: Page
+            """
+            nonlocal changed
+            found = await read(page_id)
+            if not changed:
+                changed = True
+                other = fx_kit.uow()
+                async with other.change_book(found.project_id):
+                    if left is None:
+                        await other.page_stages.delete(record.key)
+                    else:
+                        await other.page_stages.save(left)
+            return found
+
+        monkeypatch.setattr(uow.pages, 'get', get_then_change)
+        fx_kit.clock.moment = CHECKED_AT
+
+        marked = await OutdatedResults(uow=uow, catalogue=fx_kit.catalogue, clock=fx_kit.clock).mark_stale()
+
+        stored = await fx_kit.uow().page_stages.find(record.key)
+        assert (marked, stored) == ([], left)
 
     async def test_fresh_stage_made_by_an_older_version_of_a_processor_becomes_stale(
         self, fx_kit: ProcessingKit

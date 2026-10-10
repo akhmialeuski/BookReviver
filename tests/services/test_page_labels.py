@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING
 
+import anyio
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
@@ -13,13 +14,16 @@ from bookreviver.domain.enums import ContentType, PageChange, PageKind, Side
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.events import PagesChanged
 from bookreviver.domain.values import PageAnchor
+from bookreviver.services.projects import book_pages
+from tests.helpers.book_gate import hold_book
 from tests.helpers.builders import EPOCH, make_page, make_project, new_account_id
 from tests.helpers.page_services import make_page_service
 from tests.helpers.seeding import commit_project
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Collection, Sequence
+    from collections.abc import Callable, Coroutine
     from datetime import datetime
+    from typing import Any
 
     from bookreviver.adapters.clock.system import FixedClock
     from bookreviver.adapters.jobs.recording import RecordingJobQueue
@@ -27,6 +31,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Page, Project
     from bookreviver.domain.ids import PageId, ProjectId
+    from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.fakes_jobs import RecordingEventBus
 
@@ -34,7 +39,8 @@ pytestmark = pytest.mark.anyio
 
 LATER: datetime = EPOCH.replace(year=EPOCH.year + 1)
 STALE_LABEL: str = 'old'
-RIVAL_LABEL: str = 'rival'
+NEW_LABEL: str = '[4]'
+NEW_NOTES: str = 'Library stamp'
 # Kind and inclusion of the seven pages of the book, which the edits have to tell apart
 LAYOUT: list[tuple[PageKind, bool]] = [
     (PageKind.COVER, True),
@@ -99,6 +105,36 @@ def _written(database: InMemoryDatabase, before: dict[PageId, Page]) -> set[Page
     return {page_id for page_id, page in database.tables.pages.items() if before[page_id] is not page}
 
 
+async def _update_kind(service: PageService, actor: Actor, project_id: ProjectId, page_ids: list[PageId]) -> None:
+    """Change the kind of the third page, as a request to edit a page does.
+
+    :param service: Page service of the request.
+    :type service: PageService
+    :param actor: Account the service acts for.
+    :type actor: Actor
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :param page_ids: Identifiers of the pages of the book in book order.
+    :type page_ids: list[PageId]
+    """
+    await service.update(actor, project_id, page_ids[2], PageChanges(kind=PageKind.OTHER))
+
+
+async def _delete_page(service: PageService, actor: Actor, project_id: ProjectId, page_ids: list[PageId]) -> None:
+    """Delete the third page, as a request to delete a page does.
+
+    :param service: Page service of the request.
+    :type service: PageService
+    :param actor: Account the service acts for.
+    :type actor: Actor
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :param page_ids: Identifiers of the pages of the book in book order.
+    :type page_ids: list[PageId]
+    """
+    await service.delete(actor, project_id, page_ids[2])
+
+
 class TestUpdate:
     """Tests for PageService.update()."""
 
@@ -131,13 +167,12 @@ class TestUpdate:
             fx_actor,
             project.id,
             pages[2].id,
-            PageChanges(label='[4]', kind=PageKind.OTHER, included=False, notes='Library stamp'),
+            PageChanges(label=NEW_LABEL, kind=PageKind.OTHER, included=False, notes=NEW_NOTES),
         )
 
         stored = fx_database.tables.pages[pages[2].id]
         expect(
-            (stored.label, stored.kind, stored.included, stored.notes)
-            == ('[4]', PageKind.OTHER, False, 'Library stamp')
+            (stored.label, stored.kind, stored.included, stored.notes) == (NEW_LABEL, PageKind.OTHER, False, NEW_NOTES)
         )
         expect(stored.updated_at == LATER)
         expect((stored.id, stored.order_key, stored.scan_id) == (pages[2].id, pages[2].order_key, pages[2].scan_id))
@@ -167,7 +202,7 @@ class TestUpdate:
         await fx_service().update(fx_actor, project.id, pages[3].id, PageChanges(label=''))
 
         stored = fx_database.tables.pages[pages[3].id]
-        assert evolve(stored, label=STALE_LABEL, label_manual=True, updated_at=EPOCH, revision=0) == pages[3]
+        assert evolve(stored, label=STALE_LABEL, label_manual=True, updated_at=EPOCH) == pages[3]
         assert (stored.label, stored.label_manual) == ('', False)
 
     async def test_missing_page_page_of_another_project_and_foreign_project_are_not_found(
@@ -196,94 +231,7 @@ class TestUpdate:
 
 
 class TestConcurrentWrites:
-    """Tests for the use cases that write pages while another request commits a change to one of them."""
-
-    @staticmethod
-    def _racing_service(
-        database: InMemoryDatabase,
-        runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
-        assets: LocalAssetStore,
-        monkeypatch: pytest.MonkeyPatch,
-        rival: Callable[[], Awaitable[None]],
-    ) -> PageService:
-        """Build the page service over a unit of work whose page reads are followed by the rival's commit.
-
-        The unit of work builds new repositories when it rolls back, so the rival races the first attempt only.
-
-        :param database: In-memory database shared with the rival.
-        :type database: InMemoryDatabase
-        :param runtime: The recording bus, the clock and the queue the service reports through.
-        :type runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
-        :param assets: Asset store of the test.
-        :type assets: LocalAssetStore
-        :param monkeypatch: Fixture that restores the patched repository after the test.
-        :type monkeypatch: pytest.MonkeyPatch
-        :param rival: Request committing a change to a page, run after each read of one page.
-        :type rival: Callable[[], Awaitable[None]]
-        :returns: The service of one request.
-        :rtype: PageService
-        """
-        uow = InMemoryUnitOfWork(database)
-        read = uow.pages.get
-
-        async def get_then_race(page_id: PageId) -> Page:
-            """Read a page, then let the rival commit a change of it.
-
-            :param page_id: Identifier of the page.
-            :type page_id: PageId
-            :returns: The page as it was before the rival wrote.
-            :rtype: Page
-            """
-            page = await read(page_id)
-            await rival()
-            return page
-
-        monkeypatch.setattr(uow.pages, 'get', get_then_race)
-        return make_page_service(uow, assets, runtime)
-
-    async def test_an_edit_of_another_field_made_between_the_read_and_the_write_is_kept(
-        self,
-        fx_database: InMemoryDatabase,
-        fx_asset_store: LocalAssetStore,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
-        fx_actor: Actor,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Verify the kind the service sets is applied to the page the rival has just labelled, so both edits stay.
-
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
-        :param fx_runtime: The recording bus, the clock and the queue the service reports through.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param monkeypatch: Fixture that restores the patched repository after the test.
-        :type monkeypatch: pytest.MonkeyPatch
-        """
-        project, pages = await _commit_book(fx_database, fx_actor)
-        writes = 0
-
-        async def rival() -> None:
-            """Commit a new label of the page the service reads, once."""
-            nonlocal writes
-            if writes:
-                return
-            writes += 1
-            uow = InMemoryUnitOfWork(fx_database)
-            await uow.pages.update(evolve(await uow.pages.get(pages[2].id), label=RIVAL_LABEL))
-            await uow.commit()
-
-        updated = await self._racing_service(fx_database, fx_runtime, fx_asset_store, monkeypatch, rival).update(
-            fx_actor, project.id, pages[2].id, PageChanges(kind=PageKind.OTHER)
-        )
-
-        stored = fx_database.tables.pages[pages[2].id]
-        expect((stored.label, stored.kind) == (RIVAL_LABEL, PageKind.OTHER))
-        expect(updated.page == stored)
-        expect(stored.revision == 2)
-        assert_expectations()
+    """Tests for the use cases that write pages while another block of the same book is open."""
 
     async def test_a_job_writing_a_moved_page_during_a_group_move_keeps_both_changes(
         self,
@@ -295,8 +243,9 @@ class TestConcurrentWrites:
     ) -> None:
         """Verify a group move ends in the new order while a job records the content of one of the moved pages.
 
-        It replays the failure of ``pages.spec.ts`` of 2026-10-09: the job detecting the content of the pages commits
-        its write of a moved page after the move has read the pages and before it writes their order.
+        It replays the failure of ``pages.spec.ts`` of 2026-10-09. The move is inside its block when the job's write
+        starts as a concurrent task, so the job's block has to wait for the move and then read the new order. Ordering
+        is proved with events and ``wait_all_tasks_blocked``, never by waiting for a time.
 
         :param fx_database: In-memory database of the test.
         :type fx_database: InMemoryDatabase
@@ -306,40 +255,87 @@ class TestConcurrentWrites:
         :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param monkeypatch: Fixture that restores the patched repository after the test.
+        :param monkeypatch: Fixture that restores the patched method after the test.
         :type monkeypatch: pytest.MonkeyPatch
         """
         project, pages = await _commit_book(fx_database, fx_actor)
         moved = [pages[0].id, pages[1].id]
-        uow = InMemoryUnitOfWork(fx_database)
-        read = uow.pages.list_by_ids
-        writes = 0
+        anchor = PageAnchor(page_id=pages[3].id, side=Side.AFTER)
+        mover = InMemoryUnitOfWork(fx_database)
+        gate = hold_book(mover, monkeypatch)
+        seen_by_job: list[PageId] = []
 
-        async def list_then_job_writes(project_id: ProjectId, page_ids: Collection[PageId]) -> Sequence[Page]:
-            """Read the pages, then let the job commit the content of the second moved page, once.
-
-            :param project_id: Identifier of the project.
-            :type project_id: ProjectId
-            :param page_ids: Identifiers of the pages to read.
-            :type page_ids: Collection[PageId]
-            :returns: The pages as they were before the job wrote.
-            :rtype: Sequence[Page]
-            """
-            nonlocal writes
-            found = await read(project_id, page_ids)
-            if not writes:
-                writes += 1
-                job = InMemoryUnitOfWork(fx_database)
+        async def job_writes_content() -> None:
+            """Record the content of the second moved page in a block of its own, and note the order it read there."""
+            job = InMemoryUnitOfWork(fx_database)
+            async with job.change_book(project.id):
+                seen_by_job.extend(page.id for page in await book_pages(job.pages, project.id))
                 await job.pages.update(evolve(await job.pages.get(moved[1]), content_type=ContentType.COLOR_PICTURE))
-                await job.commit()
-            return found
 
-        monkeypatch.setattr(uow.pages, 'list_by_ids', list_then_job_writes)
-        await make_page_service(uow, fx_asset_store, fx_runtime).move_group(
-            fx_actor, project.id, moved, PageAnchor(page_id=pages[3].id, side=Side.AFTER)
-        )
+        async with anyio.create_task_group() as group:
+            group.start_soon(
+                make_page_service(mover, fx_asset_store, fx_runtime).move_group, fx_actor, project.id, moved, anchor
+            )
+            await gate.entered.wait()
+            group.start_soon(job_writes_content)
+            await anyio.wait_all_tasks_blocked()
+            expect(not seen_by_job)
+            gate.proceed.set()
 
         order = sorted(fx_database.tables.pages.values(), key=lambda page: page.order_key)
-        expect([page.id for page in order][:5] == [pages[2].id, pages[3].id, *moved, pages[4].id])
+        expected = [pages[2].id, pages[3].id, *moved, pages[4].id]
+        expect([page.id for page in order][:5] == expected)
         expect(fx_database.tables.pages[moved[1]].content_type == ContentType.COLOR_PICTURE)
+        expect(seen_by_job[:5] == expected)
+        assert_expectations()
+
+    @pytest.mark.parametrize('write', [_update_kind, _delete_page], ids=['update', 'delete'])
+    async def test_a_use_case_started_while_another_is_inside_its_block_waits_for_it(
+        self,
+        write: Callable[[PageService, Actor, ProjectId, list[PageId]], Coroutine[Any, Any, None]],
+        fx_database: InMemoryDatabase,
+        fx_service_over: Callable[[UnitOfWork], PageService],
+        fx_actor: Actor,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Verify a use case that starts while a move holds the book writes nothing before the move has ended.
+
+        :param write: The use case that starts second, given the service, the actor, the project and the page ids.
+        :type write: Callable[[PageService, Actor, ProjectId, list[PageId]], Coroutine[Any, Any, None]]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_service_over: Function building the page service over a unit of work.
+        :type fx_service_over: Callable[[UnitOfWork], PageService]
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        :param monkeypatch: Fixture that restores the patched method after the test.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        project, pages = await _commit_book(fx_database, fx_actor)
+        ids = [page.id for page in pages]
+        mover = InMemoryUnitOfWork(fx_database)
+        gate = hold_book(mover, monkeypatch)
+        before = dict(fx_database.tables.pages)
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(
+                fx_service_over(mover).move,
+                fx_actor,
+                project.id,
+                ids[0],
+                PageAnchor(page_id=ids[3], side=Side.AFTER),
+            )
+            await gate.entered.wait()
+            group.start_soon(
+                write,
+                fx_service_over(InMemoryUnitOfWork(fx_database)),
+                fx_actor,
+                project.id,
+                ids,
+            )
+            await anyio.wait_all_tasks_blocked()
+            expect(_written(fx_database, before) == set())
+            gate.proceed.set()
+
+        expect(fx_database.tables.pages[ids[0]].order_key != pages[0].order_key)
         assert_expectations()

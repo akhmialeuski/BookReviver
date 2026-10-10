@@ -241,7 +241,7 @@ class TestMove:
 
         stored = fx_database.tables.pages[book.pages[2].id]
         expect(stored.updated_at == LATER)
-        expect(evolve(stored, order_key=book.pages[2].order_key, updated_at=EPOCH, revision=0) == book.pages[2])
+        expect(evolve(stored, order_key=book.pages[2].order_key, updated_at=EPOCH) == book.pages[2])
         expect(stored.order_key < book.pages[0].order_key)
         assert_expectations()
 
@@ -553,8 +553,8 @@ class TestMoveSource:
         book = await _commit_book(fx_database, fx_actor)
         bare = make_source(project_id=book.project.id, name='bare.pdf')
         uow = InMemoryUnitOfWork(fx_database)
-        await uow.sources.add(bare)
-        await uow.commit()
+        async with uow.change_book(book.project.id):
+            await uow.sources.add(bare)
 
         await fx_service().move_source(
             fx_actor, book.project.id, bare.id, PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)

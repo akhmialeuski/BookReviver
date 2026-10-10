@@ -33,6 +33,8 @@ from bookreviver.domain.values import NewPage, PageAnchor, PageSize, Renditions
 from bookreviver.ports.runtime import JobQueue
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from bookreviver.services.pages import NOT_QUEUED, UNEXPECTED_FAILURE
+from tests.helpers.acting_renditions import ActingRenditionWriter
+from tests.helpers.book_gate import hold_book
 from tests.helpers.books import IMAGE
 from tests.helpers.builders import EPOCH, make_job, make_page, make_project, make_scan, make_source, new_account_id
 from tests.helpers.fake_processing import FakeRenditionWriter
@@ -41,14 +43,14 @@ from tests.helpers.page_services import PREVIEW_CONTENT, THUMBNAIL_CONTENT, make
 from tests.helpers.seeding import commit_project
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from bookreviver.adapters.clock.system import FixedClock
     from bookreviver.adapters.jobs.recording import RecordingJobQueue
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.adapters.storage import LocalAssetStore
-    from bookreviver.domain.entities import Actor, Page, PageVersion, Project, Scan, Source
+    from bookreviver.domain.entities import Actor, Page, PageOverview, PageVersion, Project, Scan, Source
     from bookreviver.domain.enums import ColorMode
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.values import RenditionInfo
@@ -57,10 +59,10 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 PNG_BIT_DEPTH_OFFSET: int = 24
-PAGES_DIRECTORY: str = 'pages'
 FAILED_AND_NEXT_JOBS: int = 2
 LIST_JOBS_PATCH: str = 'bookreviver.adapters.persistence.memory.unit_of_work.InMemoryJobRepository.list_for_project'
 WHITE: int = 255
+RIVAL_LABEL: str = 'iv'
 FIRST_SCAN_SIZE: tuple[int, int, float | None] = (100, 400, 100.0)
 # Widths, heights and resolutions whose medians are 200, 300 and 200.0
 SIZES: list[tuple[int, int, float | None]] = [(100, 500, 100.0), (300, 100, 300.0), (200, 300, 200.0)]
@@ -193,8 +195,8 @@ async def _placeholder_book(
     book = await _commit_book(database, assets, owner)
     placeholder = evolve(make_page(project_id=book.project.id, order_key='a5'), kind=PageKind.COVER, notes='Missing')
     uow = InMemoryUnitOfWork(database)
-    await uow.pages.add(placeholder)
-    await uow.commit()
+    async with uow.change_book(book.project.id):
+        await uow.pages.add(placeholder)
     return book, placeholder
 
 
@@ -213,9 +215,9 @@ async def _spare_scan(database: InMemoryDatabase, assets: LocalAssetStore, book:
     source = make_source(project_id=book.project.id, name='cover.jpg', minutes=5)
     scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True), source_label='xii')
     uow = InMemoryUnitOfWork(database)
-    await uow.sources.add(source)
-    await uow.scans.add(scan)
-    await uow.commit()
+    async with uow.change_book(book.project.id):
+        await uow.sources.add(source)
+        await uow.scans.add(scan)
     async with assets.writable(ProjectKeys(book.project.id).scan_rendition(scan, Rendition.FULL_JPEG)) as path:
         path.write_bytes(IMAGE)
     return scan
@@ -420,8 +422,8 @@ class TestAddBlank:
         sizes = [(100, 100, None), (102, 200, None), (9999, 9999, None), (500, 500, None), (300, 300, None)]
         book = await _commit_book(fx_database, fx_asset_store, fx_actor, sizes)
         uow = InMemoryUnitOfWork(fx_database)
-        await uow.pages.update(evolve(book.pages[2], included=False))
-        await uow.commit()
+        async with uow.change_book(book.project.id):
+            await uow.pages.update(evolve(book.pages[2], included=False))
 
         overview = await fx_service().add(
             fx_actor, book.project.id, NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
@@ -602,7 +604,7 @@ class TestAttachScan:
         expect([job.kind for job in fx_queue.enqueued] == [JobKind.PREPARE_PAGES])
         assert_expectations()
 
-    async def test_binds_the_scan_when_the_placeholder_is_changed_between_the_read_and_the_write(
+    async def test_binds_the_scan_after_a_printed_number_written_while_it_waited(
         self,
         fx_database: InMemoryDatabase,
         fx_asset_store: LocalAssetStore,
@@ -610,7 +612,10 @@ class TestAttachScan:
         fx_actor: Actor,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Verify a printed number written while the scan is bound is kept, and the scan is bound anyway.
+        """Verify a printed number written by a block that is open when the scan is bound is kept, and the scan bound.
+
+        The binding starts while the other block holds the book, so it waits for it and reads the placeholder after the
+        number was written, which is proved with events and ``wait_all_tasks_blocked``, never with a delay.
 
         :param fx_database: In-memory database of the test.
         :type fx_database: InMemoryDatabase
@@ -620,37 +625,36 @@ class TestAttachScan:
         :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param monkeypatch: Fixture that restores the patched repository after the test.
+        :param monkeypatch: Fixture that restores the patched method after the test.
         :type monkeypatch: pytest.MonkeyPatch
         """
         book, placeholder = await _placeholder_book(fx_database, fx_asset_store, fx_actor)
         scan = await _spare_scan(fx_database, fx_asset_store, book)
-        uow = InMemoryUnitOfWork(fx_database)
-        read = uow.pages.get
-        rival_label = 'iv'
+        writer = InMemoryUnitOfWork(fx_database)
+        gate = hold_book(writer, monkeypatch)
+        binding = make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime)
+        bound: list[PageOverview] = []
 
-        async def get_then_race(page_id: PageId) -> Page:
-            """Read a page, then let a rival request commit a new printed number of it.
+        async def write_the_number() -> None:
+            """Write a printed number of the placeholder in a block that stays open until the test lets it go."""
+            async with writer.change_book(book.project.id):
+                await writer.pages.update(evolve(await writer.pages.get(placeholder.id), label=RIVAL_LABEL))
 
-            :param page_id: Identifier of the page.
-            :type page_id: PageId
-            :returns: The page as it was before the rival wrote.
-            :rtype: Page
-            """
-            page = await read(page_id)
-            rival = InMemoryUnitOfWork(fx_database)
-            await rival.pages.update(evolve(await rival.pages.get(placeholder.id), label=rival_label))
-            await rival.commit()
-            return page
+        async def bind() -> None:
+            """Bind the scan to the placeholder and keep the overview."""
+            bound.append(await binding.attach_scan(fx_actor, book.project.id, placeholder.id, scan.id))
 
-        monkeypatch.setattr(uow.pages, 'get', get_then_race)
+        async with anyio.create_task_group() as group:
+            group.start_soon(write_the_number)
+            await gate.entered.wait()
+            group.start_soon(bind)
+            await anyio.wait_all_tasks_blocked()
+            expect(not bound)
+            gate.proceed.set()
 
-        overview = await make_page_service(uow, fx_asset_store, fx_runtime).attach_scan(
-            fx_actor, book.project.id, placeholder.id, scan.id
-        )
-
+        [overview] = bound
         expect((overview.page.origin, overview.page.scan_id) == (PageOrigin.SCAN, scan.id))
-        expect(overview.page.label == rival_label)
+        expect(overview.page.label == RIVAL_LABEL)
         assert_expectations()
 
     async def test_keeps_the_label_the_placeholder_had(
@@ -673,8 +677,8 @@ class TestAttachScan:
         """
         book, placeholder = await _placeholder_book(fx_database, fx_asset_store, fx_actor)
         uow = InMemoryUnitOfWork(fx_database)
-        await uow.pages.update(evolve(placeholder, label='[1]'))
-        await uow.commit()
+        async with uow.change_book(book.project.id):
+            await uow.pages.update(evolve(placeholder, label='[1]'))
         scan = await _spare_scan(fx_database, fx_asset_store, book)
 
         overview = await fx_service().attach_scan(fx_actor, book.project.id, placeholder.id, scan.id)
@@ -739,8 +743,8 @@ class TestAttachScan:
         if origin is PageOrigin.BLANK:
             page = evolve(make_page(project_id=book.project.id, order_key='a9'), origin=PageOrigin.BLANK)
             uow = InMemoryUnitOfWork(fx_database)
-            await uow.pages.add(page)
-            await uow.commit()
+            async with uow.change_book(book.project.id):
+                await uow.pages.add(page)
 
         with pytest.raises(NotAPlaceholderError):
             await fx_service().attach_scan(fx_actor, book.project.id, page.id, scan.id)
@@ -860,8 +864,8 @@ class TestAttachScan:
         book, placeholder = await _placeholder_book(fx_database, fx_asset_store, fx_actor)
         scan = await _spare_scan(fx_database, fx_asset_store, book)
         uow = InMemoryUnitOfWork(fx_database)
-        await uow.scans.update(evolve(scan, renditions=Renditions(ready=False)))
-        await uow.commit()
+        async with uow.change_book(book.project.id):
+            await uow.scans.update(evolve(scan, renditions=Renditions(ready=False)))
 
         with pytest.raises(ConflictError):
             await fx_service().attach_scan(fx_actor, book.project.id, placeholder.id, scan.id)
@@ -1173,8 +1177,8 @@ class TestPrepareImages:
         scan = await _spare_scan(fx_database, fx_asset_store, book)
         await fx_service().attach_scan(fx_actor, book.project.id, placeholder.id, scan.id)
         uow = InMemoryUnitOfWork(fx_database)
-        await uow.sources.delete(scan.source_id)
-        await uow.commit()
+        async with uow.change_book(book.project.id):
+            await uow.sources.delete(scan.source_id)
 
         await fx_service().prepare_images(fx_queue.enqueued[0].id)
 
@@ -1212,8 +1216,8 @@ class TestPrepareImages:
         )
         job = fx_queue.enqueued[0]
         uow = InMemoryUnitOfWork(fx_database)
-        await uow.jobs.update(evolve(job, state=JobState.CANCELLED))
-        await uow.commit()
+        async with uow.change():
+            await uow.jobs.update(evolve(job, state=JobState.CANCELLED))
         published = len(fx_events.published)
 
         await fx_service().prepare_images(job.id)
@@ -1241,8 +1245,8 @@ class TestPrepareImages:
         job = evolve(make_job(project_id=project.id), kind=JobKind.PREPARE_PAGES)
         await commit_project(fx_database, project)
         uow = InMemoryUnitOfWork(fx_database)
-        await uow.jobs.add(job)
-        await uow.commit()
+        async with uow.change():
+            await uow.jobs.add(job)
 
         await fx_service().prepare_images(job.id)
 
@@ -1261,43 +1265,6 @@ class TwoLeaves(NamedTuple):
     project: Project
     pages: list[Page]
     root: Path
-
-
-class ActingRenditionWriter(FakeRenditionWriter):
-    """A writer that lets something else happen in the middle of the first version, as another request would.
-
-    :ivar attempts: Number of versions it was asked to write.
-    """
-
-    def __init__(self, act: Callable[[PageId], Awaitable[None]]) -> None:
-        """Run ``act`` while the first version is being written.
-
-        :param act: Coroutine function called with the identifier of the page whose version is being written.
-        :type act: Callable[[PageId], Awaitable[None]]
-        """
-        super().__init__()
-        self.attempts = 0
-        self._act = act
-
-    @override
-    async def write(self, image: Path, target_dir: Path, *, full: Rendition, color_mode: ColorMode) -> RenditionInfo:
-        """Act in the middle of the first version, and write the files as the fake writer does.
-
-        :param image: Image to write.
-        :type image: Path
-        :param target_dir: Directory to create, which lies under the directory of the page the version belongs to.
-        :type target_dir: Path
-        :param full: Format of the ``full`` image.
-        :type full: Rendition
-        :param color_mode: Colour of the image.
-        :type color_mode: ColorMode
-        :returns: What the fake writer returns.
-        :rtype: RenditionInfo
-        """
-        self.attempts += 1
-        if self.attempts == 1:
-            await self._act(PageId(UUID(target_dir.parts[target_dir.parts.index(PAGES_DIRECTORY) + 1])))
-        return await super().write(image, target_dir, full=full, color_mode=color_mode)
 
 
 class FailingBus(RecordingEventBus):
@@ -1410,8 +1377,8 @@ class TestPrepareImagesWhileTheBookChanges:
             """
             page_id = written if victim == 'written' else next(page.id for page in pages if page.id != written)
             other = InMemoryUnitOfWork(fx_database)
-            await other.pages.delete(page_id)
-            await other.commit()
+            async with other.change_book(project.id):
+                await other.pages.delete(page_id)
             deleted.append(page_id)
 
         service = make_page_service(
@@ -1627,9 +1594,9 @@ class TestAddBlankWithoutSizedPages:
         """
         book = await _commit_book(fx_database, fx_asset_store, fx_actor, SIZES)
         uow = InMemoryUnitOfWork(fx_database)
-        for page in book.pages:
-            await uow.pages.update(evolve(page, included=False))
-        await uow.commit()
+        async with uow.change_book(book.project.id):
+            for page in book.pages:
+                await uow.pages.update(evolve(page, included=False))
         blank = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
 
         with pytest.raises(ConflictError, match='cut from a scan and part of the book has a recorded size') as refused:

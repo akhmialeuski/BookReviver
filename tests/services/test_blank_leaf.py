@@ -32,11 +32,12 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.events import PagesChanged
+from bookreviver.domain.events import PagesChanged, PageVersionReady
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import NewPage, ProcessorRef, Renditions, Step
 from bookreviver.services.base_versions import PAGES_BLANK, BaseVersions
+from tests.helpers.acting_renditions import ActingRenditionWriter
 from tests.helpers.builders import (
     EPOCH,
     make_page,
@@ -61,6 +62,9 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Page, PageStage, PageVersion, Project
+    from bookreviver.domain.ids import PageId
+    from bookreviver.ports.imaging import RenditionWriter
+    from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.fakes_jobs import RecordingEventBus
 
@@ -143,13 +147,19 @@ class LeafDesk:
         self.events, _, self.queue = runtime
         self._runtime = runtime
 
-    def service(self) -> PageService:
+    def service(self, *, renditions: RenditionWriter | None = None, uow: UnitOfWork | None = None) -> PageService:
         """Build the page service for one request or job.
 
-        :returns: A service over a new unit of work.
+        :param renditions: Writer of the files of a version, or None for the one that copies the image.
+        :type renditions: RenditionWriter | None
+        :param uow: Unit of work the service runs over, or None for a new one.
+        :type uow: UnitOfWork | None
+        :returns: A service over the unit of work given, or over a new one.
         :rtype: PageService
         """
-        return make_page_service(InMemoryUnitOfWork(self.database), self.assets, self._runtime)
+        return make_page_service(
+            uow or InMemoryUnitOfWork(self.database), self.assets, self._runtime, renditions=renditions
+        )
 
     async def book(self, kinds: Sequence[PageKind]) -> LeafBook:
         """Commit a book with a page of each kind, cut from a scan of text on yellowed paper, and store the images.
@@ -173,11 +183,11 @@ class LeafDesk:
         await commit_project(self.database, project, *pages, sources=[source], scans=scans, versions=versions)
         # The import makes the base version of each page the current version of the page split
         uow = InMemoryUnitOfWork(self.database)
-        for page, version in zip(pages, versions, strict=True):
-            await uow.page_stages.save(
-                make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=version.id)
-            )
-        await uow.commit()
+        async with uow.change_book(project.id):
+            for page, version in zip(pages, versions, strict=True):
+                await uow.page_stages.save(
+                    make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=version.id)
+                )
         keys = ProjectKeys(project.id)
         for version in versions:
             async with self.assets.writable(keys.version_rendition(version, Rendition.FULL_PNG)) as target:
@@ -407,13 +417,13 @@ class TestChooseALeaf:
             processor_key=NORMALIZE_KEY, params={NormalizeParam.PAGE_WIDTH: width, NormalizeParam.PAGE_HEIGHT: height}
         )
         uow = InMemoryUnitOfWork(fx_desk.database)
-        await uow.recipes.add(evolve(recipe, steps=(step,)))
-        await uow.commit()
+        async with uow.change_book(book.project.id):
+            await uow.recipes.add(evolve(recipe, steps=(step,)))
 
         await fx_desk.choose(book, [1], BlankFill.WHITE)
         uow = InMemoryUnitOfWork(fx_desk.database)
-        await uow.recipes.update(evolve(recipe, steps=(evolve(step, enabled=False),)))
-        await uow.commit()
+        async with uow.change_book(book.project.id):
+            await uow.recipes.update(evolve(recipe, steps=(evolve(step, enabled=False),)))
         await fx_desk.choose(book, [2], BlankFill.WHITE)
 
         [normalized] = fx_desk.leaves(book.pages[1])
@@ -436,13 +446,13 @@ class TestChooseALeaf:
             processor_key=NORMALIZE_KEY, params={NormalizeParam.PAGE_WIDTH: 500, NormalizeParam.PAGE_HEIGHT: 600}
         )
         uow = InMemoryUnitOfWork(fx_desk.database)
-        await uow.recipes.add(evolve(recipe, steps=(step,)))
-        await uow.commit()
+        async with uow.change_book(book.project.id):
+            await uow.recipes.add(evolve(recipe, steps=(step,)))
         await fx_desk.choose(book, [1], BlankFill.WHITE)
         await fx_desk.prepare()
         uow = InMemoryUnitOfWork(fx_desk.database)
-        await uow.recipes.update(evolve(recipe, steps=(evolve(step, enabled=False),)))
-        await uow.commit()
+        async with uow.change_book(book.project.id):
+            await uow.recipes.update(evolve(recipe, steps=(evolve(step, enabled=False),)))
 
         added = await fx_desk.service().add(
             fx_desk.actor, book.project.id, NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
@@ -492,15 +502,15 @@ class TestGetTheScanBack:
             state=VersionState.READY,
         )
         uow = InMemoryUnitOfWork(fx_desk.database)
-        await uow.page_versions.add(geometry)
-        await uow.page_stages.save(make_page_stage(page_id=blank.id, head_version_id=geometry.id))
-        await uow.commit()
+        async with uow.change_book(book.project.id):
+            await uow.page_versions.add(geometry)
+            await uow.page_stages.save(make_page_stage(page_id=blank.id, head_version_id=geometry.id))
         await fx_desk.choose(book, [1], BlankFill.WHITE)
         await fx_desk.prepare()
         after_leaf = fx_desk.heads(blank)[Stage.GEOMETRY].state
         uow = InMemoryUnitOfWork(fx_desk.database)
-        await uow.page_stages.save(make_page_stage(page_id=blank.id, head_version_id=geometry.id))
-        await uow.commit()
+        async with uow.change_book(book.project.id):
+            await uow.page_stages.save(make_page_stage(page_id=blank.id, head_version_id=geometry.id))
 
         await fx_desk.choose(book, [1], BlankFill.SCAN)
 
@@ -750,8 +760,8 @@ class TestRefusals:
         )
         waiting = make_page(project_id=book.project.id, order_key='b1', kind=PageKind.BLANK)
         uow = InMemoryUnitOfWork(fx_desk.database)
-        await uow.pages.add_many([generated, waiting])
-        await uow.commit()
+        async with uow.change_book(book.project.id):
+            await uow.pages.add_many([generated, waiting])
 
         for page in (generated, waiting):
             with pytest.raises(ConflictError, match='not cut from a scan'):
@@ -786,12 +796,96 @@ class TestRefusals:
         """
         book = await fx_desk.book([PageKind.BLANK])
         uow = InMemoryUnitOfWork(fx_desk.database)
-        await uow.page_versions.update(evolve(book.versions[0], data={}))
-        await uow.commit()
+        async with uow.change_book(book.project.id):
+            await uow.page_versions.update(evolve(book.versions[0], data={}))
 
         with pytest.raises(ConflictError, match='no size'):
             await fx_desk.choose(book, [0], BlankFill.WHITE)
 
         expect(fx_desk.page(book.pages[0]).blank_fill is BlankFill.SCAN)
         expect(fx_desk.events.published == [])
+        assert_expectations()
+
+
+class TestJobsReCheckWhatTheyApply:
+    """Tests for the steps of the jobs that store a result, which read again what the result depends on."""
+
+    async def test_a_leaf_whose_choice_was_taken_back_while_it_was_written_is_not_made_current(
+        self, fx_desk: LeafDesk
+    ) -> None:
+        """Verify the job stores no head for a leaf the page does not show any longer, and ends without a failure.
+
+        The page gets its scan back while the job writes the files of the leaf. The job holds no block then, so the
+        request is served at once, and the block that stores the leaf finds the choice changed and writes nothing.
+
+        :param fx_desk: What the tests of the choice of leaves share.
+        :type fx_desk: LeafDesk
+        """
+        book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK])
+        blank = book.pages[1]
+        await fx_desk.choose(book, [1], BlankFill.WHITE)
+
+        async def take_the_scan_back(_: PageId) -> None:
+            """Choose the scan again for the page the job is writing the leaf of, as a request would.
+
+            :param _: Page whose leaf is written, which is the only blank page of the book.
+            :type _: PageId
+            """
+            await fx_desk.choose(book, [1], BlankFill.SCAN)
+
+        service = fx_desk.service(renditions=ActingRenditionWriter(take_the_scan_back))
+        await service.prepare_images(fx_desk.queue.enqueued[-1].id)
+
+        [job] = fx_desk.database.tables.jobs.values()
+        [leaf] = fx_desk.leaves(blank)
+        expect(job.state is JobState.SUCCEEDED)
+        expect(leaf.state is VersionState.PENDING)
+        expect(Stage.PAGE_ORDER not in fx_desk.heads(blank))
+        expect(not any(isinstance(event, PageVersionReady) for event in fx_desk.events.published))
+        assert_expectations()
+
+    async def test_the_pass_of_the_start_writes_no_leaf_for_a_page_that_got_its_scan_back_meanwhile(
+        self, fx_desk: LeafDesk, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify ``remake_outdated_leaves`` adds nothing and queues nothing for a page it finds changed in its block.
+
+        The page is read to find its book, and the choice of the scan is made after that read and before the block of
+        the book opens, so the pass has to find the choice in the block and leave the page alone.
+
+        :param fx_desk: What the tests of the choice of leaves share.
+        :type fx_desk: LeafDesk
+        :param monkeypatch: Fixture that restores the patched repository after the test.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK, PageKind.TEXT])
+        blank = book.pages[1]
+        await fx_desk.choose(book, [1], BlankFill.PAPER)
+        await fx_desk.prepare()
+        await TestRemakeOutdatedLeaves().outdate(fx_desk, book, 1)
+        queued, leaves = len(fx_desk.queue.enqueued), fx_desk.leaves(blank)
+        uow = InMemoryUnitOfWork(fx_desk.database)
+        read = uow.pages.get
+        raced = False
+
+        async def get_then_take_the_scan_back(page_id: PageId) -> Page:
+            """Read a page, then choose the scan for it in a block of another unit of work, once.
+
+            :param page_id: Identifier of the page.
+            :type page_id: PageId
+            :returns: The page as it was before the choice.
+            :rtype: Page
+            """
+            nonlocal raced
+            page = await read(page_id)
+            if not raced:
+                raced = True
+                await fx_desk.choose(book, [1], BlankFill.SCAN)
+            return page
+
+        monkeypatch.setattr(uow.pages, 'get', get_then_take_the_scan_back)
+        await fx_desk.service(uow=uow).remake_outdated_leaves()
+
+        expect(len(fx_desk.queue.enqueued) == queued)
+        expect(fx_desk.leaves(blank) == leaves)
+        expect(fx_desk.page(blank).blank_fill is BlankFill.SCAN)
         assert_expectations()

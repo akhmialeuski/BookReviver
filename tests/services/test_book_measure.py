@@ -1,6 +1,7 @@
 """Tests for the job that measures the book: the content boxes Margins placed, written into the normalize step."""
 
 import math
+from datetime import timedelta
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -25,10 +26,14 @@ from bookreviver.domain.geometry import Rect
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.margins import MM_PER_INCH
 from bookreviver.domain.values import PageStageKey, ProcessorRef, RecipeDraft, StageRun, Step
+from bookreviver.services.book_measure import RECIPES_CHANGED, BookMeasure
 from tests.helpers.builders import make_page_stage, make_page_version
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from bookreviver.domain.entities import Actor, Job, Page, Project, Recipe
+    from bookreviver.domain.ids import ProjectId
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -110,9 +115,9 @@ async def placed_page(
         data=data,
     )
     uow = kit.uow()
-    await uow.page_versions.add(normalize)
-    await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id, head_version_id=normalize.id))
-    await uow.commit()
+    async with uow.change_book(project.id):
+        await uow.page_versions.add(normalize)
+        await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id, head_version_id=normalize.id))
     return page
 
 
@@ -394,10 +399,10 @@ class TestMeasureBook:
         await measure(fx_cv_kit, actor, project)
         written = await fx_cv_kit.uow().recipes.get(recipe.id)
         uow = fx_cv_kit.uow()
-        await uow.page_stages.save(
-            evolve(await uow.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)), state=StageState.FRESH)
-        )
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_stages.save(
+                evolve(await uow.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)), state=StageState.FRESH)
+            )
         job = await measure(fx_cv_kit, actor, project)
         again = await fx_cv_kit.uow().recipes.get(recipe.id)
         record = await fx_cv_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
@@ -604,3 +609,53 @@ class TestMeasureIsProcessing:
         await fx_cv_kit.service().start_measure(actor, project.id)
         with pytest.raises(ConflictError, match=BUSY_MESSAGE):
             await fx_cv_kit.service().start_measure(actor, project.id)
+
+
+class TestMeasureReChecksTheRecipes:
+    """Tests for the block of the measure, which reads the recipes again before it writes over them."""
+
+    async def test_a_recipe_changed_after_it_was_read_is_not_written_over(
+        self, fx_cv_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify the measure refuses with its reason and leaves the recipe the user saved meanwhile as it is.
+
+        The recipes are read before the block of the book opens. The user saves a recipe after that read, so the block
+        finds another ``updated_at`` and refuses, which the job records as its failure and never retries.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        :param monkeypatch: Fixture that restores the patched repository after the test.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        actor, project = await fx_cv_kit.seed_project()
+        recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
+        await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(300, 600, 30))
+        before = await normalize_params(fx_cv_kit, actor, project)
+        uow = fx_cv_kit.uow()
+        parts = fx_cv_kit.parts(uow)
+        read = uow.recipes.list_for_stage
+        saved: list[Recipe] = []
+
+        async def list_then_save(project_id: ProjectId, stage: Stage) -> Sequence[Recipe]:
+            """Read the recipes of the stage, then let the user save the first of them, once.
+
+            :param project_id: Project owning the recipes.
+            :type project_id: ProjectId
+            :param stage: The stage.
+            :type stage: Stage
+            :returns: The recipes as they were before the user saved.
+            :rtype: Sequence[Recipe]
+            """
+            found = await read(project_id, stage)
+            if not saved and found:
+                fx_cv_kit.clock.moment += timedelta(minutes=1)
+                draft = RecipeDraft(steps=found[0].steps)
+                saved.append(await fx_cv_kit.edit_recipe(actor, project, stage, draft, found[0].kind))
+            return found
+
+        monkeypatch.setattr(uow.recipes, 'list_for_stage', list_then_save)
+
+        with pytest.raises(ConflictError, match=RECIPES_CHANGED):
+            await BookMeasure(uow=uow, recipes=parts.recipes, records=parts.records).run(project.id)
+
+        assert await normalize_params(fx_cv_kit, actor, project) == before
