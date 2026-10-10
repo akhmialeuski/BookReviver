@@ -1,8 +1,8 @@
 """Persistence ports: repositories per aggregate and the unit of work that commits them together.
 
-Services never see a database. They open a ``UnitOfWork``, read and change entities through its repositories, and
-commit, so every change of one use case lands in one transaction. The in-memory and SQLAlchemy adapters both run the
-contract suite in ``tests/contracts``, which is what makes them interchangeable.
+Services never see a database. They open a ``UnitOfWork``, read entities through its repositories, and change them
+inside one of its blocks, so every change of one use case lands in one transaction. The in-memory and SQLAlchemy
+adapters both run the contract suite in ``tests/contracts``, which is what makes them interchangeable.
 
 The book is the aggregate. Every change of a book runs in one block of the unit of work, ``change_book``, which waits
 for any other change of that book, holds it until the block commits, and so reads only what the previous change
@@ -115,7 +115,8 @@ class Repository[EntityT, IdT](ABC):
     async def add_many(self, entities: Sequence[EntityT]) -> Sequence[EntityT]:
         """Store several new entities at once, all of them or, on an error, none.
 
-        After an error the unit of work is rolled back before it is used again, as a database requires.
+        After an error the block that holds the write rolls back when it is left by the exception, as a database
+        requires.
 
         :param entities: Entities to store, with their identifiers already assigned.
         :type entities: Sequence[EntityT]
@@ -259,9 +260,6 @@ class PageRepository(Repository[Page, PageId]):
     Within a project an order key is unique, and a part of a scan, the pair of a scan and a slot, belongs to one page
     at most. A page keeps its row when its scan is deleted, and loses only the reference to it. Deleting a page
     removes its versions.
-
-    A page carries a ``revision`` that every update raises by one. An update whose page has not the revision stored is
-    a write over a change the caller never read, so it is refused with a ``ConcurrentChangeError`` and writes nothing.
     """
 
     @abstractmethod
@@ -352,16 +350,14 @@ class PageRepository(Repository[Page, PageId]):
     async def update_many(self, pages: Sequence[Page]) -> None:
         """Replace the stored state of several pages in the one transaction, all of them or, on an error, none.
 
-        After an error the unit of work is rolled back before it is used again, as a database requires.
+        After an error the block that holds the write rolls back when it is left by the exception, as a database
+        requires.
 
         :param pages: Pages with their new state.
         :type pages: Sequence[Page]
         :raises NotFoundError: If a page is not stored.
         :raises ConflictError: If the new state of a page takes an order key, or a part of a scan, that another page
-                               of the project has, such as a page moved to the place another move took in the
-                               meantime.
-        :raises ConcurrentChangeError: If another transaction changed a page after it was read, which its revision no
-                                       longer matches.
+                               of the project has.
         """
 
     @abstractmethod
@@ -1028,10 +1024,10 @@ class BookPlaceRepository(Repository[BookPlace, BookPlaceKey]):
 
 
 class UnitOfWork(ABC):
-    """One transaction over every repository; nothing is visible to others before it commits.
+    """One transaction over every repository; nothing is visible to others before its block ends.
 
-    Every write goes through a ``change_book`` or a ``change`` block, which commits when it ends normally. ``commit``
-    and ``rollback`` remain only until every caller has moved to the blocks, and a later change removes them.
+    Every write goes through a ``change_book`` or a ``change`` block. A block commits when it ends normally and rolls
+    back when an exception leaves it, so nothing outside a block can commit or discard a change.
 
     :ivar projects: Project repository of this transaction.
     :ivar sources: Source repository of this transaction.
@@ -1102,19 +1098,3 @@ class UnitOfWork(ABC):
         :raises BookBusyError: On entry, if another block did not end within the wait limit of the adapter.
         :raises NestedChangeError: On entry, if a block of this unit of work is open already.
         """
-
-    @abstractmethod
-    async def commit(self) -> None:
-        """Make every change since the last commit durable and visible.
-
-        A job written by ``JobRepository.update_if_state`` keeps its guarded state until this commit: a database holds
-        the row locked, so another writer waits, and an adapter without locks refuses the commit instead when another
-        transaction changed that job in the meantime.
-
-        :raises ConflictError: If a job this transaction wrote by ``update_if_state`` was changed and committed by
-                               another transaction since; nothing of this transaction is kept then.
-        """
-
-    @abstractmethod
-    async def rollback(self) -> None:
-        """Discard every change since the last commit."""

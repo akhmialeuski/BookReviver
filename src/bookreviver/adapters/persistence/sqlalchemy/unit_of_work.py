@@ -220,13 +220,3 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
             return
         if (mapper := state.bind_mapper) is not None and issubclass(mapper.class_, DefaultBase):
             raise NoChangeOpenError
-
-    @override
-    async def commit(self) -> None:
-        """Commit the transaction, making every change since the last commit durable and visible."""
-        await self._session.commit()
-
-    @override
-    async def rollback(self) -> None:
-        """Roll the transaction back, discarding every change since the last commit."""
-        await self._session.rollback()

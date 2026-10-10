@@ -1,4 +1,4 @@
-"""In-memory unit of work: repositories work on a copy of the database, and ``commit`` publishes only the changes.
+"""In-memory unit of work: repositories work on a copy of the database, and a block publishes only the changes.
 
 The adapter backs the service and API tests and runs the same port contract suite as the SQLAlchemy adapter, so it
 reproduces the behaviour services rely on rather than only storing rows. It mirrors the schema of the SQL tables and
@@ -17,8 +17,8 @@ transaction isolation:
   cover, a deleted scan leaves its pages without their scan, a deleted job leaves the sources it imported without
   their import job, a deleted version leaves the versions it fed without their input and the stage records it headed
   without their head, and a deleted recipe leaves the stage records it processed without their recipe.
-- Isolation: a unit of work reads and writes a private copy of the tables, and ``commit`` merges only the rows it
-  added, replaced or removed, so two units of work touching different rows do not overwrite each other.
+- Isolation: a unit of work reads and writes a private copy of the tables, and a block that ends normally merges only
+  the rows it added, replaced or removed, so two units of work touching different rows do not overwrite each other.
 - Locks: the database holds one single-holder semaphore for each book and one for the blocks outside a book. A block
   of the port takes its semaphore under the wait limit, and takes a fresh copy of the tables once it holds it, so it
   reads what the previous change of the book committed. Nothing writes outside a block, which the repositories enforce.
@@ -68,7 +68,7 @@ from bookreviver.domain.enums import (
     VersionScale,
     VersionState,
 )
-from bookreviver.domain.errors import BookBusyError, ConcurrentChangeError, ConflictError, DomainError, NotFoundError
+from bookreviver.domain.errors import BookBusyError, ConflictError, DomainError, NotFoundError
 from bookreviver.domain.ids import (
     JobId,
     PageId,
@@ -634,51 +634,15 @@ class InMemoryScanRepository(InMemoryRepository[Scan, ScanId], ScanRepository):
 class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
     """Pages of the book, unique by project and order key and by scan and slot."""
 
-    def __init__(
-        self, tables: InMemoryTables, *, change: ChangeState, snapshot: InMemoryTables, committed: InMemoryTables
-    ) -> None:
+    def __init__(self, tables: InMemoryTables, *, change: ChangeState) -> None:
         """Work on the page table of the unit of work's copy, checking pages against projects and scans.
 
         :param tables: Every table of the working copy.
         :type tables: InMemoryTables
         :param change: Whether a block of the unit of work is open, which every write requires.
         :type change: ChangeState
-        :param snapshot: The committed tables as they were when this unit of work began, which tell the revision a
-                         page was read at.
-        :type snapshot: InMemoryTables
-        :param committed: The committed tables shared with every unit of work, whose page revisions another
-                          transaction may have raised since this one began.
-        :type committed: InMemoryTables
         """
         super().__init__(tables.pages, tables, change=change)
-        self._snapshot = snapshot
-        self._committed = committed
-
-    @override
-    async def update(self, entity: Page) -> Page:
-        """Replace the stored state of a page, raising its revision, as the version counter of the table does.
-
-        A database refuses a write over a row that another transaction changed after it was read, and over a page
-        read before an earlier write of this transaction. A page this transaction wrote already carries the revision
-        of the working copy, which a committed row has not reached, so the committed row is compared with the
-        snapshot taken when the transaction began and not with the page.
-
-        :param entity: Page with its new state and the revision it was read at.
-        :type entity: Page
-        :returns: The page as stored, with its revision raised by one.
-        :rtype: Page
-        :raises NotFoundError: If the page, or a project or scan it refers to, is not stored.
-        :raises ConflictError: If its new state takes a unique value of another page.
-        :raises ConcurrentChangeError: If a transaction that committed after this one began changed the page, or the
-                                       page was read before an earlier write of this transaction.
-        """
-        working = self._rows.get(entity.id)
-        committed, seen = self._committed.pages.get(entity.id), self._snapshot.pages.get(entity.id)
-        if (working is not None and working.revision != entity.revision) or (
-            committed is not None and seen is not None and committed.revision != seen.revision
-        ):
-            raise ConcurrentChangeError
-        return await super().update(evolve(entity, revision=entity.revision + 1))
 
     @override
     def _check(self, entity: Page) -> None:
@@ -2000,7 +1964,6 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
         change: ChangeState,
         snapshot: InMemoryTables,
         committed: InMemoryTables,
-        guards: dict[JobId, Job | None],
     ) -> None:
         """Work on the job table of the unit of work's copy, checking jobs against its projects.
 
@@ -2012,13 +1975,10 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
         :type snapshot: InMemoryTables
         :param committed: The committed tables shared with every unit of work, read by a guarded write.
         :type committed: InMemoryTables
-        :param guards: The committed row each guarded write judged, by job, which the unit of work checks on commit.
-        :type guards: dict[JobId, Job | None]
         """
         super().__init__(tables.jobs, tables, change=change)
         self._snapshot = snapshot
         self._committed = committed
-        self._guards = guards
 
     @override
     def _check(self, entity: Job) -> None:
@@ -2098,8 +2058,7 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
         """Replace the job in the working copy while its latest state is one of ``expected``.
 
         Like a database statement, the check sees the job as last committed by anyone, unless this transaction changed
-        the job itself. Without locks, the committed row judged here is recorded, and the unit of work refuses to
-        commit if another transaction has replaced it by then.
+        the job itself.
 
         :param entity: Job with its new state.
         :type entity: Job
@@ -2118,13 +2077,12 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
             raise NotFoundError(entity.id)
         if current.state not in expected:
             return None
-        self._guards.setdefault(entity.id, committed)
         self._rows[entity.id] = entity
         return entity
 
 
 class InMemoryUnitOfWork(UnitOfWork):
-    """A transaction over a private copy of the database that publishes only its own changes on commit.
+    """A transaction over a private copy of the database that publishes only its own changes when a block ends.
 
     Rows are frozen entities, so a changed row is a different object: comparing identities against the snapshot taken
     when the transaction began finds exactly what this unit added, replaced or removed.
@@ -2158,12 +2116,11 @@ class InMemoryUnitOfWork(UnitOfWork):
         # of a database adapter keep their session; every transaction refills the tables in place
         self._snapshot = InMemoryTables()
         self._tables = InMemoryTables()
-        self._guards: dict[JobId, Job | None] = {}
         change, committed = self._change, self._database.tables
         self.projects = InMemoryProjectRepository(self._tables, change=change)
         self.sources = InMemorySourceRepository(self._tables, change=change)
         self.scans = InMemoryScanRepository(self._tables, change=change)
-        self.pages = InMemoryPageRepository(self._tables, change=change, snapshot=self._snapshot, committed=committed)
+        self.pages = InMemoryPageRepository(self._tables, change=change)
         self.pagination_sections = InMemoryPaginationSectionRepository(self._tables, change=change)
         self.page_versions = InMemoryPageVersionRepository(
             self._tables, change=change, snapshot=self._snapshot, committed=committed
@@ -2175,9 +2132,7 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.result_mark_changes = InMemoryResultMarkChangeRepository(self._tables, change=change)
         self.recipes = InMemoryRecipeRepository(self._tables, change=change)
         self.recipe_profiles = InMemoryRecipeProfileRepository(self._tables, change=change)
-        self.jobs = InMemoryJobRepository(
-            self._tables, change=change, snapshot=self._snapshot, committed=committed, guards=self._guards
-        )
+        self.jobs = InMemoryJobRepository(self._tables, change=change, snapshot=self._snapshot, committed=committed)
         self.book_places = InMemoryBookPlaceRepository(
             self._tables, change=change, snapshot=self._snapshot, committed=committed
         )
@@ -2214,10 +2169,12 @@ class InMemoryUnitOfWork(UnitOfWork):
 
     @asynccontextmanager
     async def _block(self, lock: anyio.Semaphore) -> AsyncIterator[None]:
-        """Hold a lock for a transaction that commits on exit and is discarded on an exception.
+        """Hold a lock for a transaction that publishes its rows on exit and is discarded on an exception.
 
         The copy of the tables is taken after the lock is held, so the block reads what the change that held the lock
-        before it committed.
+        before it committed. A normal exit merges only the rows the block added, replaced or removed into the committed
+        state, and nothing awaits between the first row and the last, so no other merge interleaves. Either way the
+        copy is taken again from the committed state, which a read outside a block then sees.
 
         :param lock: Single-holder semaphore of the book or of the changes outside books.
         :type lock: anyio.Semaphore
@@ -2238,11 +2195,15 @@ class InMemoryUnitOfWork(UnitOfWork):
             self._change.is_open = True
             try:
                 yield
-                await self.commit()
-            except BaseException:
-                await self.rollback()
-                raise
+                committed = self._database.tables
+                for table in fields(InMemoryTables):
+                    before, after = getattr(self._snapshot, table.name), getattr(self._tables, table.name)
+                    target = getattr(committed, table.name)
+                    for key in before.keys() - after.keys():
+                        target.pop(key, None)
+                    target.update({key: row for key, row in after.items() if before.get(key) is not row})
             finally:
+                self._begin()
                 self._change.is_open = False
 
     def _begin(self) -> None:
@@ -2255,32 +2216,3 @@ class InMemoryUnitOfWork(UnitOfWork):
             for copy in (getattr(self._snapshot, table.name), getattr(self._tables, table.name)):
                 copy.clear()
                 copy.update(committed)
-        self._guards.clear()
-
-    @override
-    async def commit(self) -> None:
-        """Publish the rows this transaction added, replaced or removed, and begin a new transaction.
-
-        A database would have kept a job written by a guarded write locked until now. Here another transaction may
-        have committed that job meanwhile, and publishing this one would silently replace it, so the whole commit is
-        refused instead. Nothing awaits between the check and the merge, so no other commit interleaves.
-
-        :raises ConflictError: If a job this transaction wrote by ``update_if_state`` was committed by another
-                               transaction since; the transaction is discarded then.
-        """
-        committed = self._database.tables
-        if changed := [job_id for job_id, seen in self._guards.items() if committed.jobs.get(job_id) is not seen]:
-            self._begin()
-            raise ConflictError(*changed)
-        for table in fields(InMemoryTables):
-            before, after = getattr(self._snapshot, table.name), getattr(self._tables, table.name)
-            target = getattr(committed, table.name)
-            for key in before.keys() - after.keys():
-                target.pop(key, None)
-            target.update({key: row for key, row in after.items() if before.get(key) is not row})
-        self._begin()
-
-    @override
-    async def rollback(self) -> None:
-        """Discard every change of this transaction and begin a new one from the committed state."""
-        self._begin()

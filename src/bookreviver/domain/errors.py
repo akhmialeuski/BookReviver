@@ -42,18 +42,6 @@ class AnchorInsideMovedPagesError(ConflictError):
         super().__init__('The place chosen is one of the pages being moved. Choose a page that stays where it is.')
 
 
-class ConcurrentChangeError(ConflictError):
-    """A row was changed by another transaction after this one read it, so writing it would lose that change.
-
-    The message is a sentence for the person whose request lost the race, which the API sends as the detail of the
-    problem.
-    """
-
-    def __init__(self) -> None:
-        """Report the conflict with its fixed sentence."""
-        super().__init__('The pages changed while this ran. The book now shows them as they are. Try again.')
-
-
 class BookBusyError(DomainError):
     """Another change of the same book held it for longer than a change waits, so this one did not start.
 

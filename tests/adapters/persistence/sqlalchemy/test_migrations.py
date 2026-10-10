@@ -229,6 +229,11 @@ INSERT_MARGIN_CHANGE: str = (
 )
 # The revision that stores the identifiers of the accounts as 16 bytes and the time of a token as UTC
 ACCOUNT_TYPES_REVISION: str = '674f0fbcad00'
+# The revision that drops the revision counter of the pages, and the name of the column it drops
+PAGE_REVISION_REMOVED_REVISION: str = 'a6cd07915dcf'
+PAGE_REVISION_COLUMN: str = 'revision'
+# Value the counter of a page holds before the revision drops it, which a downgrade does not bring back
+COUNTED_REVISION: int = 7
 # Rows of the accounts as the fastapi-users library stored them, with the identifier as text and no byte string in it
 INSERT_OLD_USER: TextClause = text(
     'INSERT INTO "user" (id, email, hashed_password, is_active, is_superuser, is_verified)'
@@ -2156,4 +2161,106 @@ class TestAccountTypesRevision:
         with pytest.raises(RuntimeError, match='foreign key to no row'):
             await _migrate(fx_empty_database, migrations.upgrade, ACCOUNT_TYPES_REVISION)
         expect(await self._stored(fx_empty_database) == before)
+        assert_expectations()
+
+
+class TestPageRevisionRemovedRevision:
+    """Tests for the revision that drops the counter of the writes of a page, which the blocks of a book replace."""
+
+    @staticmethod
+    async def _seed(database: SqlDatabase) -> None:
+        """Store a book with a page and a version of it, and give the page a counted revision.
+
+        :param database: Database migrated to the revision before.
+        :type database: SqlDatabase
+        """
+        project = make_project(owner_id=await commit_account(database))
+        page = make_page(project_id=project.id)
+        async with database.sessions() as session:
+            await store_project(
+                SqlAlchemyUnitOfWork(session), project, page, versions=[make_page_version(page_id=page.id)]
+            )
+            # Plain SQL, since the model of the page no longer has the column this revision drops
+            await session.execute(text('UPDATE pages SET revision = :revision'), {'revision': COUNTED_REVISION})
+            await session.commit()
+
+    @staticmethod
+    async def _pages(database: SqlDatabase) -> list[dict[str, Any]]:
+        """Read every column of every page row as the database stores it.
+
+        :param database: Migrated database.
+        :type database: SqlDatabase
+        :returns: One mapping of column name to stored value per page.
+        :rtype: list[dict[str, Any]]
+        """
+        async with database.engine.connect() as connection:
+            return [dict(row) for row in (await connection.execute(text('SELECT * FROM pages'))).mappings()]
+
+    @staticmethod
+    async def _versions(database: SqlDatabase) -> list[tuple[Any, ...]]:
+        """Read the versions of the pages, which a rebuild of the table of the pages must not take with it.
+
+        :param database: Migrated database.
+        :type database: SqlDatabase
+        :returns: The identifier and the page of every version.
+        :rtype: list[tuple[Any, ...]]
+        """
+        async with database.engine.connect() as connection:
+            return [tuple(row) for row in await connection.execute(text('SELECT id, page_id FROM page_versions'))]
+
+    @staticmethod
+    async def _columns(database: SqlDatabase) -> list[str]:
+        """Read the names of the columns of ``pages``.
+
+        :param database: Migrated database.
+        :type database: SqlDatabase
+        :returns: The column names.
+        :rtype: list[str]
+        """
+        async with database.engine.connect() as connection:
+            return await connection.run_sync(
+                lambda sync: [column['name'] for column in inspect(sync).get_columns(PageRow.__tablename__)]
+            )
+
+    async def test_the_column_goes_and_every_other_column_of_a_page_stays(self, fx_empty_database: SqlDatabase) -> None:
+        """Verify the upgrade drops the counter, and a page keeps every other column and the versions it owns.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, ACCOUNT_TYPES_REVISION)
+        await self._seed(fx_empty_database)
+        before, versions = await self._pages(fx_empty_database), await self._versions(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, PAGE_REVISION_REMOVED_REVISION)
+        expect([page[PAGE_REVISION_COLUMN] for page in before] == [COUNTED_REVISION])
+        expect(PAGE_REVISION_COLUMN not in await self._columns(fx_empty_database))
+        expect(
+            await self._pages(fx_empty_database)
+            == [{name: value for name, value in page.items() if name != PAGE_REVISION_COLUMN} for page in before]
+        )
+        expect(await self._versions(fx_empty_database) == versions)
+        assert_expectations()
+
+    async def test_downgrade_brings_the_column_back_at_zero_and_keeps_every_other_column(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify a downgrade adds the counter at its first value to every page, and changes no other column.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, ACCOUNT_TYPES_REVISION)
+        await self._seed(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.upgrade, PAGE_REVISION_REMOVED_REVISION)
+        kept, versions = await self._pages(fx_empty_database), await self._versions(fx_empty_database)
+        await _migrate(fx_empty_database, migrations.downgrade, ACCOUNT_TYPES_REVISION)
+        restored = await self._pages(fx_empty_database)
+        expect(PAGE_REVISION_COLUMN in await self._columns(fx_empty_database))
+        expect([page[PAGE_REVISION_COLUMN] for page in restored] == [0])
+        expect(
+            [{name: value for name, value in page.items() if name != PAGE_REVISION_COLUMN} for page in restored] == kept
+        )
+        expect(await self._versions(fx_empty_database) == versions)
         assert_expectations()

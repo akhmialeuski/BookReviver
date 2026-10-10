@@ -26,7 +26,7 @@ from bookreviver.domain.enums import (
     Stage,
     VersionState,
 )
-from bookreviver.domain.errors import ConcurrentChangeError, ConflictError, NotFoundError
+from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import PageVersionId, SourceId
 from bookreviver.domain.values import (
     BookDetails,
@@ -62,8 +62,6 @@ pytestmark = pytest.mark.anyio
 PAGE_COUNT: int = 3
 # Two finished jobs and a queued one of the same kind in one project
 FINISHED_AND_QUEUED_JOBS: int = 3
-# Updates a page takes in a test, which raise its revision from zero
-PAGE_UPDATES: int = 2
 # A run, a job writing page images and an import of one project, which do not exclude each other
 THREE_JOBS: int = 3
 # Included pages, sources and scans of the book _add_book stores
@@ -1078,7 +1076,7 @@ class TestPageRepository:
             await uow.pages.update_many(moved)
         pages = (await fx_uow_factory()).pages
         everything = await pages.list_for_project(project.id, SliceRequest())
-        assert list(everything.items) == [evolve(page, revision=1) for page in (moved[1], moved[0])] + [book[2]]
+        assert list(everything.items) == [moved[1], moved[0], book[2]]
 
     async def test_update_to_a_key_another_page_holds_raises_conflict(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1136,7 +1134,7 @@ class TestPageRepository:
         uow = await fx_uow_factory()
         async with uow.change_book(project.id):
             await uow.pages.update(changed)
-        assert await (await fx_uow_factory()).pages.get(page.id) == evolve(changed, revision=1)
+        assert await (await fx_uow_factory()).pages.get(page.id) == changed
 
     async def test_same_order_key_twice_in_a_project_raises_conflict(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1239,99 +1237,6 @@ class TestPageRepository:
         page = make_page(project_id=make_project(owner_id=new_account_id()).id)
         with pytest.raises(NotFoundError, match=str(page.id)):
             await (await fx_uow_factory()).pages.get(page.id)
-
-
-class TestPageRevision:
-    """Contract of the revision of a page, which refuses a write over a change the writer never read."""
-
-    async def test_update_raises_the_revision_of_the_page_by_one(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify a new page starts at revision zero and every update raises its revision by one.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        page = make_page(project_id=project.id)
-        uow = await fx_uow_factory()
-        await store_project(uow, project, page)
-        uow = await fx_uow_factory()
-        async with uow.change_book(project.id):
-            first = await uow.pages.update(evolve(await uow.pages.get(page.id), label='1'))
-        uow = await fx_uow_factory()
-        async with uow.change_book(project.id):
-            second = await uow.pages.update(evolve(await uow.pages.get(page.id), label='2'))
-        expect(page.revision == 0)
-        expect(first.revision == 1)
-        expect(second.revision == PAGE_UPDATES)
-        expect((await (await fx_uow_factory()).pages.get(page.id)).revision == PAGE_UPDATES)
-        assert_expectations()
-
-    async def test_update_over_a_page_another_transaction_changed_raises_concurrent_change(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify a write of a page read before another transaction changed it is refused and writes nothing.
-
-        Both transactions change a different field, so the refusal is the revision's and no unique key's. The stored
-        page keeps the change of the transaction that committed first, and the refused one can read it again and write
-        over it.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        page = make_page(project_id=project.id)
-        uow = await fx_uow_factory()
-        await store_project(uow, project, page)
-        slow = await fx_uow_factory()
-        read = await slow.pages.get(page.id)
-        fast = await fx_uow_factory()
-        async with fast.change_book(project.id):
-            await fast.pages.update(evolve(await fast.pages.get(page.id), label='12'))
-
-        with pytest.raises(ConcurrentChangeError):
-            async with slow.change_book(project.id):
-                await slow.pages.update(evolve(read, notes='Stamp'))
-
-        stored = await (await fx_uow_factory()).pages.get(page.id)
-        expect((stored.label, stored.notes) == ('12', ''))
-        async with slow.change_book(project.id):
-            await slow.pages.update(evolve(await slow.pages.get(page.id), notes='Stamp'))
-        stored = await (await fx_uow_factory()).pages.get(page.id)
-        expect((stored.label, stored.notes) == ('12', 'Stamp'))
-        assert_expectations()
-
-    async def test_update_many_over_a_page_another_transaction_changed_writes_none(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify a batch holding one page that another transaction changed meanwhile writes none of its pages.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        first, second = (make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1'))
-        uow = await fx_uow_factory()
-        await store_project(uow, project, first, second)
-        slow = await fx_uow_factory()
-        read = await slow.pages.list_by_ids(project.id, [first.id, second.id])
-        fast = await fx_uow_factory()
-        async with fast.change_book(project.id):
-            await fast.pages.update(evolve(await fast.pages.get(second.id), notes='Stamp'))
-
-        with pytest.raises(ConcurrentChangeError):
-            async with slow.change_book(project.id):
-                await slow.pages.update_many([evolve(page, label='9') for page in read])
-
-        stored = (await (await fx_uow_factory()).pages.list_for_project(project.id, SliceRequest())).items
-        assert [(page.label, page.notes) for page in stored] == [('', ''), ('', 'Stamp')]
 
 
 class TestPageVersionRepository:
