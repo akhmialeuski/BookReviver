@@ -5,9 +5,9 @@ import { MESSAGES } from '@/shared/messages';
 /**
  * The words for a failed change of pages.
  *
- * A change of pages fails with a 409 when another change got to the same place first, when a page is moved next to
- * itself, or when a scan is already shown by another page. The server's sentence says which, and the screen adds that
- * the list has been read again, so the reader knows what they see is current and can try once more.
+ * A change of pages fails with a 409 when a page is moved next to itself, or when a scan is already shown by another
+ * page. The server's sentence says which, and the screen adds that the list has been read again, so the reader knows
+ * what they see is current and can try once more.
  */
 
 /**
