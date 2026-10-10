@@ -170,8 +170,8 @@ class TestRecipes:
         for index, kind in enumerate((PageKind.TEXT, PageKind.PLATE, PageKind.FRONTISPIECE)):
             page, _ = await fx_cv_kit.seed_scan_page(project, order_key=f'a{index}')
             uow = fx_cv_kit.uow()
-            await uow.pages.update(evolve(page, kind=kind))
-            await uow.commit()
+            async with uow.change_book(project.id):
+                await uow.pages.update(evolve(page, kind=kind))
             pages.append(page)
         reader = fx_cv_kit.uow()
         picked = await fx_cv_kit.parts(reader).recipes.for_pages(
@@ -219,8 +219,8 @@ class TestRecipes:
         actor, project = await fx_kit.seed_project()
         text = (await recipes_of(fx_kit, actor, project, Stage.GEOMETRY))[RecipeKind.TEXT]
         uow = fx_kit.uow()
-        await uow.recipes.update(evolve(text, steps=(evolve(text.steps[0], params=stored),)))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.recipes.update(evolve(text, steps=(evolve(text.steps[0], params=stored),)))
         again = (await recipes_of(fx_kit, actor, project, Stage.GEOMETRY))[RecipeKind.TEXT]
         assert [dict(step.params) for step in again.steps] == [listed]
 
@@ -304,8 +304,8 @@ class TestSaveRecipe:
         await fx_kit.seed_base_version(page)
         recipe = (await recipes_of(fx_kit, actor, project, Stage.GEOMETRY))[RecipeKind.TEXT]
         uow = fx_kit.uow()
-        await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id))
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'strength': 2})])
         await fx_kit.service().save_recipe(actor, project.id, RecipeKey(Stage.GEOMETRY, recipe.id), draft)
         record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
@@ -325,9 +325,9 @@ class TestSaveRecipe:
         second, _ = await fx_kit.seed_scan_page(project, order_key='a1')
         recipes = await recipes_of(fx_kit, actor, project, Stage.GEOMETRY)
         uow = fx_kit.uow()
-        await uow.page_stages.save(make_page_stage(page_id=first.id, recipe_id=recipes[RecipeKind.TEXT].id))
-        await uow.page_stages.save(make_page_stage(page_id=second.id, recipe_id=recipes[RecipeKind.BW_PICTURE].id))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_stages.save(make_page_stage(page_id=first.id, recipe_id=recipes[RecipeKind.TEXT].id))
+            await uow.page_stages.save(make_page_stage(page_id=second.id, recipe_id=recipes[RecipeKind.BW_PICTURE].id))
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'strength': 9})])
         await fx_kit.service().save_recipe(
             actor, project.id, RecipeKey(Stage.GEOMETRY, recipes[RecipeKind.TEXT].id), draft
@@ -351,8 +351,8 @@ class TestSaveRecipe:
         await fx_kit.seed_base_version(page)
         recipe = (await recipes_of(fx_kit, actor, project, Stage.GEOMETRY))[RecipeKind.TEXT]
         uow = fx_kit.uow()
-        await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id))
         steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={'strength': 9}, enabled=False)]
         await fx_kit.service().save_recipe(
             actor, project.id, RecipeKey(Stage.GEOMETRY, recipe.id), RecipeDraft(steps=steps)

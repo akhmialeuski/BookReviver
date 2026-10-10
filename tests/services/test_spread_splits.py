@@ -71,9 +71,9 @@ async def give_odd_pages_a_value(kit: ProcessingKit, project: Project, page: Pag
     :type page: Page
     """
     uow = kit.uow()
-    await uow.step_values.save(make_step_values(project_id=project.id, scope=ValueScope.ODD))
-    await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.GEOMETRY))
-    await uow.commit()
+    async with uow.change_book(project.id):
+        await uow.step_values.save(make_step_values(project_id=project.id, scope=ValueScope.ODD))
+        await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.GEOMETRY))
 
 
 class TestSplit:

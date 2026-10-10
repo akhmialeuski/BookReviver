@@ -617,8 +617,8 @@ class TestCollection:
         async with fx_kit.assets.writable(keys.version_rendition(preview, Rendition.PREVIEW)) as target:
             target.write_bytes(IMAGE_CONTENT)
         uow = fx_kit.uow()
-        await uow.page_versions.add(preview)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(preview)
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.jobs().collect_versions(job.id)
         with pytest.raises(NotFoundError):
@@ -646,8 +646,8 @@ class TestCollection:
         async with fx_kit.assets.writable(keys.version_rendition(preview, Rendition.PREVIEW)) as target:
             target.write_bytes(IMAGE_CONTENT)
         uow = fx_kit.uow()
-        await uow.page_versions.add(preview)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(preview)
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.jobs().collect_versions(job.id)
         async with fx_kit.assets.readable(keys.version_rendition(preview, Rendition.PREVIEW)):
@@ -779,8 +779,8 @@ class TestCollection:
         async with fx_kit.assets.writable(keys.version_rendition(reader, Rendition.FULL_JPEG)) as target:
             target.write_bytes(IMAGE_CONTENT)
         uow = fx_kit.uow()
-        await uow.page_versions.add(reader)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(reader)
         refused = keys.version_directory(reader)
         removing = fx_kit.assets.delete_prefix
 
@@ -845,8 +845,8 @@ class TestCollection:
         actor, project, _, _, old = await self.collectable_book(fx_kit)
         reader = evolve(old, id=OTHER_VERSION_ID, input_id=old.id)
         uow = fx_kit.uow()
-        await uow.page_versions.add(reader)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(reader)
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.jobs().collect_versions(job.id)
         expect(await fx_kit.uow().page_versions.find(old.id) is None)
