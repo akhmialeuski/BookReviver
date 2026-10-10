@@ -26,7 +26,7 @@ from bookreviver.domain.geometry import Rect
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.margins import MM_PER_INCH
 from bookreviver.domain.values import PageStageKey, ProcessorRef, RecipeDraft, StageRun, Step
-from bookreviver.services.book_measure import RECIPES_CHANGED, BookMeasure
+from bookreviver.services.book_measure import MEASURE_OUTDATED, BookMeasure
 from tests.helpers.builders import make_page_stage, make_page_version
 
 if TYPE_CHECKING:
@@ -655,7 +655,7 @@ class TestMeasureReChecksTheRecipes:
 
         monkeypatch.setattr(uow.recipes, 'list_for_stage', list_then_save)
 
-        with pytest.raises(ConflictError, match=RECIPES_CHANGED):
+        with pytest.raises(ConflictError, match=MEASURE_OUTDATED):
             await BookMeasure(uow=uow, recipes=parts.recipes, records=parts.records).run(project.id)
 
         assert await normalize_params(fx_cv_kit, actor, project) == before

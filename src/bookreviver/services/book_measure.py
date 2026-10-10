@@ -50,12 +50,12 @@ if TYPE_CHECKING:
 
 NORMALIZE_KEY: str = 'geometry.normalize'
 NO_NORMALIZE_STEP: str = 'No recipe of the Geometry stage has a {key} step to write the measures into.'
-RECIPES_CHANGED: str = (
-    'A recipe of the Geometry stage was changed or deleted while the book was measured, so nothing was written. '
-    'Measure the book again.'
-)
 NOTHING_TO_MEASURE: str = (
     'Margins has not placed any page of the book yet, so there is nothing to measure. Run the Geometry stage first.'
+)
+MEASURE_OUTDATED: str = (
+    'A recipe of the Geometry stage was changed or deleted while the book was measured, so nothing was written. '
+    'Measure the book again.'
 )
 PERCENT: float = 100.0
 # The fields of the normalize step that are 0 until the book gives them a value
@@ -424,7 +424,7 @@ class BookMeasure:
     def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, records: StageRecords) -> None:
         """Work over the ports of one job.
 
-        :param uow: Unit of work whose ``change_book`` block ends the job.
+        :param uow: Unit of work, in whose ``change_book`` block the job writes the measures once it has them.
         :type uow: UnitOfWork
         :param recipes: The recipes of the project, which supply the Geometry recipes and rewrite them.
         :type recipes: RecipeBook
@@ -444,9 +444,9 @@ class BookMeasure:
         any of them, so the pages of every kind are placed on one page size and each still holds its content with its
         own margins.
 
-        The recipes are read outside any block, and the block that follows reads the content boxes, works the measure
-        out and writes it, so the boxes and the recipes are the ones the write is made over. It opens that one block, so
-        it is called only outside a block.
+        The job reads and computes without a block, since the boxes of the pages take long to read, and writes in one
+        short ``change_book`` block that reads the recipes again. A recipe that was changed meanwhile, which a user
+        may have done by hand while the pages were measured, is left as it is and nothing is written.
 
         :param project_id: Project whose pages are measured.
         :type project_id: ProjectId
@@ -454,7 +454,7 @@ class BookMeasure:
         :rtype: int
         :raises NotFoundError: If the Geometry stage has no recipe.
         :raises ConflictError: If no recipe has a normalize step, the step has placed no page yet, or a recipe was
-                               changed or deleted after it was read, which writes nothing.
+                               changed or deleted while the pages were measured.
         :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
         """
         holders: list[tuple[Recipe, int]] = []
@@ -464,24 +464,23 @@ class BookMeasure:
                 holders.append((recipe, keys.index(NORMALIZE_KEY)))
         if not holders:
             raise ConflictError(NO_NORMALIZE_STEP.format(key=NORMALIZE_KEY))
+        measures = list((await BookBlocks(self._uow).read(project_id, Stage.GEOMETRY)).values())
+        if not measures:
+            raise ConflictError(NOTHING_TO_MEASURE)
+        sizes = BookSize(measures)
+        steps = [recipe.steps[position] for recipe, position in holders]
+        measured = [sizes.measured(step.params) for step in steps]
+        page: dict[str, int] = {
+            name: max(int(own[name]) for own in measured)
+            for name in (NormalizeParam.PAGE_WIDTH, NormalizeParam.PAGE_HEIGHT)
+        }
+        stale: list[PageStage] = []
         async with self._uow.change_book(project_id):
-            # The recipes were read before the block, since reading them may store the defaults in a block of their own,
-            # so a recipe that a request changed or deleted since is found here, and nothing is written over it
-            geometry = await self._uow.recipes.list_for_stage(project_id, Stage.GEOMETRY)
-            stored = {recipe.id: recipe.updated_at for recipe in geometry}
+            # The steps were measured from the recipes as they were read, so a recipe saved or deleted since is not
+            # written over
+            stored = {r.id: r.updated_at for r in await self._uow.recipes.list_for_stage(project_id, Stage.GEOMETRY)}
             if any(stored.get(recipe.id) != recipe.updated_at for recipe, _ in holders):
-                raise ConflictError(RECIPES_CHANGED)
-            measures = list((await BookBlocks(self._uow).read(project_id, Stage.GEOMETRY)).values())
-            if not measures:
-                raise ConflictError(NOTHING_TO_MEASURE)
-            sizes = BookSize(measures)
-            steps = [recipe.steps[position] for recipe, position in holders]
-            measured = [sizes.measured(step.params) for step in steps]
-            page: dict[str, int] = {
-                name: max(int(own[name]) for own in measured)
-                for name in (NormalizeParam.PAGE_WIDTH, NormalizeParam.PAGE_HEIGHT)
-            }
-            stale: list[PageStage] = []
+                raise ConflictError(MEASURE_OUTDATED)
             for (recipe, position), step, own in zip(holders, steps, measured, strict=True):
                 written = evolve(step, params={**step.params, **own, **page})
                 if written.params != step.params:
@@ -490,9 +489,9 @@ class BookMeasure:
         return len(measures)
 
     async def _write(self, recipe: Recipe, position: int, step: Step) -> list[PageStage]:
-        """Store the recipe with the measured step, and mark the pages it processed stale, in the caller's block.
+        """Store the recipe with the measured step, and mark the pages it processed stale, in the block of the caller.
 
-        It writes inside the ``change_book`` block of its caller and opens none.
+        Never opens a block.
 
         :param recipe: A recipe of the Geometry stage.
         :type recipe: Recipe
@@ -500,7 +499,7 @@ class BookMeasure:
         :type position: int
         :param step: The normalize step with the measured parameters.
         :type step: Step
-        :returns: The records of the pages that became stale, which the caller announces after it commits.
+        :returns: The records of the pages that became stale, which the caller announces after its block.
         :rtype: list[PageStage]
         :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
         """
