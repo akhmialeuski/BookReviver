@@ -5,8 +5,8 @@ of a stage changes, the later stages of the same page were computed from the old
 stale and their versions stay, which lets the interface show the old result with a mark until the user computes it
 again. A record that already failed stays failed, since a stale mark would hide the failure.
 
-The class writes the records through the unit of work of its caller, which commits, and then announces them, so a
-browser reads the stages it shows again.
+The class writes the records inside the ``change_book`` block of its caller and opens no block of its own. The caller
+announces them after the block has ended, so a browser reads the stages it shows again.
 
 A value for the odd pages or the even pages is taken by place, so a page that a change of the places of the pages turns
 over to the other side runs with other parameters, and its stages are marked stale by ``watching_sides``.
@@ -38,7 +38,7 @@ class StageRecords:
     def __init__(self, *, uow: UnitOfWork, publisher: EventPublisher, clock: Clock) -> None:
         """Write records through the unit of work of the use case.
 
-        :param uow: Unit of work whose commit ends the use case.
+        :param uow: Unit of work whose ``change_book`` block ends the use case.
         :type uow: UnitOfWork
         :param publisher: Publisher of the events the browser follows.
         :type publisher: EventPublisher
@@ -245,7 +245,7 @@ class StageRecords:
         return record
 
     async def announce(self, project_id: ProjectId, records: Sequence[PageStage]) -> None:
-        """Publish one event for each record that changed, after the transaction that wrote them committed.
+        """Publish one event for each record that changed, after the block that wrote them has ended.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
@@ -274,7 +274,7 @@ class StageRecords:
     async def _stale(self, records: Iterable[PageStage]) -> list[PageStage]:
         """Write the up-to-date ones of some records as stale, and leave the stale and the failed ones as they are.
 
-        :param records: Records read in the transaction of the caller.
+        :param records: Records read in the block of the caller.
         :type records: Iterable[PageStage]
         :returns: The records that became stale.
         :rtype: list[PageStage]
@@ -293,8 +293,9 @@ class SideWatch:
     """Marks stale the pages that the places a block changes turn over to the other side of the book.
 
     The order of the book is read before the block and after it, so inserting, deleting and moving pages are all
-    covered by the one comparison, and nothing is read when no side has values for a step. The records are marked in the
-    transaction of the caller, which commits and announces them. A block that raises marks nothing.
+    covered by the one comparison, and nothing is read when no side has values for a step. The watch is entered inside
+    the ``change_book`` block of the caller and marks the records there, and the caller announces them after its block.
+    A block that raises marks nothing.
 
     :ivar turned: The records that became stale, which are none until a block ends without an error.
     """

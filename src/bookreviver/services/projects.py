@@ -8,7 +8,7 @@ A project is deleted files first and row last. Every lookup, a repeated deletion
 deleted first would leave the files of a failed deletion out of every request's reach for good. Both stores treat a
 project without files as deleted, so a deletion that fails part-way keeps the project, and repeating it removes the
 files that are left and then the row. Until then the project may lack some of its files, which only a deletion the
-owner asked for can cause.
+owner asked for can cause. The files go outside any block of the unit of work, and the row goes in a block of its own.
 """
 
 from typing import TYPE_CHECKING
@@ -37,6 +37,22 @@ if TYPE_CHECKING:
 PAGE_WINDOW: int = 1_000
 
 
+def require_owner(project: Project, actor: Actor) -> Project:
+    """Return a project that is read already, which a block of ``change_book`` yields, when the actor owns it.
+
+    :param project: Project as read.
+    :type project: Project
+    :param actor: Account acting in the current request.
+    :type actor: Actor
+    :returns: The same project, owned by the actor.
+    :rtype: Project
+    :raises NotFoundError: If the project belongs to another account.
+    """
+    if not project.is_owned_by(actor):
+        raise NotFoundError(project.id)
+    return project
+
+
 async def owned_project(projects: ProjectRepository, actor: Actor, project_id: ProjectId) -> Project:
     """Return the actor's project.
 
@@ -50,10 +66,7 @@ async def owned_project(projects: ProjectRepository, actor: Actor, project_id: P
     :rtype: Project
     :raises NotFoundError: If the project does not exist or belongs to another account.
     """
-    project = await projects.get(project_id)
-    if not project.is_owned_by(actor):
-        raise NotFoundError(project_id)
-    return project
+    return require_owner(await projects.get(project_id), actor)
 
 
 async def owned_page(uow: UnitOfWork, actor: Actor, project_id: ProjectId, page_id: PageId) -> Page:
@@ -104,7 +117,7 @@ class ProjectService:
     ) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose commit ends every changing use case.
+        :param uow: Unit of work of the request, whose blocks end every changing use case.
         :type uow: UnitOfWork
         :param clock: Clock setting the creation and update times.
         :type clock: Clock
@@ -136,7 +149,7 @@ class ProjectService:
         return Slice(items=await self._stages.with_progress(window.items), total=window.total)
 
     async def create(self, actor: Actor, details: BookDetails) -> ProjectOverview:
-        """Create an empty project owned by the actor.
+        """Create an empty project owned by the actor, in a ``change`` block, since no book exists to lock yet.
 
         :param actor: Account acting in the current request, which becomes the owner.
         :type actor: Actor
@@ -149,8 +162,8 @@ class ProjectService:
         project = Project(
             id=ProjectId(uuid4()), owner_id=actor.account_id, details=details, created_at=moment, updated_at=moment
         )
-        stored = await self._uow.projects.add(project)
-        await self._uow.commit()
+        async with self._uow.change():
+            stored = await self._uow.projects.add(project)
         return await self._with_progress(ProjectOverview(project=stored))
 
     async def get(self, actor: Actor, project_id: ProjectId) -> ProjectOverview:
@@ -220,10 +233,9 @@ class ProjectService:
         :raises NotFoundError: If the actor has no such project, or the new cover is not a page of the project.
         :raises ValueError: If the changed description breaks one of its rules, such as an empty title.
         """
-        project = await owned_project(self._uow.projects, actor, project_id)
-        changed = evolve(changes.apply_to(project), updated_at=self._clock.now())
-        stored = await self._uow.projects.update(changed)
-        await self._uow.commit()
+        async with self._uow.change_book(project_id) as project:
+            changed = evolve(changes.apply_to(require_owner(project, actor)), updated_at=self._clock.now())
+            stored = await self._uow.projects.update(changed)
         return await self._with_progress(await self._uow.projects.overview(stored))
 
     async def _with_progress(self, overview: ProjectOverview) -> ProjectOverview:
@@ -240,7 +252,9 @@ class ProjectService:
     async def delete(self, actor: Actor, project_id: ProjectId) -> None:
         """Delete the project's source files and derived files, then the project with every row of its book.
 
-        A failure at any step leaves the project in place, and calling this again finishes the deletion.
+        The owner is checked before any file goes, and the files go outside any block, so a slow store holds no lock of
+        the book. Only the row goes in a block, which this use case opens, so it is called outside a block. A failure
+        at any step leaves the project in place, and calling this again finishes the deletion.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -252,13 +266,13 @@ class ProjectService:
         # The row goes last: only an existing row lets a repeated call reach files a failed call left behind
         await self._sources.delete_project(project_id)
         await self._assets.delete_project(project_id)
-        await self._uow.projects.delete(project_id)
-        await self._uow.commit()
+        async with self._uow.change_book(project_id):
+            await self._uow.projects.delete(project_id)
 
     async def delete_all(self, actor: Actor) -> None:
         """Delete every project of the actor with all its files, which must happen before its account is deleted.
 
-        Each project is deleted and committed on its own, files first, so a failure keeps the projects not yet
+        Each project is deleted in a block of its own, files first, so a failure keeps the projects not yet
         deleted, and calling this again deletes them. The first window of the actor's projects is read again after
         every window, since the deleted projects leave it.
 

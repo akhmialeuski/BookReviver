@@ -24,8 +24,10 @@ from attrs import evolve
 from bookreviver.domain.enums import StageState
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from bookreviver.domain.entities import PageStage, PageVersion
-    from bookreviver.domain.ids import PageVersionId
+    from bookreviver.domain.ids import PageVersionId, ProjectId
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
@@ -39,7 +41,7 @@ class OutdatedResults:
     def __init__(self, *, uow: UnitOfWork, catalogue: ProcessorCatalog, clock: Clock) -> None:
         """Work over the ports of one unit of work.
 
-        :param uow: Unit of work whose commit ends the use case.
+        :param uow: Unit of work whose blocks end the use case.
         :type uow: UnitOfWork
         :param catalogue: The processors the application can run, with the versions that are installed.
         :type catalogue: ProcessorCatalog
@@ -51,12 +53,14 @@ class OutdatedResults:
         self._clock = clock
 
     async def mark_stale(self) -> list[PageStage]:
-        """Mark every fresh record whose result a replaced version of a processor made stale, and commit.
+        """Mark every fresh record whose result a replaced version of a processor made stale, one book at a time.
 
         The versions of all the chains are read a level at a time, each distinct version once however many records,
         pages and stages lead to it, so the number of queries follows the depth of the chains, and the number of rows
         read the number of distinct versions. A version is judged once, and a chain that meets a version judged already
-        takes its verdict.
+        takes its verdict. The reading takes no lock. The records are then written by one ``change_book`` block for each
+        book, which reads each record again and marks it only if it is still fresh and still stands on the same
+        version, so it is called outside a block.
 
         :returns: The records that became stale.
         :rtype: list[PageStage]
@@ -94,12 +98,41 @@ class OutdatedResults:
                     break
                 current = versions[current].input_id
             verdicts.update(dict.fromkeys(chain, outdated))
-        moment = self._clock.now()
-        stale: list[PageStage] = []
+        by_project: dict[ProjectId, list[PageStage]] = {}
         for record in records:
             if record.head_version_id is not None and verdicts.get(record.head_version_id):
-                marked = evolve(record, state=StageState.STALE, updated_at=moment)
-                stale.append(await self._uow.page_stages.save(marked))
-        await self._uow.commit()
+                page = await self._uow.pages.get(record.page_id)
+                by_project.setdefault(page.project_id, []).append(record)
+        stale: list[PageStage] = []
+        for project_id, of_book in by_project.items():
+            stale.extend(await self._mark_book(project_id, of_book))
         logger.info('Marked %d stage records stale because a processor of their result has a new version.', len(stale))
+        return stale
+
+    async def _mark_book(self, project_id: ProjectId, outdated: Sequence[PageStage]) -> list[PageStage]:
+        """Mark the outdated records of one book stale, in a ``change_book`` block of its own.
+
+        Each record is read again in the block, since a request may have marked it, run it or deleted it since the
+        outdated ones were found. A record that is not fresh any longer, or stands on another version, is left as it is.
+        The method opens its block, so it is called only outside a block.
+
+        :param project_id: Project owning the records.
+        :type project_id: ProjectId
+        :param outdated: The records found outdated, which belong to the pages of the project.
+        :type outdated: Sequence[PageStage]
+        :returns: The records that became stale.
+        :rtype: list[PageStage]
+        """
+        moment = self._clock.now()
+        stale: list[PageStage] = []
+        async with self._uow.change_book(project_id):
+            for record in outdated:
+                current = await self._uow.page_stages.find(record.key)
+                if (
+                    current is not None
+                    and current.state is StageState.FRESH
+                    and current.head_version_id == record.head_version_id
+                ):
+                    marked = evolve(current, state=StageState.STALE, updated_at=moment)
+                    stale.append(await self._uow.page_stages.save(marked))
         return stale
