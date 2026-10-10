@@ -314,8 +314,8 @@ class TestRunStage:
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         good = await head_of(fx_kit, page, Stage.GEOMETRY)
         uow = fx_kit.uow()
-        await uow.page_versions.update(evolve(good, state=VersionState.FAILED, data={'error': 'x'}))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.update(evolve(good, state=VersionState.FAILED, data={'error': 'x'}))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         again = await fx_kit.stored_version(good.id)
         expect((again.state, again.data) == (VersionState.READY, {'ran': 1}))
@@ -330,8 +330,8 @@ class TestRunStage:
         actor, project = await fx_kit.seed_project()
         placeholder = make_page(project_id=project.id)
         uow = fx_kit.uow()
-        await uow.pages.add(placeholder)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.pages.add(placeholder)
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         await fx_kit.jobs().run_stage(job.id)
         stored = await fx_kit.uow().jobs.get(job.id)
@@ -415,8 +415,8 @@ class TestRunStage:
         actor, project, page = await prepared_page(fx_kit)
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         uow = fx_kit.uow()
-        await uow.jobs.update(evolve(job, state=JobState.CANCELLED))
-        await uow.commit()
+        async with uow.change():
+            await uow.jobs.update(evolve(job, state=JobState.CANCELLED))
         await fx_kit.jobs().run_stage(job.id)
         assert (fx_kit.fake.runs, await fx_kit.uow().page_stages.find(PageStageKey(page.id, Stage.GEOMETRY))) == (
             0,
@@ -432,8 +432,8 @@ class TestRunStage:
         actor, project, _ = await prepared_page(fx_kit)
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         uow = fx_kit.uow()
-        await uow.jobs.update(evolve(job, params={'stage': 'nowhere'}))
-        await uow.commit()
+        async with uow.change():
+            await uow.jobs.update(evolve(job, params={'stage': 'nowhere'}))
         await fx_kit.jobs().run_stage(job.id)
         stored = await fx_kit.uow().jobs.get(job.id)
         assert (stored.state, 'not valid' in stored.error) == (JobState.FAILED, True)
@@ -731,8 +731,8 @@ class TestPreviewStep:
         actor, project = await fx_kit.seed_project()
         placeholder = make_page(project_id=project.id)
         uow = fx_kit.uow()
-        await uow.pages.add(placeholder)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.pages.add(placeholder)
         preview = StepPreview(
             page_id=placeholder.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=FAKE_KEY),), step_index=0
         )

@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
+# Name of the test argument that the state of the job is passed in
+STATE_ARGUMENT: str = 'state'
 ACTIVE_STATES: tuple[JobState, ...] = (JobState.QUEUED, JobState.RUNNING)
 FINAL_STATES: tuple[JobState, ...] = (JobState.SUCCEEDED, JobState.FAILED, JobState.CANCELLED)
 
@@ -103,7 +105,7 @@ class TestGet:
 class TestCancel:
     """Tests for JobService.cancel()."""
 
-    @pytest.mark.parametrize('state', ACTIVE_STATES)
+    @pytest.mark.parametrize(STATE_ARGUMENT, ACTIVE_STATES)
     async def test_active_job_is_cancelled_and_announced(
         self, fx_fakes: JobFakes, fx_owner: Actor, fx_project: Project, state: JobState
     ) -> None:
@@ -126,7 +128,7 @@ class TestCancel:
         expect(fx_fakes.events.published == [JobChanged(project_id=job.project_id, job=cancelled)])
         assert_expectations()
 
-    @pytest.mark.parametrize('state', FINAL_STATES)
+    @pytest.mark.parametrize(STATE_ARGUMENT, FINAL_STATES)
     async def test_finished_job_cannot_be_cancelled(
         self, fx_fakes: JobFakes, fx_owner: Actor, fx_project: Project, state: JobState
     ) -> None:
@@ -163,11 +165,13 @@ class TestCancel:
         """
         job = make_job(project_id=fx_project.id, state=JobState.RUNNING)
         await fx_fakes.store(fx_project, job)
-        # The service's unit of work begins now and sees the job running
         service = fx_fakes.job_service()
+        # The service reads the job running, and the worker finishes it before the service writes the cancellation
+        read = await service.get(fx_owner, job.id)
         worker = InMemoryUnitOfWork(fx_fakes.database)
-        await worker.jobs.update(evolve(job, state=JobState.SUCCEEDED))
-        await worker.commit()
+        async with worker.change():
+            await worker.jobs.update(evolve(job, state=JobState.SUCCEEDED))
+        expect(read.state is JobState.RUNNING)
         with pytest.raises(ConflictError):
             await service.cancel(fx_owner, job.id)
         expect((await fx_fakes.stored_job(job)).state is JobState.SUCCEEDED)

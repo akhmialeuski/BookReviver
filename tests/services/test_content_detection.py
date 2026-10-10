@@ -27,14 +27,18 @@ from bookreviver.domain.events import PagesChanged, PageStageChanged
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import ContentDetection, PageStageKey
 from bookreviver.plugins.split_none import SplitNone
+from bookreviver.services.content_detection import ContentDetector
 from tests.helpers.builders import make_job, make_page, make_page_stage
 from tests.helpers.page_services import make_page_service
 from tests.helpers.processing import ProcessingKit
 from tests.helpers.processors import FakeContentProbe
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from bookreviver.adapters.storage.local import LocalAssetStore
-    from bookreviver.domain.entities import Actor, Job, Page, Project
+    from bookreviver.domain.entities import Actor, Job, Page, PageVersion, Project
+    from bookreviver.domain.ids import ProjectId
     from bookreviver.services.pages import PageService
 
 pytestmark = pytest.mark.anyio
@@ -101,11 +105,10 @@ async def keep(kit: ProcessingKit, page: Page, content_type: ContentType, *, by_
     :rtype: Page
     """
     uow = kit.uow()
-    stored = await uow.pages.update(
-        evolve(await uow.pages.get(page.id), content_type=content_type, content_by_hand=by_hand)
-    )
-    await uow.commit()
-    return stored
+    async with uow.change_book(page.project_id):
+        return await uow.pages.update(
+            evolve(await uow.pages.get(page.id), content_type=content_type, content_by_hand=by_hand)
+        )
 
 
 async def detect(kit: ProcessingKit, actor: Actor, project: Project, page_ids: list[PageId] | None = None) -> Job:
@@ -184,8 +187,8 @@ class TestDetectionJob:
         found = await keep(kit, pages[1], ContentType.TEXT)
         by_hand = await keep(kit, pages[2], ContentType.BW_PICTURE, by_hand=True)
         uow = kit.uow()
-        await uow.pages.add(make_page(project_id=project.id, order_key='a9'))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.pages.add(make_page(project_id=project.id, order_key='a9'))
 
         await detect(kit, actor, project)
 
@@ -295,9 +298,9 @@ class TestDetectionJob:
         kit, _ = probe_kit(fx_asset_store, [ContentType.BW_PICTURE, ContentType.TEXT])
         actor, project, pages = await book_of(kit, [PageKind.TEXT, PageKind.TEXT])
         uow = kit.uow()
-        for page in pages:
-            await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.GEOMETRY))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            for page in pages:
+                await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.GEOMETRY))
 
         await detect(kit, actor, project)
 
@@ -317,8 +320,8 @@ class TestDetectionJob:
         actor, project, pages = await book_of(kit, [PageKind.TEXT])
         job = await pages_of(kit).start_detection(actor, project.id, None)
         uow = kit.uow()
-        await uow.jobs.update(evolve(job, state=JobState.CANCELLED))
-        await uow.commit()
+        async with uow.change():
+            await uow.jobs.update(evolve(job, state=JobState.CANCELLED))
 
         await kit.jobs().detect_content(job.id)
 
@@ -406,9 +409,9 @@ class TestStartDetection:
         uow = kit.uow()
         waiting = make_job(project_id=project.id, kind=JobKind.PREPARE_PAGES)
         over = make_job(project_id=project.id, kind=JobKind.PREPARE_PAGES, state=JobState.SUCCEEDED)
-        await uow.jobs.add(waiting)
-        await uow.jobs.add(over)
-        await uow.commit()
+        async with uow.change():
+            await uow.jobs.add(waiting)
+            await uow.jobs.add(over)
 
         ran = await pages_of(kit).prepare_images(waiting.id)
         repeated = await pages_of(kit).prepare_images(over.id)
@@ -432,8 +435,8 @@ class TestChangeOfContent:
         kit, _ = probe_kit(fx_asset_store, [])
         actor, project, pages = await book_of(kit, [PageKind.TEXT])
         uow = kit.uow()
-        await uow.page_stages.save(make_page_stage(page_id=pages[0].id, stage=Stage.GEOMETRY))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_stages.save(make_page_stage(page_id=pages[0].id, stage=Stage.GEOMETRY))
 
         overview = await pages_of(kit).update(
             actor, project.id, pages[0].id, PageChanges(content_type=ContentType.COLOR_PICTURE)
@@ -456,9 +459,114 @@ class TestChangeOfContent:
         kit, _ = probe_kit(fx_asset_store, [])
         actor, project, pages = await book_of(kit, [PageKind.TEXT])
         uow = kit.uow()
-        await uow.page_stages.save(make_page_stage(page_id=pages[0].id, stage=Stage.GEOMETRY))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_stages.save(make_page_stage(page_id=pages[0].id, stage=Stage.GEOMETRY))
 
         await pages_of(kit).update(actor, project.id, pages[0].id, PageChanges(content_type=ContentType.TEXT))
 
         assert (await kit.uow().page_stages.get(PageStageKey(pages[0].id, Stage.GEOMETRY))).state is StageState.FRESH
+
+
+async def delete_the_page(kit: ProcessingKit, page: Page) -> None:
+    """Delete a page in a block of its own, as a request of the user would while a job reads it.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param page: Page to delete.
+    :type page: Page
+    """
+    uow = kit.uow()
+    async with uow.change_book(page.project_id):
+        await uow.pages.delete(page.id)
+
+
+async def set_the_type_by_hand(kit: ProcessingKit, page: Page) -> None:
+    """Set a content type by hand, as the user would while a job reads the page.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param page: Page to change.
+    :type page: Page
+    """
+    await keep(kit, page, ContentType.BW_PICTURE, by_hand=True)
+
+
+async def detect_the_same_type(kit: ProcessingKit, page: Page) -> None:
+    """Store the type the probe is going to find, as another job that read the page first would.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param page: Page to change.
+    :type page: Page
+    """
+    await keep(kit, page, ContentType.TEXT)
+
+
+class TestApplyStep:
+    """Tests for the block that writes what a probe found, which reads the page again."""
+
+    @pytest.mark.parametrize(
+        ('change', 'kept_type', 'kept_source'),
+        [
+            pytest.param(delete_the_page, None, None, id='page-deleted'),
+            pytest.param(set_the_type_by_hand, ContentType.BW_PICTURE, ContentSource.HAND, id='type-set-by-hand'),
+            pytest.param(detect_the_same_type, ContentType.TEXT, ContentSource.DETECTED, id='type-already-detected'),
+        ],
+    )
+    async def test_a_page_that_changed_after_the_probe_is_not_written(
+        self,
+        fx_asset_store: LocalAssetStore,
+        monkeypatch: pytest.MonkeyPatch,
+        change: Callable[[ProcessingKit, Page], Awaitable[None]],
+        kept_type: ContentType | None,
+        kept_source: ContentSource | None,
+    ) -> None:
+        """Verify a page changed between the probe and the write keeps the change, the job counts the page as read.
+
+        The change is made right after the probe returns, so the write finds the page as the change left it, and the
+        job writes nothing and announces no page.
+
+        :param fx_asset_store: Local asset store of the test.
+        :type fx_asset_store: LocalAssetStore
+        :param monkeypatch: Fixture putting the change between the probe and the write.
+        :type monkeypatch: pytest.MonkeyPatch
+        :param change: What another request does to the page while the job reads it.
+        :type change: Callable[[ProcessingKit, Page], Awaitable[None]]
+        :param kept_type: The content type the page holds afterwards, or None for a page that is gone.
+        :type kept_type: ContentType | None
+        :param kept_source: Where the type the page holds afterwards comes from, or None for a page that is gone.
+        :type kept_source: ContentSource | None
+        """
+        kit, _ = probe_kit(fx_asset_store, [ContentType.TEXT])
+        actor, project, pages = await book_of(kit, [PageKind.TEXT])
+        probe = ContentDetector._probe
+
+        async def probe_then_change(self: ContentDetector, project_id: ProjectId, base: PageVersion) -> ContentType:
+            """Probe the image, then let another request change the page before the job writes its answer.
+
+            :param self: The detector that probes.
+            :type self: ContentDetector
+            :param project_id: Project owning the page.
+            :type project_id: ProjectId
+            :param base: The base version of the page.
+            :type base: PageVersion
+            :returns: What the probe found.
+            :rtype: ContentType
+            """
+            found = await probe(self, project_id, base)
+            await change(kit, pages[0])
+            return found
+
+        monkeypatch.setattr(ContentDetector, '_probe', probe_then_change)
+
+        job = await detect(kit, actor, project)
+
+        expect((job.state, job.progress.done, job.progress.total) == (JobState.SUCCEEDED, 1, 1))
+        expect(not [event for event in kit.events.published if isinstance(event, PagesChanged)])
+        if kept_type is None:
+            with pytest.raises(NotFoundError):
+                await stored(kit, pages[0])
+        else:
+            after = await stored(kit, pages[0])
+            expect((after.content_type, after.content_source) == (kept_type, kept_source))
+        assert_expectations()
