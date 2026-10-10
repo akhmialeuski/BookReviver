@@ -1305,8 +1305,9 @@ class PageService:
 
         The block reads the page again. A page deleted while its files were written took its versions with it, so
         nothing is stored and the files are removed after the block. A leaf that stopped being the choice of its page
-        meanwhile is not stored either, since making it current would undo that choice. Its version stays pending, and
-        the next job removes it. The method opens its own block, so it is called only outside a block.
+        meanwhile is not stored either, since making it current would undo that choice. It is deleted in the block as
+        ``_prepare`` deletes such a leaf, since a leaf left pending would be taken by every job, and its files are
+        removed after the block. The method opens its own block, so it is called only outside a block.
 
         :param page: The page the version belongs to, as read before its files were written.
         :type page: Page
@@ -1321,7 +1322,10 @@ class PageService:
         stored = False
         async with self._uow.change_book(page.project_id):
             now = await self._found(page.id)
-            if now is not None and not self._outdated_leaf(version, now):
+            outdated = now is not None and self._outdated_leaf(version, now)
+            if outdated:
+                await self._uow.page_versions.delete_many([version.id])
+            elif now is not None:
                 await self._uow.page_versions.update(version)
                 if current:
                     changed = await self._records.set_head(
@@ -1330,6 +1334,8 @@ class PageService:
                 stored = True
         if now is None:
             await self._discard_files(page.project_id, [page])
+        elif outdated:
+            await self._assets.delete_prefix(ProjectKeys(page.project_id).version_directory(version))
         elif stored and current:
             await self._publisher.publish(PageVersionReady(project_id=page.project_id, version=version))
             await self._records.announce(page.project_id, changed)

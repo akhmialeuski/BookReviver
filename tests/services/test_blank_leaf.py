@@ -813,10 +813,11 @@ class TestJobsReCheckWhatTheyApply:
     async def test_a_leaf_whose_choice_was_taken_back_while_it_was_written_is_not_made_current(
         self, fx_desk: LeafDesk
     ) -> None:
-        """Verify the job stores no head for a leaf the page does not show any longer, and ends without a failure.
+        """Verify the job deletes a leaf the page does not show any longer instead of storing it, and ends alone.
 
         The page gets its scan back while the job writes the files of the leaf. The job holds no block then, so the
-        request is served at once, and the block that stores the leaf finds the choice changed and writes nothing.
+        request is served at once, and the block that stores the leaf finds the choice changed and deletes the leaf, as
+        a job deletes an outdated leaf it meets before writing. No pending leaf is left, so no second job is queued.
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
@@ -837,9 +838,8 @@ class TestJobsReCheckWhatTheyApply:
         await service.prepare_images(fx_desk.queue.enqueued[-1].id)
 
         [job] = fx_desk.database.tables.jobs.values()
-        [leaf] = fx_desk.leaves(blank)
         expect(job.state is JobState.SUCCEEDED)
-        expect(leaf.state is VersionState.PENDING)
+        expect(fx_desk.leaves(blank) == [])
         expect(Stage.PAGE_ORDER not in fx_desk.heads(blank))
         expect(not any(isinstance(event, PageVersionReady) for event in fx_desk.events.published))
         assert_expectations()

@@ -159,17 +159,22 @@ class JobStarter:
         :rtype: Job | None
         """
         group = JobKind.requested() if kind in JobKind.requested() else JobKind.housekeeping()
-        job = Job(id=JobId(uuid4()), project_id=project_id, kind=kind, params=params, created_at=self._clock.now())
         async with self._uow.change():
             if kind in JobKind.preemptive():
                 active, cancelled = await self._clear_previews(project_id)
             else:
                 active, cancelled = await self._active(project_id), []
-            busy = any(other.kind in group for other in active)
-            if not busy:
+            if any(other.kind in group for other in active):
+                job = None
+            else:
+                # Made after the cancellations, so it is stored after the end of every preview it cancelled, and the
+                # hand-off at the end of such a preview does not take it for a job that waited and queue it again
+                job = Job(
+                    id=JobId(uuid4()), project_id=project_id, kind=kind, params=params, created_at=self._clock.now()
+                )
                 await self._uow.jobs.add(job)
         await self._announce(cancelled)
-        if busy:
+        if job is None:
             return None
         if active:
             await self._announce([job])
