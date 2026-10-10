@@ -1,6 +1,7 @@
 """Tests for the current version of a stage, the list of versions, tiles on request, collection and coordinates."""
 
 from datetime import timedelta
+from functools import partial
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -41,12 +42,13 @@ from bookreviver.services.job_runs import JobTracker
 from bookreviver.services.processing_jobs import VERSIONS_LEFT, ProcessingJobs
 from bookreviver.services.version_clearing import BEING_COLLECTED
 from tests.helpers.builders import EPOCH, make_page_stage, make_result_mark_change
+from tests.helpers.meanwhile import change_when_published
 from tests.helpers.processing import IMAGE_CONTENT
 from tests.helpers.processors import FakeProcessor
 from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from bookreviver.domain.entities import Job, Page, PageVersion, Project
     from bookreviver.domain.ids import StorageKey
@@ -978,3 +980,83 @@ class TestMapToScan:
             await uow.page_versions.update(shifted)
         [mapped] = await fx_kit.service().map_to_scan(actor, project.id, page.id, shifted.id, [Point(x=5, y=7)])
         assert mapped == Point(x=1115, y=27)
+
+
+async def fail_the_chosen_version(kit: ProcessingKit, version: PageVersion) -> None:
+    """Store the version as failed, as a run that made it again and failed would.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param version: The version a user chose.
+    :type version: PageVersion
+    """
+    uow = kit.uow()
+    project_id = (await uow.pages.get(version.page_id)).project_id
+    async with uow.change_book(project_id):
+        await uow.page_versions.update(evolve(version, state=VersionState.FAILED))
+
+
+async def delete_the_page_of_the_version(kit: ProcessingKit, version: PageVersion) -> None:
+    """Delete the page the version belongs to, as a request of the user does.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param version: The version a user chose, which goes with its page.
+    :type version: PageVersion
+    """
+    uow = kit.uow()
+    project_id = (await uow.pages.get(version.page_id)).project_id
+    async with uow.change_book(project_id):
+        await uow.pages.delete(version.page_id)
+
+
+class TestChooseVersionApplyStep:
+    """Tests for the block that makes a chosen version current, which checks the version again inside it."""
+
+    @pytest.mark.parametrize(
+        ('change', 'refusal'),
+        [
+            pytest.param(fail_the_chosen_version, ConflictError, id='version-failed-meanwhile'),
+            pytest.param(delete_the_page_of_the_version, NotFoundError, id='page-deleted-meanwhile'),
+        ],
+    )
+    async def test_a_choice_whose_version_changed_while_a_preview_was_cancelled_changes_nothing(
+        self,
+        fx_kit: ProcessingKit,
+        monkeypatch: pytest.MonkeyPatch,
+        change: Callable[[ProcessingKit, PageVersion], Awaitable[None]],
+        refusal: type[Exception],
+    ) -> None:
+        """Verify the version is checked again inside the block, after the cancelling that comes before it.
+
+        The cancelling of the preview is a block of its own, and the use case announces it before its own block opens,
+        so the version may have failed, or the page may have gone, in between. The stage is not given the version, and
+        nothing is announced for the choice.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param monkeypatch: Fixture that restores the event bus.
+        :type monkeypatch: pytest.MonkeyPatch
+        :param change: The change another request makes while the preview is cancelled.
+        :type change: Callable[[ProcessingKit, PageVersion], Awaitable[None]]
+        :param refusal: What the use case refuses with.
+        :type refusal: type[Exception]
+        """
+        actor, project, page, first = await ran_geometry(fx_kit)
+        second = evolve(first, id=PageVersionId('0123456789abcdef'), params={'strength': 7})
+        uow = fx_kit.uow()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(second)
+        await fx_kit.parts(fx_kit.uow()).starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
+        change_when_published(fx_kit, monkeypatch, partial(change, fx_kit, second))
+        with pytest.raises(refusal):
+            await fx_kit.service().choose_version(actor, project.id, page.id, Stage.GEOMETRY, second.id)
+        record = await fx_kit.uow().page_stages.find(PageStageKey(page.id, Stage.GEOMETRY))
+        announced = [
+            event
+            for event in fx_kit.events.published
+            if isinstance(event, PageStageChanged) and event.stage.head_version_id == second.id
+        ]
+        expect(record is None or record.head_version_id != second.id)
+        expect(announced == [])
+        assert_expectations()

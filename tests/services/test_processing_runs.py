@@ -1,6 +1,8 @@
 """Tests for the jobs that run a stage and preview a step: the cache of versions, the current version and staleness."""
 
-from typing import TYPE_CHECKING
+from datetime import timedelta
+from functools import partial
+from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 from attrs import evolve
@@ -13,6 +15,7 @@ from bookreviver.domain.enums import (
     JobState,
     RecipeKind,
     Rendition,
+    ResultMark,
     Stage,
     StageState,
     VersionScale,
@@ -21,24 +24,30 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
 from bookreviver.domain.events import PageStageChanged, PageVersionReady
 from bookreviver.domain.geometry import Rotation
+from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import (
     NewPageEdit,
     PageStageKey,
     PageStepKey,
     RecipeDraft,
+    RecipeKey,
     SliceRequest,
     StageRun,
     Step,
     StepPreview,
 )
-from tests.helpers.builders import make_page
+from tests.helpers.builders import EPOCH, make_page
 from tests.helpers.fake_processing import PREVIEW_TOKEN
+from tests.helpers.meanwhile import change_while_writing
+from tests.helpers.page_batches import PageValues
 from tests.helpers.processing import IMAGE_CONTENT
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.stage_heads import seed_head
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from bookreviver.domain.entities import Actor, Page, PageVersion, Project
     from tests.helpers.processing import ProcessingKit
 
@@ -46,6 +55,10 @@ pytestmark = pytest.mark.anyio
 
 FAKE_KEY: str = FakeProcessor.spec.key
 EVERYTHING: SliceRequest = SliceRequest(limit=100)
+# What another request sets while a job runs: a strength, the identifier of a version, and a comment
+STRENGTH_BY_HAND: int = 7
+OTHER_INPUT_ID: str = '00112233445566ff'
+COMMENT_BY_HAND: str = 'Check the margin.'
 
 
 async def run_stage(kit: ProcessingKit, actor: Actor, project: Project, run: StageRun) -> None:
@@ -740,3 +753,168 @@ class TestPreviewStep:
         await fx_kit.jobs().preview_step(job.id)
         stored = await fx_kit.uow().jobs.get(job.id)
         assert (stored.state, stored.error) == (JobState.FAILED, 'The page has no image to preview a step on.')
+
+
+class SeededPage(NamedTuple):
+    """The account, the project and the page a change made while a job runs is made on.
+
+    :ivar actor: Account owning the project.
+    :ivar project: The project.
+    :ivar page: The page the job runs.
+    """
+
+    actor: Actor
+    project: Project
+    page: Page
+
+
+async def delete_the_page(kit: ProcessingKit, seeded: SeededPage) -> None:
+    """Delete the page, as a request of the user does while a job of the stage runs.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param seeded: The project and the page.
+    :type seeded: SeededPage
+    """
+    uow = kit.uow()
+    async with uow.change_book(seeded.project.id):
+        await uow.pages.delete(seeded.page.id)
+
+
+async def set_a_setting_by_hand(kit: ProcessingKit, seeded: SeededPage) -> None:
+    """Give the page its own strength for the geometry step, through the service the interface uses.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param seeded: The account, the project and the page.
+    :type seeded: SeededPage
+    """
+    key = await kit.edit_key(seeded.page, Stage.GEOMETRY, FAKE_KEY)
+    await PageValues(kit, seeded.actor, seeded.project.id).set(key, STRENGTH_PARAMETER, STRENGTH_BY_HAND)
+
+
+async def replace_the_input(kit: ProcessingKit, seeded: SeededPage) -> None:
+    """Make another ready version the current one of the page split, which the geometry stage reads.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param seeded: The project and the page.
+    :type seeded: SeededPage
+    """
+    uow = kit.uow()
+    [base] = await uow.page_versions.list_base_versions([seeded.page.id])
+    other = evolve(base, id=PageVersionId(OTHER_INPUT_ID))
+    record = await uow.page_stages.get(PageStageKey(seeded.page.id, Stage.PAGE_SPLIT))
+    async with uow.change_book(seeded.project.id):
+        await uow.page_versions.add(other)
+        await uow.page_stages.save(evolve(record, head_version_id=other.id))
+
+
+async def save_the_recipe(kit: ProcessingKit, seeded: SeededPage) -> None:
+    """Save the geometry recipe with another strength a moment later, as the form of the recipe does.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param seeded: The account and the project owning the recipe.
+    :type seeded: SeededPage
+    """
+    kit.clock.moment = EPOCH + timedelta(hours=1)
+    recipe = await kit.recipe_of(seeded.actor, seeded.project, Stage.GEOMETRY)
+    draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: STRENGTH_BY_HAND})])
+    await kit.service().save_recipe(seeded.actor, seeded.project.id, RecipeKey(Stage.GEOMETRY, recipe.id), draft)
+
+
+class TestRunApplyStep:
+    """Tests for the block that makes the result of a run current, which reads again what the run went by."""
+
+    @pytest.mark.parametrize(
+        'change',
+        [
+            pytest.param(delete_the_page, id='page-deleted'),
+            pytest.param(set_a_setting_by_hand, id='setting-set-by-hand'),
+            pytest.param(replace_the_input, id='input-replaced'),
+            pytest.param(save_the_recipe, id='recipe-saved'),
+        ],
+    )
+    async def test_a_run_whose_basis_changed_meanwhile_is_skipped_and_makes_nothing_current(
+        self,
+        fx_kit: ProcessingKit,
+        monkeypatch: pytest.MonkeyPatch,
+        change: Callable[[ProcessingKit, SeededPage], Awaitable[None]],
+    ) -> None:
+        """Verify a change that lands while the steps run leaves the stage without a head, and says nothing of it.
+
+        The change lands after the step is computed and before the block that stores its version, which is where a
+        request made while the job runs lands. The job ends as succeeded with no page made, since a page that was
+        skipped is not a failure, and the stage keeps the mark the change gave it.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param monkeypatch: Fixture that restores the writer of renditions.
+        :type monkeypatch: pytest.MonkeyPatch
+        :param change: The change another request makes while the job runs.
+        :type change: Callable[[ProcessingKit, SeededPage], Awaitable[None]]
+        """
+        seeded = SeededPage(*await prepared_page(fx_kit))
+        job = await fx_kit.service().start_run(
+            seeded.actor, seeded.project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
+        change_while_writing(fx_kit, monkeypatch, partial(change, fx_kit, seeded))
+        made = await fx_kit.jobs().run_stage(job.id)
+        stored = await fx_kit.uow().jobs.get(job.id)
+        record = await fx_kit.uow().page_stages.find(PageStageKey(seeded.page.id, Stage.GEOMETRY))
+        announced = [
+            event
+            for event in fx_kit.events.published
+            if isinstance(event, PageStageChanged) and event.stage.stage is Stage.GEOMETRY
+        ]
+        expect(made is None)
+        expect((stored.state, stored.progress.total, stored.error) == (JobState.SUCCEEDED, 1, ''))
+        expect(record is None)
+        expect(announced == [])
+        assert_expectations()
+
+    async def test_the_files_of_a_page_deleted_while_its_steps_ran_are_discarded(
+        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify the run leaves no file under the directory of the page that went away while it computed.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param monkeypatch: Fixture that restores the writer of renditions.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        seeded = SeededPage(*await prepared_page(fx_kit))
+        job = await fx_kit.service().start_run(
+            seeded.actor, seeded.project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
+        change_while_writing(fx_kit, monkeypatch, partial(delete_the_page, fx_kit, seeded))
+        await fx_kit.jobs().run_stage(job.id)
+        left = await fx_kit.assets.size_of(ProjectKeys(seeded.project.id).page(seeded.page.id))
+        assert left == 0
+
+    async def test_a_mark_and_a_comment_put_on_the_version_while_it_ran_are_kept(
+        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify the block that stores the result of a step does not write the mark of the version it read before.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param monkeypatch: Fixture that restores the writer of renditions.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        actor, project, page = await prepared_page(fx_kit)
+
+        async def mark_the_running_version() -> None:
+            """Mark and comment the version of the stage that is being made, through a unit of work of its own."""
+            uow = fx_kit.uow()
+            listed = await uow.page_versions.list_for_stage(page.id, Stage.GEOMETRY, None, EVERYTHING)
+            [running] = [version for version in listed.items if version.state is VersionState.RUNNING]
+            async with uow.change_book(project.id):
+                await uow.page_versions.update(evolve(running, mark=ResultMark.BAD, comment=COMMENT_BY_HAND))
+
+        change_while_writing(fx_kit, monkeypatch, mark_the_running_version)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        head = await head_of(fx_kit, page, Stage.GEOMETRY)
+        expect((head.state, head.mark, head.comment) == (VersionState.READY, ResultMark.BAD, COMMENT_BY_HAND))
+        assert_expectations()

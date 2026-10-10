@@ -2,10 +2,12 @@
 
 from typing import TYPE_CHECKING
 
+import anyio
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobKind, JobState, PageKind, RecipeKind, Stage, StageState
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
@@ -26,12 +28,18 @@ from tests.helpers.processing import ProcessingKit
 from tests.helpers.processors import FakeProcessor
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Project, Recipe
+    from bookreviver.domain.ids import ProjectId
+    from bookreviver.ports.persistence import RecipeRepository
 
 pytestmark = pytest.mark.anyio
 
 FAKE_KEY: str = FakeProcessor.spec.key
+# Tasks that ask for the recipes of one stage at the same time
+TASKS: int = 2
 GEOMETRY_STEPS: tuple[str, ...] = (
     'geometry.perspective',
     'geometry.deskew',
@@ -473,3 +481,117 @@ class TestStartRun:
         actor, project = await kit.seed_project()
         job = await kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         assert (await kit.uow().jobs.get(job.id)).state is JobState.FAILED
+
+
+class ReadGate:
+    """Holds the first read of the recipes of each unit of work until every one of them has made it.
+
+    A request that finds no recipes stores the defaults in a block of its own, so two requests that both read none
+    meet in that block. The gate makes them both read before either of them stores, which is the order that matters.
+
+    :ivar reads: How many units of work have made their first read.
+    """
+
+    def __init__(self, parties: int) -> None:
+        """Wait for as many units of work as there are parties.
+
+        :param parties: Number of units of work that read.
+        :type parties: int
+        """
+        self.reads = 0
+        self._parties = parties
+        self._all_read = anyio.Event()
+
+    def watch(self, uow: InMemoryUnitOfWork, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Hold the first read of the recipes of a stage that the unit of work makes.
+
+        :param uow: Unit of work of one of the tasks.
+        :type uow: InMemoryUnitOfWork
+        :param monkeypatch: Fixture that restores the repository when the test ends.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        read = uow.recipes.list_for_stage
+        waited = False
+
+        async def gated(project_id: ProjectId, stage: Stage) -> Sequence[Recipe]:
+            """Read the recipes, and wait on the first call until every unit of work has read.
+
+            :param project_id: Project owning the recipes.
+            :type project_id: ProjectId
+            :param stage: The stage.
+            :type stage: Stage
+            :returns: The recipes the wrapped read found.
+            :rtype: Sequence[Recipe]
+            """
+            nonlocal waited
+            found = await read(project_id, stage)
+            if not waited:
+                waited = True
+                self.reads += 1
+                if self.reads == self._parties:
+                    self._all_read.set()
+                await self._all_read.wait()
+            return found
+
+        monkeypatch.setattr(uow.recipes, 'list_for_stage', gated)
+
+
+class TestDefaultRecipesInBlocks:
+    """Tests for the creation of the default recipes by tasks that ask for the stage at the same time."""
+
+    async def test_two_tasks_that_both_found_no_recipes_store_one_set(
+        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify the task that enters the block second reads again, finds the recipes, and adds none.
+
+        Both tasks have read an empty stage before either enters its block, which the gate proves, so the second one
+        reaches the block with nothing in hand but a stale read. It must come out with the recipes of the first.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param monkeypatch: Fixture that restores the repositories.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        _, project = await fx_kit.seed_project()
+        units = [InMemoryUnitOfWork(fx_kit.database) for _ in range(TASKS)]
+        gate = ReadGate(parties=TASKS)
+        for unit in units:
+            gate.watch(unit, monkeypatch)
+        stored_sets: list[int] = []
+        repository = type(units[0].recipes)
+        add_many = repository.add_many
+
+        async def counting(recipes: RecipeRepository, entities: Sequence[Recipe]) -> Sequence[Recipe]:
+            """Count the recipes each call of ``add_many`` stores, then store them.
+
+            :param recipes: The repository the call was made on.
+            :type recipes: RecipeRepository
+            :param entities: The recipes to store.
+            :type entities: Sequence[Recipe]
+            :returns: The recipes as stored.
+            :rtype: Sequence[Recipe]
+            """
+            stored_sets.append(len(entities))
+            return await add_many(recipes, entities)
+
+        monkeypatch.setattr(repository, 'add_many', counting)
+        answers: list[list[Recipe]] = []
+
+        async def ask(unit: InMemoryUnitOfWork) -> None:
+            """Ask for the recipes of the geometry stage through the book of one task.
+
+            :param unit: Unit of work of the task.
+            :type unit: InMemoryUnitOfWork
+            """
+            answers.append(await fx_kit.parts(unit).recipes.recipes(project.id, Stage.GEOMETRY))
+
+        async with anyio.create_task_group() as tasks:
+            for unit in units:
+                tasks.start_soon(ask, unit)
+        stored = await fx_kit.uow().recipes.list_for_stage(project.id, Stage.GEOMETRY)
+        expect(gate.reads == TASKS)
+        expect(stored_sets == [len(RecipeKind)])
+        expect(len(stored) == len(RecipeKind))
+        expect(len(answers) == TASKS)
+        expect(all([recipe.id for recipe in answer] == [recipe.id for recipe in stored] for answer in answers))
+        assert_expectations()

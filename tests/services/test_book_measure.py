@@ -26,14 +26,15 @@ from bookreviver.domain.geometry import Rect
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.margins import MM_PER_INCH
 from bookreviver.domain.values import PageStageKey, ProcessorRef, RecipeDraft, StageRun, Step
-from bookreviver.services.book_measure import MEASURE_OUTDATED, BookMeasure
-from tests.helpers.builders import make_page_stage, make_page_version
+from bookreviver.services.book_measure import MEASURE_OUTDATED, BookBlocks
+from tests.helpers.builders import EPOCH, make_page_stage, make_page_version
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Collection
 
     from bookreviver.domain.entities import Actor, Job, Page, Project, Recipe
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import PageId, ProjectId
+    from bookreviver.services.book_measure import BlockMeasure
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -43,6 +44,8 @@ NORMALIZE_KEY: str = 'geometry.normalize'
 VERSION_ID_DIGITS: int = 16
 FIRST_KEY: str = 'a0'
 BUSY_MESSAGE: str = 'project is busy'
+# The line height a user types into the form while the book is measured
+HAND_LINE_HEIGHT: float = 40.0
 # The pages of the first test: a block and a line height each, the block being the same size when the lines are brought
 # to the median one, which is 30 pixels, so the block is 300 by 600 on all three. Each line height is within the quarter
 # the step scales a page by, since a page farther from the target keeps its size and would not be brought to it
@@ -611,51 +614,67 @@ class TestMeasureIsProcessing:
             await fx_cv_kit.service().start_measure(actor, project.id)
 
 
-class TestMeasureReChecksTheRecipes:
-    """Tests for the block of the measure, which reads the recipes again before it writes over them."""
+class TestMeasureApplyStep:
+    """Tests for the block that writes the measures, which reads the recipes again."""
 
-    async def test_a_recipe_changed_after_it_was_read_is_not_written_over(
-        self, fx_cv_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        'kind',
+        [
+            pytest.param(RecipeKind.TEXT, id='recipe-of-text-pages'),
+            pytest.param(RecipeKind.BW_PICTURE, id='recipe-of-pictures'),
+        ],
+    )
+    async def test_a_recipe_saved_while_the_book_was_measured_fails_the_job_and_nothing_is_written(
+        self, fx_cv_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch, kind: RecipeKind
     ) -> None:
-        """Verify the measure refuses with its reason and leaves the recipe the user saved meanwhile as it is.
+        """Verify the measure does not write over a recipe a user saved after the measure read it, in any recipe.
 
-        The recipes are read before the block of the book opens. The user saves a recipe after that read, so the block
-        finds another ``updated_at`` and refuses, which the job records as its failure and never retries.
+        The recipe is saved after the boxes of the pages are read and before the block that writes the page size, so
+        the measure was made from steps that are not the ones stored any more. The recipe of the kind that comes first
+        is written first inside the block, and the block is rolled back as a whole when a later one is found changed.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
-        :param monkeypatch: Fixture that restores the patched repository after the test.
+        :param monkeypatch: Fixture that restores the reader of the boxes.
         :type monkeypatch: pytest.MonkeyPatch
+        :param kind: The kind of page whose recipe the user saves meanwhile.
+        :type kind: RecipeKind
         """
         actor, project = await fx_cv_kit.seed_project()
         recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(300, 600, 30))
-        before = await normalize_params(fx_cv_kit, actor, project)
-        uow = fx_cv_kit.uow()
-        parts = fx_cv_kit.parts(uow)
-        read = uow.recipes.list_for_stage
-        saved: list[Recipe] = []
+        before = {each: await normalize_params(fx_cv_kit, actor, project, each) for each in RecipeKind}
+        read = BookBlocks.read
 
-        async def list_then_save(project_id: ProjectId, stage: Stage) -> Sequence[Recipe]:
-            """Read the recipes of the stage, then let the user save the first of them, once.
+        async def read_then_save(
+            blocks: BookBlocks, project_id: ProjectId, stage: Stage, *, leaving_out: Collection[PageId] = ()
+        ) -> dict[PageId, BlockMeasure]:
+            """Read the boxes as the measure does, then save the recipe of a kind through the form's use case.
 
-            :param project_id: Project owning the recipes.
+            :param blocks: The reader of the boxes.
+            :type blocks: BookBlocks
+            :param project_id: Project whose pages are read.
             :type project_id: ProjectId
-            :param stage: The stage.
+            :param stage: The stage of the normalize step.
             :type stage: Stage
-            :returns: The recipes as they were before the user saved.
-            :rtype: Sequence[Recipe]
+            :param leaving_out: Pages whose measure is not wanted.
+            :type leaving_out: Collection[PageId]
+            :returns: The boxes the wrapped reader found.
+            :rtype: dict[PageId, BlockMeasure]
             """
-            found = await read(project_id, stage)
-            if not saved and found:
-                fx_cv_kit.clock.moment += timedelta(minutes=1)
-                draft = RecipeDraft(steps=found[0].steps)
-                saved.append(await fx_cv_kit.edit_recipe(actor, project, stage, draft, found[0].kind))
+            found = await read(blocks, project_id, stage, leaving_out=leaving_out)
+            fx_cv_kit.clock.moment = EPOCH + timedelta(hours=1)
+            await set_normalize_params(fx_cv_kit, actor, project, {NormalizeParam.LINE_HEIGHT: HAND_LINE_HEIGHT}, kind)
             return found
 
-        monkeypatch.setattr(uow.recipes, 'list_for_stage', list_then_save)
-
-        with pytest.raises(ConflictError, match=MEASURE_OUTDATED):
-            await BookMeasure(uow=uow, recipes=parts.recipes, records=parts.records).run(project.id)
-
-        assert await normalize_params(fx_cv_kit, actor, project) == before
+        monkeypatch.setattr(BookBlocks, 'read', read_then_save)
+        job = await measure(fx_cv_kit, actor, project)
+        after = {each: await normalize_params(fx_cv_kit, actor, project, each) for each in RecipeKind}
+        written_by_hand = {**before[kind], NormalizeParam.LINE_HEIGHT: HAND_LINE_HEIGHT}
+        expect((job.state, job.error) == (JobState.FAILED, MEASURE_OUTDATED))
+        expect(after[kind] == written_by_hand)
+        expect(
+            {each: params for each, params in after.items() if each is not kind}
+            == {each: params for each, params in before.items() if each is not kind}
+        )
+        assert_expectations()
