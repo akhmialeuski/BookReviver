@@ -1,7 +1,6 @@
 """Tests for the use cases that add and delete pages without a scan, bind scans, and write their images."""
 
 from typing import TYPE_CHECKING, NamedTuple, override
-from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import anyio
@@ -60,7 +59,6 @@ pytestmark = pytest.mark.anyio
 
 PNG_BIT_DEPTH_OFFSET: int = 24
 FAILED_AND_NEXT_JOBS: int = 2
-LIST_JOBS_PATCH: str = 'bookreviver.adapters.persistence.memory.unit_of_work.InMemoryJobRepository.list_for_project'
 WHITE: int = 255
 RIVAL_LABEL: str = 'iv'
 FIRST_SCAN_SIZE: tuple[int, int, float | None] = (100, 400, 100.0)
@@ -1510,42 +1508,6 @@ class TestPrepareImagesWhileTheBookChanges:
             == [VersionState.READY, VersionState.READY]
         )
         expect({job.state for job in fx_database.tables.jobs.values()} == {JobState.SUCCEEDED})
-        assert_expectations()
-
-    @patch(LIST_JOBS_PATCH, new_callable=AsyncMock)
-    async def test_two_requests_that_both_pass_the_check_store_one_job(
-        self,
-        list_jobs: AsyncMock,
-        fx_service: Callable[[], PageService],
-        fx_database: InMemoryDatabase,
-        fx_actor: Actor,
-        fx_queue: RecordingJobQueue,
-    ) -> None:
-        """Verify the request that loses the race finds the job of the other, and neither fails nor queues a second.
-
-        The check for an active job is made to find none, as it does for a request that reads before the other
-        commits, so only the unique key of the jobs can stop the second insert.
-
-        :param list_jobs: Patched listing of a project's jobs, which finds none.
-        :type list_jobs: AsyncMock
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param fx_queue: Recording job queue.
-        :type fx_queue: RecordingJobQueue
-        """
-        list_jobs.return_value = []
-        project = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, project)
-
-        pages = await _add_leaves(fx_service, fx_actor, project, 2)
-
-        expect(_job_kinds(fx_database) == [(JobKind.PREPARE_PAGES, JobState.QUEUED)])
-        expect(len(fx_queue.enqueued) == 1)
-        expect(all(len(_stored_versions(fx_database, page)) == 1 for page in pages))
         assert_expectations()
 
     async def test_second_leaf_while_a_job_is_queued_queues_no_second_job(

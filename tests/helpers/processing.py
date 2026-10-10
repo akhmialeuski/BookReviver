@@ -323,8 +323,8 @@ class ProcessingKit:
         owner = new_account_id()
         project = evolve(make_project(owner_id=owner), image_policy=image_policy)
         uow = self.uow()
-        await uow.projects.add(project)
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.add(project)
         return Actor(account_id=owner), project
 
     async def seed_scan_page(
@@ -347,10 +347,10 @@ class ProcessingKit:
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
         page = make_page(project_id=project.id, order_key=order_key, scan=scan, kind=kind)
         uow = self.uow()
-        await uow.sources.add(source)
-        await uow.scans.add(scan)
-        await uow.pages.add(page)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.sources.add(source)
+            await uow.scans.add(scan)
+            await uow.pages.add(page)
         keys = ProjectKeys(project.id)
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
             async with self.assets.writable(keys.scan_rendition(scan, rendition)) as target:
@@ -377,17 +377,17 @@ class ProcessingKit:
             async with self.assets.writable(keys.version_rendition(version, rendition)) as target:
                 target.write_bytes(IMAGE_CONTENT)
         uow = self.uow()
-        await uow.page_versions.add(version)
-        await uow.page_stages.save(
-            PageStage(
-                page_id=page.id,
-                stage=Stage.PAGE_SPLIT,
-                head_version_id=version.id,
-                state=StageState.FRESH,
-                updated_at=EPOCH,
+        async with uow.change_book(page.project_id):
+            await uow.page_versions.add(version)
+            await uow.page_stages.save(
+                PageStage(
+                    page_id=page.id,
+                    stage=Stage.PAGE_SPLIT,
+                    head_version_id=version.id,
+                    state=StageState.FRESH,
+                    updated_at=EPOCH,
+                )
             )
-        )
-        await uow.commit()
         return version
 
     async def store_files(self, version: PageVersion) -> None:

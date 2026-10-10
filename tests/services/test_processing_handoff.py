@@ -402,8 +402,10 @@ class TestConcurrentRequests:
 
     async def ask_while_the_first_waits(
         self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch, first: JobKind, second: JobKind
-    ) -> tuple[Project, dict[JobKind, Job | ConflictError]]:
+    ) -> tuple[Project, list[Job | ConflictError | None]]:
         """Let two requests meet at the check, the first held after its read, and give what each of them got.
+
+        What they got is given by the order of the requests, since both may ask for the same kind of job.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -411,10 +413,10 @@ class TestConcurrentRequests:
         :type monkeypatch: pytest.MonkeyPatch
         :param first: The kind of job the first request asks for.
         :type first: JobKind
-        :param second: The kind of job the second request asks for, which differs from the first.
+        :param second: The kind of job the second request asks for.
         :type second: JobKind
-        :returns: The project, and the job or the refusal each request got, by the kind asked for.
-        :rtype: tuple[Project, dict[JobKind, Job | ConflictError]]
+        :returns: The project, and the job or the refusal of the first request and of the second, in that order.
+        :rtype: tuple[Project, list[Job | ConflictError | None]]
         """
         _, project = await prepared_page(fx_kit)
         first_uow = fx_kit.uow()
@@ -440,28 +442,30 @@ class TestConcurrentRequests:
             return found
 
         monkeypatch.setattr(first_uow.jobs, 'list_for_project', list_then_wait)
-        outcomes: dict[JobKind, Job | ConflictError] = {}
+        outcomes: list[Job | ConflictError | None] = [None, None]
 
-        async def ask(starter: JobStarter, kind: JobKind) -> None:
-            """Ask for a job and keep the job, or the refusal.
+        async def ask(starter: JobStarter, kind: JobKind, order: int) -> None:
+            """Ask for a job and keep the job, or the refusal, in the place of the request.
 
             :param starter: Starter of the request.
             :type starter: JobStarter
             :param kind: The kind of job asked for.
             :type kind: JobKind
+            :param order: Place of the request, 0 for the first and 1 for the second.
+            :type order: int
             """
             try:
-                outcomes[kind] = await starter.enqueue(project.id, kind, params_of(starter, project.id, kind))
+                outcomes[order] = await starter.enqueue(project.id, kind, params_of(starter, project.id, kind))
             except ConflictError as error:
-                outcomes[kind] = error
+                outcomes[order] = error
 
         async with anyio.create_task_group() as group:
-            group.start_soon(ask, first_starter, first)
+            group.start_soon(ask, first_starter, first, 0)
             await listed.wait()
-            group.start_soon(ask, second_starter, second)
+            group.start_soon(ask, second_starter, second, 1)
             await anyio.wait_all_tasks_blocked()
             expect(await fx_kit.uow().jobs.list_for_project(project.id, set(JobState)) == [])
-            expect(second not in outcomes)
+            expect(outcomes[1] is None)
             resume.set()
         return project, outcomes
 
@@ -490,9 +494,9 @@ class TestConcurrentRequests:
         :param second: The kind of job the second request asks for, whose group the first took.
         :type second: JobKind
         """
-        project, outcomes = await self.ask_while_the_first_waits(fx_kit, monkeypatch, first, second)
-        expect(not isinstance(outcomes[first], ConflictError))
-        expect(isinstance(outcomes[second], ConflictError))
+        project, (won, lost) = await self.ask_while_the_first_waits(fx_kit, monkeypatch, first, second)
+        expect(won is not None and not isinstance(won, ConflictError))
+        expect(isinstance(lost, ConflictError))
         expect(await processing_kinds(fx_kit, project.id) == [first])
         assert_expectations()
 
@@ -509,9 +513,12 @@ class TestConcurrentRequests:
         :param requested: The kind of job the second request asks for.
         :type requested: JobKind
         """
-        project, outcomes = await self.ask_while_the_first_waits(fx_kit, monkeypatch, JobKind.PREVIEW_STEP, requested)
-        preview, asked = outcomes[JobKind.PREVIEW_STEP], outcomes[requested]
+        project, (preview, asked) = await self.ask_while_the_first_waits(
+            fx_kit, monkeypatch, JobKind.PREVIEW_STEP, requested
+        )
+        assert preview is not None
         assert not isinstance(preview, ConflictError)
+        assert asked is not None
         assert not isinstance(asked, ConflictError)
         expect((await fx_kit.uow().jobs.get(preview.id)).state is JobState.CANCELLED)
         expect(asked.state is JobState.QUEUED)
