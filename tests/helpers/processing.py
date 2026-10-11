@@ -361,11 +361,14 @@ class ProcessingKit:
                 target.write_bytes(image)
         return page, scan
 
-    async def seed_base_version(self, page: Page) -> PageVersion:
+    async def seed_base_version(self, page: Page, *, image: bytes = IMAGE_CONTENT) -> PageVersion:
         """Commit the ready base version of a page, with its files and its stage record.
 
         :param page: Page that has a scan.
         :type page: Page
+        :param image: Content of the ``full``, the preview and the thumbnail file of the version, which a step of the
+                      geometry stage reads.
+        :type image: bytes
         :returns: The base version.
         :rtype: PageVersion
         """
@@ -379,7 +382,7 @@ class ProcessingKit:
         keys = ProjectKeys(page.project_id)
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
             async with self.assets.writable(keys.version_rendition(version, rendition)) as target:
-                target.write_bytes(IMAGE_CONTENT)
+                target.write_bytes(image)
         uow = self.uow()
         async with uow.change_book(page.project_id):
             await uow.page_versions.add(version)
