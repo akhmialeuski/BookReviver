@@ -1152,7 +1152,8 @@ class SqlAlchemyPageVersionRepository(
         """Return the versions that are neither base versions nor in the chain of a current version.
 
         The chains are followed here, from the heads of the stage records through the input of each version, over the
-        two columns of the project's versions, since a recursive query is not portable to every database.
+        two columns of the project's versions, read in one query. SQLite and PostgreSQL both run ``WITH RECURSIVE``, so
+        a recursive query would be portable too; whether it is faster is a question for a measurement on a large book.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
