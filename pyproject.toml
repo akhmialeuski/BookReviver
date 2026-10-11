@@ -126,6 +126,8 @@ forbidden_modules = [
     "advanced_alchemy",
     "cv2",
     "aiosmtplib",
+    # The core is async through anyio, whose locks and task groups keep to the contract of the unit of work
+    "asyncio",
     "dishka",
     "fastapi",
     "fastapi_users",

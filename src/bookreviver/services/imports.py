@@ -29,12 +29,12 @@ Services touch no file: names and sizes come from the staged files the store rep
 written through the imaging and asset ports.
 """
 
-import asyncio
 import logging
 from functools import partial
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+import anyio
 from attrs import evolve, frozen
 
 from bookreviver.domain.entities import Job, Page, Scan, Source
@@ -174,10 +174,10 @@ class ImportRun:
     """One execution of an import job, which keeps what the job has done so far and reports it as a result.
 
     The run is the state its steps share: the latest job as stored, the sources imported, the files rejected and the
-    files dealt with. Several scans are cut at once, and the unit of work of one job is one database session that holds
-    one block at a time and refuses a second as nested, so the blocks of the scans take one lock in turn while the
-    files are cut outside it. The port serialises the changes of a book between units of work, and this lock the
-    blocks of tasks that share one.
+    files dealt with. Several scans are cut at once, and the unit of work of one job serves one coroutine at a time, as
+    the contract of ``UnitOfWork`` says, so the blocks of the scans queue in front of one ``anyio.Lock``, which hands
+    itself over in the order of arrival, while the files are cut outside it. The port serialises the changes of a book
+    between units of work, and this lock the blocks of coroutines that share one.
 
     :ivar job: The job as last stored by this run, which carries its progress.
     """
@@ -216,7 +216,7 @@ class ImportRun:
         self._clock = runtime.clock
         self._limits = runtime.limits
         self._keys = ProjectKeys(job.project_id)
-        self._lock = asyncio.Lock()
+        self._lock = anyio.Lock()
         self._imported: list[SourceId] = []
         self._rejected: list[RejectedFile] = []
         self._handled: set[str] = set()
@@ -426,8 +426,10 @@ class ImportRun:
     async def _cut_scans(self) -> None:
         """Cut the images of every scan of the project that has none, a few at a time, in the order of the book.
 
-        :raises ImportCancelledError: If the job was cancelled.
-        :raises ExceptionGroup: If cutting one scan failed, which stops the others.
+        :raises ImportCancelledError: If the job was cancelled and no cutter failed.
+        :raises DomainError: If cutting one scan failed on a rule of the domain, which stops the others.
+        :raises Exception: The first other fault of a cutter, which stops the others.
+        :raises BaseExceptionGroup: If a cutter was stopped by a ``BaseException``, such as the death of the worker.
         """
         scans = await self._uow.scans.list_unready(self.job.project_id)
         sources = {source.id: source for source in await self._uow.sources.list_for_project(self.job.project_id)}
@@ -439,14 +441,15 @@ class ImportRun:
                 await self._cut(sources[scan.source_id], scan)
 
         try:
-            async with asyncio.TaskGroup() as group:
+            async with anyio.create_task_group() as group:
                 for _ in range(min(self._limits.parallel_scans, len(scans))):
-                    group.create_task(worker())
+                    group.start_soon(worker)
         except ExceptionGroup as errors:
-            # Workers that stop in the same moment are all in the group, in no meaningful order. A cancellation is
-            # only the job's own state, so it must not hide a fault, which would end the job as cancelled unlogged.
-            faults = [error for error in errors.exceptions if not isinstance(error, ImportCancelledError)]
-            raise (faults or errors.exceptions)[0] from errors
+            # The group of anyio holds every cutter that failed before the cancellation of the group reached it, in
+            # the order they finished. A cancellation is only the job's own state, so it must not hide a fault, which
+            # would end the job as cancelled unlogged.
+            _, faults = errors.split(ImportCancelledError)
+            raise (faults or errors).exceptions[0] from errors
 
     async def _cut(self, source: Source, scan: Scan) -> None:
         """Write the four renditions of a scan and the base version of its pages, then mark the scan ready.
