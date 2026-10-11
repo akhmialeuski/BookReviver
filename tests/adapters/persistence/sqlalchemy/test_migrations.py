@@ -36,6 +36,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     SourceRow,
 )
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
+from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.container import build_container
 from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND
@@ -284,7 +285,7 @@ async def fx_empty_database(fx_settings: Settings) -> AsyncIterator[SqlDatabase]
     :rtype: AsyncIterator[SqlDatabase]
     """
     fx_settings.data_dir.mkdir(parents=True)
-    database = SqlDatabase(fx_settings.resolved_database_url)
+    database = SqlDatabase(fx_settings.resolved_database_url, tracer=NullTracer())
     yield database
     await database.dispose()
 

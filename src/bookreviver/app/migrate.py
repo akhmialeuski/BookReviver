@@ -12,6 +12,7 @@ from advanced_alchemy.cli import add_migration_commands
 from advanced_alchemy.utils.cli_tools import click, group
 
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import Settings
 
 
@@ -28,9 +29,11 @@ def migrate(context: click.Context) -> None:
     # SQLite creates the database file but not the directory holding it
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     context.ensure_object(dict)
-    context.obj['configs'] = [
-        SqlDatabase(settings.resolved_database_url, wait_seconds=settings.change_wait_seconds).config
-    ]
+    # A migration is not measured, so the database gets the tracer that records nothing
+    database = SqlDatabase(
+        settings.resolved_database_url, tracer=NullTracer(), wait_seconds=settings.change_wait_seconds
+    )
+    context.obj['configs'] = [database.config]
 
 
 add_migration_commands(migrate)

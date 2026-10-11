@@ -17,6 +17,7 @@ from bookreviver.app.container import build_container
 from bookreviver.app.providers.accounts import account_routes
 from bookreviver.app.security import install_security, sign_in_throttle
 from bookreviver.app.settings import Settings
+from bookreviver.app.tracing import TracingMiddleware
 from bookreviver.domain.errors import DomainError
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.pages import PageService
@@ -95,6 +96,9 @@ def create_app(
     app.include_router(api)
     app.dependency_overrides[signed_in_user] = accounts.current_user
     install_security(app, resolved)
+    # Added after the security middleware, so it is the outer one and times what the CSRF check refuses too
+    if resolved.tracing.enabled:
+        app.add_middleware(TracingMiddleware, container=container)
     setup_dishka(container, app)
     # FastAPI checks its own routes first and the frontend only for what no route matched, so it is added last and
     # an address of the API is never answered with a page. Without a build there is nothing to serve, which is the

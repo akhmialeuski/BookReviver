@@ -28,6 +28,7 @@ from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
+from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ImagingSettings
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
@@ -498,7 +499,9 @@ class ImportRig:
             uow,
             FakeCatalogue(self.processors),
             self.defaults,
-            ProcessingRuntime(publisher=self.fakes.events, clock=self.fakes.clock, queue=self.queue),
+            ProcessingRuntime(
+                publisher=self.fakes.events, clock=self.fakes.clock, queue=self.queue, tracer=NullTracer()
+            ),
             ProcessingConfig(
                 preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
                 preview_long_side_px=PREVIEW_LONG_SIDE_PX,

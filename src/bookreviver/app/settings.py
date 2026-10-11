@@ -3,12 +3,18 @@
 import enum
 from functools import cached_property
 from pathlib import Path
+from typing import Self
 
-from pydantic import BaseModel, Field, PositiveFloat, PositiveInt, SecretStr
+from pydantic import BaseModel, Field, PositiveFloat, PositiveInt, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from bookreviver.domain.enums import WorkerPool
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
+
+TRACING_NEEDS_PATH: str = 'Tracing is enabled, so tracing.export_path must name the file the spans are written to.'
+TRACING_PATH_WITHOUT_TRACING: str = (
+    'tracing.export_path is set while tracing is disabled. Enable tracing, or remove the path.'
+)
 
 
 class PersistenceBackend(enum.StrEnum):
@@ -114,6 +120,37 @@ class ProcessingSettings(BaseModel):
     models_dir: Path = Path('data/models')
 
 
+class TracingSettings(BaseModel):
+    """Measurements of the backend, written as OpenTelemetry spans into a file; off by default.
+
+    :ivar enabled: Whether spans are recorded. Off, nothing is recorded and nothing is written.
+    :ivar export_path: The JSON lines file spans are appended to, one object per span. Required when ``enabled``, and
+                       refused otherwise, so a path left in the environment cannot suggest that measurements are on.
+    """
+
+    enabled: bool = False
+    export_path: Path | None = None
+
+    @model_validator(mode='after')
+    def _require_path_when_enabled(self) -> Self:
+        """Check that a path is given exactly when the measurements are on.
+
+        :returns: The settings, once checked.
+        :rtype: Self
+        :raises ValueError: If the measurements are on without a path, or off with one.
+        """
+        if self.enabled and self.export_path is None:
+            raise ValueError(TRACING_NEEDS_PATH)
+        if not self.enabled and self.export_path is not None:
+            raise ValueError(TRACING_PATH_WITHOUT_TRACING)
+        return self
+
+    @property
+    def sink(self) -> Path | None:
+        """The file spans are written to, or None when the measurements are off."""
+        return self.export_path if self.enabled else None
+
+
 class Settings(BaseSettings):
     """All runtime configuration of the API server and the workers.
 
@@ -135,6 +172,7 @@ class Settings(BaseSettings):
     :ivar mail: Outgoing mail.
     :ivar imaging: Page extraction and tiling.
     :ivar processing: Processing of pages by plugins.
+    :ivar tracing: Measurements of the backend, written as spans into a file.
     """
 
     model_config = SettingsConfigDict(
@@ -160,6 +198,7 @@ class Settings(BaseSettings):
     mail: MailSettings = MailSettings()
     imaging: ImagingSettings = ImagingSettings()
     processing: ProcessingSettings = ProcessingSettings()
+    tracing: TracingSettings = TracingSettings()
 
     @cached_property
     def resolved_database_url(self) -> str:

@@ -269,6 +269,25 @@ enough, because the server looks for the tools once and keeps that answer until 
 The DjVu tests build their samples with the same package (`c44`, `cjb2`, `djvm`, `djvmcvt`) and are skipped, with
 the reason "DjVuLibre is not installed", when it is missing.
 
+## Measurements
+
+The backend can record how long its work takes as OpenTelemetry spans, one JSON object per line in a file. Nothing is
+recorded by default. Two variables switch it on, and the path is required with the switch and refused without it:
+
+| Variable                           | Meaning                                                              |
+| ---------------------------------- | -------------------------------------------------------------------- |
+| `BOOKREVIVER_TRACING__ENABLED`     | `true` records spans                                                 |
+| `BOOKREVIVER_TRACING__EXPORT_PATH` | The file spans are appended to, a new file for each run              |
+
+The spans are `http.request` (route template, method and status), `job` (kind and job), `run.page` (page, stage and
+outcome), `step` (processor, scale and outcome: cached, ran or failed) and `write.block`, which times a block that holds
+SQLite's write lock: the wait for the lock, how long it was held and the commit, with the book. The file is complete
+once the server has stopped. `scripts/trace_report.py` summarises one run for a note:
+
+```bash
+uv run python scripts/trace_report.py path/to/spans.jsonl
+```
+
 ## Development
 
 ```bash

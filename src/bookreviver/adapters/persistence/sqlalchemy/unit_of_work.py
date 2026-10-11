@@ -6,7 +6,9 @@ change they make part of one transaction, visible to others only after its block
 
 A block of the port, ``change_book`` or ``change``, ends the read-only transaction the session may have open, takes a
 connection with the execution option that makes SQLite begin with ``BEGIN IMMEDIATE``, and so holds the write lock of
-the database from the first line of the block to its commit. ``change_book`` also locks the row of the project with
+the database from the first line of the block to its commit. The options also name the kind of the block and, for
+``change_book``, the project, which the engine's listeners put on the span that times the wait, the holding and the
+commit. ``change_book`` also locks the row of the project with
 ``FOR NO KEY UPDATE``, which PostgreSQL renders and SQLite leaves out, so on PostgreSQL two changes of one book wait
 for each other and changes of different books do not. ``change`` takes no row lock, so on PostgreSQL two of its blocks
 may overlap, and PostgreSQL has no wait limit of its own here: the limit is the busy timeout of SQLite.
@@ -26,7 +28,7 @@ from sqlalchemy import event, select
 from sqlalchemy.exc import OperationalError
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountRow
-from bookreviver.adapters.persistence.sqlalchemy.database import CHANGE_BLOCK_OPTION
+from bookreviver.adapters.persistence.sqlalchemy.database import CHANGE_BLOCK_OPTION, CHANGE_BOOK_OPTION
 from bookreviver.adapters.persistence.sqlalchemy.mappers import ProjectMapper
 from bookreviver.adapters.persistence.sqlalchemy.repositories import (
     SqlAlchemyBookPlaceRepository,
@@ -46,11 +48,12 @@ from bookreviver.adapters.persistence.sqlalchemy.repositories import (
     SqlAlchemyStepValuesRepository,
 )
 from bookreviver.adapters.persistence.sqlalchemy.tables import ProjectRow
+from bookreviver.domain.enums import BlockKind
 from bookreviver.domain.errors import BookBusyError, NotFoundError
 from bookreviver.ports.persistence import NestedChangeError, NoChangeOpenError, UnitOfWork
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Mapping
 
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import ORMExecuteState, Session
@@ -121,7 +124,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         :raises BookBusyError: If SQLite's write lock was not free within the busy timeout.
         :raises NestedChangeError: If a block of this unit of work is open already.
         """
-        async with self._block():
+        async with self._block({CHANGE_BLOCK_OPTION: BlockKind.BOOK, CHANGE_BOOK_OPTION: project_id}):
             locked = select(ProjectRow).where(ProjectRow.id == project_id).with_for_update(key_share=True)
             if (row := await self._session.scalar(locked)) is None:
                 raise NotFoundError(project_id)
@@ -137,13 +140,16 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         :raises BookBusyError: If SQLite's write lock was not free within the busy timeout.
         :raises NestedChangeError: If a block of this unit of work is open already.
         """
-        async with self._block():
+        async with self._block({CHANGE_BLOCK_OPTION: BlockKind.OTHER}):
             yield
 
     @asynccontextmanager
-    async def _block(self) -> AsyncIterator[None]:
+    async def _block(self, options: Mapping[str, object]) -> AsyncIterator[None]:
         """Run a transaction that begins holding the write lock, commits on exit and rolls back on an exception.
 
+        :param options: Execution options of the connection the block procures: the kind of the block, which also
+                        makes SQLite begin with ``BEGIN IMMEDIATE``, and the project of a block that holds a book.
+        :type options: Mapping[str, object]
         :returns: Iterator yielding once the transaction has begun.
         :rtype: AsyncIterator[None]
         :raises BookBusyError: If SQLite's write lock was not free within the busy timeout.
@@ -153,7 +159,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
             raise NestedChangeError
         self._is_open = True
         try:
-            await self._begin_holding_the_lock()
+            await self._begin_holding_the_lock(options)
             yield
             await self._session.commit()
         except BaseException:
@@ -164,7 +170,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         finally:
             self._is_open = False
 
-    async def _begin_holding_the_lock(self) -> None:
+    async def _begin_holding_the_lock(self, options: Mapping[str, object]) -> None:
         """Begin the transaction of a block, which takes the write lock of SQLite.
 
         The session's read-only transaction is ended first, and every row of the adapter's tables it loaded is expired,
@@ -177,6 +183,8 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         need a lazy load that an async session cannot run. The account rows are therefore never expired here, and the
         account database writes through the attributes of the row it holds.
 
+        :param options: Execution options of the block's connection, which the engine's listeners read.
+        :type options: Mapping[str, object]
         :raises BookBusyError: If SQLite's write lock was not free within the busy timeout.
         :raises NoChangeOpenError: If a row of the adapter's tables was left pending outside a block.
         """
@@ -186,7 +194,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
             if isinstance(row, DefaultBase) and not isinstance(row, AccountRow):
                 self._session.expire(row)
         try:
-            await self._session.connection(execution_options={CHANGE_BLOCK_OPTION: True})
+            await self._session.connection(execution_options=options)
         except OperationalError as error:
             if isinstance(error.orig, SqliteOperationalError) and error.orig.sqlite_errorname == SQLITE_BUSY:
                 raise BookBusyError from error

@@ -32,7 +32,7 @@ import logging
 from itertools import batched
 from typing import TYPE_CHECKING, ClassVar
 
-from bookreviver.domain.enums import JobState, Rendition, RunOutcome, VersionState
+from bookreviver.domain.enums import JobState, Rendition, RunOutcome, SpanAttribute, SpanName, VersionState
 from bookreviver.domain.errors import DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
@@ -327,24 +327,28 @@ class ProcessingJobs:
         :param run: What the job was asked to run, whose confirmation and last step apply to the page.
         :type run: StageRun
         :returns: What the run came to. A page that was deleted while its stage ran is failed without a record, since
-                  there is no page to hold one.
+                  there is no page to hold one. The outcome is also set on the ``run.page`` span of the page.
         :rtype: RunOutcome
         """
-        try:
-            return await executor.run(page, recipe, confirmed=run.confirm_unsplit, through_step=run.through_step)
-        except Exception:
-            logger.exception('The stage %s failed on page %s', recipe.stage, page.id)
-            record = None
-            async with self._uow.change_book(page.project_id):
-                try:
-                    await self._uow.pages.get(page.id)
-                except NotFoundError:
-                    logger.warning('Page %s was deleted while its stage %s ran', page.id, recipe.stage)
-                else:
-                    record = await self._records.mark_failed(page.id, recipe.stage, recipe_id=recipe.id)
-            if record is not None:
-                await self._records.announce(page.project_id, [record])
-            return RunOutcome.FAILED
+        attributes = {SpanAttribute.PAGE: str(page.id), SpanAttribute.STAGE: recipe.stage}
+        with self._runtime.tracer.span(SpanName.RUN_PAGE, attributes) as span:
+            try:
+                outcome = await executor.run(page, recipe, confirmed=run.confirm_unsplit, through_step=run.through_step)
+            except Exception:
+                logger.exception('The stage %s failed on page %s', recipe.stage, page.id)
+                record = None
+                async with self._uow.change_book(page.project_id):
+                    try:
+                        await self._uow.pages.get(page.id)
+                    except NotFoundError:
+                        logger.warning('Page %s was deleted while its stage %s ran', page.id, recipe.stage)
+                    else:
+                        record = await self._records.mark_failed(page.id, recipe.stage, recipe_id=recipe.id)
+                if record is not None:
+                    await self._records.announce(page.project_id, [record])
+                outcome = RunOutcome.FAILED
+            span.set_attribute(SpanAttribute.RUN_OUTCOME, outcome)
+            return outcome
 
     async def _preview(self, job: Job) -> None:
         """Run the steps of a ``preview-step`` job.

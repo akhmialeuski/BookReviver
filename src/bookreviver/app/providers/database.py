@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.app.settings import Settings
+from bookreviver.ports.tracing import Tracer
 
 # The command applying the migrations to the database the settings name, a script of pyproject.toml
 MIGRATE_COMMAND: str = 'uv run bookreviver-migrate upgrade head'
@@ -25,38 +26,47 @@ MIGRATE_COMMAND: str = 'uv run bookreviver-migrate upgrade head'
 MIGRATE_DOWNGRADE_COMMAND: str = 'uv run bookreviver-migrate downgrade'
 # How the message names a database no revision was ever applied to
 NO_REVISION: str = 'none'
+REVISION_SEPARATOR: str = ', '
+# The refusal of a database whose revision the code does not ship, and of one that is behind the code
+SCHEMA_UNKNOWN: str = (
+    'Database schema is at revision {at}, which this code does not ship, and code expects {expected}: run '
+    '`{command} {expected}` with the code that ships {unknown}, or restore the copy of the data directory made '
+    'before migrating'
+)
+SCHEMA_BEHIND: str = 'Database schema is at revision {at}, code expects {expected}: run `{command}`'
 
 
 class DatabaseProvider(Provider):
     """One database per application whose schema is at the head revision, and one session per request."""
 
     @provide(scope=Scope.APP)
-    async def database(self, settings: Settings) -> AsyncIterator[SqlDatabase]:
+    async def database(self, settings: Settings, tracer: Tracer) -> AsyncIterator[SqlDatabase]:
         """Open the configured database, check its schema revision, and close it with the application.
 
         :param settings: Application settings, of which the database URL, the data directory and the wait limit of a
                          change are read.
         :type settings: Settings
+        :param tracer: Tracer the write blocks are timed with.
+        :type tracer: Tracer
         :returns: Iterator yielding the open database and disposing of its engine afterwards.
         :rtype: AsyncIterator[SqlDatabase]
         :raises RuntimeError: When the database is not at the head revision of the migrations, naming the upgrade to
             run, or the downgrade when the database is at a revision the code does not ship.
         """
-        database = SqlDatabase(settings.resolved_database_url, wait_seconds=settings.change_wait_seconds)
+        database = SqlDatabase(settings.resolved_database_url, tracer=tracer, wait_seconds=settings.change_wait_seconds)
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         try:
             revisions = await database.schema_revisions()
-            at, expected = ', '.join(revisions.database) or NO_REVISION, ', '.join(revisions.code)
+            at = REVISION_SEPARATOR.join(revisions.database) or NO_REVISION
+            expected = REVISION_SEPARATOR.join(revisions.code)
             # upgrade head cannot move a database from a revision it cannot locate, so that case names the way back
-            if unknown := ', '.join(revisions.unknown):
-                err_msg = (
-                    f'Database schema is at revision {at}, which this code does not ship, and code expects '
-                    f'{expected}: run `{MIGRATE_DOWNGRADE_COMMAND} {expected}` with the code that ships {unknown}, '
-                    f'or restore the copy of the data directory made before migrating'
+            if unknown := REVISION_SEPARATOR.join(revisions.unknown):
+                err_msg = SCHEMA_UNKNOWN.format(
+                    at=at, expected=expected, unknown=unknown, command=MIGRATE_DOWNGRADE_COMMAND
                 )
                 raise RuntimeError(err_msg)
             if not revisions.is_current:
-                err_msg = f'Database schema is at revision {at}, code expects {expected}: run `{MIGRATE_COMMAND}`'
+                err_msg = SCHEMA_BEHIND.format(at=at, expected=expected, command=MIGRATE_COMMAND)
                 raise RuntimeError(err_msg)
             yield database
         finally:

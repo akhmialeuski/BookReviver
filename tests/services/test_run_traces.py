@@ -1,0 +1,91 @@
+"""Tests for the spans a run of a stage makes: one for each page it runs, and one for each step it finds or makes."""
+
+from typing import TYPE_CHECKING
+
+import pytest
+from delayed_assert import assert_expectations, expect
+
+from bookreviver.domain.enums import RunOutcome, SpanAttribute, SpanName, Stage, StepOutcome, VersionScale
+from bookreviver.domain.values import StageRun
+from tests.helpers.processors import FakeProcessor
+
+if TYPE_CHECKING:
+    from bookreviver.domain.entities import Actor, Page, Project
+    from tests.helpers.processing import ProcessingKit
+
+pytestmark = pytest.mark.anyio
+
+FAKE_KEY: str = FakeProcessor.spec.key
+ORDER_KEYS: tuple[str, ...] = ('a0', 'a1')
+
+
+async def run_geometry(kit: ProcessingKit, actor: Actor, project: Project) -> None:
+    """Start a run of the geometry stage over every page of the project, and let the worker do it.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param actor: Account owning the project.
+    :type actor: Actor
+    :param project: Project to run in.
+    :type project: Project
+    """
+    job = await kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+    await kit.jobs().run_stage(job.id)
+    await kit.work_queue()
+
+
+async def seeded_pages(kit: ProcessingKit) -> tuple[Actor, Project, list[Page]]:
+    """Seed a project with two scan pages whose base versions are stored, the input of the geometry stage.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :returns: The actor, the project and its pages in order.
+    :rtype: tuple[Actor, Project, list[Page]]
+    """
+    actor, project = await kit.seed_project()
+    pages: list[Page] = []
+    for order_key in ORDER_KEYS:
+        page, _ = await kit.seed_scan_page(project, order_key=order_key)
+        await kit.seed_base_version(page)
+        pages.append(page)
+    return actor, project, pages
+
+
+class TestRunSpans:
+    """Tests for the spans of a run of a stage over two pages, with the recording tracer of the kit."""
+
+    async def test_run_makes_a_page_span_for_each_page_and_a_step_span_inside_each(self, fx_kit: ProcessingKit) -> None:
+        """Verify each page is one ``run.page`` span with its stage and outcome, and its step is a ``step`` span in it.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, pages = await seeded_pages(fx_kit)
+        await run_geometry(fx_kit, actor, project)
+        page_spans = fx_kit.tracer.named(SpanName.RUN_PAGE)
+        step_spans = fx_kit.tracer.named(SpanName.STEP)
+        expect(sorted(span.attributes[SpanAttribute.PAGE] for span in page_spans) == sorted(str(p.id) for p in pages))
+        expect(all(span.attributes[SpanAttribute.STAGE] is Stage.GEOMETRY for span in page_spans))
+        expect(all(span.attributes[SpanAttribute.RUN_OUTCOME] is RunOutcome.DONE for span in page_spans))
+        expect(len(step_spans) == len(pages))
+        expect(all(span.attributes[SpanAttribute.STEP_TYPE] == FAKE_KEY for span in step_spans))
+        expect(all(span.attributes[SpanAttribute.STEP_SCALE] is VersionScale.FULL for span in step_spans))
+        expect(all(span.parent in page_spans for span in step_spans))
+        assert_expectations()
+
+    async def test_every_step_of_the_first_run_ran_and_none_of_the_second_did(self, fx_kit: ProcessingKit) -> None:
+        """Verify the outcome of a step is ``ran`` when the processor made the version, and ``cached`` when found.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, _ = await seeded_pages(fx_kit)
+        await run_geometry(fx_kit, actor, project)
+        first = [span.attributes[SpanAttribute.STEP_OUTCOME] for span in fx_kit.tracer.named(SpanName.STEP)]
+        fx_kit.tracer.finished.clear()
+        await run_geometry(fx_kit, actor, project)
+        second = [span.attributes[SpanAttribute.STEP_OUTCOME] for span in fx_kit.tracer.named(SpanName.STEP)]
+        expect(first == [StepOutcome.RAN] * len(ORDER_KEYS))
+        expect(second == [StepOutcome.CACHED] * len(ORDER_KEYS))
+        expect(fx_kit.fake.runs == len(ORDER_KEYS))
+        assert_expectations()

@@ -7,11 +7,15 @@ dishka's Taskiq integration opens a request scope per task, so a task gets its o
 
 A job kind without an entry cannot be enqueued, and the in-process broker refuses it at once.
 
+Every entry point is registered inside a ``job`` span, made by ``traced`` at the registration and not in the entry
+points, so a new job kind is measured without the author doing anything.
+
 The in-process broker runs tasks in the API process, which suits one machine. The Redis broker is selectable in the
 settings but refused until taskiq-redis is a dependency.
 """
 
 from collections.abc import Awaitable, Callable
+from functools import wraps
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -21,8 +25,9 @@ from dishka.integrations.taskiq import FromDishka, inject, setup_dishka
 from taskiq import InMemoryBroker
 
 from bookreviver.app.settings import JobBroker
-from bookreviver.domain.enums import JobKind, Stage
+from bookreviver.domain.enums import JobKind, SpanAttribute, SpanName, Stage
 from bookreviver.domain.ids import JobId
+from bookreviver.ports.tracing import Tracer
 from bookreviver.services.imports import ImportService
 from bookreviver.services.pages import PageService
 from bookreviver.services.processing_jobs import ProcessingJobs
@@ -163,10 +168,49 @@ JOB_TASKS: Mapping[JobKind, JobTask] = MappingProxyType(
 )
 
 
+def traced(kind: JobKind, task: JobTask, container: AsyncContainer) -> JobTask:
+    """Wrap an entry point so that it runs inside a ``job`` span of the application's tracer.
+
+    The wrapper keeps the signature of the entry point, so dishka still resolves the parameters of the task by their
+    annotations, and passes every argument on as it received it. The span is current while the task runs, so the spans
+    of the work the task does become its children. The tracer comes from the application container, which a
+    request-scoped task container is a child of.
+
+    :param kind: Kind of the job the entry point runs, put on the span.
+    :type kind: JobKind
+    :param task: The entry point.
+    :type task: JobTask
+    :param container: Application container, which provides the tracer.
+    :type container: AsyncContainer
+    :returns: The entry point inside a span.
+    :rtype: JobTask
+    """
+
+    @wraps(task)
+    async def run_in_span(job_id: str, *args: object, **kwargs: object) -> None:
+        """Run the entry point inside the span of its job.
+
+        :param job_id: Identifier of the job as text, the one argument the queue sends.
+        :type job_id: str
+        :param args: Positional arguments dishka resolves for the entry point.
+        :type args: object
+        :param kwargs: Keyword arguments dishka resolves for the entry point.
+        :type kwargs: object
+        """
+        tracer = await container.get(Tracer)
+        attributes = {SpanAttribute.JOB_KIND: kind, SpanAttribute.JOB_ID: job_id}
+        with tracer.span(SpanName.JOB, attributes):
+            await task(job_id, *args, **kwargs)
+
+    return run_in_span
+
+
 def create_broker(
     kind: JobBroker, container: AsyncContainer, *, tasks: Mapping[JobKind, JobTask] = JOB_TASKS
 ) -> AsyncBroker:
     """Build the broker of the given kind with every task registered, resolving task dependencies from ``container``.
+
+    Every task runs inside a ``job`` span, so ``container`` provides the tracer too.
 
     :param kind: Broker the settings select.
     :type kind: JobBroker
@@ -182,7 +226,7 @@ def create_broker(
         raise NotImplementedError(REDIS_BROKER_PENDING)
     broker = InMemoryBroker()
     for job_kind, task in tasks.items():
-        broker.register_task(inject(task, patch_module=True), task_name=job_kind)
+        broker.register_task(inject(traced(job_kind, task, container), patch_module=True), task_name=job_kind)
     setup_dishka(container, broker)
     return broker
 
