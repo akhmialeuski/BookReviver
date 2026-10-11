@@ -5,13 +5,15 @@ job's own directory, records the job with the list of the files and enqueues it,
 ``ImportService.run_import`` is the body of the background task and hands the work to an ``ImportRun``.
 
 A run imports every file on its own, so one broken file never cancels the others. In its first phase it groups the
-staged files into sources and commits each source, its scans and the pages the scans give the book in a transaction of
-its own, with the progress of the job and the enrichment of the book description, so a source is either fully in the
-project or not at all. In its second phase it cuts the images of every scan of the project that has none, which
-covers the scans of the sources just committed, the scans a cancelled import left behind, and the scans of a delivery
+staged files into sources and stores each source, its scans and the pages the scans give the book in a ``change_book``
+block of its own, with the progress of the job and the enrichment of the book description, so a source is either fully
+in the project or not at all. In its second phase it cuts the images of every scan of the project that has none, which
+covers the scans of the sources just stored, the scans a cancelled import left behind, and the scans of a delivery
 that crashed. A job delivered again after a crash therefore continues where it stopped, skipping the sources it
-already committed and writing the directories of unready scans again. The job cancels between steps: every write of
-its progress is guarded by its state, and the run stops at the first one that finds it cancelled.
+already stored and writing the directories of unready scans again. The job cancels between steps: every write of
+its progress is guarded by its state, and the run stops at the first block whose write finds it cancelled, which
+rolls the block back. Inspection, rasterising and processing run outside any block, and a block holds only the reads
+that decide and the writes.
 
 The base version of a page, ``split.none``, holds the page's own copy of its scan's ``full`` image and the renditions
 cut from that copy, so the page stands on its own once its scan is deleted. Until the plugin framework exists
@@ -79,7 +81,7 @@ from bookreviver.services.steps import StepRun
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.entities import Actor, PageStage, Project
     from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.values import MetadataSuggestion, UploadedSource
     from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
@@ -172,8 +174,10 @@ class ImportRun:
     """One execution of an import job, which keeps what the job has done so far and reports it as a result.
 
     The run is the state its steps share: the latest job as stored, the sources imported, the files rejected and the
-    files dealt with. Several scans are cut at once, and the unit of work of one job is one database session, so every
-    database step of a scan runs under one lock while the files are cut outside it.
+    files dealt with. Several scans are cut at once, and the unit of work of one job is one database session that holds
+    one block at a time and refuses a second as nested, so the blocks of the scans take one lock in turn while the
+    files are cut outside it. The port serialises the changes of a book between units of work, and this lock the
+    blocks of tasks that share one.
 
     :ivar job: The job as last stored by this run, which carries its progress.
     """
@@ -185,7 +189,7 @@ class ImportRun:
 
         :param job: The job, in the running state, whose request lists the files to import.
         :type job: Job
-        :param uow: Unit of work of the job, committed step by step.
+        :param uow: Unit of work of the job, whose ``change_book`` blocks store the job step by step.
         :type uow: UnitOfWork
         :param storage: The source store and the asset store.
         :type storage: ImportStorage
@@ -216,7 +220,6 @@ class ImportRun:
         self._imported: list[SourceId] = []
         self._rejected: list[RejectedFile] = []
         self._handled: set[str] = set()
-        self._uncommitted: Job | None = None
 
     @property
     def result(self) -> ImportResult:
@@ -238,7 +241,8 @@ class ImportRun:
 
         A source committed by the job is complete apart from its files, which a crash between its commit and its
         promotion left staged, so they are promoted now. Sources are committed before their files are promoted,
-        because a failed commit after a promotion would lose the upload.
+        because a failed block after a promotion would lose the upload. The promotion is a file operation and runs
+        before the block, which totals the scans still to cut.
 
         :returns: Names of the files still staged.
         :rtype: set[str]
@@ -257,9 +261,10 @@ class ImportRun:
                 await self._sources.promote(
                     source.project_id, self.job.id, source.id, names=[file.name for file in source.files]
                 )
-        unready = await self._uow.scans.list_unready(self.job.project_id)
-        await self._record_progress(total=self.job.progress.done + len(unready) - self.job.progress.total)
-        await self._commit()
+        async with self._uow.change_book(self.job.project_id):
+            unready = await self._uow.scans.list_unready(self.job.project_id)
+            saved = await self._record_progress(total=self.job.progress.done + len(unready) - self.job.progress.total)
+        await self._take_on(saved)
         return staged
 
     async def _import_sources(self, names: Sequence[str]) -> None:
@@ -289,7 +294,11 @@ class ImportRun:
             await self._import_source(uploaded)
 
     async def _import_source(self, uploaded: UploadedSource) -> None:
-        """Import one source: check it is new and readable, commit it with its scans and pages, and promote its files.
+        """Import one source: check it is new and readable, store it with its scans and pages, and promote its files.
+
+        The source, its scans and its pages are stored in one ``change_book`` block, which reads the end of the book
+        and the sections of the book to place the new pages, and a source whose files cannot be promoted is taken
+        back whole in a second block.
 
         :param uploaded: The staged files that make the source.
         :type uploaded: UploadedSource
@@ -335,52 +344,54 @@ class ImportRun:
             )
             for number, facts in enumerate(analysis.scans)
         ]
-        order_keys = self._order_keys.spread(
-            lower=await self._uow.pages.last_order_key(source.project_id), upper=None, count=len(scans)
-        )
-        pages = [
-            Page(
-                id=PageId(uuid4()),
-                project_id=source.project_id,
-                order_key=order_key,
-                label=scan.source_label,
-                label_manual=bool(scan.source_label),
-                origin=PageOrigin.SCAN,
-                scan_id=scan.id,
-                created_at=moment,
-                updated_at=moment,
+        async with self._uow.change_book(source.project_id) as project:
+            order_keys = self._order_keys.spread(
+                lower=await self._uow.pages.last_order_key(source.project_id), upper=None, count=len(scans)
             )
-            for scan, order_key in zip(scans, order_keys, strict=True)
-        ]
-        # The label rules of the file become sections, and only a label they do not give stays an exception. A source
-        # without rules is kept out of the numbering of a book that has sections, instead of continuing it
-        source_labels = SourceLabels(
-            rules=analysis.label_rules,
-            pages=pages,
-            moment=moment,
-            book_has_sections=bool(await self._uow.pagination_sections.list_for_project(source.project_id)),
-        )
-        pages = source_labels.pages
-        await self._record_progress(total=len(scans))
-        await self._uow.sources.add(source)
-        await self._uow.scans.add_many(scans)
-        await self._uow.pages.add_many(pages)
-        if source_labels.sections:
-            await self._uow.pagination_sections.add_many(source_labels.sections)
-        # A page without the label of its source takes the number its section gives it
-        await self._labels.recompute(source.project_id)
-        described = await self._describe_book(analysis.suggestion)
-        await self._commit()
+            pages = [
+                Page(
+                    id=PageId(uuid4()),
+                    project_id=source.project_id,
+                    order_key=order_key,
+                    label=scan.source_label,
+                    label_manual=bool(scan.source_label),
+                    origin=PageOrigin.SCAN,
+                    scan_id=scan.id,
+                    created_at=moment,
+                    updated_at=moment,
+                )
+                for scan, order_key in zip(scans, order_keys, strict=True)
+            ]
+            # The label rules of the file become sections, and only a label they do not give stays an exception. A
+            # source without rules is kept out of the numbering of a book that has sections, instead of continuing it
+            source_labels = SourceLabels(
+                rules=analysis.label_rules,
+                pages=pages,
+                moment=moment,
+                book_has_sections=bool(await self._uow.pagination_sections.list_for_project(source.project_id)),
+            )
+            pages = source_labels.pages
+            saved = await self._record_progress(total=len(scans))
+            await self._uow.sources.add(source)
+            await self._uow.scans.add_many(scans)
+            await self._uow.pages.add_many(pages)
+            if source_labels.sections:
+                await self._uow.pagination_sections.add_many(source_labels.sections)
+            # A page without the label of its source takes the number its section gives it
+            await self._labels.recompute(source.project_id)
+            described = await self._describe_book(project, analysis.suggestion)
+        await self._take_on(saved)
         try:
             await self._sources.promote(source.project_id, self.job.id, source.id, names=list(uploaded.names))
         except Exception:
-            # The source is committed and its files are not moved, and nothing would repair it once the job ends, so
-            # it is taken back whole. Its pages go first, since deleting the source only empties their scan.
-            for page in pages:
-                await self._uow.pages.delete(page.id)
-            await self._uow.sources.delete(source.id)
-            await self._record_progress(total=-len(scans))
-            await self._commit()
+            # The source is stored and its files are not moved, and nothing would repair it once the job ends, so it
+            # is taken back whole. Its pages go first, since deleting the source only empties their scan.
+            async with self._uow.change_book(source.project_id):
+                for page in pages:
+                    await self._uow.pages.delete(page.id)
+                await self._uow.sources.delete(source.id)
+                saved = await self._record_progress(total=-len(scans))
+            await self._take_on(saved)
             raise
         self._imported.append(source.id)
         self._handled.update(uploaded.names)
@@ -392,18 +403,20 @@ class ImportRun:
         if described:
             await self._publisher.publish(ProjectChanged(project_id=source.project_id))
 
-    async def _describe_book(self, suggestion: MetadataSuggestion) -> bool:
+    async def _describe_book(self, project: Project, suggestion: MetadataSuggestion) -> bool:
         """Fill the empty fields of the book description from what a source suggests, never the title.
 
-        The change joins the transaction of the source, so a source is never committed without the values it gave the
-        book. Sources come in order, so the first source that has a value for a field is the one that gives it.
+        Writes inside the block of its caller and never opens one, so the change joins the block of the source, and a
+        source is never stored without the values it gave the book. Sources come in order, so the first source that has
+        a value for a field is the one that gives it.
 
+        :param project: The project as the block of the source yielded it.
+        :type project: Project
         :param suggestion: Description fields found in the source, empty where nothing was found.
         :type suggestion: MetadataSuggestion
         :returns: Whether the description changed.
         :rtype: bool
         """
-        project = await self._uow.projects.get(self.job.project_id)
         details = project.details.fill_from(suggestion)
         if details == project.details:
             return False
@@ -441,8 +454,11 @@ class ImportRun:
         The format of ``full`` is chosen here, from the colour of the scan and the image policy of the project as it is
         now, and recorded with the scan, so a later change of the policy changes no stored path. The base version of a
         page copies that format along with the image. What an earlier attempt left in the directories of the scan and
-        of the versions is removed first, since a stored file is never replaced. The scan and its versions are marked
-        ready together, in one transaction with the progress of the job.
+        of the versions is removed first, since a stored file is never replaced. The files are written outside any
+        block, and the scan and its versions are marked ready together, in one ``change_book`` block with the progress
+        of the job. That block reads the scan and its pages again. A scan that is gone or ready already, or whose pages
+        are not the ones the versions were made for, is left as it is, its files are removed, and the run counts one
+        scan less to cut.
 
         :param source: Source holding the scan.
         :type source: Source
@@ -451,11 +467,11 @@ class ImportRun:
         :raises ImportCancelledError: If the job was cancelled.
         """
         async with self._lock:
-            # The job is read as last committed before every scan, so a cancellation stops the run before the next one
-            await self._record_progress()
-            await self._commit()
-            pages = await self._uow.pages.list_for_scan(scan.id)
-            project = await self._uow.projects.get(scan.project_id)
+            async with self._uow.change_book(scan.project_id) as project:
+                # The job is read as last stored before every scan, so a cancellation stops the run before the next one
+                saved = await self._record_progress()
+                pages = await self._uow.pages.list_for_scan(scan.id)
+            await self._take_on(saved)
         full = project.image_policy.full_format(scan.facts.color_mode)
         ready = evolve(scan, renditions=Renditions(ready=True, version=scan.renditions.version, full=full))
         of_scan = partial(self._keys.scan_rendition, ready)
@@ -481,20 +497,32 @@ class ImportRun:
                         self._keys, version, result.outputs[0], policy=project.image_policy, tiles=True
                     )
                 )
+        changed: list[PageStage] = []
         async with self._lock:
-            await self._record_progress(done=1)
-            await self._uow.page_versions.add_many(versions)
-            changed = [
-                record
-                for page, version in zip(pages, versions, strict=True)
-                for record in await self._records.set_head(
-                    PageStageKey(page.id, version.stage), head_version_id=version.id, recipe_id=None
-                )
-            ]
-            await self._uow.scans.update(ready)
-            await self._commit()
-            await self._publisher.publish(ScanReady(project_id=scan.project_id, scan=ready))
-            await self._records.announce(scan.project_id, changed)
+            async with self._uow.change_book(scan.project_id):
+                # The scan and its pages are read again, since the book may have changed while the files were cut
+                unready = {unready_scan.id for unready_scan in await self._uow.scans.list_unready(scan.project_id)}
+                current = {page.id for page in await self._uow.pages.list_for_scan(scan.id)}
+                if fits := scan.id in unready and current == {page.id for page in pages}:
+                    saved = await self._record_progress(done=1)
+                    await self._uow.page_versions.add_many(versions)
+                    for page, version in zip(pages, versions, strict=True):
+                        changed += await self._records.set_head(
+                            PageStageKey(page.id, version.stage), head_version_id=version.id, recipe_id=None
+                        )
+                    await self._uow.scans.update(ready)
+                else:
+                    saved = await self._record_progress(total=-1)
+            await self._take_on(saved)
+        if not fits:
+            # The scan stays unready for the next run to cut, and the files made for it are of no version or scan
+            logger.warning('Scan %s was changed or deleted while its images were cut, so they were not stored', scan.id)
+            await self._assets.delete_prefix(self._keys.scan_directory(scan))
+            for version in versions:
+                await self._assets.delete_prefix(self._keys.version_directory(version))
+            return
+        await self._publisher.publish(ScanReady(project_id=scan.project_id, scan=ready))
+        await self._records.announce(scan.project_id, changed)
 
     def _reject(self, names: Sequence[str], reason: RejectionReason, detail: str) -> None:
         """Record that the files of one source were not imported, and why.
@@ -509,41 +537,41 @@ class ImportRun:
         self._rejected.append(RejectedFile(file_name=names[0], reason=reason, detail=detail))
         self._handled.update(names)
 
-    async def _record_progress(self, *, done: int = 0, total: int = 0) -> None:
-        """Add to the progress of the job, only while the job is running, in the transaction still open.
+    async def _record_progress(self, *, done: int = 0, total: int = 0) -> Job:
+        """Add to the progress of the job, only while the job is running, in the block of the caller.
 
-        The write is guarded by the state, so it is also the check that the job was not cancelled, and it reads the
-        job as last committed by anyone.
+        Writes inside the block of its caller and never opens one. The write is guarded by the state, so it is also the
+        check that the job was not cancelled, and it reads the job as last stored by anyone. A block that this raises
+        in is rolled back, so no step the run did not store is counted in the progress.
 
         :param done: Steps completed since the last write.
         :type done: int
         :param total: Steps added to the total since the last write, which may be negative.
         :type total: int
+        :returns: The job as written, which the caller hands to ``_take_on`` once its block has committed.
+        :rtype: Job
         :raises ImportCancelledError: If the stored job is not running any more.
         """
         progress = Progress(done=self.job.progress.done + done, total=self.job.progress.total + total)
         saved = await self._uow.jobs.update_if_state(evolve(self.job, progress=progress), expected=(JobState.RUNNING,))
         if saved is None:
             raise ImportCancelledError
-        # ``job`` is only what was committed, since a job that fails after this write is stored with its own copy of
-        # the progress, and a step that never committed must not be counted in it. A write that changes nothing only
-        # checks the state, and is not worth an event.
-        self._uncommitted = saved if done or total else None
+        return saved
 
-    async def _commit(self) -> None:
-        """Commit the open transaction, take on the progress it wrote and announce it.
+    async def _take_on(self, saved: Job) -> None:
+        """Keep the job a committed block wrote as the latest one, and announce it when its progress changed.
 
-        :raises ImportCancelledError: If the job was cancelled and committed so since the run wrote its progress,
-                                      which an adapter without locks reports as a conflict.
+        ``job`` is only what was committed, since a job that fails after a write is stored with its own copy of the
+        progress, and a step that never committed must not be counted in it. A write that changes nothing only checks
+        the state, and is not worth an event.
+
+        :param saved: The job as ``_record_progress`` returned it, from a block that has committed.
+        :type saved: Job
         """
-        uncommitted, self._uncommitted = self._uncommitted, None
-        try:
-            await self._uow.commit()
-        except ConflictError as error:
-            raise ImportCancelledError from error
-        if uncommitted is not None:
-            self.job = uncommitted
-            await self._publisher.publish(JobChanged(project_id=self.job.project_id, job=self.job))
+        changed = saved.progress != self.job.progress
+        self.job = saved
+        if changed:
+            await self._publisher.publish(JobChanged(project_id=saved.project_id, job=saved))
 
 
 class ImportService:
@@ -568,7 +596,8 @@ class ImportService:
         :type imaging: ImportImaging
         :param runtime: The publisher, the clock, the order keys and the limits.
         :type runtime: ImportRuntime
-        :param parts: The recipes and the job starter, with which the split of the new pages is queued.
+        :param parts: The recipes and the job starter, with which the split of the new pages is queued, and the job
+                      tracker, which moves a queued import job to running.
         :type parts: ProcessingParts
         """
         self._uow = uow
@@ -578,6 +607,7 @@ class ImportService:
         self._queue = runtime.queue
         self._recipes = parts.recipes
         self._starter = parts.starter
+        self._tracker = parts.tracker
         self._publisher = runtime.publisher
         self._clock = runtime.clock
         self._limits = runtime.limits
@@ -596,6 +626,18 @@ class ImportService:
         :raises ConflictError: If the project already has an import queued or running.
         """
         await owned_project(self._uow.projects, actor, project_id)
+        await self._refuse_active_import(project_id)
+
+    async def _refuse_active_import(self, project_id: ProjectId) -> None:
+        """Refuse a project that has an import queued or running.
+
+        Only reads, so it is called outside any block, which gives an early answer, and inside the ``change`` block that
+        stores the job, which gives the answer that holds.
+
+        :param project_id: Project to import into.
+        :type project_id: ProjectId
+        :raises ConflictError: If the project already has an import queued or running.
+        """
         active = await self._uow.jobs.list_for_project(project_id, JobState.active())
         if any(job.kind in IMPORT_JOBS for job in active):
             raise ConflictError(IMPORT_ACTIVE)
@@ -604,8 +646,9 @@ class ImportService:
         """Receive an upload into the directory of a new import job, record the job and enqueue it.
 
         The rules that need no file are checked before anything is received, so an upload that cannot be imported is
-        not streamed first. The one-import rule is checked again by the database when the job is stored, since two
-        uploads can pass the check before either commits.
+        not streamed first. The one-import rule is checked again in the ``change`` block that stores the job, so two
+        uploads cannot both pass it, and the database keeps it with a unique index as the last line of defence. The
+        upload is removed again when that block fails.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -638,11 +681,9 @@ class ImportService:
             created_at=self._clock.now(),
         )
         try:
-            await self._uow.jobs.add(job)
-            await self._uow.commit()
-        except ConflictError as error:
-            await self._storage.sources.discard(project_id, job_id)
-            raise ConflictError(IMPORT_ACTIVE) from error
+            async with self._uow.change():
+                await self._refuse_active_import(project_id)
+                await self._uow.jobs.add(job)
         except BaseException:
             await self._storage.sources.discard(project_id, job_id)
             raise
@@ -651,11 +692,11 @@ class ImportService:
             await self._queue.enqueue(job)
         except Exception:
             # A job that is queued in the database but never in the queue would keep the project from importing
-            await self._uow.jobs.update_if_state(
-                evolve(job, state=JobState.FAILED, error=NOT_QUEUED, finished_at=self._clock.now()),
-                expected=(JobState.QUEUED,),
-            )
-            await self._uow.commit()
+            async with self._uow.change():
+                await self._uow.jobs.update_if_state(
+                    evolve(job, state=JobState.FAILED, error=NOT_QUEUED, finished_at=self._clock.now()),
+                    expected=(JobState.QUEUED,),
+                )
             await self._storage.sources.discard(project_id, job_id)
             raise
         return job
@@ -670,22 +711,12 @@ class ImportService:
         :type job_id: JobId
         :raises NotFoundError: If there is no such job.
         """
-        job = await self._uow.jobs.get(job_id)
-        if job.state.is_final:
-            await self._storage.sources.discard(job.project_id, job.id)
+        if (job := await self._tracker.start(job_id)) is None:
+            # The job has finished already, or it left the queue since it was read: another delivery started it, whose
+            # upload this one must leave, or it was cancelled, which nothing delivers again, so its upload is removed
+            if (stored := await self._uow.jobs.get(job_id)).state.is_final:
+                await self._storage.sources.discard(stored.project_id, stored.id)
             return
-        if job.state is JobState.QUEUED:
-            started = evolve(job, state=JobState.RUNNING, started_at=self._clock.now())
-            if (running := await self._uow.jobs.update_if_state(started, expected=(JobState.QUEUED,))) is None:
-                # The job left the queue since it was read: another delivery started it, whose upload this one must
-                # leave, or it was cancelled, which nothing delivers again, so its upload is removed here
-                await self._uow.rollback()
-                if (await self._uow.jobs.get(job.id)).state.is_final:
-                    await self._storage.sources.discard(job.project_id, job.id)
-                return
-            job = running
-            await self._uow.commit()
-        await self._publisher.publish(JobChanged(project_id=job.project_id, job=job))
         run = ImportRun(job=job, uow=self._uow, storage=self._storage, imaging=self._imaging, runtime=self._runtime)
         try:
             await run.execute()
@@ -706,8 +737,8 @@ class ImportService:
     async def _conclude(self, run: ImportRun, state: JobState, *, error: str = '') -> None:
         """Store the final state and the result of a job, remove what is left of its upload, and announce it.
 
-        Whatever the run left uncommitted is discarded first, and the job is read again as last committed. A job that
-        the account holder cancelled meanwhile stays cancelled and only gains its result.
+        Opens its own ``change`` block, so it is called outside any block, and the job is read again inside it as last
+        stored. A job that the account holder cancelled meanwhile stays cancelled and only gains its result.
 
         :param run: The run that ended, which holds the latest job and its result.
         :type run: ImportRun
@@ -716,14 +747,13 @@ class ImportService:
         :param error: Why the job failed, or empty.
         :type error: str
         """
-        await self._uow.rollback()
         final = evolve(run.job, state=state, error=error, result=run.result, finished_at=self._clock.now())
-        if (stored := await self._uow.jobs.update_if_state(final, expected=(JobState.RUNNING,))) is None:
-            cancelled = await self._uow.jobs.get(run.job.id)
-            stored = await self._uow.jobs.update_if_state(
-                evolve(cancelled, result=run.result), expected=(JobState.CANCELLED,)
-            )
-        await self._uow.commit()
+        async with self._uow.change():
+            if (stored := await self._uow.jobs.update_if_state(final, expected=(JobState.RUNNING,))) is None:
+                cancelled = await self._uow.jobs.get(run.job.id)
+                stored = await self._uow.jobs.update_if_state(
+                    evolve(cancelled, result=run.result), expected=(JobState.CANCELLED,)
+                )
         await self._storage.sources.discard(run.job.project_id, run.job.id)
         if stored is not None:
             await self._publisher.publish(JobChanged(project_id=stored.project_id, job=stored))

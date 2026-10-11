@@ -11,10 +11,11 @@ earlier one.
 
 An edit computes nothing. It marks the stage of its page stale, and a run of the stage picks it up like any other.
 Saving and deleting an edit write the manual layer of the step to the history of the page, with the edit before and
-after as snapshots, so an undo can put either back.
+after as snapshots, so an undo can put either back. The rows of an edit are written in one ``change_book`` block, and
+the stale marks are announced after it.
 
 A mask arrives as an upload. It is written to a scratch key while its digest is worked out, since its final key holds
-the hash of the whole edit, and then copied to that key and the scratch removed.
+the hash of the whole edit, and then copied to that key and the scratch removed, all before the block opens.
 """
 
 import hashlib
@@ -30,7 +31,7 @@ from bookreviver.domain.enums import ChangeSource, EditorKind, Rendition, StepLa
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import StorageKey
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.services.projects import owned_project
+from bookreviver.services.projects import owned_project, require_owner
 from bookreviver.services.recipes import find_step
 
 if TYPE_CHECKING:
@@ -72,7 +73,7 @@ class EditService:
     ) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose commit ends every changing use case.
+        :param uow: Unit of work of the request, whose blocks end every changing use case.
         :type uow: UnitOfWork
         :param assets: Store of the derived files, where masks are kept.
         :type assets: AssetStore
@@ -111,6 +112,8 @@ class EditService:
         :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its shape
                                         or its mask or has one it should not.
         """
+        # The edit is checked before its mask is written, so a refused request leaves no file, and checked again in the
+        # block, since the page or the recipe may have changed while the mask streamed in
         await owned_project(self._uow.projects, actor, project_id)
         await self._page(project_id, key.page_id)
         await self._check(project_id, key, edit, has_mask=mask is not None)
@@ -132,12 +135,16 @@ class EditService:
             edit_hash=edit_hash,
             updated_at=self._clock.now(),
         )
-        state = await self._uow.page_step_states.find(key) or PageStepState(
-            page_id=key.page_id, stage=key.stage, step_id=key.step_id, updated_at=stored.updated_at
-        )
-        await self._store(state, evolve(state, edit=stored, updated_at=stored.updated_at))
-        stale = await self._records.mark_stale(key.page_id, key.stage)
-        await self._uow.commit()
+        # A mask stays when the block fails, since its key holds the hash of the edit and an equal edit finds it there
+        async with self._uow.change_book(project_id) as project:
+            require_owner(project, actor)
+            await self._page(project_id, key.page_id)
+            await self._check(project_id, key, edit, has_mask=mask is not None)
+            state = await self._uow.page_step_states.find(key) or PageStepState(
+                page_id=key.page_id, stage=key.stage, step_id=key.step_id, updated_at=stored.updated_at
+            )
+            await self._store(state, evolve(state, edit=stored, updated_at=stored.updated_at))
+            stale = await self._records.mark_stale(key.page_id, key.stage)
         await self._records.announce(project_id, stale)
         return stored
 
@@ -175,20 +182,21 @@ class EditService:
         :raises NotFoundError: If the actor has no such project, the project has no such page, or the step has no edit
                                there.
         """
-        await owned_project(self._uow.projects, actor, project_id)
-        await self._page(project_id, key.page_id)
-        state = await self._uow.page_step_states.find(key)
-        if state is None or state.edit is None:
-            raise NotFoundError(key)
-        await self._store(state, evolve(state, edit=None, updated_at=self._clock.now()))
-        stale = await self._records.mark_stale(key.page_id, key.stage)
-        await self._uow.commit()
+        async with self._uow.change_book(project_id) as project:
+            require_owner(project, actor)
+            await self._page(project_id, key.page_id)
+            state = await self._uow.page_step_states.find(key)
+            if state is None or state.edit is None:
+                raise NotFoundError(key)
+            await self._store(state, evolve(state, edit=None, updated_at=self._clock.now()))
+            stale = await self._records.mark_stale(key.page_id, key.stage)
         await self._records.announce(project_id, stale)
 
     async def _store(self, state: PageStepState, changed: PageStepState) -> None:
         """Write the state with the edit saved or deleted, and the change of the manual layer to the history.
 
-        A state with neither a setting nor an edit left is deleted. An edit equal to the stored one writes no change.
+        It writes in the block of its caller and opens none. A state with neither a setting nor an edit left is
+        deleted. An edit equal to the stored one writes no change.
 
         :param state: The state as it is stored, or an empty one.
         :type state: PageStepState

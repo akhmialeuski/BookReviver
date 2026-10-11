@@ -54,7 +54,7 @@ class SourceService:
     def __init__(self, *, uow: UnitOfWork, sources: SourceStore, assets: AssetStore) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose commit ends the deletion of a source.
+        :param uow: Unit of work of the request, whose block ends the deletion of a source.
         :type uow: UnitOfWork
         :param sources: Store of the uploaded sources, emptied of a source when it is deleted.
         :type sources: SourceStore
@@ -125,8 +125,10 @@ class SourceService:
         """Delete a source's files and the renditions of its scans, then the source with its scans.
 
         The pages of the book made from the scans keep their images, versions, numbers and order, and lose only the
-        reference to their scan. A failure at any step leaves the source in place, and calling this again finishes the
-        deletion.
+        reference to their scan. The owner and the source are checked before any file goes, and the files go outside
+        any block, so a slow store holds no lock of the book. Only the rows go in a block, which this use case opens,
+        so it is called outside a block. A failure at any step leaves the source in place, and calling this again
+        finishes the deletion.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -144,8 +146,8 @@ class SourceService:
         # The row goes last: only an existing row lets a repeated call reach files a failed call left behind
         await self._sources.delete_source(project_id, source_id)
         await self._assets.delete_prefix(ProjectKeys(project_id).source_scans(source_id))
-        await self._uow.sources.delete(source_id)
-        await self._uow.commit()
+        async with self._uow.change_book(project_id):
+            await self._uow.sources.delete(source_id)
 
     async def _owned_source(self, actor: Actor, project_id: ProjectId, source_id: SourceId) -> Source:
         """Return a source of the actor's project.

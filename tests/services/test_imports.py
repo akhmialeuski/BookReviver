@@ -1,11 +1,13 @@
 """Tests for the import service: receiving an upload, and running the job it becomes, source by source."""
 
 import asyncio
+from contextlib import asynccontextmanager
 from functools import partial
 from operator import attrgetter, itemgetter
 from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import AsyncMock, patch
 
+import anyio
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
@@ -13,7 +15,7 @@ from PIL import Image
 
 from bookreviver.adapters.imaging.common import FactKey
 from bookreviver.adapters.jobs.recording import RecordingJobQueue
-from bookreviver.adapters.persistence.memory.unit_of_work import InMemoryJobRepository, InMemoryScanRepository
+from bookreviver.adapters.persistence.memory.unit_of_work import InMemoryScanRepository
 from bookreviver.domain.entities import Actor, VersionInputs
 from bookreviver.domain.enums import (
     ColorMode,
@@ -88,16 +90,22 @@ from tests.helpers.processors import AutoSplitProcessor
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
     from pathlib import Path
 
     from fastapi import UploadFile
 
     from bookreviver.domain.entities import Job, Page, PaginationSection, Project, Scan, Source
-    from bookreviver.domain.ids import JobId, ProjectId, StorageKey
+    from bookreviver.domain.ids import ProjectId, StorageKey
     from bookreviver.ports.storage import AssetStore
+    from bookreviver.services.imports import ImportService
 
 pytestmark = pytest.mark.anyio
 
+# The read of the active jobs that an upload makes in the block that stores its job, after its early check
+IN_BLOCK_READ: int = 2
+RACING_UPLOADS: tuple[str, str] = ('first.jpg', 'second.jpg')
+INCOMING_UPLOADS: str = 'incoming/*'
 FILES_ARG: str = 'files'
 AUTO_SPLIT: str = 'split.auto'
 CASE_ARG: str = 'case'
@@ -1162,8 +1170,8 @@ class TestRunImportFullFormat:
         await _import(fx_rig, fx_owner, project.id, [image_upload(fx_samples, 'first.jpg')])
         [first] = await _scans(fx_rig, project.id)
         uow = fx_rig.open_uow()
-        await uow.projects.update(evolve(project, image_policy=ImagePolicy.LOSSLESS))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.projects.update(evolve(project, image_policy=ImagePolicy.LOSSLESS))
 
         second = image_upload(fx_samples, 'second.jpg', width_px=SECOND_PART_WIDTH_PX)
         await _import(fx_rig, fx_owner, project.id, [second])
@@ -1834,8 +1842,9 @@ class TestRunImportFailures:
     async def test_job_cancelled_before_it_starts_has_its_upload_removed(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path, tmp_path: Path
     ) -> None:
-        """Verify a job cancelled between the worker reading it and starting it leaves no upload behind.
+        """Verify a job cancelled while the worker waits to start it leaves no upload behind.
 
+        The cancellation holds its block open, so the worker waits at the start instead of reading the job queued.
         Nothing delivers a cancelled job again, so the run that found it cancelled is the only one that can remove the
         files the job received.
 
@@ -1851,77 +1860,34 @@ class TestRunImportFailures:
         :type tmp_path: Path
         """
         job = await fx_rig.service().start_import(fx_owner, fx_project.id, [image_upload(fx_samples, 'a.jpg')])
-        read = InMemoryJobRepository.get
-        armed: list[bool] = []
-        cancelled: list[Job] = []
+        canceller = fx_rig.open_uow()
+        cancelling = anyio.Event()
+        resume = anyio.Event()
 
-        async def get_then_cancel(repository: InMemoryJobRepository, job_id: JobId) -> Job:
-            """Read the job as the worker does, and let the account holder cancel it right after, once.
+        async def cancel_and_hold() -> None:
+            """Cancel the job in a block that stays open until the test lets it commit."""
+            async with canceller.change():
+                queued = await canceller.jobs.get(job.id)
+                await canceller.jobs.update_if_state(
+                    evolve(queued, state=JobState.CANCELLED, finished_at=fx_rig.fakes.clock.now()),
+                    expected=JobState.active(),
+                )
+                cancelling.set()
+                await resume.wait()
 
-            :param repository: Repository the worker reads from.
-            :type repository: InMemoryJobRepository
-            :param job_id: Identifier of the job.
-            :type job_id: JobId
-            :returns: The job as it was read, still queued.
-            :rtype: Job
-            """
-            stored = await read(repository, job_id)
-            if not armed:
-                # Disarmed first, since cancelling reads the job through this same method
-                armed.append(True)
-                cancelled.append(await fx_rig.fakes.job_service().cancel(fx_owner, job_id))
-            return stored
+        async with anyio.create_task_group() as group:
+            group.start_soon(cancel_and_hold)
+            await cancelling.wait()
+            group.start_soon(fx_rig.service().run_import, job.id)
+            await anyio.wait_all_tasks_blocked()
+            # The worker waits for the cancellation to commit, so it has not removed the upload yet
+            async with fx_rig.sources.staged_files(fx_project.id, job.id) as staged:
+                expect(list(staged) == ['a.jpg'])
+            resume.set()
 
-        with patch.object(InMemoryJobRepository, 'get', get_then_cancel):
-            await fx_rig.service().run_import(job.id)
-
-        expect(await fx_rig.stored_job(job) == cancelled[0])
+        expect((await fx_rig.stored_job(job)).state is JobState.CANCELLED)
         expect(await _sources(fx_rig, fx_project.id) == [])
         expect(not any((tmp_path / 'storage').rglob('incoming/*')))
-        assert_expectations()
-
-    async def test_job_that_another_delivery_started_keeps_its_upload(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
-    ) -> None:
-        """Verify a delivery that lost the race to start the job leaves the files the winner is importing.
-
-        :param fx_rig: Adapters of the import.
-        :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
-        :type fx_owner: Actor
-        :param fx_project: Project of ``fx_owner``.
-        :type fx_project: Project
-        :param fx_samples: Directory the sample files are built in.
-        :type fx_samples: Path
-        """
-        job = await fx_rig.service().start_import(fx_owner, fx_project.id, [image_upload(fx_samples, 'a.jpg')])
-        read = InMemoryJobRepository.get
-        started: list[bool] = []
-
-        async def get_then_let_another_delivery_start(repository: InMemoryJobRepository, job_id: JobId) -> Job:
-            """Read the job as this delivery does, and let another delivery start it right after, once.
-
-            :param repository: Repository this delivery reads from.
-            :type repository: InMemoryJobRepository
-            :param job_id: Identifier of the job.
-            :type job_id: JobId
-            :returns: The job as it was read, still queued.
-            :rtype: Job
-            """
-            stored = await read(repository, job_id)
-            if not started:
-                started.append(True)
-                other = fx_rig.open_uow()
-                await other.jobs.update_if_state(evolve(stored, state=JobState.RUNNING), expected=(JobState.QUEUED,))
-                await other.commit()
-            return stored
-
-        with patch.object(InMemoryJobRepository, 'get', get_then_let_another_delivery_start):
-            await fx_rig.service().run_import(job.id)
-
-        async with fx_rig.sources.staged_files(fx_project.id, job.id) as staged:
-            expect(list(staged) == ['a.jpg'])
-        expect((await fx_rig.stored_job(job)).state is JobState.RUNNING)
         assert_expectations()
 
     async def test_source_whose_files_cannot_be_promoted_is_withdrawn_whole(
@@ -2128,8 +2094,8 @@ class TestRunImportSplit:
         await self._run_import(fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=2)], recipes)
         first_run = next(job for job in fx_rig.queue.enqueued if job.kind is JobKind.RUN_STAGE)
         uow = fx_rig.open_uow()
-        await uow.jobs.update_if_state(evolve(first_run, state=JobState.SUCCEEDED), expected=(JobState.QUEUED,))
-        await uow.commit()
+        async with uow.change():
+            await uow.jobs.update_if_state(evolve(first_run, state=JobState.SUCCEEDED), expected=(JobState.QUEUED,))
         await self._run_import(
             fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'b.pdf', pages=1, width_px=210)], recipes
         )
@@ -2175,10 +2141,10 @@ class TestRunImportSplit:
         :type fx_samples: Path
         """
         uow = fx_rig.open_uow()
-        await uow.jobs.add(
-            evolve(make_job(project_id=fx_project.id, state=JobState.RUNNING), kind=JobKind.COLLECT_VERSIONS)
-        )
-        await uow.commit()
+        async with uow.change():
+            await uow.jobs.add(
+                evolve(make_job(project_id=fx_project.id, state=JobState.RUNNING), kind=JobKind.COLLECT_VERSIONS)
+            )
 
         job = await self._run_import(
             fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=1)], self._recipes(AUTO_SPLIT)
@@ -2186,4 +2152,204 @@ class TestRunImportSplit:
 
         expect(job.state is JobState.SUCCEEDED)
         expect([queued for queued in fx_rig.queue.enqueued if queued.kind is JobKind.RUN_STAGE] == [])
+        assert_expectations()
+
+
+async def delete_the_page(rig: ImportRig, project: Project) -> None:
+    """Delete the only page of the project in a block of its own, as the user would while its scan is cut.
+
+    :param rig: Adapters of the import.
+    :type rig: ImportRig
+    :param project: Project whose page is deleted.
+    :type project: Project
+    """
+    [page] = await _pages(rig, project.id)
+    uow = rig.open_uow()
+    async with uow.change_book(project.id):
+        await uow.pages.delete(page.id)
+
+
+async def delete_the_source(rig: ImportRig, project: Project) -> None:
+    """Delete the only source of the project, with its scan, in a block of its own.
+
+    :param rig: Adapters of the import.
+    :type rig: ImportRig
+    :param project: Project whose source is deleted.
+    :type project: Project
+    """
+    [source] = await _sources(rig, project.id)
+    uow = rig.open_uow()
+    async with uow.change_book(project.id):
+        await uow.sources.delete(source.id)
+
+
+async def make_the_scan_ready(rig: ImportRig, project: Project) -> None:
+    """Mark the only scan of the project ready in a block of its own, as another run would have.
+
+    :param rig: Adapters of the import.
+    :type rig: ImportRig
+    :param project: Project whose scan is marked.
+    :type project: Project
+    """
+    [scan] = await _scans(rig, project.id)
+    uow = rig.open_uow()
+    async with uow.change_book(project.id):
+        await uow.scans.update(evolve(scan, renditions=evolve(scan.renditions, ready=True)))
+
+
+class TestRunImportApplyStep:
+    """Tests for the block that stores a cut scan, which reads the scan and its pages again."""
+
+    @pytest.mark.parametrize(
+        CASE_ARG,
+        [
+            pytest.param(delete_the_page, id='page-deleted'),
+            pytest.param(delete_the_source, id='source-deleted'),
+            pytest.param(make_the_scan_ready, id='scan-ready-already'),
+        ],
+    )
+    async def test_scan_that_changed_while_its_images_were_cut_is_not_stored(
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_project: Project,
+        fx_samples: Path,
+        case: Callable[[ImportRig, Project], Awaitable[None]],
+    ) -> None:
+        """Verify a scan whose book changed after the cut writes no version and announces nothing, and the job ends well.
+
+        The change is made right before the image of the scan is written, so the block that stores the scan finds
+        the book as the change left it. The scan counts one less to cut, and its files are removed.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        :param case: What another request does to the book while the scan is cut.
+        :type case: Callable[[ImportRig, Project], Awaitable[None]]
+        """
+        cut: list[Scan] = []
+
+        async def change_the_book_once(_number: int) -> None:
+            """Change the book, the first time a scan is about to be written.
+
+            :param _number: Number of the scan in its source.
+            :type _number: int
+            """
+            fx_rig.rasterizer.before_extract = None
+            cut.extend(await _scans(fx_rig, fx_project.id))
+            await case(fx_rig, fx_project)
+
+        fx_rig.rasterizer.before_extract = change_the_book_once
+
+        job = await _import(fx_rig, fx_owner, fx_project.id, [image_upload(fx_samples, 'a.jpg')])
+
+        pages = await _pages(fx_rig, fx_project.id)
+        versions = await fx_rig.open_uow().page_versions.list_base_versions([page.id for page in pages])
+        expect((job.state, job.progress.done, job.progress.total) == (JobState.SUCCEEDED, 0, 0))
+        expect(not _events_of(fx_rig, ScanReady))
+        expect(not versions)
+        expect(not await _is_stored(fx_rig.assets, ProjectKeys(fx_project.id).scan_directory(cut[0])))
+        assert_expectations()
+
+
+class TestStartImportConcurrently:
+    """Tests for two uploads of one project that meet at the check of the active import."""
+
+    async def test_second_upload_waits_for_the_first_and_is_refused(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path, tmp_path: Path
+    ) -> None:
+        """Verify the second upload waits for the block of the first, reads its job, and is refused with its upload gone.
+
+        The first upload is held inside its block after it read the active jobs. The second one is let in, receives its
+        files, and waits at the start of its own block, so the check and the insert of the first cannot be split.
+
+        :param fx_rig: Adapters of the import.
+        :type fx_rig: ImportRig
+        :param fx_owner: Account owning the project.
+        :type fx_owner: Actor
+        :param fx_project: Project of ``fx_owner``.
+        :type fx_project: Project
+        :param fx_samples: Directory the sample files are built in.
+        :type fx_samples: Path
+        :param tmp_path: Temporary directory of the test, holding the storage root.
+        :type tmp_path: Path
+        """
+        first_name, second_name = RACING_UPLOADS
+        first_uow = fx_rig.open_uow()
+        listing = first_uow.jobs.list_for_project
+        reads: list[None] = []
+        checked = anyio.Event()
+        resume = anyio.Event()
+
+        async def list_then_wait(project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
+            """List the jobs as they are, and hold the first upload once it is inside its block, after the early check.
+
+            :param project_id: Project whose jobs are listed.
+            :type project_id: ProjectId
+            :param states: States a listed job may be in.
+            :type states: Collection[JobState]
+            :returns: The jobs found.
+            :rtype: Sequence[Job]
+            """
+            found = await listing(project_id, states)
+            reads.append(None)
+            if len(reads) == IN_BLOCK_READ:
+                checked.set()
+                await resume.wait()
+            return found
+
+        second_uow = fx_rig.open_uow()
+        change = second_uow.change
+        waiting = anyio.Event()
+
+        @asynccontextmanager
+        async def change_after_saying_so() -> AsyncIterator[None]:
+            """Open the block of the second upload, which says so first, since it then waits for the first.
+
+            :returns: Iterator yielding once the block is open.
+            :rtype: AsyncIterator[None]
+            """
+            waiting.set()
+            async with change():
+                yield
+
+        outcomes: dict[str, Job | ConflictError] = {}
+
+        async def upload(name: str, service: ImportService) -> None:
+            """Upload one file and keep the job, or the refusal.
+
+            :param name: Name of the uploaded file.
+            :type name: str
+            :param service: Service the upload goes through.
+            :type service: ImportService
+            """
+            try:
+                outcomes[name] = await service.start_import(fx_owner, fx_project.id, [image_upload(fx_samples, name)])
+            except ConflictError as error:
+                outcomes[name] = error
+
+        with (
+            patch.object(first_uow.jobs, 'list_for_project', list_then_wait),
+            patch.object(second_uow, 'change', change_after_saying_so),
+        ):
+            async with anyio.create_task_group() as group:
+                group.start_soon(upload, first_name, fx_rig.service(uow=first_uow))
+                await checked.wait()
+                group.start_soon(upload, second_name, fx_rig.service(uow=second_uow))
+                await waiting.wait()
+                await anyio.wait_all_tasks_blocked()
+                expect(await fx_rig.open_uow().jobs.list_for_project(fx_project.id, set(JobState)) == [])
+                resume.set()
+
+        stored = await fx_rig.open_uow().jobs.list_for_project(fx_project.id, set(JobState))
+        winner = outcomes[first_name]
+        assert not isinstance(winner, ConflictError)
+        expect([job.id for job in stored] == [winner.id])
+        expect(str(outcomes[second_name]) == IMPORT_ACTIVE)
+        expect(len(list((tmp_path / 'storage').rglob(INCOMING_UPLOADS))) == 1)
         assert_expectations()

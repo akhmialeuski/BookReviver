@@ -103,10 +103,10 @@ async def seed_geometry(
         state=VersionState.READY,
     )
     uow = kit.uow()
-    await uow.page_versions.add(version)
-    record = make_page_stage(page_id=page.id, stage=Stage.GEOMETRY, head_version_id=version.id, state=state)
-    await uow.page_stages.save(evolve(record, through_step=through_step))
-    await uow.commit()
+    async with uow.change_book(page.project_id):
+        await uow.page_versions.add(version)
+        record = make_page_stage(page_id=page.id, stage=Stage.GEOMETRY, head_version_id=version.id, state=state)
+        await uow.page_stages.save(evolve(record, through_step=through_step))
 
 
 async def mark_version(kit: ProcessingKit, version: PageVersion, mark: ResultMark) -> None:
@@ -120,8 +120,9 @@ async def mark_version(kit: ProcessingKit, version: PageVersion, mark: ResultMar
     :type mark: ResultMark
     """
     uow = kit.uow()
-    await uow.page_versions.update(evolve(version, mark=mark))
-    await uow.commit()
+    project_id = (await uow.pages.get(version.page_id)).project_id
+    async with uow.change_book(project_id):
+        await uow.page_versions.update(evolve(version, mark=mark))
 
 
 async def seed_marked_chain(kit: ProcessingKit, page: Page, *, steps: int, marked_at: int) -> None:
@@ -140,21 +141,21 @@ async def seed_marked_chain(kit: ProcessingKit, page: Page, *, steps: int, marke
     """
     uow = kit.uow()
     previous = (await uow.page_versions.list_for_page(page.id))[0]
-    for index in range(steps):
-        version = evolve(
-            make_page_version(page_id=page.id, minutes=index + 1),
-            stage=Stage.GEOMETRY,
-            processor=ProcessorRef(key=f'geometry.step{index}', version='1'),
-            input_id=previous.id,
-            review=ReviewReason.NOT_APPLIED if index >= marked_at else None,
-            state=VersionState.READY,
+    async with uow.change_book(page.project_id):
+        for index in range(steps):
+            version = evolve(
+                make_page_version(page_id=page.id, minutes=index + 1),
+                stage=Stage.GEOMETRY,
+                processor=ProcessorRef(key=f'geometry.step{index}', version='1'),
+                input_id=previous.id,
+                review=ReviewReason.NOT_APPLIED if index >= marked_at else None,
+                state=VersionState.READY,
+            )
+            await uow.page_versions.add(version)
+            previous = version
+        await uow.page_stages.save(
+            make_page_stage(page_id=page.id, stage=Stage.GEOMETRY, head_version_id=previous.id, state=StageState.FRESH)
         )
-        await uow.page_versions.add(version)
-        previous = version
-    await uow.page_stages.save(
-        make_page_stage(page_id=page.id, stage=Stage.GEOMETRY, head_version_id=previous.id, state=StageState.FRESH)
-    )
-    await uow.commit()
 
 
 async def summaries_of(kit: ProcessingKit, project: Project) -> dict[Stage, StageSummary]:
@@ -274,13 +275,13 @@ class TestOfBook:
         """
         actor, project, pages = await seed_book(fx_kit)
         uow = fx_kit.uow()
-        await uow.pages.update(evolve(pages[1], kind=PageKind.PLATE))
-        await uow.pages.update(evolve(pages[2], kind=PageKind.BLANK))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.pages.update(evolve(pages[1], kind=PageKind.PLATE))
+            await uow.pages.update(evolve(pages[2], kind=PageKind.BLANK))
         await fx_kit.seed_scan_page(project, order_key='a3', kind=PageKind.TEXT)
         placeholder = make_page(project_id=project.id, order_key='a4')
-        await uow.pages.add(placeholder)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.pages.add(placeholder)
         before = (await summaries_of(fx_kit, project))[Stage.GEOMETRY].recipes
         recipes = {
             recipe.kind: recipe
@@ -387,8 +388,8 @@ class TestRows:
             (await fx_kit.uow().page_versions.list_for_page(pages[0].id))[0], review=ReviewReason.UNSURE_GUTTER
         )
         uow = fx_kit.uow()
-        await uow.page_versions.update(marked_base)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.update(marked_base)
         await seed_marked_chain(fx_kit, pages[0], steps=2, marked_at=0)
         rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
         assert (rows.items[0].review is not None, rows.items[0].review_processor) == (True, None)
@@ -478,8 +479,8 @@ async def seed_text_and_leaf(kit: ProcessingKit) -> tuple[Actor, Project, Page, 
     scanned, _ = await kit.seed_scan_page(project, order_key='a1')
     leaf = evolve(scanned, origin=PageOrigin.BLANK, scan_id=None)
     uow = kit.uow()
-    await uow.pages.update(leaf)
-    await uow.commit()
+    async with uow.change_book(project.id):
+        await uow.pages.update(leaf)
     for page in (text, leaf):
         await kit.seed_base_version(page)
     steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)]

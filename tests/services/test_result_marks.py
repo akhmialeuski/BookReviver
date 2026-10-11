@@ -110,8 +110,8 @@ class TestSet:
         actor, project, page, version = await ran_geometry(fx_kit)
         preview = evolve(version, id=PREVIEW_ID, scale=VersionScale.PREVIEW)
         uow = fx_kit.uow()
-        await uow.page_versions.add(preview)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(preview)
         with pytest.raises(ConflictError):
             await _marks(fx_kit).set(
                 actor, project.id, page.id, preview.id, ResultNote(mark=ResultMark.GOOD, comment='')

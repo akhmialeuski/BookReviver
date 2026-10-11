@@ -10,11 +10,12 @@ The source is opened with sequential access, so libvips streams it instead of de
 """
 
 import tempfile
+from functools import partial
 from pathlib import Path
 from typing import override
 
 import pyvips
-from asyncer import asyncify
+from anyio import to_thread
 
 from bookreviver.ports.imaging import Tiler
 
@@ -52,7 +53,7 @@ class VipsTiler(Tiler):
         :param resource_id: Path the pyramid is served from, written as the ``id`` of its ``info.json``.
         :type resource_id: str
         """
-        await asyncify(self._tile)(image, target_dir=target_dir, resource_id=resource_id)
+        await to_thread.run_sync(partial(self._tile, image, target_dir=target_dir, resource_id=resource_id))
 
     @override
     async def preview(self, image: Path, target: Path) -> None:
@@ -63,7 +64,7 @@ class VipsTiler(Tiler):
         :param target: Path to write the JPEG preview at.
         :type target: Path
         """
-        await asyncify(self._shrink)(image, target=target, long_side_px=self._preview_long_side_px)
+        await to_thread.run_sync(partial(self._shrink, image, target=target, long_side_px=self._preview_long_side_px))
 
     @override
     async def thumbnail(self, image: Path, target: Path) -> None:
@@ -74,7 +75,7 @@ class VipsTiler(Tiler):
         :param target: Path to write the JPEG thumbnail at.
         :type target: Path
         """
-        await asyncify(self._shrink)(image, target=target, long_side_px=self._thumbnail_long_side_px)
+        await to_thread.run_sync(partial(self._shrink, image, target=target, long_side_px=self._thumbnail_long_side_px))
 
     def _tile(self, image: Path, *, target_dir: Path, resource_id: str) -> None:
         """Cut the pyramid next to ``target_dir`` and move only the pyramid into place.

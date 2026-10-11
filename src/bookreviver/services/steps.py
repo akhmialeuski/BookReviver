@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import anyio
-from asyncer import asyncify
 from attrs import evolve, frozen
 
 from bookreviver.domain.enums import (
@@ -151,7 +150,7 @@ class StepRunner:
                 workdir=Path(workdir),
             )
             work = processor.run if run.scale is VersionScale.FULL else processor.preview
-            yield await asyncify(work)(step_input)
+            yield await anyio.to_thread.run_sync(work, step_input)
 
     @staticmethod
     def _unchanged(run: StepRun, image: Path | None) -> StepResult:
@@ -217,9 +216,9 @@ class StepRunner:
                 info = await self._renditions.write(output.image, target, full=full, color_mode=output.color_mode)
                 renditions = Renditions(ready=True, full=info.full)
             if output.mask is not None:
-                await asyncify(shutil.copyfile)(output.mask, target / Rendition.MASK)
+                await anyio.to_thread.run_sync(shutil.copyfile, output.mask, target / Rendition.MASK)
             if output.mesh is not None:
-                await asyncify(shutil.copyfile)(output.mesh, target / Rendition.MESH)
+                await anyio.to_thread.run_sync(shutil.copyfile, output.mesh, target / Rendition.MESH)
         transform = output.transform
         if output.mesh is not None:
             # The step cannot know where its mesh is stored, so the transform that names the file is made here

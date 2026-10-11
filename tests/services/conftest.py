@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.services.pages import PageService
 
 
@@ -126,23 +127,35 @@ def fx_runtime(
 
 
 @pytest.fixture
+def fx_service_over(
+    fx_asset_store: LocalAssetStore, fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+) -> Callable[[UnitOfWork], PageService]:
+    """Return a function building the page service over a unit of work the test made, which a test may have gated.
+
+    :param fx_asset_store: Local asset store over the test's storage root.
+    :type fx_asset_store: LocalAssetStore
+    :param fx_runtime: The recording bus, the stopped clock and the recording queue the service reports through.
+    :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+    :returns: Function building a service over the given unit of work.
+    :rtype: Callable[[UnitOfWork], PageService]
+    """
+    return lambda uow: make_page_service(uow, fx_asset_store, fx_runtime)
+
+
+@pytest.fixture
 def fx_service(
-    fx_database: InMemoryDatabase,
-    fx_asset_store: LocalAssetStore,
-    fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+    fx_database: InMemoryDatabase, fx_service_over: Callable[[UnitOfWork], PageService]
 ) -> Callable[[], PageService]:
     """Return a function building the page service for one request or job.
 
     :param fx_database: In-memory database every request of the test shares.
     :type fx_database: InMemoryDatabase
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
-    :param fx_runtime: The recording bus, the stopped clock and the recording queue the service reports through.
-    :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+    :param fx_service_over: Function building the page service over a unit of work.
+    :type fx_service_over: Callable[[UnitOfWork], PageService]
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], PageService]
     """
-    return lambda: make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime)
+    return lambda: fx_service_over(InMemoryUnitOfWork(fx_database))
 
 
 @pytest.fixture

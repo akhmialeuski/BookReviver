@@ -213,7 +213,7 @@ class PageSettingsService:
     def __init__(self, *, uow: UnitOfWork, catalogue: ProcessorCatalog, records: StageRecords, clock: Clock) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose commit ends every changing use case.
+        :param uow: Unit of work of the request, whose blocks end every changing use case.
         :type uow: UnitOfWork
         :param catalogue: The processors the application can run, which check the value of a field.
         :type catalogue: ProcessorCatalog
@@ -293,27 +293,34 @@ class PageSettingsService:
         :raises InvalidParametersError: If the processor has no such field, or the value is out of its range on a page
                                         it reaches.
         """
-        scene = await _Scene.load(self._uow, actor, project_id, field, self._clock.now())
-        name = field.name
-        processor = self._catalogue.get(next(iter(scene.steps.values())).processor_key)
-        if scene.holder is None:
-            own = {
-                page.id: {
-                    **scene.own(page),
-                    name: processor.validate_params(scene.effective(page, own={**scene.own(page), name: value}))[name],
+        async with self._uow.change_book(project_id):
+            scene = await _Scene.load(self._uow, actor, project_id, field, self._clock.now())
+            name = field.name
+            processor = self._catalogue.get(next(iter(scene.steps.values())).processor_key)
+            if scene.holder is None:
+                own = {
+                    page.id: {
+                        **scene.own(page),
+                        name: processor.validate_params(scene.effective(page, own={**scene.own(page), name: value}))[
+                            name
+                        ],
+                    }
+                    for page in scene.pages
                 }
-                for page in scene.pages
-            }
-            return await self._store(project_id, scene, own=own, params=None)
-        # The field is checked on its own too, since a stronger part may give every page another value of it
-        checked = [
-            processor.validate_params({**step.params, **scene.holder.params, name: value})[name]
-            for step in scene.steps.values()
-        ]
-        params = {**scene.holder.params, name: checked[0]}
-        for page in scene.pages:
-            processor.validate_params(scene.effective(page, parts=scene.replacing(params)))
-        return await self._store(project_id, scene, own={}, params=params)
+                params: MetadataMap | None = None
+            else:
+                # The field is checked on its own too, since a stronger part may give every page another value of it
+                checked = [
+                    processor.validate_params({**step.params, **scene.holder.params, name: value})[name]
+                    for step in scene.steps.values()
+                ]
+                params = {**scene.holder.params, name: checked[0]}
+                for page in scene.pages:
+                    processor.validate_params(scene.effective(page, parts=scene.replacing(params)))
+                own = {}
+            changes, stale = await self._store(scene, own=own, params=params)
+        await self._records.announce(project_id, stale)
+        return changes
 
     async def reset(self, actor: Actor, project_id: ProjectId, field: ValueField) -> ValueChanges:
         """Take a field back from the pages the target names, so they take it from the next part, and mark them stale.
@@ -329,41 +336,45 @@ class PageSettingsService:
         :raises NotFoundError: If the actor has no such project, a page is not one of the project, no recipe of the
                                stage has the step, or none of the pages the target names has a value for the field.
         """
-        scene = await _Scene.load(self._uow, actor, project_id, field, self._clock.now())
-        name = field.name
-        if scene.holder is None:
-            own = {
-                page.id: {other: value for other, value in scene.own(page).items() if other != name}
-                for page in scene.pages
-                if name in scene.own(page)
-            }
-            if not own:
-                raise NotFoundError(name)
-            return await self._store(project_id, scene, own=own, params=None)
-        if name not in scene.holder.params:
-            raise NotFoundError(name)
-        params = {other: value for other, value in scene.holder.params.items() if other != name}
-        return await self._store(project_id, scene, own={}, params=params)
+        async with self._uow.change_book(project_id):
+            scene = await _Scene.load(self._uow, actor, project_id, field, self._clock.now())
+            name = field.name
+            if scene.holder is None:
+                own = {
+                    page.id: {other: value for other, value in scene.own(page).items() if other != name}
+                    for page in scene.pages
+                    if name in scene.own(page)
+                }
+                if not own:
+                    raise NotFoundError(name)
+                params: MetadataMap | None = None
+            else:
+                if name not in scene.holder.params:
+                    raise NotFoundError(name)
+                params = {other: value for other, value in scene.holder.params.items() if other != name}
+                own = {}
+            changes, stale = await self._store(scene, own=own, params=params)
+        await self._records.announce(project_id, stale)
+        return changes
 
     async def _store(
-        self, project_id: ProjectId, scene: _Scene, *, own: Mapping[PageId, MetadataMap], params: MetadataMap | None
-    ) -> ValueChanges:
-        """Write the new values, the changes that made them and the stale marks, and commit.
+        self, scene: _Scene, *, own: Mapping[PageId, MetadataMap], params: MetadataMap | None
+    ) -> tuple[ValueChanges, Sequence[PageStage]]:
+        """Write the new values, the changes that made them and the stale marks, in the block of the caller.
 
-        A state with neither a setting nor an edit left is deleted, and values with no field left are deleted. Values
-        equal to the stored ones change nothing and write nothing. The stage of a page is marked stale only when what
-        the step runs with on it changes, so a page that takes the field from a stronger part is left alone.
+        It opens no block, so the caller announces the stale marks once its own block has ended. A state with neither
+        a setting nor an edit left is deleted, and values with no field left are deleted. Values equal to the stored
+        ones change nothing and write nothing. The stage of a page is marked stale only when what the step runs with
+        on it changes, so a page that takes the field from a stronger part is left alone.
 
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
         :param scene: What the change reads.
         :type scene: _Scene
         :param own: The fields each page changes from now on, for a target of pages.
         :type own: Mapping[PageId, MetadataMap]
         :param params: The fields the part of the pages the target names changes from now on, for a target of a part.
         :type params: MetadataMap | None
-        :returns: The batch and the changes written.
-        :rtype: ValueChanges
+        :returns: The batch and the changes written, and the records that became stale.
+        :rtype: tuple[ValueChanges, Sequence[PageStage]]
         """
         batch = PageBatch(uow=self._uow, source=ChangeSource.USER, moment=scene.moment)
         reached: list[PageId] = []
@@ -383,6 +394,4 @@ class PageSettingsService:
         stale: list[PageStage] = []
         for page_id in reached:
             stale.extend(await self._records.mark_stale(page_id, scene.field.stage))
-        await self._uow.commit()
-        await self._records.announce(project_id, stale)
-        return ValueChanges(batch_id=batch.batch_id, changes=tuple(changes))
+        return ValueChanges(batch_id=batch.batch_id, changes=tuple(changes)), stale

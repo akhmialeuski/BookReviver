@@ -2,9 +2,9 @@
 
 The label of a page is computed from the sections by ``Pagination``, except for a label written by hand, which is an
 exception that no recompute changes. A use case that adds, deletes or moves pages, or changes a section, calls
-``recompute`` before its commit, so the numbers change in the transaction of the change itself, and only the pages whose
-label changes are written. The pages renumbered are announced after the commit, as one ``PagesChanged`` of kind
-``edited``.
+``recompute`` inside its ``change_book`` block, so the numbers change in the transaction of the change itself, and only
+the pages whose label changes are written. The pages renumbered are announced after the block, as one ``PagesChanged``
+of kind ``edited``.
 
 A section starts at a page and so does not survive the deletion of that page. ``recompute`` is told which pages are
 about to leave, and hands every section that starts at one of them to the next page that stays, or removes it when no
@@ -32,12 +32,12 @@ if TYPE_CHECKING:
 
 
 class PageLabels:
-    """Recomputes the labels of the pages of a book through the unit of work of its caller, and announces them."""
+    """Recomputes the labels of the pages of a book in the block of its caller, and announces them after it."""
 
     def __init__(self, *, uow: UnitOfWork, publisher: EventPublisher, clock: Clock) -> None:
         """Write labels through the unit of work of the use case.
 
-        :param uow: Unit of work whose commit ends the use case.
+        :param uow: Unit of work whose ``change_book`` block ends the use case.
         :type uow: UnitOfWork
         :param publisher: Publisher of the events the browser follows.
         :type publisher: EventPublisher
@@ -74,10 +74,11 @@ class PageLabels:
         unpin: Collection[PageId] = (),
         force: bool = False,
     ) -> list[Page]:
-        """Write the labels the sections give the pages of a project, in the transaction of the caller.
+        """Write the labels the sections give the pages of a project, in the ``change_book`` block of the caller.
 
-        A book without a section has no computed label to keep, so the call stops after reading the sections, unless
-        ``force`` says a section was just removed.
+        It writes inside the block of its caller and opens none, so it is called only inside a block. A book without a
+        section has no computed label to keep, so the call stops after reading the sections, unless ``force`` says a
+        section was just removed.
 
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
@@ -88,10 +89,9 @@ class PageLabels:
         :type unpin: Collection[PageId]
         :param force: Whether to recompute although the book has no section.
         :type force: bool
-        :returns: The pages written, with their new labels, which ``announce`` reports after the commit.
+        :returns: The pages written, with their new labels, which ``announce`` reports after the block.
         :rtype: list[Page]
         :raises ConflictError: If a section cannot write a number, such as 4000 in Roman numerals.
-        :raises ConcurrentChangeError: If another request changed one of the pages meanwhile.
         """
         sections = await self._uow.pagination_sections.list_for_project(project_id)
         if not sections and not force:
@@ -118,7 +118,7 @@ class PageLabels:
         return changed
 
     async def announce(self, project_id: ProjectId) -> None:
-        """Tell the browser which pages were renumbered since the last announcement, after the caller committed.
+        """Tell the browser which pages were renumbered since the last announcement, after the caller's block ended.
 
         :param project_id: Identifier of the project.
         :type project_id: ProjectId

@@ -9,7 +9,7 @@ The navigation document is a file of the book that the user may have written, so
 from typing import TYPE_CHECKING, override
 from xml.etree import ElementTree as ET
 
-from asyncer import asyncify
+from anyio import to_thread
 from defusedxml.ElementTree import parse
 
 from bookreviver.ports.imaging import PageLabelWriter
@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 XHTML_NAMESPACE: str = 'http://www.w3.org/1999/xhtml'
 EPUB_NAMESPACE: str = 'http://www.idpf.org/2007/ops'
 PAGE_LIST_TYPE: str = 'page-list'
+NAV_ELEMENT: str = 'nav'
+HIDDEN_ATTRIBUTE: str = 'hidden'
 # Name of the content document of a page, from its position in the book counted from 1
 DEFAULT_HREF_TEMPLATE: str = 'page-{position:04d}.xhtml'
 
@@ -67,7 +69,7 @@ class EpubPageList(PageLabelWriter):
         :raises ValueError: If the document has no body.
         :raises ParseError: If the document is not well-formed XML.
         """
-        await asyncify(self._write)(target, labeling.printed)
+        await to_thread.run_sync(self._write, target, labeling.printed)
 
     def _write(self, target: Path, printed: Sequence[PrintedNumber]) -> None:
         """Write the page list into the document, which blocks, so the caller runs it in a worker thread.
@@ -83,11 +85,12 @@ class EpubPageList(PageLabelWriter):
         if body is None:
             err_msg = f'{target.name} has no body to hold a page list.'
             raise ValueError(err_msg)
-        for nav in body.findall(_xhtml('nav')):
+        for nav in body.findall(_xhtml(NAV_ELEMENT)):
             if PAGE_LIST_TYPE in nav.get(f'{{{EPUB_NAMESPACE}}}type', '').split():
                 body.remove(nav)
         if printed:
-            nav = ET.SubElement(body, _xhtml('nav'), {f'{{{EPUB_NAMESPACE}}}type': PAGE_LIST_TYPE, 'hidden': 'hidden'})
+            attributes = {f'{{{EPUB_NAMESPACE}}}type': PAGE_LIST_TYPE, HIDDEN_ATTRIBUTE: HIDDEN_ATTRIBUTE}
+            nav = ET.SubElement(body, _xhtml(NAV_ELEMENT), attributes)
             items = ET.SubElement(nav, _xhtml('ol'))
             for number in printed:
                 item = ET.SubElement(items, _xhtml('li'))

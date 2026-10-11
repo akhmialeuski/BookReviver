@@ -46,7 +46,7 @@ class CarryOverService:
     def __init__(self, *, uow: UnitOfWork, records: StageRecords, clock: Clock) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose commit ends the carry-over.
+        :param uow: Unit of work of the request, whose block ends the carry-over.
         :type uow: UnitOfWork
         :param records: Writer of the stage records, which a changed edit marks stale.
         :type records: StageRecords
@@ -73,42 +73,42 @@ class CarryOverService:
         :raises InvalidParametersError: If the scope is the selected pages and none is named, or the edit is a mask.
         """
         key = request.key
-        source = await owned_page(self._uow, actor, project_id, key.page_id)
-        await find_step(self._uow.recipes, project_id, key)
-        stored_source = await self._uow.page_step_states.find(key)
-        if stored_source is None or stored_source.edit is None:
-            raise NotFoundError(key)
-        if stored_source.edit.mask_key is not None:
-            raise InvalidParametersError(MASK_NOT_CARRIED)
-        shape = stored_source.layer(StepLayer.HAND)
-        targets = await self._targets(project_id, request, source)
-        stored = {
-            state.page_id: state
-            for state in await self._uow.page_step_states.list_for_step(
-                [page.id for page in targets], key.stage, key.step_id
-            )
-        }
-        moment = self._clock.now()
-        carried: list[PageStepState] = []
-        skipped: list[PageId] = []
-        for page in targets:
-            state = stored.get(page.id) or PageStepState(
-                page_id=page.id, stage=key.stage, step_id=key.step_id, updated_at=moment
-            )
-            if state.layer(StepLayer.HAND) == shape:
-                continue
-            if state.edit is not None and not request.overwrite:
-                skipped.append(page.id)
-                continue
-            carried.append(state)
-        batch = PageBatch(uow=self._uow, source=ChangeSource.CARRY_OVER, moment=moment)
-        for state in carried:
-            await batch.write(state, StepLayer.HAND, shape)
-        changes = await batch.flush()
-        stale: list[PageStage] = []
-        for change in changes:
-            stale.extend(await self._records.mark_stale(change.page_id, change.stage))
-        await self._uow.commit()
+        async with self._uow.change_book(project_id):
+            source = await owned_page(self._uow, actor, project_id, key.page_id)
+            await find_step(self._uow.recipes, project_id, key)
+            stored_source = await self._uow.page_step_states.find(key)
+            if stored_source is None or stored_source.edit is None:
+                raise NotFoundError(key)
+            if stored_source.edit.mask_key is not None:
+                raise InvalidParametersError(MASK_NOT_CARRIED)
+            shape = stored_source.layer(StepLayer.HAND)
+            targets = await self._targets(project_id, request, source)
+            stored = {
+                state.page_id: state
+                for state in await self._uow.page_step_states.list_for_step(
+                    [page.id for page in targets], key.stage, key.step_id
+                )
+            }
+            moment = self._clock.now()
+            carried: list[PageStepState] = []
+            skipped: list[PageId] = []
+            for page in targets:
+                state = stored.get(page.id) or PageStepState(
+                    page_id=page.id, stage=key.stage, step_id=key.step_id, updated_at=moment
+                )
+                if state.layer(StepLayer.HAND) == shape:
+                    continue
+                if state.edit is not None and not request.overwrite:
+                    skipped.append(page.id)
+                    continue
+                carried.append(state)
+            batch = PageBatch(uow=self._uow, source=ChangeSource.CARRY_OVER, moment=moment)
+            for state in carried:
+                await batch.write(state, StepLayer.HAND, shape)
+            changes = await batch.flush()
+            stale: list[PageStage] = []
+            for change in changes:
+                stale.extend(await self._records.mark_stale(change.page_id, change.stage))
         await self._records.announce(project_id, stale)
         return CarryOver(batch_id=batch.batch_id, changes=tuple(changes), skipped=tuple(skipped))
 

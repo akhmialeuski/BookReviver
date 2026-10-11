@@ -47,12 +47,21 @@ from tests.helpers.builders import (
     make_source,
     new_account_id,
 )
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.ids import AccountId
 
 pytestmark = pytest.mark.anyio
+
+# The keys of the JSON objects that hold contributors and identifiers
+NAME_KEY: str = 'name'
+ROLE_KEY: str = 'role'
+SCHEME_KEY: str = 'scheme'
+VALUE_KEY: str = 'value'
+# The printed number of a page, which is the same on a page and on the scan it shows
+ROMAN_LABEL: str = 'xii'
 
 # The right half of a spread 2200 px wide and 1561 px high
 HALF_QUAD: Quad = Quad(
@@ -114,20 +123,22 @@ class TestProjectMapper:
         described = evolve(project, details=FULL_DETAILS, image_policy=ImagePolicy.LOSSLESS, cover_page_id=cover.id)
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
-            await uow.projects.add(project)
-            await uow.pages.add(cover)
-            await uow.projects.update(described)
-            await uow.commit()
+            await store_project(uow, project, cover)
+            async with uow.change():
+                await uow.projects.update(described)
         async with fx_database.sessions() as session:
             assert await SqlAlchemyUnitOfWork(session).projects.get(project.id) == described
 
     async def test_lists_are_stored_as_json_of_plain_values(self) -> None:
         """Verify contributors and identifiers become lists of objects holding role and scheme values, not members."""
         row = ProjectMapper().to_row(evolve(make_project(owner_id=new_account_id()), details=FULL_DETAILS))
-        expect(row.contributors[:2] == [{'name': 'Я. Карскі', 'role': 'aut'}, {'name': 'И. И. Ивановъ', 'role': 'edt'}])
+        expect(
+            row.contributors[:2]
+            == [{NAME_KEY: 'Я. Карскі', ROLE_KEY: 'aut'}, {NAME_KEY: 'И. И. Ивановъ', ROLE_KEY: 'edt'}]
+        )
         expect(
             row.identifiers[:2]
-            == [{'scheme': 'shelfmark', 'value': '18.123.4.56'}, {'scheme': 'isbn', 'value': '0306406152'}]
+            == [{SCHEME_KEY: 'shelfmark', VALUE_KEY: '18.123.4.56'}, {SCHEME_KEY: 'isbn', VALUE_KEY: '0306406152'}]
         )
         expect((row.languages, row.parallel_titles) == (['bel', 'rus'], ['Białoruskie baśnie ludowe']))
         assert_expectations()
@@ -149,7 +160,7 @@ class TestPageMapper:
         scan = make_scan(source=source, number=11)
         page = evolve(
             make_page(project_id=project.id, order_key='a0V', scan=scan),
-            label='xii',
+            label=ROMAN_LABEL,
             kind=PageKind.PLATE,
             slot=2,
             included=False,
@@ -157,12 +168,7 @@ class TestPageMapper:
             updated_at=EPOCH + timedelta(minutes=5),
         )
         async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            await uow.projects.add(project)
-            await uow.sources.add(source)
-            await uow.scans.add(scan)
-            await uow.pages.add(page)
-            await uow.commit()
+            await store_project(SqlAlchemyUnitOfWork(session), project, page, sources=[source], scans=[scan])
         async with fx_database.sessions() as session:
             assert await SqlAlchemyUnitOfWork(session).pages.get(page.id) == page
 
@@ -202,11 +208,7 @@ class TestPageVersionMapper:
             state=VersionState.READY,
         )
         async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            await uow.projects.add(project)
-            await uow.pages.add(page)
-            await uow.page_versions.add_many([base, version])
-            await uow.commit()
+            await store_project(SqlAlchemyUnitOfWork(session), project, page, versions=[base, version])
         async with fx_database.sessions() as session:
             assert await SqlAlchemyUnitOfWork(session).page_versions.get(version.id) == version
 
@@ -236,11 +238,7 @@ class TestPageVersionMapper:
         page = make_page(project_id=project.id)
         version = evolve(make_page_version(page_id=page.id), transform=transform)
         async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            await uow.projects.add(project)
-            await uow.pages.add(page)
-            await uow.page_versions.add(version)
-            await uow.commit()
+            await store_project(SqlAlchemyUnitOfWork(session), project, page, versions=[version])
         async with fx_database.sessions() as session:
             assert (await SqlAlchemyUnitOfWork(session).page_versions.get(version.id)).transform == transform
 
@@ -273,10 +271,11 @@ class TestSourceMapper:
         )
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
-            await uow.projects.add(project)
-            await uow.jobs.add(job)
-            await uow.sources.add(source)
-            await uow.commit()
+            async with uow.change():
+                await uow.projects.add(project)
+                await uow.jobs.add(job)
+            async with uow.change_book(project.id):
+                await uow.sources.add(source)
         async with fx_database.sessions() as session:
             assert await SqlAlchemyUnitOfWork(session).sources.get(source.id) == source
 
@@ -296,16 +295,12 @@ class TestScanMapper:
         source = make_source(project_id=project.id)
         scan = evolve(
             make_scan(source=source, number=11),
-            source_label='xii',
+            source_label=ROMAN_LABEL,
             facts=FULL_SCAN_FACTS,
             renditions=Renditions(ready=True, version=3, full=Rendition.FULL_PNG),
         )
         async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            await uow.projects.add(project)
-            await uow.sources.add(source)
-            await uow.scans.add(scan)
-            await uow.commit()
+            await store_project(SqlAlchemyUnitOfWork(session), project, sources=[source], scans=[scan])
         async with fx_database.sessions() as session:
             assert await SqlAlchemyUnitOfWork(session).scans.get(scan.id) == scan
 
@@ -331,8 +326,8 @@ class TestJobMapper:
         )
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
-            await uow.projects.add(project)
-            await uow.jobs.add(job)
-            await uow.commit()
+            async with uow.change():
+                await uow.projects.add(project)
+                await uow.jobs.add(job)
         async with fx_database.sessions() as session:
             assert await SqlAlchemyUnitOfWork(session).jobs.get(job.id) == job

@@ -3,12 +3,13 @@
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+import anyio
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
-from bookreviver.domain.enums import Stage, VersionState
+from bookreviver.domain.enums import JobKind, Stage, VersionState
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import PageId, StorageKey
 from bookreviver.domain.keys import KeySegment, ProjectKeys
@@ -160,12 +161,12 @@ class TestManifest:
         regions = evolve(make_page_version(page_id=page.id, minutes=3), stage=Stage.LAYOUT, input_id=deskewed.id)
         await commit_project(fx_database, project, page, versions=[base, deskewed, regions])
         uow = InMemoryUnitOfWork(fx_database)
-        for version in (base, deskewed):
-            await uow.page_stages.save(
-                make_page_stage(page_id=page.id, stage=version.stage, head_version_id=version.id)
-            )
-        await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.LAYOUT, head_version_id=regions.id))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            for version in (base, deskewed):
+                await uow.page_stages.save(
+                    make_page_stage(page_id=page.id, stage=version.stage, head_version_id=version.id)
+                )
+            await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.LAYOUT, head_version_id=regions.id))
 
         manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
 
@@ -188,8 +189,10 @@ class TestManifest:
         chosen, newer = (_ready(make_page_version(page_id=page.id, minutes=minutes)) for minutes in (1, 2))
         await commit_project(fx_database, project, page, versions=[chosen, newer])
         uow = InMemoryUnitOfWork(fx_database)
-        await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=chosen.id))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_stages.save(
+                make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=chosen.id)
+            )
 
         manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
 
@@ -443,3 +446,39 @@ class TestOpenAsset:
         with pytest.raises(NotFoundError):
             async with fx_service().open_asset(fx_actor, ProjectKeys(project.id).book):
                 pytest.fail('A file that is not stored was opened.')
+
+
+class TestJobsQueuedTogether:
+    """Tests for the check of the active jobs and the insert of a job, which one block of the unit of work makes."""
+
+    @pytest.mark.parametrize('requests', [2, 5], ids=['two', 'five'])
+    async def test_requests_asking_for_the_detection_together_queue_one_job(
+        self,
+        requests: int,
+        fx_service: Callable[[], PageService],
+        fx_database: InMemoryDatabase,
+        fx_actor: Actor,
+    ) -> None:
+        """Verify the requests that pass the check at the same time are told apart by the block, so one job is stored.
+
+        Each request builds its own unit of work, and all of them start before any has finished, so the unique index
+        would be the only guard without the block that holds the check and the insert together.
+
+        :param requests: How many requests ask for the detection together.
+        :type requests: int
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        await commit_project(fx_database, project)
+
+        async with anyio.create_task_group() as group:
+            for _ in range(requests):
+                group.start_soon(fx_service().detect_new_pages, project.id)
+
+        jobs = [job for job in fx_database.tables.jobs.values() if job.project_id == project.id]
+        assert [job.kind for job in jobs] == [JobKind.DETECT_CONTENT]

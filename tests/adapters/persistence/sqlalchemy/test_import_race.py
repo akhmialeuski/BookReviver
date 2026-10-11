@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 UPLOADS: int = 2
+STORAGE_DIRECTORY: str = 'storage'
 
 
 class MeetingSourceStore(LocalSourceStore):
@@ -86,14 +87,16 @@ class TestStartImportOnSqlAlchemy:
         :param tmp_path: Temporary directory of the test, holding the storage root.
         :type tmp_path: Path
         """
-        rig = ImportRig.build(tmp_path / 'storage')
-        sources = MeetingSourceStore(root=tmp_path / 'storage')
+        storage = tmp_path / STORAGE_DIRECTORY
+        rig = ImportRig.build(storage)
+        sources = MeetingSourceStore(root=storage)
         samples = tmp_path / 'samples'
         samples.mkdir()
         project = make_project(owner_id=fx_owner_id)
         async with fx_database.sessions() as session:
-            await SqlAlchemyUnitOfWork(session).projects.add(project)
-            await session.commit()
+            uow = SqlAlchemyUnitOfWork(session)
+            async with uow.change():
+                await uow.projects.add(project)
         outcomes: list[Job | ConflictError] = []
 
         async def upload(name: str) -> None:
@@ -124,5 +127,5 @@ class TestStartImportOnSqlAlchemy:
         expect(len(winners) == len(losers) == 1)
         expect([job.id for job in stored] == [winners[0].id])
         expect(str(losers[0]) == IMPORT_ACTIVE)
-        expect([path.parent.name for path in (tmp_path / 'storage').rglob('*.jpg')] == [str(winners[0].id)])
+        expect([path.parent.name for path in storage.rglob('*.jpg')] == [str(winners[0].id)])
         assert_expectations()

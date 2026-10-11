@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import sqlalchemy as sa
 from alembic import op
 ${imports if imports else ""}
-## The JSONB variant of advanced-alchemy's JsonB renders as JSONB(astext_type=Text())
+## The JSONB variant of a JSON column renders as JSONB(astext_type=Text())
 % if 'Text()' in (upgrades or '') + (downgrades or ''):
 from sqlalchemy import Text
 % endif

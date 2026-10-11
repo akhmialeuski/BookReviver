@@ -64,9 +64,8 @@ async def another_book(kit: ProcessingKit, actor: Actor) -> Project:
     :rtype: Project
     """
     uow = kit.uow()
-    project = await uow.projects.add(make_project(owner_id=actor.account_id, title='Another book'))
-    await uow.commit()
-    return project
+    async with uow.change():
+        return await uow.projects.add(make_project(owner_id=actor.account_id, title='Another book'))
 
 
 async def stored_recipe(kit: ProcessingKit, recipe: Recipe) -> Recipe:

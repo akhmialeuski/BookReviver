@@ -3,6 +3,7 @@
 from datetime import timedelta
 from typing import TYPE_CHECKING, override
 
+import anyio
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
@@ -504,3 +505,74 @@ class TestDeleteAll:
         :type fx_actor: Actor
         """
         await fx_service().delete_all(fx_actor)
+
+
+class SourceStoreWaiting(LocalSourceStore):
+    """The local source store, whose project deletion stops until the test lets it go.
+
+    :ivar reached: Set when the deletion of the files of a project has begun.
+    :ivar proceed: Set by the test to let the deletion carry on.
+    """
+
+    def __init__(self, *, root: Path) -> None:
+        """Keep the files under ``root``, with both events unset.
+
+        :param root: Storage root, created on the first write.
+        :type root: Path
+        """
+        super().__init__(root=root)
+        self.reached = anyio.Event()
+        self.proceed = anyio.Event()
+
+    @override
+    async def delete_project(self, project_id: ProjectId) -> None:
+        """Tell the test the deletion has begun, wait for it, and remove the files.
+
+        :param project_id: Project whose source files are removed.
+        :type project_id: ProjectId
+        """
+        self.reached.set()
+        await self.proceed.wait()
+        await super().delete_project(project_id)
+
+
+class TestDeleteHoldsNoBlockOverTheFiles:
+    """Tests for the deletion of a project, whose files go outside any block and whose row goes in one."""
+
+    async def test_a_block_of_the_book_opens_while_its_files_are_being_removed(
+        self, fx_database: InMemoryDatabase, fx_asset_store: LocalAssetStore, fx_storage_root: Path, fx_actor: Actor
+    ) -> None:
+        """Verify a change of the book is not kept waiting by a slow store, and the deletion ends the row after it.
+
+        :param fx_database: In-memory database of the test.
+        :type fx_database: InMemoryDatabase
+        :param fx_asset_store: Local asset store over the test's storage root.
+        :type fx_asset_store: LocalAssetStore
+        :param fx_storage_root: Storage root both stores share.
+        :type fx_storage_root: Path
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project(owner_id=fx_actor.account_id)
+        await commit_project(fx_database, project)
+        sources = SourceStoreWaiting(root=fx_storage_root)
+        opened = False
+
+        async def open_a_block() -> None:
+            """Open and leave a block of the book of the project, which has to be granted at once."""
+            nonlocal opened
+            uow = InMemoryUnitOfWork(fx_database)
+            async with uow.change_book(project.id):
+                opened = True
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(_service(fx_database, sources, fx_asset_store).delete, fx_actor, project.id)
+            await sources.reached.wait()
+            group.start_soon(open_a_block)
+            await anyio.wait_all_tasks_blocked()
+            expect(opened)
+            sources.proceed.set()
+
+        with pytest.raises(NotFoundError):
+            await _stored(fx_database, project)
+        assert_expectations()

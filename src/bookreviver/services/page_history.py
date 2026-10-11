@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from bookreviver.domain.entities import Actor, PageStage
+    from bookreviver.domain.entities import Actor, PageStage, Recipe
     from bookreviver.domain.ids import PageId, PageStepChangeId, PageVersionId, ProjectId
     from bookreviver.domain.values import PageStepKey
     from bookreviver.ports.persistence import UnitOfWork
@@ -58,7 +58,7 @@ class PageHistoryService:
     ) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose commit ends every changing use case.
+        :param uow: Unit of work of the request, whose blocks end every changing use case.
         :type uow: UnitOfWork
         :param records: Writer of the stage records, which an undo marks stale.
         :type records: StageRecords
@@ -115,48 +115,48 @@ class PageHistoryService:
         :raises ConflictError: If a layer changed after the change that is taken back, which a later change of the
                                same page or of a page of the batch did.
         """
-        history = await self.list(actor, project_id, key)
-        chosen = history.standing[-1:] if change_id is None else history.back_to(change_id)
-        targets = await self._with_batches(project_id, chosen)
-        if not targets:
-            return ()
-        moment = self._clock.now()
-        batch = ChangeBatchId(uuid4()) if len(targets) > 1 else None
-        stored: dict[PageStepKey, PageStepState | None] = {}
-        working: dict[PageStepKey, PageStepState] = {}
-        written: list[PageStepChange] = []
-        for target in targets:
-            if target.scope is not ValueScope.PAGES:
-                continue
-            if target.key not in working:
-                stored[target.key] = await self._uow.page_step_states.find(target.key)
-                working[target.key] = stored[target.key] or PageStepState(
-                    page_id=target.page_id, stage=target.stage, step_id=target.step_id, updated_at=moment
+        async with self._uow.change_book(project_id):
+            history = await self.list(actor, project_id, key)
+            chosen = history.standing[-1:] if change_id is None else history.back_to(change_id)
+            targets = await self._with_batches(project_id, chosen)
+            if not targets:
+                return ()
+            moment = self._clock.now()
+            batch = ChangeBatchId(uuid4()) if len(targets) > 1 else None
+            stored: dict[PageStepKey, PageStepState | None] = {}
+            working: dict[PageStepKey, PageStepState] = {}
+            written: list[PageStepChange] = []
+            for target in targets:
+                if target.scope is not ValueScope.PAGES:
+                    continue
+                if target.key not in working:
+                    stored[target.key] = await self._uow.page_step_states.find(target.key)
+                    working[target.key] = stored[target.key] or PageStepState(
+                        page_id=target.page_id, stage=target.stage, step_id=target.step_id, updated_at=moment
+                    )
+                state = working[target.key]
+                if state.layer(target.layer) != target.after:
+                    raise ConflictError(CHANGED_SINCE.format(layer=target.layer.label))
+                reverted = state.with_layer(target.layer, target.before, moment)
+                working[target.key] = reverted
+                written.append(
+                    evolve(
+                        PageStepChange.between(state, reverted, target.layer, ChangeSource.UNDO),
+                        batch_id=batch,
+                        undoes=target.id,
+                    )
                 )
-            state = working[target.key]
-            if state.layer(target.layer) != target.after:
-                raise ConflictError(CHANGED_SINCE.format(layer=target.layer.label))
-            reverted = state.with_layer(target.layer, target.before, moment)
-            working[target.key] = reverted
-            written.append(
-                evolve(
-                    PageStepChange.between(state, reverted, target.layer, ChangeSource.UNDO),
-                    batch_id=batch,
-                    undoes=target.id,
-                )
-            )
-        for state_key, final in working.items():
-            if not final.is_empty:
-                await self._uow.page_step_states.save(final)
-            elif stored[state_key] is not None:
-                await self._uow.page_step_states.delete(state_key)
-        undone, parts_stale = await self._take_parts_back(project_id, targets, moment, batch)
-        written.extend(undone)
-        added = await self._uow.page_step_changes.add_many(written)
-        stale = [*parts_stale]
-        for page_id, stage in dict.fromkeys((change.page_id, change.stage) for change in added):
-            stale.extend(await self._records.mark_stale(page_id, stage))
-        await self._uow.commit()
+            for state_key, final in working.items():
+                if not final.is_empty:
+                    await self._uow.page_step_states.save(final)
+                elif stored[state_key] is not None:
+                    await self._uow.page_step_states.delete(state_key)
+            undone, parts_stale = await self._take_parts_back(project_id, targets, moment, batch)
+            written.extend(undone)
+            added = await self._uow.page_step_changes.add_many(written)
+            stale = [*parts_stale]
+            for page_id, stage in dict.fromkeys((change.page_id, change.stage) for change in added):
+                stale.extend(await self._records.mark_stale(page_id, stage))
         await self._records.announce(project_id, stale)
         return added
 
@@ -172,15 +172,17 @@ class PageHistoryService:
 
         The version the stage stands on was made by a step in the middle of the recipe, which cuts no pyramid, and the
         page is shown by the pyramid of the current version of its stage. So the cutting of that pyramid is queued once
-        the clear is committed, which a project busy with another tile cutting or collection leaves undone.
+        the block of the clear has ended, which a project busy with another tile cutting or collection leaves undone.
 
         A preview of the project, queued or running, is cancelled first, since the reader asked for the clear and a
         preview is disposable: the editor of a step asks for one by itself when the step is opened, so a clear a moment
         later would otherwise be refused by a job the reader never started. It writes versions of the preview scale
         only, and its last write finds the job cancelled and changes nothing, as for a run.
 
-        The files of the deleted versions are removed after the transaction committed, so a store that fails to remove
-        them leaves them without a row for the next collection and does not fail the clear.
+        The cancelling and the queuing of the tile cutting are blocks of their own, so this use case opens one block for
+        the rows and is called outside a block. The files of the deleted versions are removed after that block ended,
+        so a store that fails to remove them leaves them without a row for the next collection and does not fail the
+        clear.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -196,46 +198,46 @@ class PageHistoryService:
         :raises ConflictError: If a run, a measure of the book, a tile cutting or a collection of the project is queued
                                or running, which may be reading or deleting the versions the clear deletes.
         """
-        await owned_page(self._uow, actor, project_id, key.page_id)
-        recipes = await self._uow.recipes.list_for_stage(project_id, key.stage)
-        if not any(step.step_id == key.step_id for recipe in recipes for step in recipe.steps):
-            raise NotFoundError(key.step_id)
+        # The step is checked before the previews are cancelled, so a request the block would refuse cancels nothing
+        await self._recipes_with_step(actor, project_id, key)
         if await self._starter.free_of_previews(project_id):
             raise ConflictError(PROJECT_BUSY)
-        stored = await self._uow.page_step_states.find(key)
-        if stored is not None:
-            await self._uow.page_step_states.delete(key)
-        changes = await self._uow.page_step_changes.delete_for_step(key)
-        versions = await self._uow.page_versions.list_for_page(key.page_id)
-        chain = StepVersions.of(versions, key.stage, step_places(recipes, key.step_id))
-        if stored is None and not changes and not chain.doomed:
-            return ClearedStep(changes=0, versions=())
-        stale: list[PageStage] = []
-        untiled: list[PageVersionId] = []
-        for record in await self._uow.page_stages.list_for_page(key.page_id):
-            if record.head_version_id is None or record.head_version_id not in chain.doomed:
-                continue
-            head = chain.input_of(record.head_version_id) if record.stage is key.stage else None
-            if head is None:
-                stale.extend(await self._records.clear(record.key))
-                continue
-            if (kept := chain.versions[head]).renditions is not None and not kept.tiles_ready:
-                untiled.append(head)
-            # The new head is the result of the step at its depth in the recipe the page was run by, and the page was
-            # run through that step only, which is before the last step that is on
-            recipe = next((recipe for recipe in recipes if recipe.id == record.recipe_id), None)
-            enabled = () if recipe is None else recipe.indexed_steps_through(None)
-            place = chain.depths[head]
-            through_step = None if recipe is None or place >= len(enabled) else recipe.stopped_at(enabled[place][0])
-            # The record is marked stale below, so only the later stages that the new head makes stale are announced
-            _, *later = await self._records.set_head(
-                record.key, head_version_id=head, recipe_id=record.recipe_id, through_step=through_step
-            )
-            stale.extend(later)
-        stale.extend(await self._records.mark_stale(key.page_id, key.stage))
-        deleted = tuple(version for version in versions if version.id in chain.doomed)
-        await self._uow.page_versions.delete_many([version.id for version in deleted])
-        await self._uow.commit()
+        async with self._uow.change_book(project_id):
+            recipes = await self._recipes_with_step(actor, project_id, key)
+            stored = await self._uow.page_step_states.find(key)
+            if stored is not None:
+                await self._uow.page_step_states.delete(key)
+            changes = await self._uow.page_step_changes.delete_for_step(key)
+            versions = await self._uow.page_versions.list_for_page(key.page_id)
+            chain = StepVersions.of(versions, key.stage, step_places(recipes, key.step_id))
+            if stored is None and not changes and not chain.doomed:
+                return ClearedStep(changes=0, versions=())
+            stale: list[PageStage] = []
+            untiled: list[PageVersionId] = []
+            for record in await self._uow.page_stages.list_for_page(key.page_id):
+                if record.head_version_id is None or record.head_version_id not in chain.doomed:
+                    continue
+                head = chain.input_of(record.head_version_id) if record.stage is key.stage else None
+                if head is None:
+                    stale.extend(await self._records.clear(record.key))
+                    continue
+                if (kept := chain.versions[head]).renditions is not None and not kept.tiles_ready:
+                    untiled.append(head)
+                # The new head is the result of the step at its depth in the recipe the page was run by, and the page
+                # was run through that step only, which is before the last step that is on
+                recipe = next((recipe for recipe in recipes if recipe.id == record.recipe_id), None)
+                enabled = () if recipe is None else recipe.indexed_steps_through(None)
+                place = chain.depths[head]
+                through_step = None if recipe is None or place >= len(enabled) else recipe.stopped_at(enabled[place][0])
+                # The record is marked stale below, so only the later stages that the new head makes stale are
+                # announced
+                _, *later = await self._records.set_head(
+                    record.key, head_version_id=head, recipe_id=record.recipe_id, through_step=through_step
+                )
+                stale.extend(later)
+            stale.extend(await self._records.mark_stale(key.page_id, key.stage))
+            deleted = tuple(version for version in versions if version.id in chain.doomed)
+            await self._uow.page_versions.delete_many([version.id for version in deleted])
         await self._records.announce(project_id, stale)
         await self._starter.enqueue_tiles(project_id, untiled)
         for version in deleted:
@@ -244,6 +246,29 @@ class PageHistoryService:
             except OSError:
                 logger.exception('The files of the version %s were not removed after its page was cleared', version.id)
         return ClearedStep(changes=changes, versions=deleted)
+
+    async def _recipes_with_step(self, actor: Actor, project_id: ProjectId, key: PageStepKey) -> Sequence[Recipe]:
+        """Read the recipes of the stage of a page of the actor's project, which must include the step.
+
+        It only reads, so it is called outside a block, to refuse a request before anything is cancelled, and inside the
+        block, to decide on what the block holds.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param key: The page, the stage and the step.
+        :type key: PageStepKey
+        :returns: The recipes of the stage.
+        :rtype: Sequence[Recipe]
+        :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the stage
+                               has the step.
+        """
+        await owned_page(self._uow, actor, project_id, key.page_id)
+        recipes = await self._uow.recipes.list_for_stage(project_id, key.stage)
+        if not any(step.step_id == key.step_id for recipe in recipes for step in recipe.steps):
+            raise NotFoundError(key.step_id)
+        return recipes
 
     async def _take_parts_back(
         self, project_id: ProjectId, targets: Sequence[PageStepChange], moment: datetime, batch: ChangeBatchId | None

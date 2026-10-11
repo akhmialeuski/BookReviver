@@ -116,9 +116,9 @@ async def fx_extra_providers(fx_fakes: JobFakes, fx_book: Book) -> Sequence[Prov
         versions=fx_book.versions,
     )
     uow = InMemoryUnitOfWork(fx_fakes.database)
-    for record in fx_book.records:
-        await uow.page_stages.save(record)
-    await uow.commit()
+    async with uow.change_book(fx_book.project.id):
+        for record in fx_book.records:
+            await uow.page_stages.save(record)
     return (JobFakesProvider(fx_fakes), ProcessingFakesProvider())
 
 

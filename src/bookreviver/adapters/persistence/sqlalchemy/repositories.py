@@ -22,7 +22,7 @@ from itertools import batched, chain
 from operator import attrgetter
 from typing import TYPE_CHECKING, Any, ClassVar, override
 
-from advanced_alchemy.exceptions import DuplicateKeyError, ForeignKeyError, RepositoryError, wrap_sqlalchemy_exception
+from advanced_alchemy.exceptions import DuplicateKeyError, ForeignKeyError, wrap_sqlalchemy_exception
 from advanced_alchemy.exceptions import NotFoundError as MissingRowError
 from advanced_alchemy.filters import CollectionFilter, LimitOffset
 from advanced_alchemy.repository import DEFAULT_ERROR_MESSAGE_TEMPLATES, SQLAlchemyAsyncRepository
@@ -30,7 +30,6 @@ from attrs import evolve
 from sqlalchemy import Table, UniqueConstraint, and_, case, delete, exists, func, inspect, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.orm.exc import StaleDataError
 
 from bookreviver.adapters.persistence.sqlalchemy.database import SQLITE_DIALECT
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
@@ -97,7 +96,7 @@ from bookreviver.domain.enums import (
     VersionScale,
     VersionState,
 )
-from bookreviver.domain.errors import ConcurrentChangeError, ConflictError, NotFoundError
+from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import (
     JobId,
     PageId,
@@ -260,8 +259,6 @@ class RowRepository[RowT: ModelProtocol](SQLAlchemyAsyncRepository[RowT]):
         :rtype: RowT
         :raises NotFoundError: If no row has this key, or a row this one refers to through a foreign key is not stored.
         :raises ConflictError: If the new state takes a unique value of another row.
-        :raises ConcurrentChangeError: If the table counts versions and another transaction changed the row after the
-                                       state was read.
         """
         with self._reporting_integrity_errors([data]):
             return await super().update(data, **options)
@@ -309,11 +306,6 @@ class RowRepository[RowT: ModelProtocol](SQLAlchemyAsyncRepository[RowT]):
             ]
             parents = (getattr(row, key) for row in rows for key in references)
             raise NotFoundError(*dict.fromkeys(parent for parent in parents if parent is not None)) from error
-        except RepositoryError as error:
-            # The library wraps every SQLAlchemy error, so the version counter's refusal arrives as its cause
-            if isinstance(error.__cause__, StaleDataError):
-                raise ConcurrentChangeError from error
-            raise
 
 
 class ProjectRows(RowRepository[ProjectRow]):
@@ -509,8 +501,6 @@ class SqlAlchemyRepository[EntityT, IdT, RowT: ModelProtocol](Repository[EntityT
         :returns: The entity as stored.
         :rtype: EntityT
         :raises NotFoundError: If the entity is not stored.
-        :raises ConcurrentChangeError: If the entity's row counts versions and another transaction changed it after the
-                                       entity was read.
         """
         return self._mapper.to_entity(await self._rows.update(self._mapper.to_row(entity)))
 
@@ -634,16 +624,18 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
         )
 
     @staticmethod
-    def _book_counts(project_id: QueryableAttribute[UUID] | ProjectId) -> tuple[ScalarSelect[int], ...]:
+    def _book_counts(
+        project_id: QueryableAttribute[UUID] | ProjectId,
+    ) -> tuple[ScalarSelect[int], ScalarSelect[int], ScalarSelect[int], ScalarSelect[int]]:
         """Return the scalar subqueries counting a project's included pages, sources and scans.
 
         :param project_id: The project's identifier, or the identifier column of the enclosing query's project rows,
                            which the subqueries then correlate with.
         :type project_id: QueryableAttribute[UUID] | ProjectId
         :returns: The count of included pages, of sources, of scans and of pages with an image, in this order.
-        :rtype: tuple[ScalarSelect[int], ...]
+        :rtype: tuple[ScalarSelect[int], ScalarSelect[int], ScalarSelect[int], ScalarSelect[int]]
         """
-        return tuple(
+        pages, sources, scans, with_image = (
             select(func.count()).where(*conditions).correlate(ProjectRow).scalar_subquery()
             for conditions in (
                 (PageRow.project_id == project_id, PageRow.included.is_(True)),
@@ -652,6 +644,7 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
                 (PageRow.project_id == project_id, PageRow.origin != PageOrigin.PLACEHOLDER),
             )
         )
+        return pages, sources, scans, with_image
 
 
 class SqlAlchemySourceRepository(SqlAlchemyRepository[Source, SourceId, SourceRow], SourceRepository):
@@ -784,30 +777,6 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
         :type session: AsyncSession
         """
         super().__init__(rows=PageRows(session=session), mapper=PageMapper())
-
-    @override
-    async def update(self, entity: Page) -> Page:
-        """Replace the stored state of a page that has not changed since it was read.
-
-        The version counter of the table refuses a write over a row that changed after the library loaded it, but the
-        library loads the row again at the update, and the session keeps no row nobody refers to, so the counter alone
-        never sees a change committed between the read of the page and its update. The revision the page was read at
-        is therefore compared with the loaded row here, and the counter still covers the time between that load and
-        the ``UPDATE`` statement.
-
-        :param entity: Page with its new state and the revision it was read at.
-        :type entity: Page
-        :returns: The page as stored, with its revision raised by one.
-        :rtype: Page
-        :raises NotFoundError: If the page is not stored.
-        :raises ConflictError: If the new state takes a key another page has.
-        :raises ConcurrentChangeError: If the page was changed after it was read.
-        """
-        # The reference keeps the row in the session, so the update below changes this very row
-        stored = await self._rows.get(entity.id)
-        if stored.revision != entity.revision:
-            raise ConcurrentChangeError
-        return await super().update(entity)
 
     @override
     async def list_for_project(
@@ -1093,7 +1062,8 @@ class SqlAlchemyPageVersionRepository(
                 PageVersionRow.stage == Stage.PAGE_SPLIT,
             )
         )
-        sizes = (PageSize.from_data(data) for data in (await self._rows.session.scalars(statement)).all())
+        stored: Sequence[dict[str, Any]] = (await self._rows.session.scalars(statement)).all()
+        sizes = (PageSize.from_data(data) for data in stored)
         return [size for size in sizes if size is not None]
 
     @override
@@ -1215,7 +1185,10 @@ class SqlAlchemyPageVersionRepository(
             )
         ).all()
         goes = collectable_versions(
-            {PageVersionId(version_id): input_id for version_id, input_id, _ in rows},
+            {
+                PageVersionId(version_id): None if input_id is None else PageVersionId(input_id)
+                for version_id, input_id, _ in rows
+            },
             eligible=[PageVersionId(version_id) for version_id, _, can_go in rows if can_go],
             heads=[PageVersionId(head) for head in heads if head is not None],
         )
@@ -1423,7 +1396,7 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
         if not project_ids:
             return list[StageTally]()
         marked = and_(PageStageRow.state != StageState.FAILED, PageVersionRow.review.is_not(None))
-        counted = (
+        fresh_sum, stale_sum, failed_sum, review_sum, check_sum, partial_sum = (
             func.coalesce(func.sum(case((condition, 1), else_=0)), 0)
             for condition in (
                 PageStageRow.state == StageState.FRESH,
@@ -1435,7 +1408,16 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
             )
         )
         statement = (
-            select(PageRow.project_id, PageStageRow.stage, *counted)
+            select(
+                PageRow.project_id,
+                PageStageRow.stage,
+                fresh_sum,
+                stale_sum,
+                failed_sum,
+                review_sum,
+                check_sum,
+                partial_sum,
+            )
             .select_from(PageStageRow)
             .join(PageRow, PageStageRow.page_id == PageRow.id)
             .outerjoin(PageVersionRow, PageStageRow.head_version_id == PageVersionRow.id)
@@ -1481,6 +1463,7 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
         return [
             StepTally(stage=stage, through_step=through_step, pages=pages)
             for stage, through_step, pages in await self._rows.session.execute(statement)
+            if through_step is not None
         ]
 
 
@@ -2019,7 +2002,8 @@ class SqlAlchemyRecipeProfileRepository(
         )
         counted: dict[RecipeProfileId, int] = {}
         for profile_id, books in await self._rows.session.execute(statement):
-            counted[RecipeProfileId(profile_id)] = int(books)
+            if profile_id is not None:
+                counted[RecipeProfileId(profile_id)] = int(books)
         return counted
 
 

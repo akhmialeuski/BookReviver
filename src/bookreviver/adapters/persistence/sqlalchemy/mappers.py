@@ -310,7 +310,6 @@ class PageMapper(RowMapper[Page, PageRow]):
             group_label=row.group_label,
             created_at=row.created_at,
             updated_at=row.updated_at,
-            revision=row.revision,
         )
 
     @override
@@ -340,7 +339,6 @@ class PageMapper(RowMapper[Page, PageRow]):
             group_label=entity.group_label,
             created_at=entity.created_at,
             updated_at=entity.updated_at,
-            revision=entity.revision,
         )
 
 

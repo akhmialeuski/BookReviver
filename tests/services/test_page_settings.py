@@ -51,6 +51,7 @@ pytestmark = pytest.mark.anyio
 
 COUNT_BEFORE_PATCH: str = 'bookreviver.adapters.persistence.memory.unit_of_work.InMemoryPageRepository.count_before'
 STEPS_OF_A_CHAIN: int = 3
+UNKNOWN_FIELD: str = 'no_such_field'
 FAKE_KEY: str = FakeProcessor.spec.key
 STRONGER: int = 2
 STRONGEST: int = 3
@@ -136,8 +137,8 @@ async def put_in_group(kit: ProcessingKit, page: Page, label: str) -> None:
     :type label: str
     """
     uow = kit.uow()
-    await uow.pages.update(evolve(await uow.pages.get(page.id), group_label=label))
-    await uow.commit()
+    async with uow.change_book(page.project_id):
+        await uow.pages.update(evolve(await uow.pages.get(page.id), group_label=label))
 
 
 async def strengths(kit: ProcessingKit, actor: Actor, project: Project, pages: list[Page]) -> list[object]:
@@ -249,7 +250,7 @@ class TestPageValues:
         actor, project, page, _ = await ran_geometry(fx_kit)
         key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
         with pytest.raises(InvalidParametersError):
-            await PageValues(fx_kit, actor, project.id).set(key, 'no_such_field', 1)
+            await PageValues(fx_kit, actor, project.id).set(key, UNKNOWN_FIELD, 1)
         expect(await fx_kit.uow().page_step_states.find(key) is None)
         expect(await fx_kit.uow().page_step_changes.list_for_page(page.id) == [])
         assert_expectations()
@@ -517,7 +518,7 @@ class TestValuesForPartsOfTheBook:
         :type fx_kit: ProcessingKit
         """
         actor, project, pages, step_id = await ran_book(fx_kit)
-        field = ValueField(stage=Stage.GEOMETRY, step_id=step_id, name='no_such_field', target=on(ValueScope.EVEN))
+        field = ValueField(stage=Stage.GEOMETRY, step_id=step_id, name=UNKNOWN_FIELD, target=on(ValueScope.EVEN))
         with pytest.raises(InvalidParametersError):
             await fx_kit.page_settings().change(actor, project.id, field, 1)
         expect(await fx_kit.uow().step_values.list_for_step(project.id, step_id) == [])
@@ -572,8 +573,8 @@ class TestValuesForPartsOfTheBook:
             :rtype: list[StageState]
             """
             uow = fx_kit.uow()
-            await fx_kit.parts(uow).records.mark_group_stale(project.id, page.id, labels)
-            await uow.commit()
+            async with uow.change_book(project.id):
+                await fx_kit.parts(uow).records.mark_group_stale(project.id, page.id, labels)
             return await stages_of(fx_kit, pages)
 
         expect(await moved(pages[0], {'', 'Plates'}) == [StageState.FRESH, StageState.FRESH])
@@ -596,9 +597,10 @@ class TestValuesForPartsOfTheBook:
         for page in pages:
             await fx_kit.seed_base_version(page)
         uow = fx_kit.uow()
-        for recipe in await uow.recipes.list_for_stage(first.id, Stage.GEOMETRY):
-            await uow.recipes.add(evolve(recipe, id=RecipeId(uuid4()), project_id=second.id))
-        await uow.commit()
+        recipes = await uow.recipes.list_for_stage(first.id, Stage.GEOMETRY)
+        async with uow.change_book(second.id):
+            for recipe in recipes:
+                await uow.recipes.add(evolve(recipe, id=RecipeId(uuid4()), project_id=second.id))
         await run_stage(fx_kit, other_actor, second, GEOMETRY_RUN)
         heads = [await head_of(fx_kit, page, Stage.GEOMETRY) for page in pages]
         expect([head.params[STRENGTH_PARAMETER] for head in heads] == [RECIPE_STRENGTH, RECIPE_STRENGTH])

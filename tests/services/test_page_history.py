@@ -39,6 +39,7 @@ pytestmark = pytest.mark.anyio
 
 FAKE_KEY: str = FakeProcessor.spec.key
 STRONGER: int = 2
+BUSY_MESSAGE: str = 'project is busy'
 STRONGEST: int = 3
 NOT_FAILING: bool = False
 OTHER_ORDER_KEY: str = 'a1'
@@ -254,9 +255,9 @@ class TestUndo:
         key = await step_key(fx_kit, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         uow = fx_kit.uow()
-        record = await uow.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
-        await uow.page_stages.save(evolve(record, state=StageState.FRESH))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            record = await uow.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+            await uow.page_stages.save(evolve(record, state=StageState.FRESH))
         fx_kit.events.published.clear()
         await fx_kit.page_history().undo(actor, project.id, key, None)
         stored = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
@@ -275,8 +276,8 @@ class TestUndo:
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         [change] = await history_of(fx_kit, actor, project, key)
         uow = fx_kit.uow()
-        await uow.page_step_states.save(make_page_step_state(page_id=page.id, step_id=key.step_id, params={'x': 1}))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_step_states.save(make_page_step_state(page_id=page.id, step_id=key.step_id, params={'x': 1}))
         with pytest.raises(ConflictError):
             await fx_kit.page_history().undo(actor, project.id, key, change.id)
         expect((await fx_kit.uow().page_step_states.get(key)).params == {'x': 1})
@@ -360,21 +361,23 @@ class TestUndoOfABatch:
         other_key = evolve(key, page_id=other.id)
         batch = ChangeBatchId(uuid4())
         uow = fx_kit.uow()
-        for at in (key, other_key):
-            state = make_page_step_state(page_id=at.page_id, step_id=at.step_id, params={STRENGTH_PARAMETER: STRONGER})
-            await uow.page_step_states.save(state)
-            await uow.page_step_changes.add(
-                evolve(
-                    PageStepChange.between(
-                        make_page_step_state(page_id=at.page_id, step_id=at.step_id),
-                        state,
-                        StepLayer.SETTINGS,
-                        ChangeSource.CARRY_OVER,
-                    ),
-                    batch_id=batch,
+        async with uow.change_book(project.id):
+            for at in (key, other_key):
+                state = make_page_step_state(
+                    page_id=at.page_id, step_id=at.step_id, params={STRENGTH_PARAMETER: STRONGER}
                 )
-            )
-        await uow.commit()
+                await uow.page_step_states.save(state)
+                await uow.page_step_changes.add(
+                    evolve(
+                        PageStepChange.between(
+                            make_page_step_state(page_id=at.page_id, step_id=at.step_id),
+                            state,
+                            StepLayer.SETTINGS,
+                            ChangeSource.CARRY_OVER,
+                        ),
+                        batch_id=batch,
+                    )
+                )
         undone = await fx_kit.page_history().undo(actor, project.id, key, None)
         expect(sorted(undo.page_id for undo in undone) == sorted([page.id, other.id]))
         expect(len({undo.batch_id for undo in undone}) == 1 and undone[0].batch_id not in {None, batch})
@@ -395,16 +398,17 @@ class TestUndoOfABatch:
         other_key = evolve(key, page_id=other.id)
         batch = ChangeBatchId(uuid4())
         uow = fx_kit.uow()
-        for at, params in ((key, {STRENGTH_PARAMETER: STRONGER}), (other_key, {STRENGTH_PARAMETER: STRONGEST})):
-            empty = make_page_step_state(page_id=at.page_id, step_id=at.step_id)
-            carried = evolve(empty, params={STRENGTH_PARAMETER: STRONGER})
-            await uow.page_step_states.save(evolve(empty, params=params))
-            await uow.page_step_changes.add(
-                evolve(
-                    PageStepChange.between(empty, carried, StepLayer.SETTINGS, ChangeSource.CARRY_OVER), batch_id=batch
+        async with uow.change_book(project.id):
+            for at, params in ((key, {STRENGTH_PARAMETER: STRONGER}), (other_key, {STRENGTH_PARAMETER: STRONGEST})):
+                empty = make_page_step_state(page_id=at.page_id, step_id=at.step_id)
+                carried = evolve(empty, params={STRENGTH_PARAMETER: STRONGER})
+                await uow.page_step_states.save(evolve(empty, params=params))
+                await uow.page_step_changes.add(
+                    evolve(
+                        PageStepChange.between(empty, carried, StepLayer.SETTINGS, ChangeSource.CARRY_OVER),
+                        batch_id=batch,
+                    )
                 )
-            )
-        await uow.commit()
         with pytest.raises(ConflictError):
             await fx_kit.page_history().undo(actor, project.id, key, None)
         expect((await fx_kit.uow().page_step_states.get(key)).params == {STRENGTH_PARAMETER: STRONGER})
@@ -480,8 +484,8 @@ class TestClear:
         """
         actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
         uow = fx_kit.uow()
-        await uow.page_versions.update(evolve(made[0], tiles_ready=True))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.update(evolve(made[0], tiles_ready=True))
         queued = len(fx_kit.recording.enqueued)
         await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
         await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[0]))
@@ -500,9 +504,9 @@ class TestClear:
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)])
         blank_recipe = await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, draft, RecipeKind.BLANK)
         uow = fx_kit.uow()
-        record = await uow.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
-        await uow.page_stages.save(evolve(record, recipe_id=blank_recipe.id))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            record = await uow.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+            await uow.page_stages.save(evolve(record, recipe_id=blank_recipe.id))
         await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
         stored = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         expect((stored.head_version_id, stored.recipe_id, stored.through_step) == (made[0].id, blank_recipe.id, 0))
@@ -531,9 +535,9 @@ class TestClear:
         key = PageStepKey(page.id, Stage.GEOMETRY, step_ids[0])
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         uow = fx_kit.uow()
-        for version in made:
-            await uow.result_mark_changes.add(make_result_mark_change(version_id=version.id))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            for version in made:
+                await uow.result_mark_changes.add(make_result_mark_change(version_id=version.id))
         expect([await has_files(fx_kit, project, version) for version in made] == [True, True])
         cleared = await fx_kit.page_history().clear(actor, project.id, key)
         stored = fx_kit.uow()
@@ -561,8 +565,8 @@ class TestClear:
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         uow = fx_kit.uow()
         before = {version.id for version in await uow.page_versions.list_for_page(other.id)}
-        await uow.result_mark_changes.add(make_result_mark_change(version_id=first.id))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.result_mark_changes.add(make_result_mark_change(version_id=first.id))
         await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
         stored = fx_kit.uow()
         kept = {version.id for version in await stored.page_versions.list_for_page(page.id)}
@@ -640,21 +644,23 @@ class TestClear:
         other_key = evolve(key, page_id=other.id)
         batch = ChangeBatchId(uuid4())
         uow = fx_kit.uow()
-        for at in (key, other_key):
-            state = make_page_step_state(page_id=at.page_id, step_id=at.step_id, params={STRENGTH_PARAMETER: STRONGER})
-            await uow.page_step_states.save(state)
-            await uow.page_step_changes.add(
-                evolve(
-                    PageStepChange.between(
-                        make_page_step_state(page_id=at.page_id, step_id=at.step_id),
-                        state,
-                        StepLayer.SETTINGS,
-                        ChangeSource.CARRY_OVER,
-                    ),
-                    batch_id=batch,
+        async with uow.change_book(project.id):
+            for at in (key, other_key):
+                state = make_page_step_state(
+                    page_id=at.page_id, step_id=at.step_id, params={STRENGTH_PARAMETER: STRONGER}
                 )
-            )
-        await uow.commit()
+                await uow.page_step_states.save(state)
+                await uow.page_step_changes.add(
+                    evolve(
+                        PageStepChange.between(
+                            make_page_step_state(page_id=at.page_id, step_id=at.step_id),
+                            state,
+                            StepLayer.SETTINGS,
+                            ChangeSource.CARRY_OVER,
+                        ),
+                        batch_id=batch,
+                    )
+                )
         await fx_kit.page_history().clear(actor, project.id, key)
         kept = await history_of(fx_kit, actor, project, other_key)
         undone = await fx_kit.page_history().undo(actor, project.id, other_key, None)
@@ -691,7 +697,7 @@ class TestClear:
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         written = len(await history_of(fx_kit, actor, project, key))
         await fx_kit.service().start_collection(actor, project.id)
-        with pytest.raises(ConflictError, match='project is busy'):
+        with pytest.raises(ConflictError, match=BUSY_MESSAGE):
             await fx_kit.page_history().clear(actor, project.id, key)
         stored = fx_kit.uow()
         expect(len(await history_of(fx_kit, actor, project, key)) == written)
@@ -753,7 +759,7 @@ class TestClear:
         job = await fx_kit.parts(fx_kit.uow()).starter.enqueue(
             project.id, active, StageRun(stage=Stage.GEOMETRY).to_map()
         )
-        with pytest.raises(ConflictError, match='project is busy'):
+        with pytest.raises(ConflictError, match=BUSY_MESSAGE):
             await fx_kit.page_history().clear(actor, project.id, key)
         stored = fx_kit.uow()
         expect((await stored.jobs.get(job.id)).state is JobState.QUEUED)

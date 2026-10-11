@@ -264,8 +264,8 @@ class TestUploadSources:
         :type tmp_path: Path
         """
         uow = InMemoryUnitOfWork(fx_fakes.database)
-        await uow.jobs.add(make_job(project_id=fx_project.id, state=JobState.RUNNING))
-        await uow.commit()
+        async with uow.change():
+            await uow.jobs.add(make_job(project_id=fx_project.id, state=JobState.RUNNING))
 
         response = await fx_client.post(
             SOURCES_PATH.format(project_id=fx_project.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])
@@ -406,8 +406,8 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
         :type tmp_path: Path
         """
         uow = InMemoryUnitOfWork(fx_fakes.database)
-        await uow.jobs.add(make_job(project_id=fx_project.id, state=JobState.QUEUED))
-        await uow.commit()
+        async with uow.change():
+            await uow.jobs.add(make_job(project_id=fx_project.id, state=JobState.QUEUED))
 
         response = await fx_client.post(
             SOURCES_PATH.format(project_id=fx_project.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])

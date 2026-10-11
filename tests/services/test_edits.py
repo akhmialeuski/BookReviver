@@ -28,6 +28,7 @@ FAKE_KEY: str = FakeProcessor.spec.key
 ERASER_KEY: str = CleanupProcessor.spec.key
 ROTATION: NewPageEdit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=1.5))
 MASK_CONTENT: bytes = b'mask-bytes' * 1000
+MASK_NAME: str = 'mask.png'
 
 
 async def prepared(kit: ProcessingKit) -> tuple[Actor, Project, Page]:
@@ -193,7 +194,7 @@ class TestSave:
         actor, project, page = await prepared(fx_kit)
         key = await fx_kit.edit_key(page, Stage.CLEANUP, ERASER_KEY)
         edit = NewPageEdit(kind=EditorKind.BRUSH_MASK)
-        stored = await fx_kit.edits().save(actor, project.id, key, edit, upload('mask.png', content=MASK_CONTENT))
+        stored = await fx_kit.edits().save(actor, project.id, key, edit, upload(MASK_NAME, content=MASK_CONTENT))
         assert stored.mask_key is not None
         async with fx_kit.assets.readable(stored.mask_key) as mask:
             content = mask.read_bytes()
@@ -214,9 +215,9 @@ class TestSave:
         key = await fx_kit.edit_key(page, Stage.CLEANUP, ERASER_KEY)
         strokes = BrushStrokes(strokes=(Stroke(radius=9, points=(Point(x=3, y=4),)),))
         edit = NewPageEdit(kind=EditorKind.BRUSH_MASK, geometry=strokes)
-        stored = await fx_kit.edits().save(actor, project.id, key, edit, upload('mask.png', content=MASK_CONTENT))
+        stored = await fx_kit.edits().save(actor, project.id, key, edit, upload(MASK_NAME, content=MASK_CONTENT))
         other = NewPageEdit(kind=EditorKind.BRUSH_MASK, geometry=BrushStrokes())
-        changed = await fx_kit.edits().save(actor, project.id, key, other, upload('mask.png', content=MASK_CONTENT))
+        changed = await fx_kit.edits().save(actor, project.id, key, other, upload(MASK_NAME, content=MASK_CONTENT))
         expect(stored.geometry == strokes)
         expect(stored.mask_key is not None)
         expect(changed.edit_hash != stored.edit_hash)
@@ -231,8 +232,8 @@ class TestSave:
         actor, project, page = await prepared(fx_kit)
         key = await fx_kit.edit_key(page, Stage.CLEANUP, ERASER_KEY)
         edit = NewPageEdit(kind=EditorKind.BRUSH_MASK)
-        first = await fx_kit.edits().save(actor, project.id, key, edit, upload('mask.png', content=MASK_CONTENT))
-        second = await fx_kit.edits().save(actor, project.id, key, edit, upload('mask.png', content=MASK_CONTENT))
+        first = await fx_kit.edits().save(actor, project.id, key, edit, upload(MASK_NAME, content=MASK_CONTENT))
+        second = await fx_kit.edits().save(actor, project.id, key, edit, upload(MASK_NAME, content=MASK_CONTENT))
         assert first.edit_hash == second.edit_hash
 
     async def test_page_of_another_project_is_not_found(self, fx_kit: ProcessingKit) -> None:
@@ -262,8 +263,8 @@ class TestDelete:
         key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
         await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
         uow = fx_kit.uow()
-        await uow.page_stages.save(make_page_stage(page_id=page.id))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_stages.save(make_page_stage(page_id=page.id))
         await fx_kit.edits().delete(actor, project.id, key)
         record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         expect(await fx_kit.edits().list(actor, project.id, page.id, Stage.GEOMETRY) == [])

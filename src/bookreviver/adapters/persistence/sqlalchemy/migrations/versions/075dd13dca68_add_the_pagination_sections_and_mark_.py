@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 
 import advanced_alchemy.types.datetime
 import advanced_alchemy.types.guid
-import advanced_alchemy.types.json
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import Text
@@ -78,7 +77,6 @@ def schema_upgrades() -> None:
             'kinds',
             sa.JSON()
             .with_variant(postgresql.JSONB(astext_type=Text()), 'cockroachdb')
-            .with_variant(advanced_alchemy.types.json.ORA_JSONB(), 'oracle')
             .with_variant(postgresql.JSONB(astext_type=Text()), 'postgresql'),
             nullable=False,
         ),

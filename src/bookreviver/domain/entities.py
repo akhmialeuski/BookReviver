@@ -261,8 +261,6 @@ class Page:
     :ivar group_label: Label of the group the user put the page in by hand, or empty for no group.
     :ivar created_at: When the page was created.
     :ivar updated_at: When the page was last changed.
-    :ivar revision: How many times the stored page has been written since it was added, which a write has to match so
-                    that it never replaces a change it did not read.
     """
 
     WHOLE_SCAN: ClassVar[int] = 0
@@ -286,7 +284,6 @@ class Page:
     group_label: str = ''
     created_at: datetime
     updated_at: datetime
-    revision: int = field(default=0, validator=validators.ge(0))
 
     def __attrs_post_init__(self) -> None:
         """Check the scan of the page, its leaf and its content type.

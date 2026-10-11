@@ -16,6 +16,7 @@ from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyU
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.errors import NotFoundError
 from tests.helpers.builders import make_job, make_page, make_project, make_scan, make_source, new_account_id
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
@@ -55,10 +56,9 @@ class TestProjectRow:
         project = make_project(owner_id=fx_owner_id)
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
-            await uow.projects.add(project)
-            await uow.pages.add(make_page(project_id=project.id))
-            await uow.jobs.add(make_job(project_id=project.id))
-            await uow.commit()
+            await store_project(uow, project, make_page(project_id=project.id))
+            async with uow.change():
+                await uow.jobs.add(make_job(project_id=project.id))
         async with fx_database.sessions() as session:
             # A bulk statement bypasses the ORM, so only the database can remove the dependent rows
             await session.execute(delete(ProjectRow).where(ProjectRow.id == project.id))
@@ -82,11 +82,12 @@ class TestProjectRow:
         project = make_project(owner_id=fx_owner_id)
         source = make_source(project_id=project.id)
         async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            await uow.projects.add(project)
-            await uow.sources.add(source)
-            await uow.scans.add_many([make_scan(source=source, number=number) for number in range(SCAN_COUNT)])
-            await uow.commit()
+            await store_project(
+                SqlAlchemyUnitOfWork(session),
+                project,
+                sources=[source],
+                scans=[make_scan(source=source, number=number) for number in range(SCAN_COUNT)],
+            )
         async with fx_database.sessions() as session:
             # A bulk statement bypasses the ORM, so only the database can remove the dependent rows
             await session.execute(delete(ProjectRow).where(ProjectRow.id == project.id))
@@ -112,10 +113,9 @@ class TestProjectRow:
         cover = make_page(project_id=project.id)
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
-            await uow.projects.add(project)
-            await uow.pages.add(cover)
-            await uow.projects.update(evolve(project, cover_page_id=cover.id))
-            await uow.commit()
+            await store_project(uow, project, cover)
+            async with uow.change():
+                await uow.projects.update(evolve(project, cover_page_id=cover.id))
         async with fx_database.sessions() as session:
             await session.execute(delete(ProjectRow).where(ProjectRow.id == project.id))
             await session.commit()
@@ -134,14 +134,13 @@ class TestProjectRow:
         project = make_project(owner_id=fx_owner_id)
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
-            await uow.projects.add(project)
-            await uow.pages.add(make_page(project_id=project.id))
-            await uow.jobs.add(make_job(project_id=project.id))
-            await uow.commit()
+            await store_project(uow, project, make_page(project_id=project.id))
+            async with uow.change():
+                await uow.jobs.add(make_job(project_id=project.id))
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
-            await uow.projects.update(evolve(project, details=evolve(project.details, title='Renamed')))
-            await uow.commit()
+            async with uow.change():
+                await uow.projects.update(evolve(project, details=evolve(project.details, title='Renamed')))
             expect(await session.scalar(select(func.count()).select_from(PageRow)) == 1)
             expect(await session.scalar(select(func.count()).select_from(JobRow)) == 1)
         assert_expectations()
@@ -170,8 +169,8 @@ class TestProjectRow:
         """
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
-            await uow.projects.add(make_project(owner_id=fx_owner_id))
-            await uow.commit()
+            async with uow.change():
+                await uow.projects.add(make_project(owner_id=fx_owner_id))
         async with fx_database.sessions() as session:
             with pytest.raises(IntegrityError, match=SQLITE_FOREIGN_KEY_FAILED):
                 await session.execute(delete(AccountTable).filter_by(id=fx_owner_id))
@@ -184,8 +183,10 @@ class TestProjectRow:
         """
         owner_id = new_account_id()
         async with fx_database.sessions() as session:
+            uow = SqlAlchemyUnitOfWork(session)
             with pytest.raises(NotFoundError, match=str(owner_id)):
-                await SqlAlchemyUnitOfWork(session).projects.add(make_project(owner_id=owner_id))
+                async with uow.change():
+                    await uow.projects.add(make_project(owner_id=owner_id))
 
 
 class TestJobRow:
@@ -203,9 +204,10 @@ class TestJobRow:
         """
         project = make_project(owner_id=fx_owner_id)
         async with fx_database.sessions() as session:
-            await SqlAlchemyUnitOfWork(session).projects.add(project)
-            session.add(JobMapper().to_row(make_job(project_id=project.id, state=JobState.RUNNING)))
-            await session.commit()
+            uow = SqlAlchemyUnitOfWork(session)
+            async with uow.change():
+                await uow.projects.add(project)
+                session.add(JobMapper().to_row(make_job(project_id=project.id, state=JobState.RUNNING)))
         async with fx_database.sessions() as session:
             # A row added directly bypasses the repository, which would report the conflict as a domain error
             session.add(JobMapper().to_row(make_job(project_id=project.id, state=JobState.QUEUED)))
@@ -222,8 +224,9 @@ class TestJobRow:
         """
         project = make_project(owner_id=fx_owner_id)
         async with fx_database.sessions() as session:
-            await SqlAlchemyUnitOfWork(session).projects.add(project)
-            for state in (JobState.SUCCEEDED, JobState.FAILED, JobState.CANCELLED, JobState.QUEUED):
-                session.add(JobMapper().to_row(make_job(project_id=project.id, state=state)))
-            await session.commit()
+            uow = SqlAlchemyUnitOfWork(session)
+            async with uow.change():
+                await uow.projects.add(project)
+                for state in (JobState.SUCCEEDED, JobState.FAILED, JobState.CANCELLED, JobState.QUEUED):
+                    session.add(JobMapper().to_row(make_job(project_id=project.id, state=state)))
             assert await session.scalar(select(func.count()).select_from(JobRow)) == len(JobState) - 1

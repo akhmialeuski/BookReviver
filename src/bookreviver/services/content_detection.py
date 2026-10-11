@@ -29,7 +29,7 @@ from bookreviver.domain.enums import (
     VersionScale,
     VersionState,
 )
-from bookreviver.domain.errors import ConcurrentChangeError, NotFoundError
+from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.events import PagesChanged
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import ContentDetection, SliceRequest
@@ -56,15 +56,13 @@ class ContentDetector:
     KINDS: ClassVar[frozenset[PageKind]] = frozenset(
         {PageKind.TEXT, PageKind.TITLE, PageKind.PLATE, PageKind.FRONTISPIECE, PageKind.OTHER}
     )
-    # How many times a page that another request changed is read and written again before it is left as it is
-    WRITE_ATTEMPTS: ClassVar[int] = 3
     # How many pages are read from the database at once
     WINDOW: ClassVar[int] = 500
 
     def __init__(self, *, uow: UnitOfWork, runtime: StageRuntime, records: StageRecords, tracker: JobTracker) -> None:
         """Work over the ports of one job.
 
-        :param uow: Unit of work whose commit follows each page.
+        :param uow: Unit of work whose ``change_book`` block holds the write of each page.
         :type uow: UnitOfWork
         :param runtime: The runner of the processor that finds the content of an image, the publisher and the clock.
         :type runtime: StageRuntime
@@ -111,7 +109,6 @@ class ContentDetector:
                     content = await self._probe(job.project_id, base)
                 except Exception:
                     logger.exception('The content of page %s could not be detected', page.id)
-                    await self._uow.rollback()
                     failed += 1
                     continue
                 read += 1
@@ -199,9 +196,11 @@ class ContentDetector:
         return ContentType(output.data[VersionData.CONTENT_TYPE])
 
     async def _write(self, project_id: ProjectId, page_id: PageId, content: ContentType, *, forced: bool) -> bool:
-        """Write what was detected into the page, unless the user set it by hand or the page is gone.
+        """Write what was detected into the page in one short ``change_book`` block, which reads the page again first.
 
-        The page is read again when another request changed it after it was read, so the other change stays.
+        Opens its own block, so it is called outside any block. The page is read inside the block, so a change of
+        another request that committed after the probe stays. Nothing is written when the page is gone, when the user
+        set its content by hand and did not ask for the page by name, or when the page already shows the content.
 
         :param project_id: Project owning the page.
         :type project_id: ProjectId
@@ -214,7 +213,7 @@ class ContentDetector:
         :returns: True when the page was written.
         :rtype: bool
         """
-        for _ in range(self.WRITE_ATTEMPTS):
+        async with self._uow.change_book(project_id):
             try:
                 before = await self._uow.pages.get(page_id)
             except NotFoundError:
@@ -224,14 +223,8 @@ class ContentDetector:
             after = evolve(before, content_type=content, content_by_hand=False, updated_at=self._clock.now())
             if after == evolve(before, updated_at=after.updated_at):
                 return False
-            try:
-                await self._uow.pages.update(after)
-                shown = before.recipe_kind is not after.recipe_kind
-                stale = await self._records.mark_content_stale(page_id) if shown else []
-                await self._uow.commit()
-            except ConcurrentChangeError:
-                await self._uow.rollback()
-                continue
-            await self._records.announce(project_id, stale)
-            return True
-        return False
+            await self._uow.pages.update(after)
+            shown = before.recipe_kind is not after.recipe_kind
+            stale = await self._records.mark_content_stale(page_id) if shown else []
+        await self._records.announce(project_id, stale)
+        return True

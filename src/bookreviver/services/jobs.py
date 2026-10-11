@@ -42,7 +42,7 @@ class JobCancellation:
     def __init__(self, *, uow: UnitOfWork, publisher: EventPublisher, clock: Clock) -> None:
         """Cancel jobs through the unit of work.
 
-        :param uow: Unit of work, committed when a job is cancelled.
+        :param uow: Unit of work, whose ``change`` block holds the cancellation.
         :type uow: UnitOfWork
         :param publisher: Publisher announcing a cancelled job to the project's subscribers.
         :type publisher: EventPublisher
@@ -54,7 +54,9 @@ class JobCancellation:
         self._clock = clock
 
     async def cancel(self, job: Job) -> Job | None:
-        """Cancel a job that is queued or running, commit that and announce it.
+        """Cancel a job that is queued or running in a ``change`` block of its own, and announce it once it committed.
+
+        Opens its own block, so it is called outside any block.
 
         :param job: The job as read.
         :type job: Job
@@ -62,14 +64,27 @@ class JobCancellation:
                   which case nothing is changed or announced.
         :rtype: Job | None
         """
-        cancelled = await self._uow.jobs.update_if_state(
+        async with self._uow.change():
+            cancelled = await self.mark_cancelled(job)
+        if cancelled is not None:
+            await self._publisher.publish(JobChanged(project_id=cancelled.project_id, job=cancelled))
+        return cancelled
+
+    async def mark_cancelled(self, job: Job) -> Job | None:
+        """Write the cancelled state of a job that is queued or running, and announce nothing.
+
+        Writes inside the block of its caller and never opens one, so the caller announces the job after its block
+        committed.
+
+        :param job: The job as read.
+        :type job: Job
+        :returns: The job in the cancelled state, with the time it finished, or None when it had finished meanwhile, in
+                  which case nothing is changed.
+        :rtype: Job | None
+        """
+        return await self._uow.jobs.update_if_state(
             evolve(job, state=JobState.CANCELLED, finished_at=self._clock.now()), expected=JobState.active()
         )
-        if cancelled is None:
-            return None
-        await self._uow.commit()
-        await self._publisher.publish(JobChanged(project_id=cancelled.project_id, job=cancelled))
-        return cancelled
 
 
 class JobService:

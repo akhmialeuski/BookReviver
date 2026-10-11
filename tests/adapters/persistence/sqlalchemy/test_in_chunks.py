@@ -14,6 +14,7 @@ from sqlalchemy import event
 from bookreviver.adapters.persistence.sqlalchemy.repositories import RowRepository
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from tests.helpers.builders import make_page, make_page_stage, make_page_version, make_project
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
@@ -83,12 +84,10 @@ async def _seed_book(database: SqlDatabase, owner_id: AccountId) -> tuple[Projec
     versions = [make_page_version(page_id=page.id, minutes=number) for number, page in enumerate(pages)]
     async with database.sessions() as session:
         uow = SqlAlchemyUnitOfWork(session)
-        await uow.projects.add(project)
-        await uow.pages.add_many(pages)
-        await uow.page_versions.add_many(versions)
-        for page in pages:
-            await uow.page_stages.save(make_page_stage(page_id=page.id))
-        await uow.commit()
+        await store_project(uow, project, *pages, versions=versions)
+        async with uow.change_book(project.id):
+            for page in pages:
+                await uow.page_stages.save(make_page_stage(page_id=page.id))
     return project, pages, versions
 
 
@@ -139,13 +138,15 @@ class TestListsLongerThanAChunk:
         :param fx_owner_id: Account that may own projects.
         :type fx_owner_id: AccountId
         """
-        _, pages, versions = await _seed_book(fx_database, fx_owner_id)
+        project, pages, versions = await _seed_book(fx_database, fx_owner_id)
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
             with Statements(fx_database) as reading:
                 await uow.page_versions.list_by_ids([version.id for version in versions])
-            with Statements(fx_database) as deleting:
-                await uow.page_versions.delete_many([version.id for version in versions])
+            async with uow.change_book(project.id):
+                # Only the deletion is counted, not the statement that locks the book
+                with Statements(fx_database) as deleting:
+                    await uow.page_versions.delete_many([version.id for version in versions])
             remaining = await uow.page_versions.list_for_page(pages[0].id)
         expect(reading.bound == [CHUNK] * (COUNT // CHUNK) + [COUNT % CHUNK])
         expect(len(deleting.bound) == ceil(COUNT / CHUNK) and max(deleting.bound) <= CHUNK)

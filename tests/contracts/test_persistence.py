@@ -26,7 +26,7 @@ from bookreviver.domain.enums import (
     Stage,
     VersionState,
 )
-from bookreviver.domain.errors import ConcurrentChangeError, ConflictError, NotFoundError
+from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import PageVersionId, SourceId
 from bookreviver.domain.values import (
     BookDetails,
@@ -50,6 +50,7 @@ from tests.helpers.builders import (
     make_source,
     new_account_id,
 )
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, Project
@@ -61,8 +62,6 @@ pytestmark = pytest.mark.anyio
 PAGE_COUNT: int = 3
 # Two finished jobs and a queued one of the same kind in one project
 FINISHED_AND_QUEUED_JOBS: int = 3
-# Updates a page takes in a test, which raise its revision from zero
-PAGE_UPDATES: int = 2
 # A run, a job writing page images and an import of one project, which do not exclude each other
 THREE_JOBS: int = 3
 # Included pages, sources and scans of the book _add_book stores
@@ -77,9 +76,11 @@ UNORDERED_KEYS: list[str] = ['a1', 'a0v', 'a0V', 'a0', 'Zz']
 
 
 async def _add_book(uow: UnitOfWork, project: Project) -> list[Page]:
-    """Add a source of ``PAGE_COUNT`` scans and one page per scan, the last kept out of the book.
+    """Add a source of ``PAGE_COUNT`` scans and one page per scan, the last kept out of the book, in one block.
 
-    :param uow: Unit of work to add to, in which the project is stored.
+    The block is ``change_book`` of the project, so the project must be stored already and no block may be open.
+
+    :param uow: Unit of work to add to, with no block open, in which the project is stored.
     :type uow: UnitOfWork
     :param project: Project of the book.
     :type project: Project
@@ -90,9 +91,10 @@ async def _add_book(uow: UnitOfWork, project: Project) -> list[Page]:
     scans = [make_scan(source=source, number=number) for number in range(PAGE_COUNT)]
     pages = [make_page(project_id=project.id, order_key=f'a{scan.number}', scan=scan) for scan in scans]
     pages[-1] = evolve(pages[-1], included=False)
-    await uow.sources.add(source)
-    await uow.scans.add_many(scans)
-    await uow.pages.add_many(pages)
+    async with uow.change_book(project.id):
+        await uow.sources.add(source)
+        await uow.scans.add_many(scans)
+        await uow.pages.add_many(pages)
     return pages
 
 
@@ -111,26 +113,9 @@ class TestProjectRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.add(project)
         assert await (await fx_uow_factory()).projects.get(project.id) == project
-
-    async def test_rolled_back_project_is_gone(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify rollback discards an uncommitted project.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.rollback()
-        with pytest.raises(NotFoundError):
-            await (await fx_uow_factory()).projects.get(project.id)
 
     async def test_update_replaces_details(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
         """Verify an update stores the new description, whose contributors and identifiers come back in their order.
@@ -142,10 +127,10 @@ class TestProjectRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        described = evolve(project, details=FULL_DETAILS)
-        await uow.projects.update(described)
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.add(project)
+            described = evolve(project, details=FULL_DETAILS)
+            await uow.projects.update(described)
         assert (await (await fx_uow_factory()).projects.get(project.id)).details == FULL_DETAILS
 
     async def test_update_clears_lists_and_height(
@@ -160,10 +145,10 @@ class TestProjectRepository:
         """
         project = evolve(make_project(owner_id=await fx_new_owner()), details=FULL_DETAILS)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        cleared = evolve(project, details=BookDetails(title=FULL_DETAILS.title))
-        await uow.projects.update(cleared)
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.add(project)
+            cleared = evolve(project, details=BookDetails(title=FULL_DETAILS.title))
+            await uow.projects.update(cleared)
         assert (await (await fx_uow_factory()).projects.get(project.id)).details == BookDetails(
             title=FULL_DETAILS.title
         )
@@ -180,12 +165,13 @@ class TestProjectRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.add(project)
         duplicate = evolve(project, details=BookDetails(title='Other'))
         uow = await fx_uow_factory()
         with pytest.raises(ConflictError, match=str(project.id)):
-            await uow.projects.add(duplicate)
+            async with uow.change():
+                await uow.projects.add(duplicate)
 
     @pytest.mark.parametrize(OPERATION_ARG, ['get', UPDATE_OPERATION, 'delete'])
     async def test_missing_project_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory, operation: str) -> None:
@@ -197,10 +183,12 @@ class TestProjectRepository:
         :type operation: str
         """
         project = make_project(owner_id=new_account_id())
-        repository = (await fx_uow_factory()).projects
+        uow = await fx_uow_factory()
         argument = project if operation == UPDATE_OPERATION else project.id
+        # The block is ``change``, because the project is missing and ``change_book`` would raise on entry
         with pytest.raises(NotFoundError, match=str(project.id)):
-            await getattr(repository, operation)(argument)
+            async with uow.change():
+                await getattr(uow.projects, operation)(argument)
 
     async def test_list_for_owner_orders_pages_and_counts(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -212,13 +200,14 @@ class TestProjectRepository:
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        owner_id = await fx_new_owner()
+        owner_id, other_owner_id = await fx_new_owner(), await fx_new_owner()
         older, newer = make_project(owner_id=owner_id, minutes=1), make_project(owner_id=owner_id, minutes=2)
         uow = await fx_uow_factory()
-        for project in (older, newer, make_project(owner_id=await fx_new_owner())):
-            await uow.projects.add(project)
+        # The owners are stored before the block, because storing one is a write of its own that waits for the block
+        async with uow.change():
+            for project in (older, newer, make_project(owner_id=other_owner_id)):
+                await uow.projects.add(project)
         await _add_book(uow, older)
-        await uow.commit()
         repository = (await fx_uow_factory()).projects
         full = await repository.list_for_owner(owner_id, SliceRequest())
         second = await repository.list_for_owner(owner_id, SliceRequest(offset=1, limit=1))
@@ -243,10 +232,11 @@ class TestProjectRepository:
         owner_id = await fx_new_owner()
         project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         uow = await fx_uow_factory()
+        async with uow.change():
+            for owned in (project, other):
+                await uow.projects.add(owned)
         for owned in (project, other):
-            await uow.projects.add(owned)
             await _add_book(uow, owned)
-        await uow.commit()
         projects = (await fx_uow_factory()).projects
         overview = await projects.overview(project)
         assert (overview.project, overview.page_count, overview.source_count, overview.scan_count) == (project, *BOOK)
@@ -263,10 +253,11 @@ class TestProjectRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
+        async with uow.change():
+            await uow.projects.add(project)
         await _add_book(uow, project)
-        await uow.pages.add(make_page(project_id=project.id, order_key='b0'))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.pages.add(make_page(project_id=project.id, order_key='b0'))
         projects = (await fx_uow_factory()).projects
         overview = await projects.overview(project)
         listed = (await projects.list_for_owner(project.owner_id, SliceRequest())).items[0]
@@ -288,9 +279,9 @@ class TestProjectRepository:
         tied = sorted((make_project(owner_id=owner_id, minutes=1) for _ in range(PAGE_COUNT)), key=attrgetter('id'))
         uow = await fx_uow_factory()
         # Insert against the expected order, so neither insertion nor storage order can pass for it
-        for project in reversed(tied):
-            await uow.projects.add(project)
-        await uow.commit()
+        async with uow.change():
+            for project in reversed(tied):
+                await uow.projects.add(project)
         repository = (await fx_uow_factory()).projects
         full = await repository.list_for_owner(owner_id, SliceRequest())
         paged = [
@@ -315,13 +306,12 @@ class TestProjectRepository:
         project = make_project(owner_id=await fx_new_owner())
         cover = make_page(project_id=project.id)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add(cover)
-        await uow.projects.update(evolve(project, cover_page_id=cover.id))
-        await uow.commit()
+        await store_project(uow, project, cover)
+        async with uow.change():
+            await uow.projects.update(evolve(project, cover_page_id=cover.id))
         uow = await fx_uow_factory()
-        await uow.pages.delete(cover.id)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.pages.delete(cover.id)
         assert (await (await fx_uow_factory()).projects.get(project.id)).cover_page_id is None
 
     async def test_cover_outside_the_project_raises_not_found(
@@ -339,15 +329,13 @@ class TestProjectRepository:
         foreign = make_page(project_id=other.id)
         missing = make_page(project_id=project.id)
         uow = await fx_uow_factory()
-        for owned in (project, other):
-            await uow.projects.add(owned)
-        await uow.pages.add(foreign)
-        await uow.commit()
+        await store_project(uow, project)
+        await store_project(uow, other, foreign)
         for page in (foreign, missing):
             uow = await fx_uow_factory()
             with pytest.raises(NotFoundError, match=str(page.id)):
-                await uow.projects.update(evolve(project, cover_page_id=page.id))
-            await uow.rollback()
+                async with uow.change():
+                    await uow.projects.update(evolve(project, cover_page_id=page.id))
 
     async def test_delete_cascades_to_every_row_of_the_book(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -364,12 +352,15 @@ class TestProjectRepository:
         uow = await fx_uow_factory()
         first_pages = {}
         for project in (doomed, kept):
-            await uow.projects.add(project)
+            async with uow.change():
+                await uow.projects.add(project)
             first_pages[project.id] = (await _add_book(uow, project))[0]
-            await uow.page_versions.add(make_page_version(page_id=first_pages[project.id].id))
-            await uow.jobs.add(make_job(project_id=project.id))
-        await uow.projects.delete(doomed.id)
-        await uow.commit()
+            async with uow.change_book(project.id):
+                await uow.page_versions.add(make_page_version(page_id=first_pages[project.id].id))
+            async with uow.change():
+                await uow.jobs.add(make_job(project_id=project.id))
+        async with uow.change():
+            await uow.projects.delete(doomed.id)
         after = await fx_uow_factory()
         counts = {
             project.id: (
@@ -408,11 +399,14 @@ class TestSourceRepository:
             suggestion=MetadataSuggestion(title='Book', publication_year='1887'),
         )
         uow = await fx_uow_factory()
-        for owned in (project, other):
-            await uow.projects.add(owned)
-        await uow.jobs.add(job)
-        await uow.sources.add_many([later, earlier, make_source(project_id=other.id)])
-        await uow.commit()
+        async with uow.change():
+            for owned in (project, other):
+                await uow.projects.add(owned)
+            await uow.jobs.add(job)
+        async with uow.change_book(project.id):
+            await uow.sources.add_many([later, earlier])
+        async with uow.change_book(other.id):
+            await uow.sources.add(make_source(project_id=other.id))
         sources = (await fx_uow_factory()).sources
         expect(await sources.get(earlier.id) == earlier)
         expect(await sources.list_for_project(project.id) == [earlier, later])
@@ -432,10 +426,8 @@ class TestSourceRepository:
         project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         source = make_source(project_id=project.id)
         uow = await fx_uow_factory()
-        for owned in (project, other):
-            await uow.projects.add(owned)
-        await uow.sources.add(source)
-        await uow.commit()
+        await store_project(uow, project, sources=[source])
+        await store_project(uow, other)
         sources = (await fx_uow_factory()).sources
         expect(await sources.find_by_sha256(project.id, source.sha256) == source)
         expect(await sources.find_by_sha256(other.id, source.sha256) is None)
@@ -453,12 +445,11 @@ class TestSourceRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.sources.add(make_source(project_id=project.id))
-        await uow.commit()
+        await store_project(uow, project, sources=[make_source(project_id=project.id)])
         uow = await fx_uow_factory()
         with pytest.raises(ConflictError, match=make_source(project_id=project.id).sha256):
-            await uow.sources.add(make_source(project_id=project.id))
+            async with uow.change_book(project.id):
+                await uow.sources.add(make_source(project_id=project.id))
 
     async def test_same_file_in_another_project_is_stored(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -474,9 +465,7 @@ class TestSourceRepository:
         first, second = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         uow = await fx_uow_factory()
         for project in (first, second):
-            await uow.projects.add(project)
-            await uow.sources.add(make_source(project_id=project.id))
-        await uow.commit()
+            await store_project(uow, project, sources=[make_source(project_id=project.id)])
         sources = (await fx_uow_factory()).sources
         assert [len(await sources.list_for_project(project.id)) for project in (first, second)] == [1, 1]
 
@@ -493,12 +482,15 @@ class TestSourceRepository:
         project = make_project(owner_id=await fx_new_owner())
         missing_job = make_job(project_id=project.id)
         uow = await fx_uow_factory()
+        # The block is ``change``, because the project is missing and ``change_book`` would raise on entry
         with pytest.raises(NotFoundError, match=str(project.id)):
-            await uow.sources.add(make_source(project_id=project.id))
-        await uow.rollback()
-        await uow.projects.add(project)
+            async with uow.change():
+                await uow.sources.add(make_source(project_id=project.id))
+        async with uow.change():
+            await uow.projects.add(project)
         with pytest.raises(NotFoundError, match=str(missing_job.id)):
-            await uow.sources.add(evolve(make_source(project_id=project.id), import_job_id=missing_job.id))
+            async with uow.change_book(project.id):
+                await uow.sources.add(evolve(make_source(project_id=project.id), import_job_id=missing_job.id))
 
     async def test_deleted_import_job_leaves_its_sources(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -514,13 +506,14 @@ class TestSourceRepository:
         job = make_job(project_id=project.id)
         source = evolve(make_source(project_id=project.id), import_job_id=job.id)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.jobs.add(job)
-        await uow.sources.add(source)
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.add(project)
+            await uow.jobs.add(job)
+        async with uow.change_book(project.id):
+            await uow.sources.add(source)
         uow = await fx_uow_factory()
-        await uow.jobs.delete(job.id)
-        await uow.commit()
+        async with uow.change():
+            await uow.jobs.delete(job.id)
         assert await (await fx_uow_factory()).sources.get(source.id) == evolve(source, import_job_id=None)
 
     async def test_delete_cascades_to_its_scans_only(
@@ -539,13 +532,15 @@ class TestSourceRepository:
             make_source(project_id=project.id, name='b.pdf'),
         )
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.sources.add_many([doomed, kept])
-        await uow.scans.add_many([make_scan(source=source, number=0) for source in (doomed, kept)])
-        await uow.commit()
+        await store_project(
+            uow,
+            project,
+            sources=[doomed, kept],
+            scans=[make_scan(source=source, number=0) for source in (doomed, kept)],
+        )
         uow = await fx_uow_factory()
-        await uow.sources.delete(doomed.id)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.sources.delete(doomed.id)
         scans = (await fx_uow_factory()).scans
         expect(await scans.list_for_source(doomed.id) == [])
         expect(len(await scans.list_for_source(kept.id)) == 1)
@@ -563,14 +558,15 @@ class TestSourceRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
+        async with uow.change():
+            await uow.projects.add(project)
         pages = await _add_book(uow, project)
         version = make_page_version(page_id=pages[0].id)
-        await uow.page_versions.add(version)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.add(version)
         uow = await fx_uow_factory()
-        await uow.sources.delete((await uow.sources.list_for_project(project.id))[0].id)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.sources.delete((await uow.sources.list_for_project(project.id))[0].id)
         after = await fx_uow_factory()
         kept = await after.pages.list_for_project(project.id, SliceRequest())
         expect(list(kept.items) == [evolve(page, scan_id=None) for page in pages])
@@ -595,10 +591,7 @@ class TestScanRepository:
         source = make_source(project_id=project.id)
         scans = [make_scan(source=source, number=number) for number in range(PAGE_COUNT)]
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.sources.add(source)
-        await uow.scans.add_many(scans)
-        await uow.commit()
+        await store_project(uow, project, sources=[source], scans=scans)
         repository = (await fx_uow_factory()).scans
         unstored = make_scan(source=source, number=PAGE_COUNT)
         found = await repository.list_by_ids([scans[0].id, scans[2].id, scans[2].id, unstored.id])
@@ -623,10 +616,7 @@ class TestScanRepository:
             for number in reversed(range(PAGE_COUNT))
         ]
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.sources.add(source)
-        await uow.scans.add_many(scans)
-        await uow.commit()
+        await store_project(uow, project, sources=[source], scans=scans)
         repository = (await fx_uow_factory()).scans
         expect(await repository.get(scans[0].id) == scans[0])
         expect(await repository.list_for_source(source.id) == list(reversed(scans)))
@@ -647,11 +637,8 @@ class TestScanRepository:
         second = make_source(project_id=project.id, name='part2.pdf', minutes=2)
         expected = [make_scan(source=source, number=number) for source in (first, second) for number in range(2)]
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.sources.add_many([second, first])
         # Insert against the expected order, so neither insertion nor storage order can pass for it
-        await uow.scans.add_many(list(reversed(expected)))
-        await uow.commit()
+        await store_project(uow, project, sources=[second, first], scans=list(reversed(expected)))
         scans = (await fx_uow_factory()).scans
         everything = await scans.list_for_project(project.id, SliceRequest())
         window = await scans.list_for_project(project.id, SliceRequest(offset=1, limit=2))
@@ -674,12 +661,11 @@ class TestScanRepository:
         source = make_source(project_id=project.id)
         scan = make_scan(source=source, number=0)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.sources.add(source)
-        await uow.scans.add(scan)
+        await store_project(uow, project, sources=[source])
         ready = evolve(scan, renditions=Renditions(ready=True, version=2, full=Rendition.FULL_PNG))
-        await uow.scans.update(ready)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.scans.add(scan)
+            await uow.scans.update(ready)
         assert await (await fx_uow_factory()).scans.get(scan.id) == ready
 
     async def test_list_unready_returns_the_scans_without_ready_renditions_in_import_order(
@@ -706,11 +692,8 @@ class TestScanRepository:
             make_scan(source=first, number=2),
         ]
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.projects.add(other)
-        await uow.sources.add_many([second, first, foreign])
-        await uow.scans.add_many([*scans, make_scan(source=foreign, number=0)])
-        await uow.commit()
+        await store_project(uow, project, sources=[second, first], scans=scans)
+        await store_project(uow, other, sources=[foreign], scans=[make_scan(source=foreign, number=0)])
         unready = await (await fx_uow_factory()).scans.list_unready(project.id)
         assert [(scan.source_id, scan.number) for scan in unready] == [
             (first.id, 1),
@@ -732,11 +715,13 @@ class TestScanRepository:
         project = make_project(owner_id=await fx_new_owner())
         source = make_source(project_id=project.id)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
+        async with uow.change():
+            await uow.projects.add(project)
         expect(await uow.scans.list_unready(project.id) == [])
-        await uow.sources.add(source)
-        await uow.scans.add(evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True)))
-        await uow.commit()
+        scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
+        async with uow.change_book(project.id):
+            await uow.sources.add(source)
+            await uow.scans.add(scan)
         expect(await (await fx_uow_factory()).scans.list_unready(project.id) == [])
         assert_expectations()
 
@@ -753,11 +738,10 @@ class TestScanRepository:
         project = make_project(owner_id=await fx_new_owner())
         source = make_source(project_id=project.id)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.sources.add(source)
-        await uow.scans.add(make_scan(source=source, number=0))
+        await store_project(uow, project, sources=[source], scans=[make_scan(source=source, number=0)])
         with pytest.raises(ConflictError, match=str(source.id)):
-            await uow.scans.add_many([make_scan(source=source, number=1), make_scan(source=source, number=0)])
+            async with uow.change_book(project.id):
+                await uow.scans.add_many([make_scan(source=source, number=1), make_scan(source=source, number=0)])
 
     async def test_scan_of_a_missing_source_raises_not_found(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -772,9 +756,10 @@ class TestScanRepository:
         project = make_project(owner_id=await fx_new_owner())
         source = make_source(project_id=project.id)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
+        await store_project(uow, project)
         with pytest.raises(NotFoundError, match=str(source.id)):
-            await uow.scans.add(make_scan(source=source, number=0))
+            async with uow.change_book(project.id):
+                await uow.scans.add(make_scan(source=source, number=0))
 
 
 class TestPageRepository:
@@ -795,9 +780,7 @@ class TestPageRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add_many([make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS])
-        await uow.commit()
+        await store_project(uow, project, *[make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS])
         pages = (await fx_uow_factory()).pages
         everything = await pages.list_for_project(project.id, SliceRequest())
         window = await pages.list_for_project(project.id, SliceRequest(offset=1, limit=2))
@@ -820,11 +803,9 @@ class TestPageRepository:
         owner_id = await fx_new_owner()
         project, other, empty = (make_project(owner_id=owner_id) for _ in range(3))
         uow = await fx_uow_factory()
-        for owned in (project, other, empty):
-            await uow.projects.add(owned)
-        await uow.pages.add_many([make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS])
-        await uow.pages.add(make_page(project_id=other.id, order_key='b0'))
-        await uow.commit()
+        await store_project(uow, project, *[make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS])
+        await store_project(uow, other, make_page(project_id=other.id, order_key='b0'))
+        await store_project(uow, empty)
         pages = (await fx_uow_factory()).pages
         expect(await pages.last_order_key(project.id) == 'a1')
         expect(await pages.last_order_key(empty.id) is None)
@@ -856,13 +837,19 @@ class TestPageRepository:
         found = evolve(found, content_type=ContentType.BW_PICTURE)
         by_hand = evolve(by_hand, content_type=ContentType.TEXT, content_by_hand=True)
         uow = await fx_uow_factory()
-        for owned in (project, other):
-            await uow.projects.add(owned)
-        await uow.sources.add(source)
-        await uow.scans.add_many(scans)
-        await uow.pages.add_many([text, plate, blank, found, by_hand, make_page(project_id=project.id, order_key='b0')])
-        await uow.pages.add(make_page(project_id=other.id, order_key='a0'))
-        await uow.commit()
+        await store_project(
+            uow,
+            project,
+            text,
+            plate,
+            blank,
+            found,
+            by_hand,
+            make_page(project_id=project.id, order_key='b0'),
+            sources=[source],
+            scans=scans,
+        )
+        await store_project(uow, other, make_page(project_id=other.id, order_key='a0'))
         tally = await (await fx_uow_factory()).pages.kind_tally(project.id)
         assert dict(tally) == {
             RecipeKind.TEXT: 2,
@@ -884,12 +871,10 @@ class TestPageRepository:
         owner_id = await fx_new_owner()
         project, other = (make_project(owner_id=owner_id) for _ in range(2))
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.projects.add(other)
         book = [make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS]
         book[0] = evolve(book[0], included=False)
-        await uow.pages.add_many([*book, make_page(project_id=other.id, order_key='Zy')])
-        await uow.commit()
+        await store_project(uow, project, *book)
+        await store_project(uow, other, make_page(project_id=other.id, order_key='Zy'))
         pages = (await fx_uow_factory()).pages
         positions = [await pages.count_before(page) for page in book]
         # The keys are stored as a1, a0v, a0V, a0, Zz and sort as Zz, a0, a0V, a0v, a1
@@ -914,11 +899,7 @@ class TestPageRepository:
         elsewhere = make_page(project_id=project.id, order_key='a3', scan=other)
         placeholder = make_page(project_id=project.id, order_key='a4')
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.sources.add(source)
-        await uow.scans.add_many([spread, other])
-        await uow.pages.add_many([right, left, elsewhere, placeholder])
-        await uow.commit()
+        await store_project(uow, project, right, left, elsewhere, placeholder, sources=[source], scans=[spread, other])
         pages = (await fx_uow_factory()).pages
         expect(await pages.list_for_scan(spread.id) == [left, right])
         expect(await pages.list_for_scan(other.id) == [elsewhere])
@@ -938,9 +919,7 @@ class TestPageRepository:
         book = [make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1', 'a2')]
         book[1] = evolve(book[1], included=False)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add_many(book)
-        await uow.commit()
+        await store_project(uow, project, *book)
         pages = (await fx_uow_factory()).pages
         everything = await pages.list_for_project(project.id, SliceRequest(), included_only=True)
         window = await pages.list_for_project(project.id, SliceRequest(offset=1, limit=1), included_only=True)
@@ -961,9 +940,7 @@ class TestPageRepository:
         project = make_project(owner_id=await fx_new_owner())
         book = [make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS]
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add_many(book)
-        await uow.commit()
+        await store_project(uow, project, *book)
         pages = (await fx_uow_factory()).pages
         wanted = [book[0].id, book[2].id, book[4].id, book[2].id]
         # Stored as a1, a0v, a0V, a0, Zz, so these three are a1, a0V and Zz
@@ -983,10 +960,8 @@ class TestPageRepository:
         project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         own, foreign = make_page(project_id=project.id), make_page(project_id=other.id)
         uow = await fx_uow_factory()
-        for owned in (project, other):
-            await uow.projects.add(owned)
-        await uow.pages.add_many([own, foreign])
-        await uow.commit()
+        await store_project(uow, project, own)
+        await store_project(uow, other, foreign)
         pages = (await fx_uow_factory()).pages
         missing = make_page(project_id=project.id)
         with pytest.raises(NotFoundError, match=str(foreign.id)):
@@ -1020,11 +995,7 @@ class TestPageRepository:
         )
         placeholder = make_page(project_id=project.id, order_key='a3')
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.sources.add_many([first, second])
-        await uow.scans.add_many(scans)
-        await uow.pages.add_many([late, elsewhere, early, placeholder])
-        await uow.commit()
+        await store_project(uow, project, late, elsewhere, early, placeholder, sources=[first, second], scans=scans)
         pages = (await fx_uow_factory()).pages
         expect(await pages.list_for_source(project.id, first.id) == [early, late])
         expect(await pages.list_for_source(project.id, second.id) == [elsewhere])
@@ -1044,11 +1015,8 @@ class TestPageRepository:
         owner_id = await fx_new_owner()
         project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         uow = await fx_uow_factory()
-        for owned in (project, other):
-            await uow.projects.add(owned)
-        await uow.pages.add_many([make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS])
-        await uow.pages.add(make_page(project_id=other.id, order_key='a0W'))
-        await uow.commit()
+        await store_project(uow, project, *[make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS])
+        await store_project(uow, other, make_page(project_id=other.id, order_key='a0W'))
         pages = (await fx_uow_factory()).pages
         # The keys sort as Zz, a0, a0V, a0v, a1
         inclusive = await pages.list_range(project.id, 'a0', 'a0v')
@@ -1073,10 +1041,8 @@ class TestPageRepository:
         project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         book = [make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS]
         uow = await fx_uow_factory()
-        for owned in (project, other):
-            await uow.projects.add(owned)
-        await uow.pages.add_many([*book, make_page(project_id=other.id, order_key='a0W')])
-        await uow.commit()
+        await store_project(uow, project, *book)
+        await store_project(uow, other, make_page(project_id=other.id, order_key='a0W'))
         pages = (await fx_uow_factory()).pages
         # The keys are stored as a1, a0v, a0V, a0, Zz and sort as Zz, a0, a0V, a0v, a1
         by_key = {page.order_key: page.id for page in book}
@@ -1103,16 +1069,14 @@ class TestPageRepository:
         project = make_project(owner_id=await fx_new_owner())
         book = [make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1', 'a2')]
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add_many(book)
-        await uow.commit()
+        await store_project(uow, project, *book)
         moved = [evolve(book[0], order_key='a1V'), evolve(book[1], order_key='a1G')]
         uow = await fx_uow_factory()
-        await uow.pages.update_many(moved)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.pages.update_many(moved)
         pages = (await fx_uow_factory()).pages
         everything = await pages.list_for_project(project.id, SliceRequest())
-        assert list(everything.items) == [evolve(page, revision=1) for page in (moved[1], moved[0])] + [book[2]]
+        assert list(everything.items) == [moved[1], moved[0], book[2]]
 
     async def test_update_to_a_key_another_page_holds_raises_conflict(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1127,15 +1091,14 @@ class TestPageRepository:
         project = make_project(owner_id=await fx_new_owner())
         first, second = (make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1'))
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add_many([first, second])
-        await uow.commit()
+        await store_project(uow, project, first, second)
         uow = await fx_uow_factory()
         with pytest.raises(ConflictError, match='a1'):
-            await uow.pages.update(evolve(first, order_key='a1'))
-        await uow.rollback()
+            async with uow.change_book(project.id):
+                await uow.pages.update(evolve(first, order_key='a1'))
         with pytest.raises(ConflictError, match='a1'):
-            await uow.pages.update_many([evolve(first, order_key='a1')])
+            async with uow.change_book(project.id):
+                await uow.pages.update_many([evolve(first, order_key='a1')])
 
     async def test_update_many_with_a_missing_page_raises_not_found(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1150,9 +1113,10 @@ class TestPageRepository:
         project = make_project(owner_id=await fx_new_owner())
         missing = make_page(project_id=project.id)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
+        await store_project(uow, project)
         with pytest.raises(NotFoundError, match=str(missing.id)):
-            await uow.pages.update_many([missing])
+            async with uow.change_book(project.id):
+                await uow.pages.update_many([missing])
 
     async def test_updated_page_reads_back(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
         """Verify a page moved, numbered, given a kind and kept out of the book reads back so.
@@ -1165,14 +1129,12 @@ class TestPageRepository:
         project = make_project(owner_id=await fx_new_owner())
         page = make_page(project_id=project.id)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add(page)
-        await uow.commit()
+        await store_project(uow, project, page)
         changed = evolve(page, order_key='a0V', label='[4]', kind=PageKind.TITLE, included=False, notes='Stamp')
         uow = await fx_uow_factory()
-        await uow.pages.update(changed)
-        await uow.commit()
-        assert await (await fx_uow_factory()).pages.get(page.id) == evolve(changed, revision=1)
+        async with uow.change_book(project.id):
+            await uow.pages.update(changed)
+        assert await (await fx_uow_factory()).pages.get(page.id) == changed
 
     async def test_same_order_key_twice_in_a_project_raises_conflict(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1188,10 +1150,10 @@ class TestPageRepository:
         project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         uow = await fx_uow_factory()
         for owned in (project, other):
-            await uow.projects.add(owned)
-            await uow.pages.add(make_page(project_id=owned.id, order_key='a5'))
+            await store_project(uow, owned, make_page(project_id=owned.id, order_key='a5'))
         with pytest.raises(ConflictError, match='a5'):
-            await uow.pages.add(make_page(project_id=project.id, order_key='a5'))
+            async with uow.change_book(project.id):
+                await uow.pages.add(make_page(project_id=project.id, order_key='a5'))
 
     async def test_same_part_of_a_scan_twice_raises_conflict(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1207,13 +1169,17 @@ class TestPageRepository:
         source = make_source(project_id=project.id)
         scan = make_scan(source=source, number=0)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.sources.add(source)
-        await uow.scans.add(scan)
-        await uow.pages.add_many([make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1')])
-        await uow.pages.add(make_page(project_id=project.id, order_key='a2', scan=scan))
+        await store_project(
+            uow,
+            project,
+            *[make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1')],
+            make_page(project_id=project.id, order_key='a2', scan=scan),
+            sources=[source],
+            scans=[scan],
+        )
         with pytest.raises(ConflictError, match=str(scan.id)):
-            await uow.pages.add(make_page(project_id=project.id, order_key='a3', scan=scan))
+            async with uow.change_book(project.id):
+                await uow.pages.add(make_page(project_id=project.id, order_key='a3', scan=scan))
 
     async def test_page_of_a_missing_parent_raises_not_found(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1228,12 +1194,15 @@ class TestPageRepository:
         project = make_project(owner_id=await fx_new_owner())
         missing_scan = make_scan(source=make_source(project_id=project.id), number=0)
         uow = await fx_uow_factory()
+        # The block is ``change``, because the project is missing and ``change_book`` would raise on entry
         with pytest.raises(NotFoundError, match=str(project.id)):
-            await uow.pages.add(make_page(project_id=project.id))
-        await uow.rollback()
-        await uow.projects.add(project)
+            async with uow.change():
+                await uow.pages.add(make_page(project_id=project.id))
+        async with uow.change():
+            await uow.projects.add(project)
         with pytest.raises(NotFoundError, match=str(missing_scan.id)):
-            await uow.pages.add(make_page(project_id=project.id, scan=missing_scan))
+            async with uow.change_book(project.id):
+                await uow.pages.add(make_page(project_id=project.id, scan=missing_scan))
 
     async def test_delete_cascades_to_its_versions(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1248,13 +1217,12 @@ class TestPageRepository:
         project = make_project(owner_id=await fx_new_owner())
         doomed, kept = (make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1'))
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add_many([doomed, kept])
-        await uow.page_versions.add_many([make_page_version(page_id=page.id) for page in (doomed, kept)])
-        await uow.commit()
+        await store_project(
+            uow, project, doomed, kept, versions=[make_page_version(page_id=page.id) for page in (doomed, kept)]
+        )
         uow = await fx_uow_factory()
-        await uow.pages.delete(doomed.id)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.pages.delete(doomed.id)
         versions = (await fx_uow_factory()).page_versions
         expect(await versions.list_for_page(doomed.id) == [])
         expect(len(await versions.list_for_page(kept.id)) == 1)
@@ -1269,105 +1237,6 @@ class TestPageRepository:
         page = make_page(project_id=make_project(owner_id=new_account_id()).id)
         with pytest.raises(NotFoundError, match=str(page.id)):
             await (await fx_uow_factory()).pages.get(page.id)
-
-
-class TestPageRevision:
-    """Contract of the revision of a page, which refuses a write over a change the writer never read."""
-
-    async def test_update_raises_the_revision_of_the_page_by_one(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify a new page starts at revision zero and every update raises its revision by one.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        page = make_page(project_id=project.id)
-        uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add(page)
-        await uow.commit()
-        uow = await fx_uow_factory()
-        first = await uow.pages.update(evolve(await uow.pages.get(page.id), label='1'))
-        await uow.commit()
-        uow = await fx_uow_factory()
-        second = await uow.pages.update(evolve(await uow.pages.get(page.id), label='2'))
-        await uow.commit()
-        expect(page.revision == 0)
-        expect(first.revision == 1)
-        expect(second.revision == PAGE_UPDATES)
-        expect((await (await fx_uow_factory()).pages.get(page.id)).revision == PAGE_UPDATES)
-        assert_expectations()
-
-    async def test_update_over_a_page_another_transaction_changed_raises_concurrent_change(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify a write of a page read before another transaction changed it is refused and writes nothing.
-
-        Both transactions change a different field, so the refusal is the revision's and no unique key's. The stored
-        page keeps the change of the transaction that committed first, and the refused one can read it again and write
-        over it.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        page = make_page(project_id=project.id)
-        uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add(page)
-        await uow.commit()
-        slow = await fx_uow_factory()
-        read = await slow.pages.get(page.id)
-        fast = await fx_uow_factory()
-        await fast.pages.update(evolve(await fast.pages.get(page.id), label='12'))
-        await fast.commit()
-
-        with pytest.raises(ConcurrentChangeError):
-            await slow.pages.update(evolve(read, notes='Stamp'))
-        await slow.rollback()
-
-        stored = await (await fx_uow_factory()).pages.get(page.id)
-        expect((stored.label, stored.notes) == ('12', ''))
-        await slow.pages.update(evolve(await slow.pages.get(page.id), notes='Stamp'))
-        await slow.commit()
-        stored = await (await fx_uow_factory()).pages.get(page.id)
-        expect((stored.label, stored.notes) == ('12', 'Stamp'))
-        assert_expectations()
-
-    async def test_update_many_over_a_page_another_transaction_changed_writes_none(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify a batch holding one page that another transaction changed meanwhile writes none of its pages.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        first, second = (make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1'))
-        uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add_many([first, second])
-        await uow.commit()
-        slow = await fx_uow_factory()
-        read = await slow.pages.list_by_ids(project.id, [first.id, second.id])
-        fast = await fx_uow_factory()
-        await fast.pages.update(evolve(await fast.pages.get(second.id), notes='Stamp'))
-        await fast.commit()
-
-        with pytest.raises(ConcurrentChangeError):
-            await slow.pages.update_many([evolve(page, label='9') for page in read])
-        await slow.rollback()
-
-        stored = (await (await fx_uow_factory()).pages.list_for_project(project.id, SliceRequest())).items
-        assert [(page.label, page.notes) for page in stored] == [('', ''), ('', 'Stamp')]
 
 
 class TestPageVersionRepository:
@@ -1405,13 +1274,8 @@ class TestPageVersionRepository:
             state=VersionState.FAILED,
         )
         uow = await fx_uow_factory()
-        for owned in (project, other):
-            await uow.projects.add(owned)
-        await uow.pages.add_many([*pages, elsewhere])
-        await uow.page_versions.add_many(
-            [pending, failed, ready, running, spread_half, make_page_version(page_id=elsewhere.id)]
-        )
-        await uow.commit()
+        await store_project(uow, project, *pages, versions=[pending, failed, ready, running, spread_half])
+        await store_project(uow, other, elsewhere, versions=[make_page_version(page_id=elsewhere.id)])
         versions = (await fx_uow_factory()).page_versions
         found = await versions.list_to_prepare(project.id, {'split.none', 'pages.blank'})
         expect(list(found) == [failed, pending])
@@ -1462,14 +1326,18 @@ class TestPageVersionRepository:
             ),
         ]
         uow = await fx_uow_factory()
-        for owned in (project, other):
-            await uow.projects.add(owned)
-        await uow.sources.add_many(sources)
-        await uow.scans.add_many([*scans, foreign_scan])
-        await uow.pages.add_many([*pages, leaf, foreign_page])
-        await uow.page_versions.add_many(versions)
-        await uow.page_versions.add_many(derived_pair)
-        await uow.commit()
+        await store_project(
+            uow,
+            project,
+            *pages,
+            leaf,
+            sources=[sources[0]],
+            scans=scans,
+            versions=[*versions[:-1], *derived_pair],
+        )
+        await store_project(
+            uow, other, foreign_page, sources=[sources[1]], scans=[foreign_scan], versions=[versions[-1]]
+        )
         found = await (await fx_uow_factory()).page_versions.base_sizes(project.id)
         assert sorted(found, key=attrgetter('width_px')) == [
             PageSize(width_px=10, height_px=20, dpi=None),
@@ -1491,20 +1359,16 @@ class TestPageVersionRepository:
         scan = make_scan(source=source, number=0)
         page = make_page(project_id=project.id, scan=scan, kind=PageKind.BLANK)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.sources.add(source)
-        await uow.scans.add(scan)
-        await uow.pages.add(page)
-        await uow.commit()
+        await store_project(uow, project, page, sources=[source], scans=[scan])
         uow = await fx_uow_factory()
-        stored = await uow.pages.get(page.id)
-        await uow.pages.update(evolve(stored, blank_fill=BlankFill.PAPER))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            stored = await uow.pages.get(page.id)
+            await uow.pages.update(evolve(stored, blank_fill=BlankFill.PAPER))
 
         uow = await fx_uow_factory()
-        leaf = await uow.pages.get(page.id)
-        await uow.pages.update(evolve(leaf, blank_fill=BlankFill.SCAN))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            leaf = await uow.pages.get(page.id)
+            await uow.pages.update(evolve(leaf, blank_fill=BlankFill.SCAN))
 
         expect(stored.blank_fill is BlankFill.SCAN)
         expect((leaf.blank_fill, leaf.scan_id) == (BlankFill.PAPER, scan.id))
@@ -1524,17 +1388,15 @@ class TestPageVersionRepository:
         project = make_project(owner_id=await fx_new_owner())
         page = make_page(project_id=project.id)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add(page)
-        await uow.commit()
+        await store_project(uow, project, page)
         uow = await fx_uow_factory()
-        added = await uow.pages.get(page.id)
-        await uow.pages.update(evolve(added, content_type=ContentType.BW_PICTURE))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            added = await uow.pages.get(page.id)
+            await uow.pages.update(evolve(added, content_type=ContentType.BW_PICTURE))
         uow = await fx_uow_factory()
-        found = await uow.pages.get(page.id)
-        await uow.pages.update(evolve(found, content_type=ContentType.COLOR_PICTURE, content_by_hand=True))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            found = await uow.pages.get(page.id)
+            await uow.pages.update(evolve(found, content_type=ContentType.COLOR_PICTURE, content_by_hand=True))
 
         by_hand = await (await fx_uow_factory()).pages.get(page.id)
         expect((added.content_type, added.content_by_hand) == (None, False))
@@ -1557,10 +1419,7 @@ class TestPageVersionRepository:
         base = make_page_version(page_id=page.id, minutes=1)
         later = evolve(make_page_version(page_id=page.id, minutes=2), input_id=base.id, renditions=None)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add_many([page, other])
-        await uow.page_versions.add_many([base, later, make_page_version(page_id=other.id)])
-        await uow.commit()
+        await store_project(uow, project, page, other, versions=[base, later, make_page_version(page_id=other.id)])
         versions = (await fx_uow_factory()).page_versions
         expect(await versions.get(later.id) == later)
         expect(await versions.list_for_page(page.id) == [base, later])
@@ -1582,10 +1441,14 @@ class TestPageVersionRepository:
         second_base = make_page_version(page_id=second.id, minutes=1)
         derived = evolve(make_page_version(page_id=first.id, minutes=3), input_id=first_base.id)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add_many([first, second, unasked])
-        await uow.page_versions.add_many([first_base, second_base, derived, make_page_version(page_id=unasked.id)])
-        await uow.commit()
+        await store_project(
+            uow,
+            project,
+            first,
+            second,
+            unasked,
+            versions=[first_base, second_base, derived, make_page_version(page_id=unasked.id)],
+        )
         versions = (await fx_uow_factory()).page_versions
         expect(await versions.list_base_versions([first.id, second.id]) == [second_base, first_base])
         expect(await versions.list_base_versions([]) == [])
@@ -1605,14 +1468,15 @@ class TestPageVersionRepository:
         page = make_page(project_id=project.id)
         missing_input = make_page_version(page_id=page.id)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
+        await store_project(uow, project)
         with pytest.raises(NotFoundError, match=str(page.id)):
-            await uow.page_versions.add(make_page_version(page_id=page.id))
-        await uow.rollback()
-        await uow.projects.add(project)
-        await uow.pages.add(page)
+            async with uow.change_book(project.id):
+                await uow.page_versions.add(make_page_version(page_id=page.id))
+        async with uow.change_book(project.id):
+            await uow.pages.add(page)
         with pytest.raises(NotFoundError, match=missing_input.id):
-            await uow.page_versions.add(evolve(make_page_version(page_id=page.id), input_id=missing_input.id))
+            async with uow.change_book(project.id):
+                await uow.page_versions.add(evolve(make_page_version(page_id=page.id), input_id=missing_input.id))
 
     async def test_deleted_input_leaves_the_versions_it_fed(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1629,13 +1493,10 @@ class TestPageVersionRepository:
         base = make_page_version(page_id=page.id)
         later = evolve(make_page_version(page_id=page.id, minutes=1), input_id=base.id)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add(page)
-        await uow.page_versions.add_many([base, later])
-        await uow.commit()
+        await store_project(uow, project, page, versions=[base, later])
         uow = await fx_uow_factory()
-        await uow.page_versions.delete(base.id)
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_versions.delete(base.id)
         assert await (await fx_uow_factory()).page_versions.list_for_page(page.id) == [evolve(later, input_id=None)]
 
     async def test_update_of_a_version_deleted_with_its_page_by_another_transaction_raises_not_found(
@@ -1655,19 +1516,16 @@ class TestPageVersionRepository:
         page = make_page(project_id=project.id)
         version = make_page_version(page_id=page.id)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.pages.add(page)
-        await uow.page_versions.add(version)
-        await uow.commit()
+        await store_project(uow, project, page, versions=[version])
         reading = await fx_uow_factory()
         [read] = await reading.page_versions.list_for_page(page.id)
         deleting = await fx_uow_factory()
-        await deleting.pages.delete(page.id)
-        await deleting.commit()
+        async with deleting.change_book(project.id):
+            await deleting.pages.delete(page.id)
 
         with pytest.raises(NotFoundError, match=version.id):
-            await reading.page_versions.update(evolve(read, state=VersionState.READY))
-        await reading.rollback()
+            async with reading.change_book(project.id):
+                await reading.page_versions.update(evolve(read, state=VersionState.READY))
 
         assert await (await fx_uow_factory()).page_versions.list_for_page(page.id) == []
 
@@ -1690,10 +1548,10 @@ class TestJobRepository:
         new = make_job(project_id=project.id, state=JobState.QUEUED, minutes=2)
         done = make_job(project_id=project.id, state=JobState.SUCCEEDED, minutes=3)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        for job in (old, new, done):
-            await uow.jobs.add(job)
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.add(project)
+            for job in (old, new, done):
+                await uow.jobs.add(job)
         listed = await (await fx_uow_factory()).jobs.list_for_project(project.id, {JobState.QUEUED, JobState.FAILED})
         assert [job.id for job in listed] == [new.id, old.id]
 
@@ -1718,11 +1576,11 @@ class TestJobRepository:
             make_job(project_id=other.id, state=JobState.RUNNING, minutes=4),
         ]
         uow = await fx_uow_factory()
-        for project in (first, second, other):
-            await uow.projects.add(project)
-        for job in (*wanted, *ignored):
-            await uow.jobs.add(job)
-        await uow.commit()
+        async with uow.change():
+            for project in (first, second, other):
+                await uow.projects.add(project)
+            for job in (*wanted, *ignored):
+                await uow.jobs.add(job)
         jobs = (await fx_uow_factory()).jobs
         listed = await jobs.list_for_projects({first.id, second.id}, JobState.active())
         expect([job.id for job in listed] == [wanted[1].id, wanted[0].id])
@@ -1744,12 +1602,13 @@ class TestJobRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         setup = await fx_uow_factory()
-        await setup.projects.add(project)
-        await setup.jobs.add(evolve(make_job(project_id=project.id, state=first_state), kind=JobKind.PREPARE_PAGES))
-        await setup.commit()
+        async with setup.change():
+            await setup.projects.add(project)
+            await setup.jobs.add(evolve(make_job(project_id=project.id, state=first_state), kind=JobKind.PREPARE_PAGES))
         uow = await fx_uow_factory()
         with pytest.raises(ConflictError):
-            await uow.jobs.add(evolve(make_job(project_id=project.id), kind=JobKind.PREPARE_PAGES))
+            async with uow.change():
+                await uow.jobs.add(evolve(make_job(project_id=project.id), kind=JobKind.PREPARE_PAGES))
 
     @pytest.mark.parametrize('finished_state', FINAL_STATES, ids=str)
     async def test_finished_prepare_job_leaves_room_for_the_next_one(
@@ -1766,12 +1625,12 @@ class TestJobRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        for minutes in (1, 2):
-            finished = make_job(project_id=project.id, state=finished_state, minutes=minutes)
-            await uow.jobs.add(evolve(finished, kind=JobKind.PREPARE_PAGES))
-        await uow.jobs.add(evolve(make_job(project_id=project.id, minutes=3), kind=JobKind.PREPARE_PAGES))
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.add(project)
+            for minutes in (1, 2):
+                finished = make_job(project_id=project.id, state=finished_state, minutes=minutes)
+                await uow.jobs.add(evolve(finished, kind=JobKind.PREPARE_PAGES))
+            await uow.jobs.add(evolve(make_job(project_id=project.id, minutes=3), kind=JobKind.PREPARE_PAGES))
         listed = await (await fx_uow_factory()).jobs.list_for_project(project.id, EVERY_STATE)
         assert len(listed) == FINISHED_AND_QUEUED_JOBS
 
@@ -1787,10 +1646,10 @@ class TestJobRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.jobs.add(make_job(project_id=project.id, state=JobState.RUNNING))
-        await uow.jobs.add(evolve(make_job(project_id=project.id), kind=JobKind.PREPARE_PAGES))
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.add(project)
+            await uow.jobs.add(make_job(project_id=project.id, state=JobState.RUNNING))
+            await uow.jobs.add(evolve(make_job(project_id=project.id), kind=JobKind.PREPARE_PAGES))
         kinds = [job.kind for job in await (await fx_uow_factory()).jobs.list_for_project(project.id, EVERY_STATE)]
         assert sorted(kinds) == sorted([JobKind.IMPORT_SOURCE, JobKind.PREPARE_PAGES])
 
@@ -1817,17 +1676,18 @@ class TestJobRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         setup = await fx_uow_factory()
-        await setup.projects.add(project)
-        await setup.jobs.add(evolve(make_job(project_id=project.id, state=JobState.RUNNING), kind=first))
-        await setup.commit()
+        async with setup.change():
+            await setup.projects.add(project)
+            await setup.jobs.add(evolve(make_job(project_id=project.id, state=JobState.RUNNING), kind=first))
         uow = await fx_uow_factory()
         queued = evolve(make_job(project_id=project.id), kind=second)
         if (first in JobKind.requested()) == (second in JobKind.requested()):
             with pytest.raises(ConflictError):
-                await uow.jobs.add(queued)
+                async with uow.change():
+                    await uow.jobs.add(queued)
         else:
-            await uow.jobs.add(queued)
-            await uow.commit()
+            async with uow.change():
+                await uow.jobs.add(queued)
 
     @pytest.mark.parametrize(
         ('first', 'second'),
@@ -1850,12 +1710,13 @@ class TestJobRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         setup = await fx_uow_factory()
-        await setup.projects.add(project)
-        await setup.jobs.add(evolve(make_job(project_id=project.id, state=JobState.RUNNING), kind=first))
-        await setup.commit()
+        async with setup.change():
+            await setup.projects.add(project)
+            await setup.jobs.add(evolve(make_job(project_id=project.id, state=JobState.RUNNING), kind=first))
         uow = await fx_uow_factory()
         with pytest.raises(ConflictError):
-            await uow.jobs.add(evolve(make_job(project_id=project.id, state=JobState.RUNNING), kind=second))
+            async with uow.change():
+                await uow.jobs.add(evolve(make_job(project_id=project.id, state=JobState.RUNNING), kind=second))
 
     async def test_processing_jobs_leave_room_for_other_jobs_of_the_project_and_for_other_projects(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1870,13 +1731,13 @@ class TestJobRepository:
         owner_id = await fx_new_owner()
         project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         uow = await fx_uow_factory()
-        for owned in (project, other):
-            await uow.projects.add(owned)
-        await uow.jobs.add(evolve(make_job(project_id=project.id), kind=JobKind.RUN_STAGE))
-        await uow.jobs.add(evolve(make_job(project_id=project.id), kind=JobKind.PREPARE_PAGES))
-        await uow.jobs.add(make_job(project_id=project.id))
-        await uow.jobs.add(evolve(make_job(project_id=other.id), kind=JobKind.RUN_STAGE))
-        await uow.commit()
+        async with uow.change():
+            for owned in (project, other):
+                await uow.projects.add(owned)
+            await uow.jobs.add(evolve(make_job(project_id=project.id), kind=JobKind.RUN_STAGE))
+            await uow.jobs.add(evolve(make_job(project_id=project.id), kind=JobKind.PREPARE_PAGES))
+            await uow.jobs.add(make_job(project_id=project.id))
+            await uow.jobs.add(evolve(make_job(project_id=other.id), kind=JobKind.RUN_STAGE))
         listed = await (await fx_uow_factory()).jobs.list_for_project(project.id, EVERY_STATE)
         assert len(listed) == THREE_JOBS
 
@@ -1895,12 +1756,12 @@ class TestJobRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        for minutes in (1, 2):
-            finished = make_job(project_id=project.id, state=finished_state, minutes=minutes)
-            await uow.jobs.add(evolve(finished, kind=JobKind.RUN_STAGE))
-        await uow.jobs.add(evolve(make_job(project_id=project.id, minutes=3), kind=JobKind.COLLECT_VERSIONS))
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.add(project)
+            for minutes in (1, 2):
+                finished = make_job(project_id=project.id, state=finished_state, minutes=minutes)
+                await uow.jobs.add(evolve(finished, kind=JobKind.RUN_STAGE))
+            await uow.jobs.add(evolve(make_job(project_id=project.id, minutes=3), kind=JobKind.COLLECT_VERSIONS))
         listed = await (await fx_uow_factory()).jobs.list_for_project(project.id, EVERY_STATE)
         assert len(listed) == FINISHED_AND_QUEUED_JOBS
 
@@ -1919,12 +1780,13 @@ class TestJobRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         setup = await fx_uow_factory()
-        await setup.projects.add(project)
-        await setup.jobs.add(make_job(project_id=project.id, state=first_state))
-        await setup.commit()
+        async with setup.change():
+            await setup.projects.add(project)
+            await setup.jobs.add(make_job(project_id=project.id, state=first_state))
         uow = await fx_uow_factory()
         with pytest.raises(ConflictError):
-            await uow.jobs.add(make_job(project_id=project.id, state=JobState.QUEUED))
+            async with uow.change():
+                await uow.jobs.add(make_job(project_id=project.id, state=JobState.QUEUED))
 
     @pytest.mark.parametrize('finished_state', FINAL_STATES, ids=str)
     async def test_finished_import_leaves_room_for_the_next_one(
@@ -1941,12 +1803,12 @@ class TestJobRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        # Two finished imports share the project, and an active one joins them
-        await uow.jobs.add(make_job(project_id=project.id, state=finished_state, minutes=1))
-        await uow.jobs.add(make_job(project_id=project.id, state=finished_state, minutes=2))
-        await uow.jobs.add(make_job(project_id=project.id, state=JobState.QUEUED, minutes=3))
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.add(project)
+            # Two finished imports share the project, and an active one joins them
+            await uow.jobs.add(make_job(project_id=project.id, state=finished_state, minutes=1))
+            await uow.jobs.add(make_job(project_id=project.id, state=finished_state, minutes=2))
+            await uow.jobs.add(make_job(project_id=project.id, state=JobState.QUEUED, minutes=3))
         active = await (await fx_uow_factory()).jobs.list_for_project(project.id, JobState.active())
         assert len(active) == 1
 
@@ -1963,10 +1825,10 @@ class TestJobRepository:
         owner_id = await fx_new_owner()
         first, second = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         uow = await fx_uow_factory()
-        for project in (first, second):
-            await uow.projects.add(project)
-            await uow.jobs.add(make_job(project_id=project.id, state=JobState.RUNNING))
-        await uow.commit()
+        async with uow.change():
+            for project in (first, second):
+                await uow.projects.add(project)
+                await uow.jobs.add(make_job(project_id=project.id, state=JobState.RUNNING))
         for project in (first, second):
             assert len(await (await fx_uow_factory()).jobs.list_for_project(project.id, JobState.active())) == 1
 
@@ -1991,9 +1853,9 @@ class TestJobRepository:
         )
         job = evolve(make_job(project_id=project.id, state=JobState.SUCCEEDED), request=request, result=result)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.jobs.add(job)
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.add(project)
+            await uow.jobs.add(job)
         stored = await (await fx_uow_factory()).jobs.get(job.id)
         expect(stored == job)
         expect(stored.request is not None and list(stored.request.files) == list(request.files))
@@ -2012,9 +1874,9 @@ class TestJobRepository:
         project = make_project(owner_id=await fx_new_owner())
         job = make_job(project_id=project.id)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.jobs.add(job)
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.add(project)
+            await uow.jobs.add(job)
         stored = await (await fx_uow_factory()).jobs.get(job.id)
         assert (stored.request, stored.result) == (None, None)
 
@@ -2027,7 +1889,8 @@ class TestJobRepository:
         project_id = make_project(owner_id=new_account_id()).id
         uow = await fx_uow_factory()
         with pytest.raises(NotFoundError, match=str(project_id)):
-            await uow.jobs.add(make_job(project_id=project_id))
+            async with uow.change():
+                await uow.jobs.add(make_job(project_id=project_id))
 
     async def test_guarded_update_replaces_job_in_expected_state(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -2042,12 +1905,12 @@ class TestJobRepository:
         project = make_project(owner_id=await fx_new_owner())
         job = make_job(project_id=project.id, state=JobState.RUNNING)
         uow = await fx_uow_factory()
-        await uow.projects.add(project)
-        await uow.jobs.add(job)
-        await uow.commit()
+        async with uow.change():
+            await uow.projects.add(project)
+            await uow.jobs.add(job)
         succeeded = evolve(job, state=JobState.SUCCEEDED)
-        expect(await uow.jobs.update_if_state(succeeded, expected=JobState.active()) == succeeded)
-        await uow.commit()
+        async with uow.change():
+            expect(await uow.jobs.update_if_state(succeeded, expected=JobState.active()) == succeeded)
         expect(await (await fx_uow_factory()).jobs.get(job.id) == succeeded)
         assert_expectations()
 
@@ -2067,17 +1930,17 @@ class TestJobRepository:
         project = make_project(owner_id=await fx_new_owner())
         job = make_job(project_id=project.id, state=JobState.RUNNING)
         setup = await fx_uow_factory()
-        await setup.projects.add(project)
-        await setup.jobs.add(job)
-        await setup.commit()
+        async with setup.change():
+            await setup.projects.add(project)
+            await setup.jobs.add(job)
         canceller = await fx_uow_factory()
         seen = await canceller.jobs.get(job.id)
         worker = await fx_uow_factory()
-        await worker.jobs.update(evolve(job, state=JobState.SUCCEEDED))
-        await worker.commit()
+        async with worker.change():
+            await worker.jobs.update(evolve(job, state=JobState.SUCCEEDED))
         cancelled = evolve(seen, state=JobState.CANCELLED)
-        expect(await canceller.jobs.update_if_state(cancelled, expected=JobState.active()) is None)
-        await canceller.commit()
+        async with canceller.change():
+            expect(await canceller.jobs.update_if_state(cancelled, expected=JobState.active()) is None)
         expect((await (await fx_uow_factory()).jobs.get(job.id)).state is JobState.SUCCEEDED)
         assert_expectations()
 
@@ -2090,30 +1953,5 @@ class TestJobRepository:
         job = make_job(project_id=make_project(owner_id=new_account_id()).id)
         uow = await fx_uow_factory()
         with pytest.raises(NotFoundError, match=str(job.id)):
-            await uow.jobs.update_if_state(job, expected=JobState.active())
-
-
-class TestUnitOfWork:
-    """Contract of UnitOfWork isolation between concurrent units."""
-
-    async def test_concurrent_commits_keep_each_others_changes(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify a commit publishes only its own changes and never reverts another unit's commit.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        owner_id = await fx_new_owner()
-        first, second = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
-        # Both units start before either commits, as two overlapping requests do
-        early = await fx_uow_factory()
-        late = await fx_uow_factory()
-        await late.projects.add(second)
-        await late.commit()
-        await early.projects.add(first)
-        await early.commit()
-        listed = await (await fx_uow_factory()).projects.list_for_owner(owner_id, SliceRequest())
-        assert {item.project.id for item in listed.items} == {first.id, second.id}
+            async with uow.change():
+                await uow.jobs.update_if_state(job, expected=JobState.active())

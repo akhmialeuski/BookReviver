@@ -48,8 +48,9 @@ class TestFailedImportOnSqlAlchemy:
         samples.mkdir()
         project = make_project(owner_id=fx_owner_id)
         async with fx_database.sessions() as session:
-            await SqlAlchemyUnitOfWork(session).projects.add(project)
-            await session.commit()
+            uow = SqlAlchemyUnitOfWork(session)
+            async with uow.change():
+                await uow.projects.add(project)
         async with fx_database.sessions() as session:
             job = await rig.service(uow=SqlAlchemyUnitOfWork(session)).start_import(
                 Actor(account_id=fx_owner_id), project.id, [pdf_upload(samples, 'a.pdf', pages=PAGES)]

@@ -87,10 +87,12 @@ class TestDelete:
         pages = {project.id: make_page(project_id=project.id) for project in (*owned, kept)}
         async with fx_container() as scope:
             uow = await scope.get(UnitOfWork)
+            async with uow.change():
+                for project in (*owned, kept):
+                    await uow.projects.add(project)
             for project in (*owned, kept):
-                await uow.projects.add(project)
-                await uow.pages.add(pages[project.id])
-            await uow.commit()
+                async with uow.change_book(project.id):
+                    await uow.pages.add(pages[project.id])
         files = BookFiles(
             sources=await fx_container.get(SourceStore),
             assets=await fx_container.get(AssetStore),

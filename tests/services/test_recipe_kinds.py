@@ -69,8 +69,8 @@ async def add_page(kit: ProcessingKit, project: Project, kind: PageKind, *, orde
     page, _ = await kit.seed_scan_page(project, order_key=order_key)
     await kit.seed_base_version(page)
     uow = kit.uow()
-    await uow.pages.update(evolve(page, kind=kind))
-    await uow.commit()
+    async with uow.change_book(project.id):
+        await uow.pages.update(evolve(page, kind=kind))
     return page.id
 
 
@@ -197,8 +197,8 @@ class TestRecipeOfAPage:
             fx_kit, [PageKind.TEXT, PageKind.PLATE, PageKind.BLANK, PageKind.TEXT]
         )
         uow = fx_kit.uow()
-        await uow.pages.update(evolve(await uow.pages.get(found), content_type=ContentType.BW_PICTURE))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.pages.update(evolve(await uow.pages.get(found), content_type=ContentType.BW_PICTURE))
         recipes = await tune_recipes(fx_kit, actor, project)
 
         await run_all(fx_kit, actor, project)
@@ -219,9 +219,9 @@ class TestRecipeOfAPage:
         """
         actor, project, (by_hand, plate_as_text) = await seed_book(fx_kit, [PageKind.TEXT, PageKind.PLATE])
         uow = fx_kit.uow()
-        for page_id, content in ((by_hand, ContentType.COLOR_PICTURE), (plate_as_text, ContentType.TEXT)):
-            await uow.pages.update(evolve(await uow.pages.get(page_id), content_type=content, content_by_hand=True))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            for page_id, content in ((by_hand, ContentType.COLOR_PICTURE), (plate_as_text, ContentType.TEXT)):
+                await uow.pages.update(evolve(await uow.pages.get(page_id), content_type=content, content_by_hand=True))
         recipes = await tune_recipes(fx_kit, actor, project)
 
         await run_all(fx_kit, actor, project)

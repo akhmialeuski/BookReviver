@@ -63,8 +63,8 @@ async def seed_loose_base(
         make_page_version(page_id=page.id, minutes=minutes), state=state, renditions=Renditions(ready=ready)
     )
     uow = kit.uow()
-    await uow.page_versions.add(version)
-    await uow.commit()
+    async with uow.change_book(page.project_id):
+        await uow.page_versions.add(version)
     return version
 
 
@@ -99,8 +99,8 @@ class TestOf:
         page, base = await seed_page(fx_kit, project, FIRST_KEY)
         geometry = await seed_head(fx_kit, page, Stage.GEOMETRY, after=base)
         uow = fx_kit.uow()
-        await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.CLEANUP, head_version_id=None))
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.CLEANUP, head_version_id=None))
         assert await StageInputs(uow=fx_kit.uow()).of([page.id], Stage.LAYOUT) == {page.id: geometry}
 
     async def test_a_head_whose_files_are_not_ready_is_skipped_like_a_missing_one(self, fx_kit: ProcessingKit) -> None:
@@ -206,8 +206,10 @@ class TestOf:
         geometry = await seed_head(fx_kit, page, Stage.GEOMETRY, after=base)
         await seed_head(fx_kit, page, Stage.CLEANUP, after=geometry)
         uow = fx_kit.uow()
-        await uow.page_stages.save(
-            make_page_stage(page_id=page.id, stage=Stage.LAYOUT, head_version_id=geometry.id, state=StageState.STALE)
-        )
-        await uow.commit()
+        async with uow.change_book(project.id):
+            await uow.page_stages.save(
+                make_page_stage(
+                    page_id=page.id, stage=Stage.LAYOUT, head_version_id=geometry.id, state=StageState.STALE
+                )
+            )
         assert await StageInputs(uow=fx_kit.uow()).of([page.id], Stage.GEOMETRY) == {page.id: base}

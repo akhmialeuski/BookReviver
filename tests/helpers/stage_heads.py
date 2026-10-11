@@ -40,9 +40,9 @@ async def seed_head(
         state=VersionState.READY,
     )
     uow = kit.uow()
-    await uow.page_versions.add(version)
-    await uow.page_stages.save(
-        make_page_stage(page_id=page.id, stage=stage, head_version_id=version.id, state=StageState.FRESH)
-    )
-    await uow.commit()
+    async with uow.change_book(page.project_id):
+        await uow.page_versions.add(version)
+        await uow.page_stages.save(
+            make_page_stage(page_id=page.id, stage=stage, head_version_id=version.id, state=StageState.FRESH)
+        )
     return version

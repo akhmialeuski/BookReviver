@@ -4,10 +4,14 @@ The tests need OpenCV, and are skipped with the reason where the optional group 
 """
 
 import io
-from typing import TYPE_CHECKING
+from datetime import timedelta
+from functools import partial
+from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
+from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
@@ -16,9 +20,11 @@ from bookreviver.domain.enums import JobState, PageChange, Stage, StageState, Va
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import PagesChanged, PageVersionReady
 from bookreviver.domain.geometry import Line, Point
+from bookreviver.domain.ids import PageId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NewPageEdit, StageRun, Step, StepPreview
-from tests.helpers.builders import make_page_stage, make_step_values
+from bookreviver.domain.values import NewPageEdit, PageStageKey, SliceRequest, StageRun, Step, StepPreview
+from tests.helpers.builders import EPOCH, make_page_stage, make_step_values
+from tests.helpers.meanwhile import change_while_writing
 from tests.helpers.samples import png_bytes, spread
 from tests.helpers.spreads import (
     HEIGHT_PX,
@@ -33,6 +39,8 @@ from tests.helpers.spreads import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from bookreviver.domain.entities import Actor, PageVersion, Project
     from tests.helpers.processing import ProcessingKit
 
@@ -40,6 +48,9 @@ pytestmark = pytest.mark.anyio
 
 # Where the cut line the user draws crosses the top and the bottom of the scan
 CUT_LINE: Line = Line(start=Point(x=880, y=0), end=Point(x=900, y=HEIGHT_PX - 1))
+# Where another run that split the scan first put its right half, after the one page of the book
+RIGHT_HALF_ORDER_KEY: str = 'a1'
+EVERYTHING: SliceRequest = SliceRequest(limit=100)
 
 
 async def width_of(kit: ProcessingKit, project: Project, version: PageVersion) -> int:
@@ -71,9 +82,9 @@ async def give_odd_pages_a_value(kit: ProcessingKit, project: Project, page: Pag
     :type page: Page
     """
     uow = kit.uow()
-    await uow.step_values.save(make_step_values(project_id=project.id, scope=ValueScope.ODD))
-    await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.GEOMETRY))
-    await uow.commit()
+    async with uow.change_book(project.id):
+        await uow.step_values.save(make_step_values(project_id=project.id, scope=ValueScope.ODD))
+        await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.GEOMETRY))
 
 
 class TestSplit:
@@ -367,4 +378,126 @@ class TestUnsplit:
         with pytest.raises(NotFoundError):
             async with fx_cv_kit.assets.readable(stored):
                 pass
+        assert_expectations()
+
+
+class SplitBook(NamedTuple):
+    """The account, the project and the page of a scan of a spread, on which a change is made while a split runs.
+
+    :ivar actor: Account owning the project.
+    :ivar project: The project.
+    :ivar page: The page that shows the scan whole.
+    """
+
+    actor: Actor
+    project: Project
+    page: Page
+
+
+async def delete_the_spread(kit: ProcessingKit, book: SplitBook) -> None:
+    """Delete the page of the scan, as a request of the user does while a job splits it.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param book: The project and the page.
+    :type book: SplitBook
+    """
+    uow = kit.uow()
+    async with uow.change_book(book.project.id):
+        await uow.pages.delete(book.page.id)
+
+
+async def split_the_scan_elsewhere(kit: ProcessingKit, book: SplitBook) -> None:
+    """Store the right half of the scan, as another run that split it first would have.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param book: The project and the page.
+    :type book: SplitBook
+    """
+    right = evolve(book.page, id=PageId(uuid4()), order_key=RIGHT_HALF_ORDER_KEY, slot=Page.RIGHT_HALF)
+    uow = kit.uow()
+    async with uow.change_book(book.project.id):
+        await uow.pages.add(right)
+
+
+async def draw_the_cut_line(kit: ProcessingKit, book: SplitBook) -> None:
+    """Save the cut line of the step for the page, through the service the editor of the interface uses.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param book: The account, the project and the page.
+    :type book: SplitBook
+    """
+    key = await kit.edit_key(book.page, Stage.PAGE_SPLIT, SPLIT_SPREAD)
+    await kit.edits().save(book.actor, book.project.id, key, NewPageEdit(kind=CUT_LINE.editor, geometry=CUT_LINE), None)
+
+
+async def save_the_split_recipe(kit: ProcessingKit, book: SplitBook) -> None:
+    """Save the recipe of the page split again a moment later, as the form of the recipe does.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param book: The account and the project owning the recipe.
+    :type book: SplitBook
+    """
+    kit.clock.moment = EPOCH + timedelta(hours=1)
+    await use_recipe(kit, book.actor, book.project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
+
+
+class TestSplitApplyStep:
+    """Tests for the block that stores a split, which reads again what the split went by."""
+
+    @pytest.mark.parametrize(
+        ('change', 'pages_left'),
+        [
+            pytest.param(delete_the_spread, 0, id='page-deleted'),
+            pytest.param(split_the_scan_elsewhere, 2, id='scan-split-by-another-run'),
+            pytest.param(draw_the_cut_line, 1, id='cut-line-drawn-by-hand'),
+            pytest.param(save_the_split_recipe, 1, id='recipe-saved'),
+        ],
+    )
+    async def test_a_split_whose_basis_changed_meanwhile_is_skipped_and_stores_nothing(
+        self,
+        fx_cv_kit: ProcessingKit,
+        monkeypatch: pytest.MonkeyPatch,
+        change: Callable[[ProcessingKit, SplitBook], Awaitable[None]],
+        pages_left: int,
+    ) -> None:
+        """Verify a change that lands while the scan is cut stores no page, no version and no head, and no file.
+
+        The change lands after the step ran and before the block that stores the halves. The job ends as succeeded
+        with no page made, and the browser is told of no page and no version.
+
+        :param fx_cv_kit: The processing kit with the OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        :param monkeypatch: Fixture that restores the writer of renditions.
+        :type monkeypatch: pytest.MonkeyPatch
+        :param change: The change another request makes while the job runs.
+        :type change: Callable[[ProcessingKit, SplitBook], Awaitable[None]]
+        :param pages_left: How many pages the book has after the change, none of them made by the split.
+        :type pages_left: int
+        """
+        actor, project, [page] = await seed_spreads(fx_cv_kit)
+        book = SplitBook(actor, project, page)
+        await use_recipe(fx_cv_kit, actor, project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
+        job = await fx_cv_kit.service().start_run(actor, project.id, Stage.PAGE_SPLIT, StageRun(stage=Stage.PAGE_SPLIT))
+        change_while_writing(fx_cv_kit, monkeypatch, partial(change, fx_cv_kit, book))
+        made = await fx_cv_kit.jobs().run_stage(job.id)
+        reader = fx_cv_kit.uow()
+        stored = await reader.jobs.get(job.id)
+        versions = await reader.page_versions.list_for_stage(page.id, Stage.PAGE_SPLIT, None, EVERYTHING)
+        told = [
+            event
+            for event in fx_cv_kit.events.published
+            if isinstance(event, PageVersionReady)
+            or (isinstance(event, PagesChanged) and event.change is PageChange.ADDED)
+        ]
+        expect(made is None)
+        expect((stored.state, stored.progress.total) == (JobState.SUCCEEDED, 1))
+        expect(len(await book_of(fx_cv_kit, project)) == pages_left)
+        expect(await reader.page_stages.find(PageStageKey(page.id, Stage.PAGE_SPLIT)) is None)
+        expect(versions.total == 0)
+        expect(await fx_cv_kit.assets.size_of(ProjectKeys(project.id).page(page.id)) == 0)
+        expect(told == [])
         assert_expectations()

@@ -1,8 +1,8 @@
 """The pagination sections of a book, and the numbering of a range of pages that makes one.
 
 A section numbers the pages from the page it starts at, and the labels of the pages follow the sections, so every use
-case that changes a section recomputes the labels in its own transaction, writes only the labels that change, and
-announces them as one ``PagesChanged`` of kind ``edited``.
+case that changes a section recomputes the labels in the same ``change_book`` block, writes only the labels that
+change, and announces them after the block as one ``PagesChanged`` of kind ``edited``.
 
 ``number`` keeps the older way of numbering a range of pages, which is now a way of making sections. It makes a section
 of the main flow at the first page of the range, a series that does not count for the kinds to skip, and a section that
@@ -24,7 +24,7 @@ from bookreviver.domain.ids import PaginationSectionId
 from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.values import NumberedPage, Slice
 from bookreviver.services.page_labels import PageLabels
-from bookreviver.services.projects import owned_project
+from bookreviver.services.projects import owned_project, require_owner
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -78,7 +78,7 @@ class PaginationService:
     def __init__(self, *, uow: UnitOfWork, publisher: EventPublisher, clock: Clock) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose commit ends every changing use case.
+        :param uow: Unit of work of the request, whose blocks end every changing use case.
         :type uow: UnitOfWork
         :param publisher: Publisher of the events the browser follows.
         :type publisher: EventPublisher
@@ -124,9 +124,7 @@ class PaginationService:
         :raises NotFoundError: If the actor has no such project, or the project has no such page.
         :raises ConflictError: If another section that takes the same pages starts at the page, or a number does not
                                fit the style.
-        :raises ConcurrentChangeError: If another request changed one of the pages meanwhile.
         """
-        await owned_project(self._uow.projects, actor, project_id)
         moment = self._clock.now()
         section = PaginationSection(
             id=PaginationSectionId(uuid4()),
@@ -141,10 +139,13 @@ class PaginationService:
             created_at=moment,
             updated_at=moment,
         )
-        await self._require_own_page(project_id, section.first_page_id)
-        await self._require_no_clash(project_id, section)
-        stored = await self._uow.pagination_sections.add(section)
-        await self._renumber(project_id)
+        async with self._uow.change_book(project_id) as project:
+            require_owner(project, actor)
+            await self._require_own_page(project_id, section.first_page_id)
+            await self._require_no_clash(project_id, section)
+            stored = await self._uow.pagination_sections.add(section)
+            await self._labels.recompute(project_id, force=True)
+        await self._labels.announce(project_id)
         return stored
 
     async def update(
@@ -165,24 +166,25 @@ class PaginationService:
         :raises NotFoundError: If the actor has no such project, or the project has no such section or page.
         :raises ConflictError: If another section that takes the same pages starts at the page, or a number does not
                                fit the style.
-        :raises ConcurrentChangeError: If another request changed one of the pages meanwhile.
         """
-        await owned_project(self._uow.projects, actor, project_id)
-        section = evolve(
-            await self._section(project_id, section_id),
-            first_page_id=draft.first_page_id,
-            name=draft.name,
-            style=draft.style,
-            start=draft.start,
-            prefix=draft.prefix,
-            display=draft.display,
-            kinds=draft.kinds,
-            updated_at=self._clock.now(),
-        )
-        await self._require_own_page(project_id, section.first_page_id)
-        await self._require_no_clash(project_id, section)
-        stored = await self._uow.pagination_sections.update(section)
-        await self._renumber(project_id)
+        async with self._uow.change_book(project_id) as project:
+            require_owner(project, actor)
+            section = evolve(
+                await self._section(project_id, section_id),
+                first_page_id=draft.first_page_id,
+                name=draft.name,
+                style=draft.style,
+                start=draft.start,
+                prefix=draft.prefix,
+                display=draft.display,
+                kinds=draft.kinds,
+                updated_at=self._clock.now(),
+            )
+            await self._require_own_page(project_id, section.first_page_id)
+            await self._require_no_clash(project_id, section)
+            stored = await self._uow.pagination_sections.update(section)
+            await self._labels.recompute(project_id, force=True)
+        await self._labels.announce(project_id)
         return stored
 
     async def remove(self, actor: Actor, project_id: ProjectId, section_id: PaginationSectionId) -> None:
@@ -195,11 +197,12 @@ class PaginationService:
         :param section_id: Identifier of the section.
         :type section_id: PaginationSectionId
         :raises NotFoundError: If the actor has no such project, or the project has no such section.
-        :raises ConcurrentChangeError: If another request changed one of the pages meanwhile.
         """
-        await owned_project(self._uow.projects, actor, project_id)
-        await self._uow.pagination_sections.delete((await self._section(project_id, section_id)).id)
-        await self._renumber(project_id)
+        async with self._uow.change_book(project_id) as project:
+            require_owner(project, actor)
+            await self._uow.pagination_sections.delete((await self._section(project_id, section_id)).id)
+            await self._labels.recompute(project_id, force=True)
+        await self._labels.announce(project_id)
 
     async def number(self, actor: Actor, project_id: ProjectId, numbering: PageNumbering) -> None:
         """Make the sections that number a range of pages, and write the labels they give.
@@ -213,16 +216,17 @@ class PaginationService:
         :raises NotFoundError: If the actor has no such project, or the project lacks the first or the last page.
         :raises ReversedRangeError: If the range runs backwards.
         :raises ConflictError: If a number does not fit the style, such as 4000 in Roman numerals.
-        :raises ConcurrentChangeError: If another request changed one of the pages meanwhile, which writes none.
         """
-        await owned_project(self._uow.projects, actor, project_id)
-        plan = await self._plan(project_id, numbering)
-        # A number that does not fit is found before anything is written
-        plan.labels()
-        for section_id in plan.removed:
-            await self._uow.pagination_sections.delete(section_id)
-        await self._uow.pagination_sections.add_many(plan.added)
-        await self._renumber(project_id, unpin=plan.counted)
+        async with self._uow.change_book(project_id) as project:
+            require_owner(project, actor)
+            plan = await self._plan(project_id, numbering)
+            # A number that does not fit is found before anything is written
+            plan.labels()
+            for section_id in plan.removed:
+                await self._uow.pagination_sections.delete(section_id)
+            await self._uow.pagination_sections.add_many(plan.added)
+            await self._labels.recompute(project_id, unpin=plan.counted, force=True)
+        await self._labels.announce(project_id)
 
     async def preview_numbers(
         self, actor: Actor, project_id: ProjectId, numbering: PageNumbering
@@ -325,20 +329,6 @@ class PaginationService:
             pages=pages,
             counted=counted,
         )
-
-    async def _renumber(self, project_id: ProjectId, *, unpin: frozenset[PageId] = frozenset()) -> None:
-        """Recompute the labels after a change of the sections, commit it, and announce the pages renumbered.
-
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :param unpin: Pages whose hand-written label is dropped.
-        :type unpin: frozenset[PageId]
-        :raises ConflictError: If a number does not fit its style, or the database refuses the commit.
-        :raises ConcurrentChangeError: If another request changed one of the pages meanwhile.
-        """
-        await self._labels.recompute(project_id, unpin=unpin, force=True)
-        await self._uow.commit()
-        await self._labels.announce(project_id)
 
     async def _section(self, project_id: ProjectId, section_id: PaginationSectionId) -> PaginationSection:
         """Read a section of the project.
