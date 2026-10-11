@@ -84,7 +84,7 @@ export function answersPreview(version: PageVersionSchema, request: PreviewReque
   ) {
     return false;
   }
-  // A page that did not meet the condition of the step passed it as it was, so its version holds no parameters
+  // A leaf the program drew passes every step as it was, so its version holds no parameters
   if (version.data.skipped_by_condition === true) {
     return true;
   }

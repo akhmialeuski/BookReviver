@@ -6,10 +6,8 @@ import { stepRowOptions, useStepRows } from '@/features/workspace/queries';
 import {
   type BarStep,
   barStepsOf,
-  countStep,
   hasStepBar,
   openStepOf,
-  type StepCounts,
   type StepStates,
 } from '@/features/workspace/steps';
 import type { StripItem } from '@/features/workspace/strip';
@@ -19,8 +17,9 @@ import type { StripItem } from '@/features/workspace/strip';
  * step did on every page of the book, and the state of each step on the open page.
  *
  * The step is the one the address names, so the bar, the canvas and the panel all follow the link. The pages of the book
- * are read once for the open step, which gives the counts and the open page's input and result, and each other step is
- * read for the open page alone, since the dots of the bar want one page of every step and not the whole book of each.
+ * are read once for the open step, which gives the flags of the strip and the open page's input and result, and each
+ * other step is read for the open page alone, since the dots of the bar want one page of every step and not the whole
+ * book of each.
  *
  * What the last carry-over of a step did is kept here, by book, stage and step, because the menu that made it is drawn
  * only for a page whose shape was set by hand and goes away with the page, while its result and undo stay the step's.
@@ -36,8 +35,6 @@ export interface StepWorkspace {
   states: StepStates;
   /** What the open step read and made on the open page, or null while it is read or when there is no open step. */
   page: StepPageSchema | null;
-  /** How the pages of the book stand at the open step, or null while they are read. */
-  counts: StepCounts | null;
   /** The rows of every page of the book at the open step, with the flags the server put on them, or null while read. */
   rows: readonly StagePageSchema[] | null;
   /** What the last carry-over of the open step did, or null when there is none, it was taken back, or no step is open. */
@@ -100,10 +97,6 @@ export function useStepWorkspace(
   });
 
   const rowOfPage: StagePageSchema | undefined = rows.data?.find((row) => row.page_id === pageId);
-  const counts = useMemo(
-    () => (rows.data === undefined || open === null ? null : countStep(rows.data)),
-    [rows.data, open],
-  );
   const states = useMemo(() => {
     const byStep = new Map<string, FigureState | null>();
     steps.forEach((step, index) => {
@@ -119,7 +112,6 @@ export function useStepWorkspace(
     open,
     states,
     page: rowOfPage?.step ?? null,
-    counts,
     rows: open === null ? null : (rows.data ?? null),
     carried: carryKey === null ? null : (carriedResults.get(carryKey) ?? null),
     setCarried,

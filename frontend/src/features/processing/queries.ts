@@ -12,7 +12,6 @@ import {
   listScansApiV1ProjectsProjectIdScansGet,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet,
   type PageVersionSchema,
-  type ResultMark,
   type RunImpactSchema,
   runImpactApiV1ProjectsProjectIdStagesStageRunImpactPost,
   type ScanSchema,
@@ -98,12 +97,10 @@ export function useRecipes(projectId: string, stage: Stage, enabled: boolean) {
   });
 }
 
-/** What narrows the results a stage made on a page: one step of the stage, and one mark. */
+/** What narrows the results a stage made on a page: one step of the stage. */
 export interface VersionsFilter {
   /** The step whose results are read, or undefined for the results of every step. */
   step?: string;
-  /** The mark the results carry, or undefined for every result. */
-  mark?: ResultMark;
 }
 
 /**
@@ -112,7 +109,7 @@ export interface VersionsFilter {
  * @param projectId The book.
  * @param pageId The page.
  * @param stage The stage.
- * @param filter The step and the mark to read, or nothing for the results of every step.
+ * @param filter The step to read, or nothing for the results of every step.
  */
 export function versionsOptions(
   projectId: string,
@@ -125,7 +122,6 @@ export function versionsOptions(
     scale: 'full',
     size: LIST_SIZE,
     ...(filter.step === undefined ? {} : { step: filter.step }),
-    ...(filter.mark === undefined ? {} : { mark: filter.mark }),
   } as const;
   return queryOptions({
     queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({

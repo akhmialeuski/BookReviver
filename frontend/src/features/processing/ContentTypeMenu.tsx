@@ -25,10 +25,11 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 /**
  * What the open page shows, as a button of the canvas toolbar with the menu that changes it.
  *
- * The steps of a recipe have a condition, the pages of text or the pictures, and a page meets it by what it shows. The
- * program proposes the type from the share of the page that pictures cover and from the colour of the pictures, and the
- * reader's choice here is kept, so a later detection leaves the page as it is. The choice is made on the open page or on
- * the selected pages, and "Detect again" gives those pages back to the program.
+ * What a page shows decides the kind of the page, and so which recipe processes it: a page of text, a colour picture and
+ * a black-and-white picture each have a recipe of their own. The program proposes the type from the share of the page
+ * that pictures cover and from the colour of the pictures, and the reader's choice here is kept, so a later detection
+ * leaves the page as it is. The choice is made on the open page or on the selected pages, and "Detect again" gives
+ * those pages back to the program.
  */
 
 const labels = MESSAGES.processing.content;

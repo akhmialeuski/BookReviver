@@ -173,7 +173,7 @@ export function useEditorSession({
     entry === undefined || recipe === undefined
       ? null
       : stepVersion(chain, recipe.steps, entry.index);
-  // A page that did not meet the condition of the step passed it as it was, so the step found nothing on it
+  // A leaf the program drew passes every step as it was, so the step found nothing on it
   const skipped = foundMade?.data.skipped_by_condition === true;
   const made = skipped ? null : (foundMade ?? (editable.length === 1 ? head : null));
   const focused = focusStepId !== undefined;

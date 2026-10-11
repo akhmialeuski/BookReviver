@@ -49,7 +49,7 @@ const STEP_FLAG_NAMES = {
 
 /** The name of the button that adds a step to a recipe, and what it says of itself. */
 const ADD_STEP = 'Add a step';
-const ADD_STEP_HINT = 'A step can be added more than once, with its own settings and pages.';
+const ADD_STEP_HINT = 'A step can be added more than once, each with its own settings.';
 
 /**
  * Every text the interface shows, in one place.
@@ -685,7 +685,7 @@ export const MESSAGES = {
       gear: {
         open: 'Steps of the stage',
         title: (stage: string) => `Steps of ${stage}`,
-        hint: 'Drag a step to reorder, choose the pages it processes, switch it off or remove it. Nothing changes until the steps are saved.',
+        hint: 'Drag a step to reorder, switch it off or remove it. Nothing changes until the steps are saved.',
 
         reset: {
           open: 'Reset to the default steps',
@@ -1220,7 +1220,7 @@ export const MESSAGES = {
     library: {
       title: 'Profiles',
       description:
-        'Your recipe profiles, by stage. Apply one to this book or to the selected pages, copy it, or exchange it as a file.',
+        'Your recipe profiles, by stage. Apply one to the recipe of a kind of page in this book, copy it, or exchange it as a file.',
       stages: 'Stages',
       allStages: 'All stages',
       empty: (stage: string) =>
@@ -1293,7 +1293,6 @@ export const MESSAGES = {
     loadFailed: 'The steps of this stage could not be read.',
     content: {
       title: 'What the page shows',
-      picture: 'Picture',
       found: 'found',
       applyTo: 'Apply to',
       thisPage: 'This page',
@@ -1485,7 +1484,6 @@ export const MESSAGES = {
       handle: 'Drag to compare before and after',
       none: 'Nothing comes before this stage, so there is nothing to compare.',
       spreadOnly: 'Comparing works on one page at a time.',
-      noImage: 'This page has no picture before or after to compare.',
     },
     thisPage: {
       title: (label: string) => (label === '' ? 'This page' : `This page · ${label}`),
@@ -1749,7 +1747,6 @@ export const MESSAGES = {
       name: 'Content box and margins of the page',
       handle: (handle: string) => `Handle of the content box: ${handle}`,
       side: (side: string) => `Margin of the page: ${side}`,
-      finding: 'Looking for the content box of this page…',
       alignment: {
         vertical: 'Vertical alignment',
         horizontal: 'Horizontal alignment',

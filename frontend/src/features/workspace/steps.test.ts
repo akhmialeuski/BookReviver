@@ -1,16 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { StepPageSchema } from '@/api';
 import { deskew, processor, recipe, step } from '@/features/processing/fixtures';
-import { row, stepPage } from '@/features/workspace/fixtures';
-import {
-  barStepsOf,
-  countStep,
-  defaultStepOf,
-  hasStepBar,
-  openStepOf,
-} from '@/features/workspace/steps';
+import { row } from '@/features/workspace/fixtures';
+import { barStepsOf, defaultStepOf, hasStepBar, openStepOf } from '@/features/workspace/steps';
 
-/** The steps of the open recipe as the bar reads them, and the counts of what a step did on the pages of the book. */
+/** The steps of the open recipe as the bar reads them, and the step a stage opens on. */
 
 const CATALOGUE = [
   processor('geometry.perspective', { title: 'Perspective' }),
@@ -25,13 +18,6 @@ const RECIPE = recipe('r', {
     step('x.gone', { step_id: 'd' }),
   ],
 });
-
-function placed(
-  state: StepPageSchema['state'],
-  flags: StepPageSchema['flags'] = [],
-): StepPageSchema {
-  return stepPage('b', state, { flags });
-}
 
 describe('barStepsOf', () => {
   it('lists the saved steps in order with their numbers and titles', () => {
@@ -60,59 +46,6 @@ describe('openStepOf', () => {
     expect(openStepOf(steps, 'b')?.number).toBe(2);
     expect(openStepOf(steps, 'nope')).toBeNull();
     expect(openStepOf(steps, undefined)).toBeNull();
-  });
-});
-
-describe('countStep', () => {
-  it('counts the pages by what the step did on them and by the flags the server raised', () => {
-    const rows = [
-      row('1', { step: placed('found') }),
-      row('2', { step: placed('found', ['unusual']) }),
-      row('3', { step: placed('by-hand', ['by-hand']) }),
-      row('4', { step: placed('skipped', ['skipped']) }),
-      row('5', { step: placed('default') }),
-    ];
-
-    expect(countStep(rows)).toEqual({
-      found: 2,
-      byHand: 1,
-      skipped: 1,
-      notRun: 1,
-      check: 0,
-      unusual: 1,
-    });
-  });
-
-  it('counts a page with a setting of its own as set by hand, though the step found its shape', () => {
-    const counts = countStep([row('1', { step: placed('found', ['by-hand']) })]);
-
-    expect(counts.found).toBe(1);
-    expect(counts.byHand).toBe(1);
-  });
-
-  it('counts the pages the step was unsure of by the flag, whichever step marked them first', () => {
-    const rows = [
-      row('1', { step: placed('found', ['unsure']) }),
-      row('2', { step: placed('skipped', ['skipped']) }),
-      row('3', {
-        step: placed('found'),
-        review: 'low-confidence',
-        review_processor: 'geometry.crop',
-      }),
-    ];
-
-    expect(countStep(rows).check).toBe(1);
-  });
-
-  it('leaves out a row that was not asked for a step', () => {
-    expect(countStep([row('1')])).toEqual({
-      found: 0,
-      byHand: 0,
-      skipped: 0,
-      notRun: 0,
-      check: 0,
-      unusual: 0,
-    });
   });
 });
 

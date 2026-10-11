@@ -149,33 +149,12 @@ describe('useStepWorkspace', () => {
     expect(seen?.page?.state).toBe('by-hand');
   });
 
-  it('counts the pages of the book at the open step', async () => {
-    await render('b');
-
-    expect(seen?.counts).toEqual({
-      found: 1,
-      byHand: 1,
-      skipped: 1,
-      notRun: 0,
-      check: 0,
-      unusual: 0,
-    });
-  });
-
   it('moves to another step without reading the book again for the one it leaves', async () => {
     await render('b');
     await render('c');
 
     expect(seen?.open?.stepId).toBe('c');
     expect(seen?.page?.state).toBe('skipped');
-    expect(seen?.counts).toEqual({
-      found: 1,
-      byHand: 0,
-      skipped: 2,
-      notRun: 0,
-      check: 0,
-      unusual: 0,
-    });
     const wholeBook = requests().filter((query) => query.size === 1000);
     expect(wholeBook.map((query) => query.step)).toEqual(['b', 'c']);
   });
@@ -184,7 +163,6 @@ describe('useStepWorkspace', () => {
     await render(undefined);
 
     expect(seen?.open).toBeNull();
-    expect(seen?.counts).toBeNull();
     expect(requests().every((query) => query.size === 1)).toBe(true);
     expect([...(seen?.states ?? [])]).toEqual([
       ['a', 'found'],

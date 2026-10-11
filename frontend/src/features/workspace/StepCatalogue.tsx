@@ -20,10 +20,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
  *
  * Choosing a step adds it to the saved recipe at once, and it is shown in the bar and opened. A step has no identifier
  * until the server gives it one when the recipe is saved, and the bar lists only steps that have one, so a step that
- * waited in the draft could not be opened. The same processor may be chosen again: each instance keeps its own settings,
- * condition and edits. The step stands where its processor usually does, and a place that the usual order refuses is
- * told to the reader and nothing is sent. The button waits while the draft of the panel holds changes, since saving the
- * recipe would save them too.
+ * waited in the draft could not be opened. The same processor may be chosen again: each instance keeps its own settings
+ * and edits. The step stands where its processor usually does, and a place that the usual order refuses is told to the
+ * reader and nothing is sent. The button waits while the draft of the panel holds changes, since saving the recipe
+ * would save them too.
  */
 
 const labels = MESSAGES.workspace.steps.catalogue;
