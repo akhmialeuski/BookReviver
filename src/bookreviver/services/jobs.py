@@ -167,7 +167,9 @@ class JobService:
         """Return a subscription to the project's events, for the owner only.
 
         The ownership check runs here, before the subscription exists, so a caller learns of a refusal before it
-        subscribes or starts streaming.
+        subscribes or starts streaming. The check is the last read the service makes for the stream, which then stays
+        open for as long as the browser tab does, so what the reads left open is released before the subscription is
+        returned.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -179,6 +181,7 @@ class JobService:
         :raises NotFoundError: If the project does not exist or belongs to another account.
         """
         await self._check_owner(actor, project_id)
+        await self._uow.release_reads()
         return self._stream.subscribe(project_id)
 
     async def _check_owner(self, actor: Actor, project_id: ProjectId) -> None:

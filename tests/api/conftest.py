@@ -6,6 +6,7 @@ import pytest
 from dishka import AsyncContainer
 
 from bookreviver.adapters.persistence.memory import InMemoryDatabase
+from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.ports.storage import AssetStore, SourceStore
 from tests.helpers.storage import BookFiles
 
@@ -41,6 +42,18 @@ async def fx_database(fx_container: AsyncContainer) -> InMemoryDatabase:
     :rtype: InMemoryDatabase
     """
     return await fx_container.get(InMemoryDatabase)
+
+
+@pytest.fixture
+async def fx_sql_database(fx_container: AsyncContainer) -> SqlDatabase:
+    """Return the SQL database of the running application, whose pool a test counts the connections of.
+
+    :param fx_container: Container of the application, built with SQLAlchemy persistence for the books to be stored.
+    :type fx_container: AsyncContainer
+    :returns: The database whose engine every request of the application takes its connections from.
+    :rtype: SqlDatabase
+    """
+    return await fx_container.get(SqlDatabase)
 
 
 @pytest.fixture

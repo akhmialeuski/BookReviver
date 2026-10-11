@@ -2,7 +2,7 @@
 
 The event bus is the application's own ``InProcessEventBus`` with what a test needs to observe: the list of everything
 published, an event set once a subscription is in place, so a test publishes only after the stream subscribed, and the
-number of subscriptions still open.
+number of subscriptions still open, which a test can also wait to reach a count.
 """
 
 from contextlib import asynccontextmanager
@@ -43,6 +43,17 @@ class RecordingEventBus(InProcessEventBus):
         self.published: list[DomainEvent] = []
         self.subscribed = anyio.Event()
         self.open_subscriptions = 0
+        # Set and replaced by every new subscription, so a waiter for a count is woken by each one and misses none
+        self._arrival = anyio.Event()
+
+    async def wait_for_subscriptions(self, count: int) -> None:
+        """Return once at least ``count`` subscriptions are open at the same time.
+
+        :param count: Number of subscriptions to wait for.
+        :type count: int
+        """
+        while self.open_subscriptions < count:
+            await self._arrival.wait()
 
     @override
     async def publish(self, event: DomainEvent) -> None:
@@ -67,6 +78,8 @@ class RecordingEventBus(InProcessEventBus):
         async with super().subscribe(project_id) as events:
             self.open_subscriptions += 1
             self.subscribed.set()
+            arrived, self._arrival = self._arrival, anyio.Event()
+            arrived.set()
             try:
                 yield events
             finally:
