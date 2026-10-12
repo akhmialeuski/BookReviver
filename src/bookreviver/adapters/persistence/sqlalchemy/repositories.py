@@ -1133,17 +1133,17 @@ class SqlAlchemyPageVersionRepository(
         :returns: The window and the number of versions that match.
         :rtype: Slice[PageVersion]
         """
-        filters: dict[str, Any] = {'page_id': page_id}
+        filters: list[ColumnElement[bool]] = [PageVersionRow.page_id == page_id]
         if stage is not None:
-            filters['stage'] = stage
+            filters.append(PageVersionRow.stage == stage)
         if scale is not None:
-            filters['scale'] = scale
+            filters.append(PageVersionRow.scale == scale)
         if mark is not None:
-            filters['mark'] = mark
+            filters.append(PageVersionRow.mark == mark)
         rows, total = await self._rows.get_many_and_count(
             LimitOffset(limit=request.limit, offset=request.offset),
+            *filters,
             order_by=[PageVersionRow.created_at.asc(), PageVersionRow.id.asc()],
-            **filters,
         )
         return Slice(items=[self._mapper.to_entity(row) for row in rows], total=total)
 
@@ -1540,11 +1540,11 @@ class SqlAlchemyPageStepStateRepository(
         :returns: The states of the page.
         :rtype: Sequence[PageStepState]
         """
-        filters: dict[str, Any] = {'page_id': page_id}
+        filters: list[ColumnElement[bool]] = [PageStepStateRow.page_id == page_id]
         if stage is not None:
-            filters['stage'] = stage
+            filters.append(PageStepStateRow.stage == stage)
         order = list(Stage)
-        states = [self._mapper.to_entity(row) for row in await self._rows.get_many(**filters)]
+        states = [self._mapper.to_entity(row) for row in await self._rows.get_many(*filters)]
         return sorted(states, key=lambda state: (order.index(state.stage), str(state.step_id)))
 
     @override
@@ -1735,10 +1735,10 @@ class SqlAlchemyPageStepChangeRepository(
         :returns: The changes of the page.
         :rtype: Sequence[PageStepChange]
         """
-        filters: dict[str, Any] = {'page_id': page_id}
+        filters: list[ColumnElement[bool]] = [PageStepChangeRow.page_id == page_id]
         if stage is not None:
-            filters['stage'] = stage
-        rows = await self._rows.get_many(order_by=[PageStepChangeRow.sequence.asc()], **filters)
+            filters.append(PageStepChangeRow.stage == stage)
+        rows = await self._rows.get_many(*filters, order_by=[PageStepChangeRow.sequence.asc()])
         return [self._mapper.to_entity(row) for row in rows]
 
     @override
