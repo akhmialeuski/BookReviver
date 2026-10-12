@@ -1170,7 +1170,6 @@ class SqlAlchemyPageVersionRepository(
             or_(PageVersionRow.scale != VersionScale.PREVIEW, PageVersionRow.created_at < previews_older_than),
         )
         # The two columns of every version of the project, and whether it may go, since the chains are followed here
-        # and a recursive query is not portable to every database
         rows = (
             await session.execute(
                 select(PageVersionRow.id, PageVersionRow.input_id, may_go)
