@@ -11,6 +11,7 @@ import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.api.route_names import RouteName
 from bookreviver.app.settings import PersistenceBackend
@@ -22,9 +23,9 @@ from tests.helpers.sse import STREAM_TIMEOUT_SECONDS, EventStreamReader
 
 if TYPE_CHECKING:
     import httpx
+    from dishka import AsyncContainer
     from fastapi import FastAPI
 
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Actor, Project
     from bookreviver.domain.ids import AccountId
@@ -65,6 +66,18 @@ def fx_settings(fx_settings: Settings) -> Settings:
 
 
 @pytest.fixture
+async def fx_sql_database(fx_container: AsyncContainer) -> SqlDatabase:
+    """Return the SQL database of the running application, whose pool a test counts the connections of.
+
+    :param fx_container: Container of the application, built with SQLAlchemy persistence by ``fx_settings``.
+    :type fx_container: AsyncContainer
+    :returns: The database whose engine every request of the application takes its connections from.
+    :rtype: SqlDatabase
+    """
+    return await fx_container.get(SqlDatabase)
+
+
+@pytest.fixture
 async def fx_owned_project(fx_sql_database: SqlDatabase, fx_actor: Actor) -> Project:
     """Commit the signed-in account and a project that it owns.
 
@@ -75,7 +88,9 @@ async def fx_owned_project(fx_sql_database: SqlDatabase, fx_actor: Actor) -> Pro
     :returns: The stored project of the signed-in account.
     :rtype: Project
     """
-    return await _store_project_of(fx_sql_database, await commit_account(fx_sql_database, fx_actor.account_id))
+    return await _store_project_of(
+        fx_sql_database, await commit_account(fx_sql_database, account_id=fx_actor.account_id)
+    )
 
 
 @pytest.fixture

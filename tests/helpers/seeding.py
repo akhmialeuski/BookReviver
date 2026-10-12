@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 ACCOUNT_DOMAIN: str = 'example.org'
 
 
-async def commit_account(database: SqlDatabase, account_id: AccountId | None = None) -> AccountId:
+async def commit_account(database: SqlDatabase, *, account_id: AccountId | None = None) -> AccountId:
     """Commit a verified account, which the owner key of a project in the SQL database refers to.
 
     :param database: SQL database to commit into.
@@ -30,7 +30,8 @@ async def commit_account(database: SqlDatabase, account_id: AccountId | None = N
     :returns: Identifier of the account.
     :rtype: AccountId
     """
-    account_id = account_id or new_account_id()
+    if account_id is None:
+        account_id = new_account_id()
     async with database.sessions() as session:
         session.add(
             AccountTable(

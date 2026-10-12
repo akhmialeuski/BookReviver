@@ -247,11 +247,14 @@ class TestEvents:
         expect(not released.await_count)
         assert_expectations()
 
+    @patch.object(InMemoryUnitOfWork, RELEASE_READS, new_callable=AsyncMock)
     async def test_reads_are_released_once_the_owner_is_checked(
-        self, fx_fakes: JobFakes, fx_owner: Actor, fx_project: Project
+        self, released: AsyncMock, fx_fakes: JobFakes, fx_owner: Actor, fx_project: Project
     ) -> None:
         """Verify the owner's subscription is returned after exactly one release of the reads, which the check made.
 
+        :param released: The release of the unit of work, which records its calls instead of ending a transaction.
+        :type released: AsyncMock
         :param fx_fakes: Adapters of the service.
         :type fx_fakes: JobFakes
         :param fx_owner: Account owning the project.
@@ -260,7 +263,6 @@ class TestEvents:
         :type fx_project: Project
         """
         await fx_fakes.store(fx_project)
-        with patch.object(InMemoryUnitOfWork, RELEASE_READS, new_callable=AsyncMock) as released:
-            async with await fx_fakes.job_service().events(fx_owner, fx_project.id):
-                expect(released.await_count == 1)
+        async with await fx_fakes.job_service().events(fx_owner, fx_project.id):
+            expect(released.await_count == 1)
         assert_expectations()
