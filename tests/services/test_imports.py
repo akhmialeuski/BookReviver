@@ -91,8 +91,9 @@ from tests.helpers.processors import AutoSplitProcessor
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
+    from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping, Sequence
     from pathlib import Path
+    from typing import Any
 
     from fastapi import UploadFile
 
@@ -143,6 +144,49 @@ CUT_STEP: str = '_cut'
 LONG_BOOK_PAGES: int = 6
 PARALLEL_SCANS: int = 2
 SECRET_FAULT: str = 'secret detail of the failure'
+# Names of the uploaded files, each written once so a test compares a name with the one it uploaded
+IMAGE_NAME: str = 'a.jpg'
+PDF_NAME: str = 'a.pdf'
+SECOND_PDF_NAME: str = 'b.pdf'
+LABELLED_PDF_NAME: str = 'book.pdf'
+FIRST_LABELLED_PDF_NAME: str = 'one.pdf'
+SECOND_LABELLED_PDF_NAME: str = 'two.pdf'
+COVER_NAME: str = 'cover.jpg'
+PLATE_NAME: str = 'plate.jpg'
+PAGE_JPEG_NAME: str = 'page.jpg'
+PAGE_TIFF_NAME: str = 'page.tif'
+UNREADABLE_PDF_NAME: str = 'bad.pdf'
+TEXT_NAME: str = 'notes.txt'
+PART_ONE_NAME: str = 'part1.pdf'
+PART_TWO_NAME: str = 'part2.pdf'
+PART_THREE_NAME: str = 'part3-cover.jpg'
+DJVU_PART_TWO_NAME: str = 'part2.djvu'
+DJVU_PART_TEN_NAME: str = 'part10.djvu'
+DJVU_INDEX_NAME: str = 'a-index.djvu'
+PDF_AFTER_DJVU_NAME: str = 'b-book.pdf'
+ORIGINAL_PDF_NAME: str = 'a-book.pdf'
+COPY_PDF_NAME: str = 'b-copy.pdf'
+OTHER_IMAGE_NAME: str = 'c.jpg'
+REPEATED_IMAGE_NAME: str = 'again.jpg'
+# Two scans of one name in two folders, and the system files a folder upload brings along
+FIRST_VOLUME_SCAN: str = 'vol1/001.tif'
+SECOND_VOLUME_SCAN: str = 'vol2/001.tif'
+VOLUME_SCAN_NAME: str = '001.tif'
+FOLDER_SCAN: str = 'book/001.jpg'
+FOLDER_VIEW_FILE: str = 'book/.DS_Store'
+RESOURCE_FORK_FILE: str = 'book/._001.jpg'
+THUMBNAILS_FILE: str = 'book/Thumbs.db'
+AUTHOR_KEY: str = 'author'
+FIRST_AUTHOR: str = 'First Author'
+DAMAGED_PAGE_ERROR: str = f'Page 2 of {PDF_NAME} is damaged.'
+REFUSED_SCANS_ERROR: str = 'scans refused'
+STATE_ARG: str = 'state'
+# Roman pages, then a rule that writes a prefix and no number, which no section can express
+PREFIX_ONLY_LABEL: str = '12a'
+PREFIX_ONLY_RULES: tuple[Mapping[str, Any], ...] = (
+    ROMAN_THEN_ARABIC_RULES[0],
+    {'startpage': 2, 'prefix': PREFIX_ONLY_LABEL, 'style': '', 'firstpagenum': 1},
+)
 BROKEN_PDF: bytes = b'this is not a pdf'
 DJVU_HEADER: bytes = b'AT&TFORM'
 # Pages of the sample DjVu documents, of different widths so that a page taken for another shows in its scan
@@ -155,15 +199,15 @@ DJVU_WIDTHS: list[int] = [page.size_px[0] for page in DJVU_PAGES]
 
 
 @pytest.fixture
-def fx_rig(tmp_path: Path) -> ImportRig:
-    """Build the adapters an import runs on, over a storage root in the test's temporary directory.
+def fx_rig(fx_storage_root: Path) -> ImportRig:
+    """Build the adapters an import runs on, over the storage root of the test.
 
-    :param tmp_path: Temporary directory of the test.
-    :type tmp_path: Path
+    :param fx_storage_root: Storage root under the test's temporary directory.
+    :type fx_storage_root: Path
     :returns: The rig with an empty database and nothing stored.
     :rtype: ImportRig
     """
-    return ImportRig.build(tmp_path / 'storage')
+    return ImportRig.build(fx_storage_root)
 
 
 @pytest.fixture
@@ -216,9 +260,9 @@ def fx_book_files(fx_samples: Path) -> list[UploadFile]:
     :rtype: list[UploadFile]
     """
     return [
-        image_upload(fx_samples, 'part3-cover.jpg'),
-        pdf_upload(fx_samples, 'part2.pdf', pages=SECOND_PART_PAGES, width_px=SECOND_PART_WIDTH_PX),
-        pdf_upload(fx_samples, 'part1.pdf', pages=FIRST_PART_PAGES),
+        image_upload(fx_samples, PART_THREE_NAME),
+        pdf_upload(fx_samples, PART_TWO_NAME, pages=SECOND_PART_PAGES, width_px=SECOND_PART_WIDTH_PX),
+        pdf_upload(fx_samples, PART_ONE_NAME, pages=FIRST_PART_PAGES),
     ]
 
 
@@ -486,12 +530,12 @@ class TestStartImport:
             job.request is not None
             and [file.name for file in job.request.files]
             == [
-                'part3-cover.jpg',
-                'part2.pdf',
-                'part1.pdf',
+                PART_THREE_NAME,
+                PART_TWO_NAME,
+                PART_ONE_NAME,
             ]
         )
-        expect(staged_names == ['part1.pdf', 'part2.pdf', 'part3-cover.jpg'])
+        expect(staged_names == [PART_ONE_NAME, PART_TWO_NAME, PART_THREE_NAME])
         expect(fx_rig.queue.enqueued == [job])
         expect(_events_of(fx_rig, JobChanged)[0].job == job)
         assert_expectations()
@@ -510,12 +554,12 @@ class TestStartImport:
         """
         stranger = Actor(account_id=new_account_id())
         with pytest.raises(NotFoundError):
-            await fx_rig.service().start_import(stranger, fx_project.id, [image_upload(fx_samples, 'a.jpg')])
+            await fx_rig.service().start_import(stranger, fx_project.id, [image_upload(fx_samples, IMAGE_NAME)])
         assert fx_rig.queue.enqueued == []
 
-    @pytest.mark.parametrize('state', [JobState.QUEUED, JobState.RUNNING], ids=str)
+    @pytest.mark.parametrize(STATE_ARG, [JobState.QUEUED, JobState.RUNNING], ids=str)
     async def test_project_importing_already_raises_conflict_before_receiving_anything(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_samples: Path, tmp_path: Path, state: JobState
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_samples: Path, fx_storage_root: Path, state: JobState
     ) -> None:
         """Verify a second upload is refused while an import is queued or running, before its files are streamed.
 
@@ -525,8 +569,8 @@ class TestStartImport:
         :type fx_owner: Actor
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
-        :param tmp_path: Temporary directory of the test, holding the storage root.
-        :type tmp_path: Path
+        :param fx_storage_root: Storage root under the test's temporary directory.
+        :type fx_storage_root: Path
         :param state: Active state of the import already there.
         :type state: JobState
         """
@@ -534,11 +578,11 @@ class TestStartImport:
         await fx_rig.fakes.store(project, make_job(project_id=project.id, state=state))
 
         with pytest.raises(ConflictError, match=IMPORT_ACTIVE):
-            await fx_rig.service().start_import(fx_owner, project.id, [image_upload(fx_samples, 'a.jpg')])
+            await fx_rig.service().start_import(fx_owner, project.id, [image_upload(fx_samples, IMAGE_NAME)])
 
-        assert not (tmp_path / 'storage').exists()
+        assert not await anyio.Path(fx_storage_root).exists()
 
-    @pytest.mark.parametrize('state', [JobState.SUCCEEDED, JobState.FAILED, JobState.CANCELLED], ids=str)
+    @pytest.mark.parametrize(STATE_ARG, [JobState.SUCCEEDED, JobState.FAILED, JobState.CANCELLED], ids=str)
     async def test_finished_import_does_not_keep_the_project_from_importing_again(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_samples: Path, state: JobState
     ) -> None:
@@ -556,7 +600,7 @@ class TestStartImport:
         project = make_project(owner_id=fx_owner.account_id)
         await fx_rig.fakes.store(project, make_job(project_id=project.id, state=state))
 
-        job = await fx_rig.service().start_import(fx_owner, project.id, [image_upload(fx_samples, 'a.jpg')])
+        job = await fx_rig.service().start_import(fx_owner, project.id, [image_upload(fx_samples, IMAGE_NAME)])
 
         assert job.state is JobState.QUEUED
 
@@ -594,7 +638,7 @@ class TestStartImport:
 
     @patch.object(RecordingJobQueue, 'enqueue', new=AsyncMock(side_effect=ConnectionError))
     async def test_unreachable_queue_fails_the_job_and_removes_the_upload(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path, tmp_path: Path
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path, fx_storage_root: Path
     ) -> None:
         """Verify a job that could not be queued ends failed, so the project can import again, and loses its upload.
 
@@ -606,16 +650,16 @@ class TestStartImport:
         :type fx_project: Project
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
-        :param tmp_path: Temporary directory of the test, holding the storage root.
-        :type tmp_path: Path
+        :param fx_storage_root: Storage root under the test's temporary directory.
+        :type fx_storage_root: Path
         """
         with pytest.raises(ConnectionError):
-            await fx_rig.service().start_import(fx_owner, fx_project.id, [image_upload(fx_samples, 'a.jpg')])
+            await fx_rig.service().start_import(fx_owner, fx_project.id, [image_upload(fx_samples, IMAGE_NAME)])
 
         [job] = await fx_rig.open_uow().jobs.list_for_project(fx_project.id, set(JobState))
         expect((job.state, job.error) == (JobState.FAILED, NOT_QUEUED))
         expect(job.finished_at is not None)
-        expect(not any((tmp_path / 'storage').rglob('a.jpg')))
+        expect(not [path async for path in anyio.Path(fx_storage_root).rglob(IMAGE_NAME)])
         assert_expectations()
 
 
@@ -653,7 +697,7 @@ class TestAuthorizeUpload:
         with pytest.raises(NotFoundError):
             await fx_rig.service().authorize_upload(Actor(account_id=new_account_id()), fx_project.id)
 
-    @pytest.mark.parametrize('state', [JobState.QUEUED, JobState.RUNNING], ids=str)
+    @pytest.mark.parametrize(STATE_ARG, [JobState.QUEUED, JobState.RUNNING], ids=str)
     async def test_project_that_imports_is_a_conflict(
         self, fx_rig: ImportRig, fx_owner: Actor, state: JobState
     ) -> None:
@@ -701,7 +745,7 @@ class TestRunImport:
         )
         by_id = {scan.id: scan for scan in scans}
         expect(job.state is JobState.SUCCEEDED)
-        expect([source.file_name for source in sources] == ['part3-cover.jpg', 'part2.pdf', 'part1.pdf'])
+        expect([source.file_name for source in sources] == [PART_THREE_NAME, PART_TWO_NAME, PART_ONE_NAME])
         expect(all(source.import_job_id == job.id for source in sources))
         expect([source.scan_count for source in sources] == [1, SECOND_PART_PAGES, FIRST_PART_PAGES])
         expect(job.result is not None and list(job.result.imported) == [source.id for source in sources])
@@ -732,8 +776,8 @@ class TestRunImport:
         second = image_upload(fx_samples, 'second.tif', width_px=SECOND_PART_WIDTH_PX)
         first = image_upload(fx_samples, 'first.tif')
         uploads = [
-            upload('vol2/001.tif', content=second.file.read()),
-            upload('vol1/001.tif', content=first.file.read()),
+            upload(SECOND_VOLUME_SCAN, content=second.file.read()),
+            upload(FIRST_VOLUME_SCAN, content=first.file.read()),
         ]
 
         job = await _import(fx_rig, fx_owner, fx_project.id, uploads)
@@ -744,9 +788,11 @@ class TestRunImport:
             async with fx_rig.sources.source_files(fx_project.id, source.id) as files:
                 stored.append([path.name for path in files])
         expect(job.state is JobState.SUCCEEDED)
-        expect([source.file_name for source in sources] == ['vol2/001.tif', 'vol1/001.tif'])
-        expect([[file.name for file in source.files] for source in sources] == [['vol2/001.tif'], ['vol1/001.tif']])
-        expect(stored == [['001.tif'], ['001.tif']])
+        expect([source.file_name for source in sources] == [SECOND_VOLUME_SCAN, FIRST_VOLUME_SCAN])
+        expect(
+            [[file.name for file in source.files] for source in sources] == [[SECOND_VOLUME_SCAN], [FIRST_VOLUME_SCAN]]
+        )
+        expect(stored == [[VOLUME_SCAN_NAME], [VOLUME_SCAN_NAME]])
         expect(job.result is not None and job.result.rejected == ())
         assert_expectations()
 
@@ -766,23 +812,23 @@ class TestRunImport:
         """
         scan = image_upload(fx_samples, 'scan.jpg')
         uploads = [
-            upload('book/.DS_Store', content=b'folder view'),
-            upload('book/001.jpg', content=scan.file.read()),
-            upload('book/._001.jpg', content=b'resource fork'),
-            upload('book/Thumbs.db', content=b'thumbnails'),
+            upload(FOLDER_VIEW_FILE, content=b'folder view'),
+            upload(FOLDER_SCAN, content=scan.file.read()),
+            upload(RESOURCE_FORK_FILE, content=b'resource fork'),
+            upload(THUMBNAILS_FILE, content=b'thumbnails'),
         ]
 
         job = await _import(fx_rig, fx_owner, fx_project.id, uploads)
 
         assert job.result is not None
         expect(job.state is JobState.SUCCEEDED)
-        expect([source.file_name for source in await _sources(fx_rig, fx_project.id)] == ['book/001.jpg'])
+        expect([source.file_name for source in await _sources(fx_rig, fx_project.id)] == [FOLDER_SCAN])
         expect(
             [(file.file_name, file.reason) for file in job.result.rejected]
             == [
-                ('book/.DS_Store', RejectionReason.SYSTEM_FILE),
-                ('book/._001.jpg', RejectionReason.SYSTEM_FILE),
-                ('book/Thumbs.db', RejectionReason.SYSTEM_FILE),
+                (FOLDER_VIEW_FILE, RejectionReason.SYSTEM_FILE),
+                (RESOURCE_FORK_FILE, RejectionReason.SYSTEM_FILE),
+                (THUMBNAILS_FILE, RejectionReason.SYSTEM_FILE),
             ]
         )
         expect(job.result.skipped == ())
@@ -804,9 +850,9 @@ class TestRunImport:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        pdf_upload(fx_samples, 'book.pdf', pages=len(ROMAN_THEN_ARABIC_LABELS))
-        labelled = add_page_labels(fx_samples / 'book.pdf', rules=ROMAN_THEN_ARABIC_RULES)
-        files = [upload('book.pdf', content=labelled.read_bytes()), image_upload(fx_samples, 'cover.jpg')]
+        pdf_upload(fx_samples, LABELLED_PDF_NAME, pages=len(ROMAN_THEN_ARABIC_LABELS))
+        labelled = add_page_labels(fx_samples / LABELLED_PDF_NAME, rules=ROMAN_THEN_ARABIC_RULES)
+        files = [upload(LABELLED_PDF_NAME, content=labelled.read_bytes()), image_upload(fx_samples, COVER_NAME)]
 
         await _import(fx_rig, fx_owner, fx_project.id, files)
 
@@ -832,10 +878,10 @@ class TestRunImport:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        pdf_upload(fx_samples, 'book.pdf', pages=len(ROMAN_THEN_ARABIC_LABELS))
-        labelled = add_page_labels(fx_samples / 'book.pdf', rules=ROMAN_THEN_ARABIC_RULES)
+        pdf_upload(fx_samples, LABELLED_PDF_NAME, pages=len(ROMAN_THEN_ARABIC_LABELS))
+        labelled = add_page_labels(fx_samples / LABELLED_PDF_NAME, rules=ROMAN_THEN_ARABIC_RULES)
 
-        await _import(fx_rig, fx_owner, fx_project.id, [upload('book.pdf', content=labelled.read_bytes())])
+        await _import(fx_rig, fx_owner, fx_project.id, [upload(LABELLED_PDF_NAME, content=labelled.read_bytes())])
 
         pages, sections = await _pages(fx_rig, fx_project.id), await _sections(fx_rig, fx_project.id)
         by_start = {section.first_page_id: section for section in sections}
@@ -860,17 +906,13 @@ class TestRunImport:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        rules = [
-            {'startpage': 0, 'prefix': '', 'style': 'r', 'firstpagenum': 1},
-            {'startpage': 2, 'prefix': '12a', 'style': '', 'firstpagenum': 1},
-        ]
-        pdf_upload(fx_samples, 'book.pdf', pages=len(ROMAN_THEN_ARABIC_LABELS))
-        labelled = add_page_labels(fx_samples / 'book.pdf', rules=rules)
+        pdf_upload(fx_samples, LABELLED_PDF_NAME, pages=len(ROMAN_THEN_ARABIC_LABELS))
+        labelled = add_page_labels(fx_samples / LABELLED_PDF_NAME, rules=PREFIX_ONLY_RULES)
 
-        await _import(fx_rig, fx_owner, fx_project.id, [upload('book.pdf', content=labelled.read_bytes())])
+        await _import(fx_rig, fx_owner, fx_project.id, [upload(LABELLED_PDF_NAME, content=labelled.read_bytes())])
 
         pages, sections = await _pages(fx_rig, fx_project.id), await _sections(fx_rig, fx_project.id)
-        expect([page.label for page in pages] == ['i', 'ii', '12a', '12a'])
+        expect([page.label for page in pages] == ['i', 'ii', PREFIX_ONLY_LABEL, PREFIX_ONLY_LABEL])
         expect([page.label_manual for page in pages] == [False, False, True, True])
         expect(
             sorted(section.display for section in sections)
@@ -892,9 +934,9 @@ class TestRunImport:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        pdf_upload(fx_samples, 'book.pdf', pages=len(ROMAN_THEN_ARABIC_LABELS))
-        labelled = add_page_labels(fx_samples / 'book.pdf', rules=ROMAN_THEN_ARABIC_RULES)
-        files = [upload('book.pdf', content=labelled.read_bytes()), image_upload(fx_samples, 'plate.jpg')]
+        pdf_upload(fx_samples, LABELLED_PDF_NAME, pages=len(ROMAN_THEN_ARABIC_LABELS))
+        labelled = add_page_labels(fx_samples / LABELLED_PDF_NAME, rules=ROMAN_THEN_ARABIC_RULES)
+        files = [upload(LABELLED_PDF_NAME, content=labelled.read_bytes()), image_upload(fx_samples, PLATE_NAME)]
 
         await _import(fx_rig, fx_owner, fx_project.id, files)
 
@@ -920,8 +962,8 @@ class TestRunImport:
         :type fx_samples: Path
         """
         files = [
-            image_upload(fx_samples, 'cover.jpg'),
-            image_upload(fx_samples, 'plate.jpg', width_px=PAGE_WIDTH_PX + 1),
+            image_upload(fx_samples, COVER_NAME),
+            image_upload(fx_samples, PLATE_NAME, width_px=PAGE_WIDTH_PX + 1),
         ]
 
         await _import(fx_rig, fx_owner, fx_project.id, files)
@@ -942,13 +984,15 @@ class TestRunImport:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        pdf_upload(fx_samples, 'one.pdf', pages=len(ROMAN_THEN_ARABIC_LABELS))
-        first = add_page_labels(fx_samples / 'one.pdf', rules=ROMAN_THEN_ARABIC_RULES)
-        pdf_upload(fx_samples, 'two.pdf', pages=len(ROMAN_THEN_ARABIC_LABELS), width_px=PAGE_WIDTH_PX + 1)
-        second = add_page_labels(fx_samples / 'two.pdf', rules=ROMAN_THEN_ARABIC_RULES)
+        pdf_upload(fx_samples, FIRST_LABELLED_PDF_NAME, pages=len(ROMAN_THEN_ARABIC_LABELS))
+        first = add_page_labels(fx_samples / FIRST_LABELLED_PDF_NAME, rules=ROMAN_THEN_ARABIC_RULES)
+        pdf_upload(
+            fx_samples, SECOND_LABELLED_PDF_NAME, pages=len(ROMAN_THEN_ARABIC_LABELS), width_px=PAGE_WIDTH_PX + 1
+        )
+        second = add_page_labels(fx_samples / SECOND_LABELLED_PDF_NAME, rules=ROMAN_THEN_ARABIC_RULES)
 
-        await _import(fx_rig, fx_owner, fx_project.id, [upload('one.pdf', content=first.read_bytes())])
-        await _import(fx_rig, fx_owner, fx_project.id, [upload('two.pdf', content=second.read_bytes())])
+        await _import(fx_rig, fx_owner, fx_project.id, [upload(FIRST_LABELLED_PDF_NAME, content=first.read_bytes())])
+        await _import(fx_rig, fx_owner, fx_project.id, [upload(SECOND_LABELLED_PDF_NAME, content=second.read_bytes())])
 
         pages, sections = await _pages(fx_rig, fx_project.id), await _sections(fx_rig, fx_project.id)
         starts = {section.first_page_id for section in sections}
@@ -1019,7 +1063,7 @@ class TestRunImport:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        await _import(fx_rig, fx_owner, fx_project.id, [image_upload(fx_samples, 'cover.jpg')])
+        await _import(fx_rig, fx_owner, fx_project.id, [image_upload(fx_samples, COVER_NAME)])
 
         keys, uow = ProjectKeys(fx_project.id), fx_rig.open_uow()
         [scan] = await _scans(fx_rig, fx_project.id)
@@ -1114,12 +1158,12 @@ class TestRunImportFullFormat:
     @pytest.mark.parametrize(
         CASE_ARG,
         [
-            FullFormatCase(ImagePolicy.COMPACT, BILEVEL_MODE, 'page.tif', Rendition.FULL_PNG),
-            FullFormatCase(ImagePolicy.LOSSLESS, BILEVEL_MODE, 'page.tif', Rendition.FULL_PNG),
-            FullFormatCase(ImagePolicy.COMPACT, GRAY_MODE, 'page.jpg', Rendition.FULL_JPEG),
-            FullFormatCase(ImagePolicy.LOSSLESS, GRAY_MODE, 'page.jpg', Rendition.FULL_PNG),
-            FullFormatCase(ImagePolicy.COMPACT, RGB_MODE, 'page.jpg', Rendition.FULL_JPEG),
-            FullFormatCase(ImagePolicy.LOSSLESS, RGB_MODE, 'page.jpg', Rendition.FULL_PNG),
+            FullFormatCase(ImagePolicy.COMPACT, BILEVEL_MODE, PAGE_TIFF_NAME, Rendition.FULL_PNG),
+            FullFormatCase(ImagePolicy.LOSSLESS, BILEVEL_MODE, PAGE_TIFF_NAME, Rendition.FULL_PNG),
+            FullFormatCase(ImagePolicy.COMPACT, GRAY_MODE, PAGE_JPEG_NAME, Rendition.FULL_JPEG),
+            FullFormatCase(ImagePolicy.LOSSLESS, GRAY_MODE, PAGE_JPEG_NAME, Rendition.FULL_PNG),
+            FullFormatCase(ImagePolicy.COMPACT, RGB_MODE, PAGE_JPEG_NAME, Rendition.FULL_JPEG),
+            FullFormatCase(ImagePolicy.LOSSLESS, RGB_MODE, PAGE_JPEG_NAME, Rendition.FULL_PNG),
         ],
         ids=lambda case: f'{case.policy}-{case.mode}',
     )
@@ -1251,8 +1295,8 @@ class TestRunImportDjvu:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        files = write_djvu_indirect(fx_samples, pages=DJVU_PAGES, index_name='a-index.djvu')
-        uploads = [pdf_upload(fx_samples, 'b-book.pdf'), *djvu_uploads(files[::-1])]
+        files = write_djvu_indirect(fx_samples, pages=DJVU_PAGES, index_name=DJVU_INDEX_NAME)
+        uploads = [pdf_upload(fx_samples, PDF_AFTER_DJVU_NAME), *djvu_uploads(files[::-1])]
 
         job = await _import(fx_rig, fx_owner, fx_project.id, uploads)
 
@@ -1261,7 +1305,7 @@ class TestRunImportDjvu:
         async with fx_rig.sources.source_files(fx_project.id, djvu.id) as stored:
             stored_names = sorted(path.name for path in stored)
         expect(job.state is JobState.SUCCEEDED)
-        expect((djvu.kind, djvu.file_name, pdf.file_name) == (SourceKind.DJVU, 'a-index.djvu', 'b-book.pdf'))
+        expect((djvu.kind, djvu.file_name, pdf.file_name) == (SourceKind.DJVU, DJVU_INDEX_NAME, PDF_AFTER_DJVU_NAME))
         expect([file.name for file in djvu.files] == [path.name for path in files])
         expect(djvu.size_bytes == sum(path.stat().st_size for path in files))
         expect(stored_names == sorted(path.name for path in files))
@@ -1284,8 +1328,8 @@ class TestRunImportDjvu:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        second = write_djvu_bundle(fx_samples / 'part2.djvu', pages=DJVU_PAGES[:2])
-        tenth = write_djvu_bundle(fx_samples / 'part10.djvu', pages=DJVU_PAGES[1:])
+        second = write_djvu_bundle(fx_samples / DJVU_PART_TWO_NAME, pages=DJVU_PAGES[:2])
+        tenth = write_djvu_bundle(fx_samples / DJVU_PART_TEN_NAME, pages=DJVU_PAGES[1:])
 
         await _import(fx_rig, fx_owner, fx_project.id, djvu_uploads([tenth, second]))
 
@@ -1295,7 +1339,7 @@ class TestRunImportDjvu:
             await _pages(fx_rig, fx_project.id),
         )
         widths = {scan.id: scan.facts.width_px for scan in scans}
-        expect([source.file_name for source in sources] == ['part10.djvu', 'part2.djvu'])
+        expect([source.file_name for source in sources] == [DJVU_PART_TEN_NAME, DJVU_PART_TWO_NAME])
         expect([source.scan_count for source in sources] == [2, 2])
         expect([widths[page.scan_id] for page in pages if page.scan_id] == [*DJVU_WIDTHS[1:], *DJVU_WIDTHS[:2]])
         assert_expectations()
@@ -1339,18 +1383,21 @@ class TestRunImportDjvu:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        index, first, *_ = write_djvu_indirect(fx_samples, pages=DJVU_PAGES, index_name='a-index.djvu')
+        index, first, *_ = write_djvu_indirect(fx_samples, pages=DJVU_PAGES, index_name=DJVU_INDEX_NAME)
 
         job = await _import(
-            fx_rig, fx_owner, fx_project.id, [*djvu_uploads([index, first]), pdf_upload(fx_samples, 'b-book.pdf')]
+            fx_rig,
+            fx_owner,
+            fx_project.id,
+            [*djvu_uploads([index, first]), pdf_upload(fx_samples, PDF_AFTER_DJVU_NAME)],
         )
 
         assert job.result is not None
         [rejected] = job.result.rejected
         expect(job.state is JobState.SUCCEEDED)
-        expect((rejected.file_name, rejected.reason) == ('a-index.djvu', RejectionReason.UNREADABLE))
+        expect((rejected.file_name, rejected.reason) == (DJVU_INDEX_NAME, RejectionReason.UNREADABLE))
         expect('p0002.djvu, p0003.djvu' in rejected.detail)
-        expect([source.file_name for source in await _sources(fx_rig, fx_project.id)] == ['b-book.pdf'])
+        expect([source.file_name for source in await _sources(fx_rig, fx_project.id)] == [PDF_AFTER_DJVU_NAME])
         assert_expectations()
 
 
@@ -1371,25 +1418,28 @@ class TestRunImportChecks:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        content = pdf_upload(fx_samples, 'book.pdf').file.read()
+        content = pdf_upload(fx_samples, LABELLED_PDF_NAME).file.read()
 
         job = await _import(
             fx_rig,
             fx_owner,
             fx_project.id,
             [
-                upload('a-book.pdf', content=content),
-                upload('b-copy.pdf', content=content),
-                image_upload(fx_samples, 'c.jpg'),
+                upload(ORIGINAL_PDF_NAME, content=content),
+                upload(COPY_PDF_NAME, content=content),
+                image_upload(fx_samples, OTHER_IMAGE_NAME),
             ],
         )
 
         assert job.result is not None
         [rejected] = job.result.rejected
         expect(job.state is JobState.SUCCEEDED)
-        expect([source.file_name for source in await _sources(fx_rig, fx_project.id)] == ['a-book.pdf', 'c.jpg'])
-        expect((rejected.file_name, rejected.reason) == ('b-copy.pdf', RejectionReason.DUPLICATE))
-        expect('a-book.pdf' in rejected.detail)
+        expect(
+            [source.file_name for source in await _sources(fx_rig, fx_project.id)]
+            == [ORIGINAL_PDF_NAME, OTHER_IMAGE_NAME]
+        )
+        expect((rejected.file_name, rejected.reason) == (COPY_PDF_NAME, RejectionReason.DUPLICATE))
+        expect(ORIGINAL_PDF_NAME in rejected.detail)
         assert_expectations()
 
     async def test_rejects_a_file_of_an_earlier_upload_and_fails_a_job_that_imports_nothing(
@@ -1406,16 +1456,16 @@ class TestRunImportChecks:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        content = image_upload(fx_samples, 'cover.jpg').file.read()
-        await _import(fx_rig, fx_owner, fx_project.id, [upload('cover.jpg', content=content)])
+        content = image_upload(fx_samples, COVER_NAME).file.read()
+        await _import(fx_rig, fx_owner, fx_project.id, [upload(COVER_NAME, content=content)])
 
-        job = await _import(fx_rig, fx_owner, fx_project.id, [upload('again.jpg', content=content)])
+        job = await _import(fx_rig, fx_owner, fx_project.id, [upload(REPEATED_IMAGE_NAME, content=content)])
 
         assert job.result is not None
         expect((job.state, job.error) == (JobState.FAILED, NO_SOURCE_IMPORTED))
         expect(
             [(file.file_name, file.reason) for file in job.result.rejected]
-            == [('again.jpg', RejectionReason.DUPLICATE)]
+            == [(REPEATED_IMAGE_NAME, RejectionReason.DUPLICATE)]
         )
         expect(len(await _sources(fx_rig, fx_project.id)) == 1)
         assert_expectations()
@@ -1441,7 +1491,7 @@ class TestRunImportChecks:
             fx_rig,
             fx_owner,
             fx_project.id,
-            [upload(case.name, content=case.content), image_upload(fx_samples, 'page.jpg')],
+            [upload(case.name, content=case.content), image_upload(fx_samples, PAGE_JPEG_NAME)],
         )
 
         assert job.result is not None
@@ -1449,7 +1499,7 @@ class TestRunImportChecks:
         expect(job.state is JobState.SUCCEEDED)
         expect((rejected.file_name, rejected.reason) == (case.name, case.reason))
         expect(rejected.detail != '')
-        expect([source.file_name for source in await _sources(fx_rig, fx_project.id)] == ['page.jpg'])
+        expect([source.file_name for source in await _sources(fx_rig, fx_project.id)] == [PAGE_JPEG_NAME])
         assert_expectations()
 
     async def test_job_that_imports_nothing_fails_and_lists_every_rejection(
@@ -1468,12 +1518,12 @@ class TestRunImportChecks:
             fx_rig,
             fx_owner,
             fx_project.id,
-            [upload('bad.pdf', content=BROKEN_PDF), upload('notes.txt', content=BROKEN_PDF)],
+            [upload(UNREADABLE_PDF_NAME, content=BROKEN_PDF), upload(TEXT_NAME, content=BROKEN_PDF)],
         )
 
         assert job.result is not None
         expect((job.state, job.error) == (JobState.FAILED, NO_SOURCE_IMPORTED))
-        expect(sorted(file.file_name for file in job.result.rejected) == ['bad.pdf', 'notes.txt'])
+        expect(sorted(file.file_name for file in job.result.rejected) == [UNREADABLE_PDF_NAME, TEXT_NAME])
         expect(list(job.result.imported) == [])
         expect(await _pages(fx_rig, fx_project.id) == [])
         assert_expectations()
@@ -1497,14 +1547,14 @@ class TestRunImportChecks:
             fx_owner,
             fx_project.id,
             [
-                pdf_upload(fx_samples, 'a.pdf', pages=1, metadata={'title': 'Other title', 'author': 'First Author'}),
-                pdf_upload(fx_samples, 'b.pdf', pages=1, width_px=210, metadata={'author': 'Second Author'}),
+                pdf_upload(fx_samples, PDF_NAME, pages=1, metadata={'title': 'Other title', AUTHOR_KEY: FIRST_AUTHOR}),
+                pdf_upload(fx_samples, SECOND_PDF_NAME, pages=1, width_px=210, metadata={AUTHOR_KEY: 'Second Author'}),
             ],
         )
 
         project = await fx_rig.open_uow().projects.get(fx_project.id)
         expect(project.details.title == fx_project.details.title)
-        expect(project.details.contributors == (Contributor(name='First Author', role=ContributorRole.AUTHOR),))
+        expect(project.details.contributors == (Contributor(name=FIRST_AUTHOR, role=ContributorRole.AUTHOR),))
         expect(len(_events_of(fx_rig, ProjectChanged)) == 1)
         assert_expectations()
 
@@ -1528,9 +1578,9 @@ class TestRunImportChecks:
             '<dc:subject><rdf:Bag><rdf:li>Folklore</rdf:li></rdf:Bag></dc:subject>'
         )
 
-        path = add_xmp(write_pdf(fx_samples / 'a.pdf', pages=[PdfPage()]), packet=packet)
+        path = add_xmp(write_pdf(fx_samples / PDF_NAME, pages=[PdfPage()]), packet=packet)
 
-        await _import(fx_rig, fx_owner, fx_project.id, [upload('a.pdf', content=path.read_bytes())])
+        await _import(fx_rig, fx_owner, fx_project.id, [upload(PDF_NAME, content=path.read_bytes())])
 
         details = (await fx_rig.open_uow().projects.get(fx_project.id)).details
         expect((details.languages, details.subjects) == (('bel',), ('Folklore',)))
@@ -1557,7 +1607,7 @@ class TestRunImportChecks:
             fx_rig,
             fx_owner,
             project.id,
-            [pdf_upload(fx_samples, 'a.pdf', pages=1, metadata={'author': 'Document Author'})],
+            [pdf_upload(fx_samples, PDF_NAME, pages=1, metadata={AUTHOR_KEY: 'Document Author'})],
         )
 
         expect((await fx_rig.open_uow().projects.get(project.id)).details == described.details)
@@ -1591,7 +1641,7 @@ class TestRunImportLifecycle:
             fx_rig,
             fx_owner,
             fx_project.id,
-            [pdf_upload(fx_samples, 'a.pdf', pages=LONG_BOOK_PAGES)],
+            [pdf_upload(fx_samples, PDF_NAME, pages=LONG_BOOK_PAGES)],
             parallel_scans=PARALLEL_SCANS,
         )
 
@@ -1605,7 +1655,7 @@ class TestRunImportLifecycle:
         assert_expectations()
 
     async def test_job_cancelled_between_sources_keeps_the_sources_it_committed(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path, tmp_path: Path
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path, fx_storage_root: Path
     ) -> None:
         """Verify a cancelled job stops before the next source, names the files it never reached, and removes them.
 
@@ -1617,13 +1667,13 @@ class TestRunImportLifecycle:
         :type fx_project: Project
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
-        :param tmp_path: Temporary directory of the test, holding the storage root.
-        :type tmp_path: Path
+        :param fx_storage_root: Storage root under the test's temporary directory.
+        :type fx_storage_root: Path
         """
         job = await fx_rig.service().start_import(
             fx_owner,
             fx_project.id,
-            [pdf_upload(fx_samples, 'a.pdf', pages=1), pdf_upload(fx_samples, 'b.pdf', pages=1, width_px=210)],
+            [pdf_upload(fx_samples, PDF_NAME, pages=1), pdf_upload(fx_samples, SECOND_PDF_NAME, pages=1, width_px=210)],
         )
 
         async def cancel_before_the_second_source() -> None:
@@ -1638,10 +1688,10 @@ class TestRunImportLifecycle:
         stored = await fx_rig.stored_job(job)
         assert stored.result is not None
         expect(stored.state is JobState.CANCELLED)
-        expect([source.file_name for source in await _sources(fx_rig, fx_project.id)] == ['a.pdf'])
-        expect(list(stored.result.skipped) == ['b.pdf'])
+        expect([source.file_name for source in await _sources(fx_rig, fx_project.id)] == [PDF_NAME])
+        expect(list(stored.result.skipped) == [SECOND_PDF_NAME])
         expect(len(stored.result.imported) == 1)
-        expect(not any((tmp_path / 'storage').rglob('incoming/*')))
+        expect(not [path async for path in anyio.Path(fx_storage_root).rglob(INCOMING_UPLOADS)])
         expect(_events_of(fx_rig, JobChanged)[-1].job == stored)
         assert_expectations()
 
@@ -1663,7 +1713,7 @@ class TestRunImportLifecycle:
         :type fx_samples: Path
         """
         job = await fx_rig.service().start_import(
-            fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=THREE_PAGES)]
+            fx_owner, fx_project.id, [pdf_upload(fx_samples, PDF_NAME, pages=THREE_PAGES)]
         )
 
         async def cancel_after_the_first_scan(event: DomainEvent) -> None:
@@ -1687,7 +1737,7 @@ class TestRunImportLifecycle:
         expect([scan.renditions.ready for scan in await _scans(fx_rig, fx_project.id)] == [True, False, False])
         expect(len(await _pages(fx_rig, fx_project.id)) == THREE_PAGES)
 
-        next_job = await _import(fx_rig, fx_owner, fx_project.id, [image_upload(fx_samples, 'cover.jpg')])
+        next_job = await _import(fx_rig, fx_owner, fx_project.id, [image_upload(fx_samples, COVER_NAME)])
 
         expect(next_job.state is JobState.SUCCEEDED)
         expect(all(scan.renditions.ready for scan in await _scans(fx_rig, fx_project.id)))
@@ -1713,7 +1763,7 @@ class TestRunImportLifecycle:
         :type fx_samples: Path
         """
         job = await fx_rig.service().start_import(
-            fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=THREE_PAGES)]
+            fx_owner, fx_project.id, [pdf_upload(fx_samples, PDF_NAME, pages=THREE_PAGES)]
         )
         # The first preview is the first scan's and the second is its page's, so the third is the second scan's
         fx_rig.tiler.crash_on_preview = 3
@@ -1749,7 +1799,7 @@ class TestRunImportLifecycle:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        job = await fx_rig.service().start_import(fx_owner, fx_project.id, [image_upload(fx_samples, 'a.jpg')])
+        job = await fx_rig.service().start_import(fx_owner, fx_project.id, [image_upload(fx_samples, IMAGE_NAME)])
         fx_rig.sources.crash_on_promote = True
         with pytest.raises(WorkerCrashError):
             await fx_rig.service().run_import(job.id)
@@ -1760,7 +1810,7 @@ class TestRunImportLifecycle:
         async with fx_rig.sources.source_files(fx_project.id, source.id) as files:
             stored_names = [path.name for path in files]
         expect((await fx_rig.stored_job(job)).state is JobState.SUCCEEDED)
-        expect(stored_names == ['a.jpg'])
+        expect(stored_names == [IMAGE_NAME])
         assert_expectations()
 
     async def test_job_that_finished_only_has_its_upload_removed(
@@ -1777,7 +1827,7 @@ class TestRunImportLifecycle:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        job = await fx_rig.service().start_import(fx_owner, fx_project.id, [image_upload(fx_samples, 'a.jpg')])
+        job = await fx_rig.service().start_import(fx_owner, fx_project.id, [image_upload(fx_samples, IMAGE_NAME)])
         cancelled = await fx_rig.fakes.job_service().cancel(fx_owner, job.id)
 
         await fx_rig.service().run_import(job.id)
@@ -1799,7 +1849,7 @@ class TestRunImportLifecycle:
             await fx_rig.service().run_import(make_job(project_id=make_project(owner_id=new_account_id()).id).id)
 
     async def test_damaged_scan_fails_the_job_with_the_message_of_the_error(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path, tmp_path: Path
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path, fx_storage_root: Path
     ) -> None:
         """Verify a scan that cannot be written fails the job with the reason, and the upload is removed.
 
@@ -1811,19 +1861,19 @@ class TestRunImportLifecycle:
         :type fx_project: Project
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
-        :param tmp_path: Temporary directory of the test, holding the storage root.
-        :type tmp_path: Path
+        :param fx_storage_root: Storage root under the test's temporary directory.
+        :type fx_storage_root: Path
         """
-        fx_rig.rasterizer.failures[1] = UnsupportedSourceError('Page 2 of a.pdf is damaged.')
+        fx_rig.rasterizer.failures[1] = UnsupportedSourceError(DAMAGED_PAGE_ERROR)
 
         job = await _import(
-            fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=THREE_PAGES)], parallel_scans=1
+            fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, PDF_NAME, pages=THREE_PAGES)], parallel_scans=1
         )
 
         assert job.result is not None
-        expect((job.state, job.error) == (JobState.FAILED, 'Page 2 of a.pdf is damaged.'))
+        expect((job.state, job.error) == (JobState.FAILED, DAMAGED_PAGE_ERROR))
         expect(len(job.result.imported) == 1)
-        expect(not any((tmp_path / 'storage').rglob('incoming/*')))
+        expect(not [path async for path in anyio.Path(fx_storage_root).rglob(INCOMING_UPLOADS)])
         assert_expectations()
 
     async def test_unexpected_error_fails_the_job_without_leaking_its_message(
@@ -1842,7 +1892,7 @@ class TestRunImportLifecycle:
         """
         fx_rig.rasterizer.failures[0] = RuntimeError(SECRET_FAULT)
 
-        job = await _import(fx_rig, fx_owner, fx_project.id, [image_upload(fx_samples, 'a.jpg')])
+        job = await _import(fx_rig, fx_owner, fx_project.id, [image_upload(fx_samples, IMAGE_NAME)])
 
         expect((job.state, job.error) == (JobState.FAILED, UNEXPECTED_FAILURE))
         expect((await fx_rig.open_uow().jobs.list_for_project(fx_project.id, JobState.active())) == [])
@@ -1853,7 +1903,7 @@ class TestRunImportFailures:
     """Tests for what ImportService.run_import() leaves behind when a step fails or races another."""
 
     async def test_job_cancelled_before_it_starts_has_its_upload_removed(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path, tmp_path: Path
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path, fx_storage_root: Path
     ) -> None:
         """Verify a job cancelled while the worker waits to start it leaves no upload behind.
 
@@ -1869,10 +1919,10 @@ class TestRunImportFailures:
         :type fx_project: Project
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
-        :param tmp_path: Temporary directory of the test, holding the storage root.
-        :type tmp_path: Path
+        :param fx_storage_root: Storage root under the test's temporary directory.
+        :type fx_storage_root: Path
         """
-        job = await fx_rig.service().start_import(fx_owner, fx_project.id, [image_upload(fx_samples, 'a.jpg')])
+        job = await fx_rig.service().start_import(fx_owner, fx_project.id, [image_upload(fx_samples, IMAGE_NAME)])
         canceller = fx_rig.open_uow()
         cancelling = anyio.Event()
         resume = anyio.Event()
@@ -1895,12 +1945,12 @@ class TestRunImportFailures:
             await anyio.wait_all_tasks_blocked()
             # The worker waits for the cancellation to commit, so it has not removed the upload yet
             async with fx_rig.sources.staged_files(fx_project.id, job.id) as staged:
-                expect(list(staged) == ['a.jpg'])
+                expect(list(staged) == [IMAGE_NAME])
             resume.set()
 
         expect((await fx_rig.stored_job(job)).state is JobState.CANCELLED)
         expect(await _sources(fx_rig, fx_project.id) == [])
-        expect(not any((tmp_path / 'storage').rglob('incoming/*')))
+        expect(not [path async for path in anyio.Path(fx_storage_root).rglob(INCOMING_UPLOADS)])
         assert_expectations()
 
     async def test_source_whose_files_cannot_be_promoted_is_withdrawn_whole(
@@ -1922,7 +1972,7 @@ class TestRunImportFailures:
         """
         fx_rig.sources.fail_on_promote = OSError('disk full')
 
-        job = await _import(fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=THREE_PAGES)])
+        job = await _import(fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, PDF_NAME, pages=THREE_PAGES)])
 
         expect(job.state is JobState.FAILED)
         expect(job.error == UNEXPECTED_FAILURE)
@@ -1947,12 +1997,12 @@ class TestRunImportFailures:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        failure = UnsupportedSourceError('scans refused')
+        failure = UnsupportedSourceError(REFUSED_SCANS_ERROR)
         with patch.object(InMemoryScanRepository, 'add_many', AsyncMock(side_effect=failure)):
-            job = await _import(fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=THREE_PAGES)])
+            job = await _import(fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, PDF_NAME, pages=THREE_PAGES)])
 
         stored = await fx_rig.open_uow().jobs.get(job.id)
-        expect((job.state, job.error) == (JobState.FAILED, 'scans refused'))
+        expect((job.state, job.error) == (JobState.FAILED, REFUSED_SCANS_ERROR))
         expect((job.progress.done, job.progress.total) == (0, 0))
         expect(stored.progress == job.progress)
         expect(await _sources(fx_rig, fx_project.id) == [])
@@ -2206,7 +2256,7 @@ class TestRunImportSplit:
         :type fx_samples: Path
         """
         job = await self._run_import(
-            fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=2)], self._recipes(AUTO_SPLIT)
+            fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, PDF_NAME, pages=2)], self._recipes(AUTO_SPLIT)
         )
 
         [queued] = [queued for queued in fx_rig.queue.enqueued if queued.kind is JobKind.RUN_STAGE]
@@ -2233,13 +2283,13 @@ class TestRunImportSplit:
         :type fx_samples: Path
         """
         recipes = self._recipes(AUTO_SPLIT)
-        await self._run_import(fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=2)], recipes)
+        await self._run_import(fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, PDF_NAME, pages=2)], recipes)
         first_run = next(job for job in fx_rig.queue.enqueued if job.kind is JobKind.RUN_STAGE)
         uow = fx_rig.open_uow()
         async with uow.change():
             await uow.jobs.update_if_state(evolve(first_run, state=JobState.SUCCEEDED), expected=(JobState.QUEUED,))
         await self._run_import(
-            fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'b.pdf', pages=1, width_px=210)], recipes
+            fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, SECOND_PDF_NAME, pages=1, width_px=210)], recipes
         )
 
         runs = [StageRun.from_map(job.params) for job in fx_rig.queue.enqueued if job.kind is JobKind.RUN_STAGE]
@@ -2261,7 +2311,7 @@ class TestRunImportSplit:
         :type fx_samples: Path
         """
         job = await self._run_import(
-            fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=2)], self._recipes('split.none')
+            fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, PDF_NAME, pages=2)], self._recipes('split.none')
         )
 
         expect(job.state is JobState.SUCCEEDED)
@@ -2289,7 +2339,7 @@ class TestRunImportSplit:
             )
 
         job = await self._run_import(
-            fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, 'a.pdf', pages=1)], self._recipes(AUTO_SPLIT)
+            fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, PDF_NAME, pages=1)], self._recipes(AUTO_SPLIT)
         )
 
         expect(job.state is JobState.SUCCEEDED)
@@ -2388,7 +2438,7 @@ class TestRunImportApplyStep:
 
         fx_rig.rasterizer.before_extract = change_the_book_once
 
-        job = await _import(fx_rig, fx_owner, fx_project.id, [image_upload(fx_samples, 'a.jpg')])
+        job = await _import(fx_rig, fx_owner, fx_project.id, [image_upload(fx_samples, IMAGE_NAME)])
 
         pages = await _pages(fx_rig, fx_project.id)
         versions = await fx_rig.open_uow().page_versions.list_base_versions([page.id for page in pages])
@@ -2403,7 +2453,7 @@ class TestStartImportConcurrently:
     """Tests for two uploads of one project that meet at the check of the active import."""
 
     async def test_second_upload_waits_for_the_first_and_is_refused(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path, tmp_path: Path
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path, fx_storage_root: Path
     ) -> None:
         """Verify the second upload waits for the block of the first, reads its job, and is refused with its upload gone.
 
@@ -2418,8 +2468,8 @@ class TestStartImportConcurrently:
         :type fx_project: Project
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
-        :param tmp_path: Temporary directory of the test, holding the storage root.
-        :type tmp_path: Path
+        :param fx_storage_root: Storage root under the test's temporary directory.
+        :type fx_storage_root: Path
         """
         first_name, second_name = RACING_UPLOADS
         first_uow = fx_rig.open_uow()
@@ -2493,5 +2543,5 @@ class TestStartImportConcurrently:
         assert not isinstance(winner, ConflictError)
         expect([job.id for job in stored] == [winner.id])
         expect(str(outcomes[second_name]) == IMPORT_ACTIVE)
-        expect(len(list((tmp_path / 'storage').rglob(INCOMING_UPLOADS))) == 1)
+        expect(len([path async for path in anyio.Path(fx_storage_root).rglob(INCOMING_UPLOADS)]) == 1)
         assert_expectations()
