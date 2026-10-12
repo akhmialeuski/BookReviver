@@ -168,7 +168,7 @@ JOB_TASKS: Mapping[JobKind, JobTask] = MappingProxyType(
 )
 
 
-def traced(kind: JobKind, task: JobTask, container: AsyncContainer) -> JobTask:
+def traced(*, kind: JobKind, task: JobTask, container: AsyncContainer) -> JobTask:
     """Wrap an entry point so that it runs inside a ``job`` span of the application's tracer.
 
     The wrapper keeps the signature of the entry point, so dishka still resolves the parameters of the task by their
@@ -230,7 +230,8 @@ def create_broker(
         raise NotImplementedError(REDIS_BROKER_PENDING)
     broker = InMemoryBroker()
     for job_kind, task in tasks.items():
-        broker.register_task(inject(traced(job_kind, task, container), patch_module=True), task_name=job_kind)
+        entry = traced(kind=job_kind, task=task, container=container)
+        broker.register_task(inject(entry, patch_module=True), task_name=job_kind)
     setup_dishka(container, broker)
     return broker
 

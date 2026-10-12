@@ -35,6 +35,12 @@ EFFECTIVE_ROUTE_KEY: str = 'effective_route_context'
 # The key of the type of an ASGI scope or message, and the attribute of a route that holds its path template
 ASGI_TYPE: str = 'type'
 ROUTE_PATH: str = 'path'
+# The type of the scope of an HTTP request, the key of its method, the key of the status in the message that starts the
+# answer, and the key of the route Starlette's router puts into the scope
+HTTP_SCOPE: str = 'http'
+SCOPE_METHOD: str = 'method'
+MESSAGE_STATUS: str = 'status'
+STARLETTE_ROUTE_KEY: str = 'route'
 
 
 class TracingMiddleware:
@@ -64,11 +70,11 @@ class TracingMiddleware:
         :param send: The ASGI send function of the server.
         :type send: Send
         """
-        if scope[ASGI_TYPE] != 'http':
+        if scope[ASGI_TYPE] != HTTP_SCOPE:
             await self.app(scope, receive, send)
             return
         tracer = await self._container.get(Tracer)
-        with tracer.span(SpanName.HTTP_REQUEST, {SpanAttribute.METHOD: scope['method']}) as span:
+        with tracer.span(SpanName.HTTP_REQUEST, {SpanAttribute.METHOD: scope[SCOPE_METHOD]}) as span:
 
             async def send_with_status(message: Message) -> None:
                 """Record the status when the answer starts, then send the message on.
@@ -77,7 +83,7 @@ class TracingMiddleware:
                 :type message: Message
                 """
                 if message[ASGI_TYPE] == RESPONSE_START:
-                    span.set_attribute(SpanAttribute.STATUS, message['status'])
+                    span.set_attribute(SpanAttribute.STATUS, message[MESSAGE_STATUS])
                 await send(message)
 
             try:
@@ -85,7 +91,7 @@ class TracingMiddleware:
             finally:
                 # The router puts the route into the scope while it matches, so it is read once the request is done
                 effective = scope.get(FASTAPI_SCOPE_KEY, {}).get(EFFECTIVE_ROUTE_KEY)
-                path = getattr(effective, ROUTE_PATH, None) or getattr(scope.get('route'), ROUTE_PATH, None)
+                path = getattr(effective, ROUTE_PATH, None) or getattr(scope.get(STARLETTE_ROUTE_KEY), ROUTE_PATH, None)
                 if path is not None:
                     span.set_attribute(SpanAttribute.ROUTE, path)
 
