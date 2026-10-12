@@ -24,6 +24,7 @@ const SERVER_COMMAND = [
 const DEFAULT_WORKERS = 3;
 const TEST_TIMEOUT_MS = 90_000;
 const EXPECT_TIMEOUT_MS = 15_000;
+const SERVER_SHUTDOWN_TIMEOUT_MS = 30_000;
 const WORKERS = Number(process.env.BOOKREVIVER_E2E_WORKERS ?? DEFAULT_WORKERS);
 
 export default defineConfig({
@@ -52,6 +53,9 @@ export default defineConfig({
     url: BASE_URL,
     timeout: 120_000,
     reuseExistingServer: false,
+    // The lifespan of the server flushes what it still holds, such as the queued spans of the measurements, and
+    // without a graceful signal Playwright kills the server and the lifespan never runs
+    gracefulShutdown: { signal: 'SIGTERM', timeout: SERVER_SHUTDOWN_TIMEOUT_MS },
     env: {
       BOOKREVIVER_AUTH__SECRET: 'end-to-end-secret-that-is-long-enough-to-sign-with',
       BOOKREVIVER_AUTH__COOKIE_SECURE: 'false',

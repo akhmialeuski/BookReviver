@@ -288,6 +288,16 @@ once the server has stopped. `scripts/trace_report.py` summarises one run for a 
 uv run python scripts/trace_report.py path/to/spans.jsonl
 ```
 
+To measure a full end-to-end run, export the two variables with a path outside `frontend/.e2e-data`, which the server
+command deletes at its start, run the scenarios and read the report. Playwright stops the server with `SIGTERM`, so the
+last spans are written before the file is read:
+
+```bash
+export BOOKREVIVER_TRACING__ENABLED=true BOOKREVIVER_TRACING__EXPORT_PATH=/path/to/e2e-spans.jsonl
+npm --prefix frontend run e2e
+uv run python scripts/trace_report.py /path/to/e2e-spans.jsonl
+```
+
 ## Development
 
 ```bash
