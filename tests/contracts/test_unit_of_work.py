@@ -57,6 +57,8 @@ STAMP: str = 'Stamp'
 FIRST_IN: str = 'first in'
 FIRST_OUT: str = 'first out'
 SECOND_IN: str = 'second in'
+# How many blocks queue behind a held one in the test of the order they enter in
+WAITERS: int = 4
 OPENER_ARG: str = 'opener'
 OPENER_IDS: list[str] = ['change_book', 'change']
 ERROR_ARG: str = 'error_type'
@@ -556,6 +558,51 @@ class TestBlockWait:
         expect(seen == [True])
         expect(len(await (await fx_uow_factory()).jobs.list_for_project(fx_project.id, set(JobState))) == 2)
         assert_expectations()
+
+    @pytest.mark.parametrize(OPENER_ARG, OPENER_PARAMS, ids=OPENER_IDS)
+    async def test_blocks_waiting_for_one_holder_enter_in_the_order_they_asked(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_project: Project, opener: Opener
+    ) -> None:
+        """Verify blocks that queue behind a held block enter one by one in the order they asked, first come first in.
+
+        The first block holds until the test lets it go. Each waiter is started only once every task is blocked, so it
+        asks after the one before it.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_project: Stored project every block changes.
+        :type fx_project: Project
+        :param opener: Opens the kind of block under test.
+        :type opener: Opener
+        """
+        holder = await fx_uow_factory()
+        waiters = [await fx_uow_factory() for _ in range(WAITERS)]
+        entered: list[int] = []
+        inside, release = anyio.Event(), anyio.Event()
+
+        async def hold() -> None:
+            """Hold the block until released."""
+            async with opener(holder, fx_project):
+                inside.set()
+                await release.wait()
+
+        async def wait_and_enter(number: int) -> None:
+            """Ask for the block and note the number of this waiter once inside.
+
+            :param number: Position of this waiter in the order of asking.
+            :type number: int
+            """
+            async with opener(waiters[number], fx_project):
+                entered.append(number)
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(hold)
+            await inside.wait()
+            for number in range(WAITERS):
+                tasks.start_soon(wait_and_enter, number)
+                await anyio.wait_all_tasks_blocked()
+            release.set()
+        assert entered == list(range(WAITERS))
 
     @pytest.mark.parametrize(OPENER_ARG, OPENER_PARAMS, ids=OPENER_IDS)
     async def test_wait_longer_than_the_limit_raises_book_busy(

@@ -3,48 +3,32 @@
 The recording tracer is given to the database, so each block of a unit of work leaves one span with the kind of the
 block, the book it held, the wait for the lock, the holding and how it ended. Two units of work over one file show the
 wait. They are ordered by events and never by a sleep: the second block asks for the lock while the first holds it, and
-only then is the first let go. A plain SQLite connection that sits in a transaction after a read holds the commit of a
-block up, which shows that a commit refused by a reader is timed as well.
+only then is the first let go. A block refused the lock ends its span as not begun, whether the queue of its process
+or SQLite refused it.
 """
 
-import sqlite3
-from contextlib import closing
 from time import perf_counter
 from typing import TYPE_CHECKING
 
 import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
-from sqlalchemy.exc import OperationalError
 
-from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import BlockKind, BlockOutcome, SpanAttribute, SpanName
 from bookreviver.domain.errors import BookBusyError
-from tests.helpers.builders import make_page, make_project
-from tests.helpers.schema import create_schema
-from tests.helpers.seeding import commit_account, store_project
-from tests.helpers.tracers import AskingTracer
+from tests.helpers.builders import make_page
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.tracing.recording import RecordingSpan
-    from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Project
+    from tests.helpers.tracers import AskingTracer
 
 pytestmark = pytest.mark.anyio
 
-# Long enough that a block which wrongly waits for a lock that is never given fails the test, and does not hang it
-WAIT_SECONDS: float = 10.0
-# Short enough that a block refused the lock gives up at once
-IMPATIENT_SECONDS: float = 0.05
 MILLISECONDS_PER_SECOND: int = 1_000
 FAILED_BLOCK: str = 'The block failed after it wrote a page.'
-# Any statement that reads, which makes the connection hold a shared lock for as long as its transaction is open
-SELECT_SCHEMA: str = 'SELECT count(*) FROM sqlite_master'
-# The share of the busy timeout a refused commit has to have waited, below 1 for the clocks that do not tick evenly
-BUSY_SHARE: float = 0.9
 
 
 def milliseconds(span: RecordingSpan, key: SpanAttribute) -> float:
@@ -60,70 +44,6 @@ def milliseconds(span: RecordingSpan, key: SpanAttribute) -> float:
     value = span.attributes[key]
     assert isinstance(value, float)
     return value
-
-
-@pytest.fixture
-def fx_tracer() -> AskingTracer:
-    """Build the tracer of the test, which every database of the test is given.
-
-    :returns: A tracer with no span recorded.
-    :rtype: AskingTracer
-    """
-    return AskingTracer()
-
-
-@pytest.fixture
-async def fx_traced_database(fx_settings: Settings, fx_tracer: AskingTracer) -> AsyncIterator[SqlDatabase]:
-    """Open a database over a fresh file, whose blocks are timed by the tracer of the test.
-
-    :param fx_settings: Settings with a fresh data directory of the test.
-    :type fx_settings: Settings
-    :param fx_tracer: Tracer of the test.
-    :type fx_tracer: AskingTracer
-    :returns: Iterator yielding the database and disposing of its engine afterwards.
-    :rtype: AsyncIterator[SqlDatabase]
-    """
-    await create_schema(fx_settings)
-    database = SqlDatabase(fx_settings.resolved_database_url, tracer=fx_tracer, wait_seconds=WAIT_SECONDS)
-    yield database
-    await database.dispose()
-
-
-@pytest.fixture
-async def fx_impatient_database(fx_traced_database: SqlDatabase, fx_tracer: AskingTracer) -> AsyncIterator[SqlDatabase]:
-    """Open a second database over the file of the first, whose blocks give up for the lock almost at once.
-
-    :param fx_traced_database: The database whose file and schema the second one shares.
-    :type fx_traced_database: SqlDatabase
-    :param fx_tracer: Tracer of the test.
-    :type fx_tracer: AskingTracer
-    :returns: Iterator yielding the database and disposing of its engine afterwards.
-    :rtype: AsyncIterator[SqlDatabase]
-    """
-    url = fx_traced_database.engine.url.render_as_string(hide_password=False)
-    database = SqlDatabase(url, tracer=fx_tracer, wait_seconds=IMPATIENT_SECONDS)
-    yield database
-    await database.dispose()
-
-
-@pytest.fixture
-async def fx_project(fx_traced_database: SqlDatabase, fx_tracer: AskingTracer) -> Project:
-    """Commit an account and a project of it, which a ``change_book`` block needs to find.
-
-    The blocks that store the project are spans too, which are not what a test looks at, so they are forgotten.
-
-    :param fx_traced_database: Database to store into.
-    :type fx_traced_database: SqlDatabase
-    :param fx_tracer: Tracer of the test.
-    :type fx_tracer: AskingTracer
-    :returns: The project.
-    :rtype: Project
-    """
-    project = make_project(owner_id=await commit_account(fx_traced_database))
-    async with fx_traced_database.sessions() as session:
-        await store_project(SqlAlchemyUnitOfWork(session), project)
-    fx_tracer.finished.clear()
-    return project
 
 
 class TestWriteBlockSpan:
@@ -292,7 +212,10 @@ class TestWaitForTheLock:
         fx_project: Project,
         fx_tracer: AskingTracer,
     ) -> None:
-        """Verify a block that gives up for the lock ends its span with the time it waited, and held nothing.
+        """Verify a block that SQLite refuses the lock ends its span with the time it waited, and held nothing.
+
+        The two blocks belong to two databases over one file, each with its own queue, as two processes would, so the
+        second meets the first at the busy timeout of SQLite.
 
         :param fx_traced_database: Database whose block holds the lock.
         :type fx_traced_database: SqlDatabase
@@ -318,34 +241,31 @@ class TestWaitForTheLock:
         expect(held.attributes[SpanAttribute.BLOCK_OUTCOME] is BlockOutcome.COMMITTED)
         assert_expectations()
 
-    async def test_commit_that_waits_for_a_reader_and_fails_keeps_its_time(
+    async def test_block_refused_its_turn_ends_its_span_as_not_begun_with_its_wait(
         self, fx_impatient_database: SqlDatabase, fx_project: Project, fx_tracer: AskingTracer
     ) -> None:
-        """Verify a commit refused by the lock of a reader is timed, and its block is recorded as rolled back.
+        """Verify a block whose turn in the queue does not come in time ends its span with its wait, and held nothing.
 
-        In the rollback journal mode a commit waits for the shared lock of every reader to go, up to the busy timeout,
-        and then fails with SQLITE_BUSY, leaving the transaction open for the rollback. Such a commit is the longest
-        one a run has, so it must not be the one that goes unreported.
+        Both blocks belong to one database, so the second never reaches SQLite: the queue of the process refuses it.
 
-        :param fx_impatient_database: Database whose blocks give up for a lock after a few milliseconds.
+        :param fx_impatient_database: Database whose blocks give up for their turn after a few milliseconds.
         :type fx_impatient_database: SqlDatabase
         :param fx_project: Committed project of the database.
         :type fx_project: Project
         :param fx_tracer: Tracer of the test.
         :type fx_tracer: AskingTracer
         """
-        path = fx_impatient_database.engine.url.database
-        assert path is not None
-        # The reader sits in a transaction that has read, so it holds a shared lock until it is closed
-        with closing(sqlite3.connect(path, autocommit=True)) as reader:
-            reader.execute('BEGIN')
-            reader.execute(SELECT_SCHEMA).fetchall()
-            async with fx_impatient_database.sessions() as session:
-                uow = SqlAlchemyUnitOfWork(session)
-                with pytest.raises(OperationalError):
-                    async with uow.change_book(fx_project.id):
-                        await uow.pages.add(make_page(project_id=fx_project.id))
-        (span,) = fx_tracer.named(SpanName.WRITE_BLOCK)
-        expect(span.attributes[SpanAttribute.BLOCK_OUTCOME] is BlockOutcome.ROLLED_BACK)
-        expect(milliseconds(span, SpanAttribute.COMMIT_MS) >= IMPATIENT_SECONDS * MILLISECONDS_PER_SECOND * BUSY_SHARE)
+        async with (
+            fx_impatient_database.sessions() as holder,
+            fx_impatient_database.sessions() as asker,
+            SqlAlchemyUnitOfWork(holder).change_book(fx_project.id),
+        ):
+            with pytest.raises(BookBusyError):
+                async with SqlAlchemyUnitOfWork(asker).change_book(fx_project.id):
+                    pass
+        refused, held = fx_tracer.named(SpanName.WRITE_BLOCK)
+        expect(refused.attributes[SpanAttribute.BLOCK_OUTCOME] is BlockOutcome.NOT_BEGUN)
+        expect(milliseconds(refused, SpanAttribute.WAIT_MS) > 0)
+        expect(SpanAttribute.HOLD_MS not in refused.attributes)
+        expect(held.attributes[SpanAttribute.BLOCK_OUTCOME] is BlockOutcome.COMMITTED)
         assert_expectations()
