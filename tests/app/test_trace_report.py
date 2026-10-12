@@ -1,20 +1,28 @@
 """Tests for ``bookreviver.app.trace_report``, run on a small file of spans written to the temporary directory.
 
-The file holds the spans of a run of ten seconds with four write blocks, of which two overlap and one never took the
-lock, and five steps of two types. The names in it are the ones the application records, taken from the enumerations,
-so a span or an attribute that is renamed there fails these tests instead of emptying the report.
+The file holds the spans of a run of ten seconds with seven write blocks and five steps of two types. Four of the
+blocks belong to no step: two overlap and one never took the lock. Three blocks sit inside the two deskew steps that
+ran. The names in it are the ones the application records, taken from the enumerations, so a span or an attribute that
+is renamed there fails these tests instead of emptying the report.
 
 The expected values are worked out by hand:
 
 - The wall time is 10 s, from the start of the ``job`` span to its end.
 - The blocks hold the lock from the end of their wait to their end: A over 0 to 2 s, B over 1 to 3 s (it asked at 0.5 s
   and waited 500 ms), C over 5 to 6 s (it asked at 4 s and waited 1000 ms). A and B overlap, so they hold the lock for
-  3 s together, and with C for 4 s: 40 % of the run, where adding the three up would give 50 %. The fourth block asked at
-  7 s, waited 50 ms and was refused, so it held nothing.
-- The waits are 0, 500, 1000 and 50 ms. By nearest rank over four values the 50th percentile is the second smallest,
-  50 ms, and the 90th and 99th are the largest, 1000 ms.
+  3 s together, and with C for 4 s. The fourth block asked at 7 s, waited 50 ms and was refused, so it held nothing.
+- Inside the first deskew step that ran, 8.00 to 8.10 s, block E asked at 8.02 s, waited 30 ms and ended at 8.08 s, so it
+  held the lock for 0.03 s. Inside the second one, 8.20 to 8.50 s, block F asked at 8.21 s, waited 60 ms and ended at
+  8.35 s, so it held the lock for 0.08 s, and block G asked at 8.40 s, waited 20 ms and ended at 8.45 s, so it held it
+  for 0.03 s. None of the three overlaps another block. Together the holding is 4 + 0.03 + 0.08 + 0.03 = 4.14 s, which
+  is 41.4 % of the 10 s.
+- There are 7 write blocks, and their waits are 0, 500, 1000, 50, 30, 60 and 20 ms, in order 0, 20, 30, 50, 60, 500 and
+  1000 ms. By nearest rank over seven values the 50th percentile is the ceiling of 3.5, the 4th, 50 ms; the 90th is the
+  ceiling of 6.3 and the 99th the ceiling of 6.93, both the 7th, 1000 ms; the maximum is 1000 ms.
 - ``geometry.deskew`` has four steps: two cached, and two that ran in 100 and 300 ms, so the median run is 200 ms.
-  ``split.none`` has one step that ran in 40 ms.
+  The wait for the lock inside the step of 100 ms is that of E, 30 ms, and inside the step of 300 ms the sum of F and G,
+  60 + 20 = 80 ms, so the median wait is (30 + 80) / 2 = 55 ms. ``split.none`` has one step that ran in 40 ms, with no
+  block inside it, so its median run is 40 ms and its median wait is 0 ms.
 
 The budgets of ``--check`` are tried on files of their own, built from the same builders: a preview step that ran
 counts, and one found cached or one at the full scale does not, however long it lasted. The verdict lines hold the
@@ -23,6 +31,7 @@ limit and the measured value, which are worked out in the cases.
 
 import json
 from datetime import UTC, datetime, timedelta
+from itertools import count
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
@@ -32,7 +41,7 @@ from bookreviver.app import trace_report
 from bookreviver.domain.enums import BlockOutcome, SpanAttribute, SpanName, StepOutcome, VersionScale
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
     from pathlib import Path
 
 START: datetime = datetime(2026, 1, 1, tzinfo=UTC)
@@ -41,19 +50,60 @@ ENCODING: str = 'utf-8'
 TIME_FORMAT: str = '%Y-%m-%dT%H:%M:%S.%fZ'
 DESKEW: str = 'geometry.deskew'
 SPLIT: str = 'split.none'
+TRACE_ID: str = '0x' + '1' * 32
+# Identifiers of the spans a test refers to as parents; the spans nobody refers to take the next one of the counter
+SPAN_IDS: Iterator[int] = count(1)
+JOB_NAME: str = 'job'
+JOB_ID: str = '0x00000000000000ff'
+FIRST_STEP_ID: str = '0x00000000000000a1'
+SECOND_STEP_ID: str = '0x00000000000000a2'
 EXPECTED_REPORT: str = f"""Trace report: {FILE_NAME}
 Wall time of the run, s: 10.000
-Write blocks: 4
-Share of the run with the write lock held, %: 40.0
+Write blocks: 7
+Share of the run with the write lock held, %: 41.4
 Wait for the write lock, ms: p50 50.00, p90 1000.00, p99 1000.00, max 1000.00
 
-| Step type       | Count | Found cached, % | Median run, ms |
-|-----------------|-------|-----------------|----------------|
-| {DESKEW} | 4     | 50.0            | 200.0          |
-| {SPLIT}      | 1     | 0.0             | 40.0           |"""
+| Step type       | Count | Found cached, % | Median run, ms | Median wait for the lock, ms |
+|-----------------|-------|-----------------|----------------|------------------------------|
+| {DESKEW} | 4     | 50.0            | 200.0          | 55.0                         |
+| {SPLIT}      | 1     | 0.0             | 40.0           | 0.0                          |"""
 
 
-def span_line(name: SpanName, start_s: float, end_s: float, attributes: Mapping[SpanAttribute, object]) -> str:
+class Lineage(NamedTuple):
+    """The identifier of a span and of the span it was started inside.
+
+    :ivar span_id: Identifier of the span, or None to take the next one of the counter.
+    :ivar parent_id: Identifier of the parent, or None for the root of a trace.
+    """
+
+    span_id: str | None = None
+    parent_id: str | None = None
+
+
+class Placement(NamedTuple):
+    """Where a step span is in the run and what its identifier is.
+
+    :ivar start_s: Seconds after the start of the run at which the step started.
+    :ivar span_id: Identifier of the step, or None to take the next one of the counter.
+    """
+
+    start_s: float = 1.0
+    span_id: str | None = None
+
+
+# A span of the next identifier of the counter that has no parent, and a step that starts one second into the run
+NEXT_LINEAGE: Lineage = Lineage()
+ONE_SECOND_IN: Placement = Placement()
+
+
+def span_line(
+    name: SpanName,
+    start_s: float,
+    end_s: float,
+    attributes: Mapping[SpanAttribute, object],
+    *,
+    lineage: Lineage = NEXT_LINEAGE,
+) -> str:
     """Write one span as the exporter does, as a line of JSON.
 
     :param name: Name of the span.
@@ -64,11 +114,19 @@ def span_line(name: SpanName, start_s: float, end_s: float, attributes: Mapping[
     :type end_s: float
     :param attributes: Facts of the span.
     :type attributes: Mapping[SpanAttribute, object]
+    :param lineage: The identifier of the span and of its parent.
+    :type lineage: Lineage
     :returns: The line, without the end of line.
     :rtype: str
     """
     record = {
         'name': name.value,
+        'context': {
+            'trace_id': TRACE_ID,
+            'span_id': lineage.span_id or f'0x{next(SPAN_IDS):016x}',
+            'trace_state': '[]',
+        },
+        'parent_id': lineage.parent_id,
         'start_time': (START + timedelta(seconds=start_s)).strftime(TIME_FORMAT),
         'end_time': (START + timedelta(seconds=end_s)).strftime(TIME_FORMAT),
         'attributes': {key.value: value for key, value in attributes.items()},
@@ -76,7 +134,7 @@ def span_line(name: SpanName, start_s: float, end_s: float, attributes: Mapping[
     return json.dumps(record)
 
 
-def block(start_s: float, end_s: float, wait_ms: int, outcome: BlockOutcome) -> str:
+def block(start_s: float, end_s: float, wait_ms: int, outcome: BlockOutcome, *, parent_id: str | None = None) -> str:
     """Write a ``write.block`` span.
 
     :param start_s: Seconds after the start of the run at which the block asked for the lock.
@@ -87,15 +145,24 @@ def block(start_s: float, end_s: float, wait_ms: int, outcome: BlockOutcome) -> 
     :type wait_ms: int
     :param outcome: How the block ended.
     :type outcome: BlockOutcome
+    :param parent_id: Identifier of the span the block was started inside, or None for a root.
+    :type parent_id: str | None
     :returns: The line of the span.
     :rtype: str
     """
     attributes = {SpanAttribute.WAIT_MS: float(wait_ms), SpanAttribute.BLOCK_OUTCOME: outcome.value}
-    return span_line(SpanName.WRITE_BLOCK, start_s, end_s, attributes)
+    return span_line(SpanName.WRITE_BLOCK, start_s, end_s, attributes, lineage=Lineage(parent_id=parent_id))
 
 
-def step(step_type: str, outcome: StepOutcome, run_ms: int, scale: VersionScale = VersionScale.FULL) -> str:
-    """Write a ``step`` span of the given duration, which starts one second into the run.
+def step(
+    step_type: str,
+    outcome: StepOutcome,
+    run_ms: int,
+    scale: VersionScale = VersionScale.FULL,
+    *,
+    placement: Placement = ONE_SECOND_IN,
+) -> str:
+    """Write a ``step`` span of the given duration, which by default starts one second into the run.
 
     :param step_type: Key of the processor of the step.
     :type step_type: str
@@ -105,6 +172,8 @@ def step(step_type: str, outcome: StepOutcome, run_ms: int, scale: VersionScale 
     :type run_ms: int
     :param scale: The size of the image the step ran on.
     :type scale: VersionScale
+    :param placement: When the step started and what its identifier is.
+    :type placement: Placement
     :returns: The line of the span.
     :rtype: str
     """
@@ -113,7 +182,8 @@ def step(step_type: str, outcome: StepOutcome, run_ms: int, scale: VersionScale 
         SpanAttribute.STEP_SCALE: scale.value,
         SpanAttribute.STEP_OUTCOME: outcome.value,
     }
-    return span_line(SpanName.STEP, 1.0, 1.0 + run_ms / 1000, attributes)
+    end_s = placement.start_s + run_ms / 1000
+    return span_line(SpanName.STEP, placement.start_s, end_s, attributes, lineage=Lineage(span_id=placement.span_id))
 
 
 @pytest.fixture
@@ -152,16 +222,19 @@ def fx_span_file(fx_write_spans: Callable[[Sequence[str]], Path]) -> Path:
     """
     return fx_write_spans(
         [
-            span_line(SpanName.JOB, 0.0, 10.0, {SpanAttribute.JOB_ID: 'job'}),
-            block(0.0, 2.0, 0, BlockOutcome.COMMITTED),
-            block(0.5, 3.0, 500, BlockOutcome.COMMITTED),
-            block(4.0, 6.0, 1000, BlockOutcome.ROLLED_BACK),
-            block(7.0, 7.5, 50, BlockOutcome.NOT_BEGUN),
-            step(DESKEW, StepOutcome.CACHED, 5),
-            step(DESKEW, StepOutcome.RAN, 100),
-            step(DESKEW, StepOutcome.RAN, 300),
-            step(DESKEW, StepOutcome.CACHED, 8),
-            step(SPLIT, StepOutcome.RAN, 40),
+            span_line(SpanName.JOB, 0.0, 10.0, {SpanAttribute.JOB_ID: JOB_NAME}, lineage=Lineage(span_id=JOB_ID)),
+            block(0.0, 2.0, 0, BlockOutcome.COMMITTED, parent_id=JOB_ID),
+            block(0.5, 3.0, 500, BlockOutcome.COMMITTED, parent_id=JOB_ID),
+            block(4.0, 6.0, 1000, BlockOutcome.ROLLED_BACK, parent_id=JOB_ID),
+            block(7.0, 7.5, 50, BlockOutcome.NOT_BEGUN, parent_id=JOB_ID),
+            step(DESKEW, StepOutcome.CACHED, 5, placement=Placement(9.0)),
+            step(DESKEW, StepOutcome.RAN, 100, placement=Placement(8.0, FIRST_STEP_ID)),
+            step(DESKEW, StepOutcome.RAN, 300, placement=Placement(8.2, SECOND_STEP_ID)),
+            step(DESKEW, StepOutcome.CACHED, 8, placement=Placement(9.1)),
+            step(SPLIT, StepOutcome.RAN, 40, placement=Placement(9.5)),
+            block(8.02, 8.08, 30, BlockOutcome.COMMITTED, parent_id=FIRST_STEP_ID),
+            block(8.21, 8.35, 60, BlockOutcome.COMMITTED, parent_id=SECOND_STEP_ID),
+            block(8.4, 8.45, 20, BlockOutcome.COMMITTED, parent_id=SECOND_STEP_ID),
         ]
     )
 
@@ -282,6 +355,31 @@ class TestReport:
         """
         spans = trace_report.load_spans(fx_span_file)
         assert trace_report.report(spans, fx_span_file.name) == EXPECTED_REPORT
+
+    def test_wait_of_blocks_outside_the_steps_that_ran_is_not_counted_in_a_step(
+        self, fx_write_spans: Callable[[Sequence[str]], Path]
+    ) -> None:
+        """Verify only the write blocks whose parent is a step that ran add to the wait of the steps of its type.
+
+        The file holds one step that ran and one found cached, both of deskew. A block of 400 ms is inside the cached
+        step and one of 700 ms inside the job, so neither is the wait of a step that ran, and the median wait of the
+        row is 0 ms, where the median run is that of the one step that ran, 100 ms.
+
+        :param fx_write_spans: Function that writes lines of spans to a file.
+        :type fx_write_spans: Callable[[Sequence[str]], Path]
+        """
+        path = fx_write_spans(
+            [
+                span_line(SpanName.JOB, 0.0, 10.0, {SpanAttribute.JOB_ID: JOB_NAME}, lineage=Lineage(span_id=JOB_ID)),
+                step(DESKEW, StepOutcome.RAN, 100, placement=Placement(1.0)),
+                step(DESKEW, StepOutcome.CACHED, 5, placement=Placement(2.0, FIRST_STEP_ID)),
+                block(2.0, 2.4, 400, BlockOutcome.COMMITTED, parent_id=FIRST_STEP_ID),
+                block(5.0, 6.0, 700, BlockOutcome.COMMITTED, parent_id=JOB_ID),
+            ]
+        )
+        spans = trace_report.load_spans(path)
+        row = trace_report.report(spans, path.name).splitlines()[-1]
+        assert [cell.strip() for cell in row.strip('|').split('|')] == [DESKEW, '2', '50.0', '100.0', '0.0']
 
     def test_main_prints_the_report_and_succeeds(self, fx_span_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Verify the command line prints the report of the file it is given and exits with 0, budgets or not.

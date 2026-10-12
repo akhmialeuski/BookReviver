@@ -9,8 +9,9 @@ report is meant to be pasted into a note:
 - how much of that time some write block held the write lock of the database, where blocks that overlap are counted
   once;
 - the number of write blocks and the wait for the lock, as the 50th, 90th and 99th percentile and the maximum;
-- for every type of step, how many steps there were, how many of them were found made by an earlier run, and the median
-  milliseconds of those that ran.
+- for every type of step, how many steps there were, how many of them were found made by an earlier run, and, over those
+  that ran, the median milliseconds and the median of the wait for the write lock inside the step, which is the sum of
+  the waits of the write blocks whose parent is the step.
 
 A percentile is the nearest rank: the smallest value that at least that share of the values does not exceed.
 
@@ -19,7 +20,8 @@ measured value and the verdict, ``met``, ``exceeded`` or ``no data`` where the r
 1 when a budget is exceeded:
 
 - a preview of a step on the visible page takes under 1 s, measured as the longest ``step`` span at the preview scale
-  that ran its processor (a step found made by an earlier run took no time of its own);
+  that ran its processor (a step found made by an earlier run took no time of its own), on the full duration of the step
+  with the waits for the lock in it, because the budget NFR-PERF-3 is the latency a reader of the page sees;
 - the wait for the write lock stays under 100 ms at the 99th percentile over all write blocks.
 """
 
@@ -44,7 +46,13 @@ FIELD_SEPARATOR: str = ', '
 # Format specifications of the numbers of the report
 ONE_DECIMAL: str = '.1f'
 TWO_DECIMALS: str = '.2f'
-STEP_HEADER: tuple[str, ...] = ('Step type', 'Count', 'Found cached, %', 'Median run, ms')
+STEP_HEADER: tuple[str, ...] = (
+    'Step type',
+    'Count',
+    'Found cached, %',
+    'Median run, ms',
+    'Median wait for the lock, ms',
+)
 # The verdicts of the budgets
 MET: str = 'met'
 EXCEEDED: str = 'exceeded'
@@ -76,12 +84,16 @@ class Span:
     :ivar name: Name of the span, such as ``write.block``.
     :ivar start: Seconds since the epoch at which the span started.
     :ivar end: Seconds since the epoch at which the span ended.
+    :ivar span_id: Identifier of the span, which the spans started inside it name as their parent.
+    :ivar parent_id: Identifier of the span this one was started inside, or None for the root of a trace.
     :ivar attributes: Facts the span carries.
     """
 
     name: str
     start: float
     end: float
+    span_id: str
+    parent_id: str | None
     attributes: dict[str, str | float]
 
     @property
@@ -106,7 +118,16 @@ def load_spans(path: Path) -> list[Span]:
             record = json.loads(line)
             start = datetime.fromisoformat(record['start_time']).timestamp()
             end = datetime.fromisoformat(record['end_time']).timestamp()
-            spans.append(Span(name=record['name'], start=start, end=end, attributes=record.get('attributes', {})))
+            spans.append(
+                Span(
+                    name=record['name'],
+                    start=start,
+                    end=end,
+                    span_id=record['context']['span_id'],
+                    parent_id=record.get('parent_id'),
+                    attributes=record.get('attributes', {}),
+                )
+            )
     return spans
 
 
@@ -192,14 +213,23 @@ def report(spans: list[Span], title: str) -> str:
     for span in spans:
         if span.name == SpanName.STEP and SpanAttribute.STEP_TYPE in span.attributes:
             by_type[str(span.attributes[SpanAttribute.STEP_TYPE])].append(span)
+    # The wait of the write blocks that the step span of the parent link encloses, summed for each step
+    wait_by_parent: defaultdict[str, float] = defaultdict(float)
+    for span in blocks:
+        if span.parent_id is not None:
+            wait_by_parent[span.parent_id] += float(span.attributes.get(SpanAttribute.WAIT_MS, 0))
     rows: list[tuple[str, ...]] = []
     for step_type, steps in sorted(by_type.items()):
         cached = sum(1 for step in steps if step.attributes.get(SpanAttribute.STEP_OUTCOME) == StepOutcome.CACHED)
-        runs = [
-            step.duration_ms for step in steps if step.attributes.get(SpanAttribute.STEP_OUTCOME) == StepOutcome.RAN
-        ]
-        median = f'{statistics.median(runs):{ONE_DECIMAL}}' if runs else NO_VALUE
-        rows.append((step_type, str(len(steps)), f'{cached / len(steps) * PERCENT:{ONE_DECIMAL}}', median))
+        ran = [step for step in steps if step.attributes.get(SpanAttribute.STEP_OUTCOME) == StepOutcome.RAN]
+        median = f'{statistics.median(step.duration_ms for step in ran):{ONE_DECIMAL}}' if ran else NO_VALUE
+        median_wait = (
+            f'{statistics.median(wait_by_parent.get(step.span_id, 0.0) for step in ran):{ONE_DECIMAL}}'
+            if ran
+            else NO_VALUE
+        )
+        share = f'{cached / len(steps) * PERCENT:{ONE_DECIMAL}}'
+        rows.append((step_type, str(len(steps)), share, median, median_wait))
     if rows:
         widths = [max(len(row[column]) for row in (STEP_HEADER, *rows)) for column in range(len(STEP_HEADER))]
         lines.append('')
