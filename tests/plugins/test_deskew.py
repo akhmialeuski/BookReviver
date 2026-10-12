@@ -26,7 +26,7 @@ from bookreviver.domain.geometry import Point
 from bookreviver.domain.ids import PageId
 from bookreviver.ports.processing import StepInput
 from tests.helpers.builders import make_page_edit
-from tests.helpers.samples import INK, save, spread, text_page, turned
+from tests.helpers.samples import ANGLE_TOLERANCE, INK, save, spread, text_page, turned
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -34,8 +34,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.processing import Processor
 
-# How far the angle that is found may be from the angle the page was turned by, in degrees, for each method
-ANGLE_TOLERANCE: float = 0.2
 HOUGH_TOLERANCE: float = 0.2
 BASELINE_TOLERANCE: float = 0.15
 # The confidence a page of clear lines has at least

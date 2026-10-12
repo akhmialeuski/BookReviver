@@ -15,7 +15,7 @@ from bookreviver.app import trace_report
 from bookreviver.domain.enums import SpanAttribute, SpanName, Stage, StepOutcome, VersionData, VersionScale
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.values import Step, StepPreview
-from tests.helpers.samples import png_bytes, text_page, turned
+from tests.helpers.samples import ANGLE_TOLERANCE, png_bytes, text_page, turned
 
 if TYPE_CHECKING:
     from tests.helpers.processing import ProcessingKit
@@ -28,8 +28,6 @@ NANOSECONDS_PER_MILLISECOND: int = 1_000_000
 PAGE_WIDTH_PX: int = 1_400
 PAGE_HEIGHT_PX: int = 2_048
 SKEW_DEGREES: float = 2.0
-# How far the angle that is found may be from the opposite of the skew, in degrees
-ANGLE_TOLERANCE: float = 0.2
 
 
 class TestPreviewBudget:
