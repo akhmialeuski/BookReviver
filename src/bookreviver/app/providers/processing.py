@@ -21,6 +21,7 @@ from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings
 from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
 from bookreviver.ports.storage import AssetStore
+from bookreviver.ports.tracing import Tracer
 from bookreviver.services.edits import EditService
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.page_carry import CarryOverService
@@ -91,7 +92,9 @@ class ProcessingProvider(Provider):
         )
 
     @provide(scope=Scope.APP)
-    def processing_runtime(self, publisher: EventPublisher, clock: Clock, queue: JobQueue) -> ProcessingRuntime:
+    def processing_runtime(
+        self, publisher: EventPublisher, clock: Clock, queue: JobQueue, tracer: Tracer
+    ) -> ProcessingRuntime:
         """Gather what a processing use case reports through.
 
         :param publisher: Publisher of the application's event bus.
@@ -100,10 +103,12 @@ class ProcessingProvider(Provider):
         :type clock: Clock
         :param queue: Queue handing jobs to the broker.
         :type queue: JobQueue
+        :param tracer: Tracer of the application.
+        :type tracer: Tracer
         :returns: The runtime.
         :rtype: ProcessingRuntime
         """
-        return ProcessingRuntime(publisher=publisher, clock=clock, queue=queue)
+        return ProcessingRuntime(publisher=publisher, clock=clock, queue=queue, tracer=tracer)
 
     @provide(scope=Scope.APP)
     def step_runner(
@@ -203,7 +208,7 @@ class ProcessingProvider(Provider):
         :type runner: StepRunner
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
-        :param runtime: The publisher, the clock and the queue.
+        :param runtime: The publisher, the clock, the queue and the tracer.
         :type runtime: ProcessingRuntime
         :param order_keys: Order keys of the application.
         :type order_keys: OrderKeys
@@ -219,6 +224,7 @@ class ProcessingProvider(Provider):
             clock=runtime.clock,
             order_keys=order_keys,
             preview_long_side_px=config.preview_long_side_px,
+            tracer=runtime.tracer,
         )
 
     @provide(scope=Scope.REQUEST)

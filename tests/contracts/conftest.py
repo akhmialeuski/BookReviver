@@ -12,6 +12,7 @@ from bookreviver.app.providers.core import CoreProvider
 from bookreviver.app.providers.database import DatabaseProvider
 from bookreviver.app.providers.persistence import PERSISTENCE_PROVIDERS
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
+from bookreviver.app.providers.tracing import TracingProvider
 from bookreviver.app.settings import PersistenceBackend, Settings
 from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.storage import AssetStore, SourceStore
@@ -19,6 +20,7 @@ from tests.helpers.builders import new_account_id
 from tests.helpers.job_queues import QueueAdapter
 from tests.helpers.schema import create_schema
 from tests.helpers.seeding import commit_account
+from tests.helpers.tracers import TracerAdapter
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
@@ -67,6 +69,7 @@ async def fx_persistence(
         await create_schema(fx_settings)
     container = make_async_container(
         CoreProvider(),
+        TracingProvider(),
         DatabaseProvider(),
         PERSISTENCE_PROVIDERS[fx_persistence_backend](),
         context={Settings: fx_settings},
@@ -150,6 +153,30 @@ def fx_queue_adapter(request: pytest.FixtureRequest) -> QueueAdapter:
     :rtype: QueueAdapter
     """
     return QueueAdapter(request.param)
+
+
+@pytest.fixture(params=list(TracerAdapter), ids=str)
+def fx_tracer_adapter(request: pytest.FixtureRequest) -> TracerAdapter:
+    """Return each adapter of the Tracer port in turn.
+
+    :param request: Request of the parametrized fixture, whose ``param`` is the adapter.
+    :type request: pytest.FixtureRequest
+    :returns: The adapter under test, set up by ``open_tracer_under_test``.
+    :rtype: TracerAdapter
+    """
+    return TracerAdapter(request.param)
+
+
+@pytest.fixture(params=[adapter for adapter in TracerAdapter if adapter.keeps_spans], ids=str)
+def fx_recording_adapter(request: pytest.FixtureRequest) -> TracerAdapter:
+    """Return each adapter of the Tracer port that keeps the spans it is given, in turn.
+
+    :param request: Request of the parametrized fixture, whose ``param`` is the adapter.
+    :type request: pytest.FixtureRequest
+    :returns: The adapter under test, set up by ``open_tracer_under_test``.
+    :rtype: TracerAdapter
+    """
+    return TracerAdapter(request.param)
 
 
 @pytest.fixture(params=list(STORAGE_PROVIDERS), ids=str)

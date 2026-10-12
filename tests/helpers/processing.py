@@ -16,6 +16,7 @@ from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
+from bookreviver.adapters.tracing.recording import RecordingTracer
 from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.domain.entities import Actor, PageStage
 from bookreviver.domain.enums import (
@@ -101,6 +102,7 @@ class ProcessingKit:
     :ivar catalogue: The catalogue of the processors the services can run.
     :ivar writer: The fake writer of renditions.
     :ivar tiler: The fake tiler.
+    :ivar tracer: Tracer of the runs of the kit, which keeps the spans of the pages and steps they run.
     """
 
     def __init__(
@@ -133,6 +135,7 @@ class ProcessingKit:
         self.cleanup = CleanupProcessor()
         self.writer = FakeRenditionWriter()
         self.tiler = FakeTiler()
+        self.tracer = RecordingTracer()
         self.catalogue = FakeCatalogue(processors or [SplitNone(), self.fake, self.cleanup])
         self._runner = StepRunner(
             assets=assets, catalogue=self.catalogue, renditions=self.writer, tiler=self.tiler, iiif_root=IIIF_ROOT
@@ -146,7 +149,7 @@ class ProcessingKit:
         :returns: The parts.
         :rtype: ProcessingParts
         """
-        runtime = ProcessingRuntime(publisher=self.events, clock=self.clock, queue=self.queue)
+        runtime = ProcessingRuntime(publisher=self.events, clock=self.clock, queue=self.queue, tracer=self.tracer)
         config = ProcessingConfig(
             preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
@@ -235,6 +238,7 @@ class ProcessingKit:
             clock=self.clock,
             order_keys=FractionalOrderKeys(),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
+            tracer=self.tracer,
         )
         return ProcessingJobs(uow=uow, assets=self.assets, runtime=runtime, parts=self.parts(uow))
 
@@ -357,11 +361,14 @@ class ProcessingKit:
                 target.write_bytes(image)
         return page, scan
 
-    async def seed_base_version(self, page: Page) -> PageVersion:
+    async def seed_base_version(self, page: Page, *, image: bytes = IMAGE_CONTENT) -> PageVersion:
         """Commit the ready base version of a page, with its files and its stage record.
 
         :param page: Page that has a scan.
         :type page: Page
+        :param image: Content of the ``full``, the preview and the thumbnail file of the version, which a step of the
+                      geometry stage reads.
+        :type image: bytes
         :returns: The base version.
         :rtype: PageVersion
         """
@@ -375,7 +382,7 @@ class ProcessingKit:
         keys = ProjectKeys(page.project_id)
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
             async with self.assets.writable(keys.version_rendition(version, rendition)) as target:
-                target.write_bytes(IMAGE_CONTENT)
+                target.write_bytes(image)
         uow = self.uow()
         async with uow.change_book(page.project_id):
             await uow.page_versions.add(version)

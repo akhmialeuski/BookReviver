@@ -3,7 +3,6 @@
 The tests need OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
 """
 
-import time
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -27,7 +26,7 @@ from bookreviver.domain.geometry import Point
 from bookreviver.domain.ids import PageId
 from bookreviver.ports.processing import StepInput
 from tests.helpers.builders import make_page_edit
-from tests.helpers.samples import INK, save, spread, text_page, turned
+from tests.helpers.samples import ANGLE_TOLERANCE, INK, save, spread, text_page, turned
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -35,8 +34,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.processing import Processor
 
-# How far the angle that is found may be from the angle the page was turned by, in degrees, for each method
-ANGLE_TOLERANCE: float = 0.2
 HOUGH_TOLERANCE: float = 0.2
 BASELINE_TOLERANCE: float = 0.15
 # The confidence a page of clear lines has at least
@@ -55,16 +52,12 @@ PICTURE_ROWS: tuple[int, int] = (300, 700)
 PICTURE_COLUMNS: tuple[int, int] = (100, 800)
 PICTURE_TONES: tuple[int, int] = (20, 200)
 PICTURE_SEED: int = 1
-# The angle of the rotation edit of a test, and the longer side of the preview the budget is measured on, in pixels
+# The angle of the rotation edit of a test, in degrees
 EDIT_DEGREES: float = 2.5
-PREVIEW_WIDTH_PX: int = 1_400
-PREVIEW_HEIGHT_PX: int = 2_048
 # The grain of a cover or a blank leaf: its seed, mean tone and spread
 GRAIN_SEED: int = 4
 GRAIN_TONE: int = 90
 GRAIN_SPREAD: float = 9.0
-# What a preview of the step may take, which is the budget of the visible page
-PREVIEW_BUDGET_SECONDS: float = 1.0
 
 
 def run_on(processor: Processor, image: Path, workdir: Path, **params: object) -> MetadataMap:
@@ -304,23 +297,6 @@ class TestDeskew:
         broken.write_bytes(b'not an image')
         with pytest.raises(ConflictError, match='cannot be read'):
             fx_deskew.run(StepInput(image=broken, params=fx_deskew.validate_params({}), workdir=tmp_path))
-
-    def test_preview_of_the_visible_page_fits_the_budget(self, fx_deskew: Processor, tmp_path: Path) -> None:
-        """Verify the preview step on the image of a preview takes under a second, the budget of the visible page.
-
-        :param fx_deskew: The processor under test.
-        :type fx_deskew: Processor
-        :param tmp_path: Temporary directory of the test.
-        :type tmp_path: Path
-        """
-        image = save(turned(text_page(PREVIEW_WIDTH_PX, PREVIEW_HEIGHT_PX), 2.0), tmp_path / 'preview.png')
-        step_input = StepInput(image=image, scale=0.5, params=fx_deskew.validate_params({}), workdir=tmp_path)
-        started = time.perf_counter()
-        [output] = fx_deskew.preview(step_input).outputs
-        elapsed = time.perf_counter() - started
-        expect(elapsed < PREVIEW_BUDGET_SECONDS)
-        expect(abs(output.data[VersionData.ANGLE] + 2.0) < ANGLE_TOLERANCE)
-        assert_expectations()
 
     @pytest.mark.parametrize(
         'raw',

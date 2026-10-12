@@ -23,6 +23,8 @@ dependencies = [
     "fastapi-users[oauth]==15.0.5",
     "fractional-indexing==0.1.3",
     "httpx-oauth==0.17.0",
+    "opentelemetry-api==1.45.1",
+    "opentelemetry-sdk==1.45.1",
     "pillow==12.3.0",
     "pydantic-settings==2.15.0",
     "pymupdf==1.28.2",
@@ -51,6 +53,8 @@ dependencies = [
 bookreviver-migrate = "bookreviver.app.migrate:migrate"
 # Writes the OpenAPI schema the frontend client is generated from to docs/openapi.json
 bookreviver-openapi = "bookreviver.app.openapi:main"
+# Summarises the spans of a measured run, and with --check compares it with the time budgets
+bookreviver-trace-report = "bookreviver.app.trace_report:main"
 
 # Processing plugins, found by the catalogue in the application through importlib.metadata.entry_points. An external
 # package registers its own processors in this group in the same way
@@ -133,6 +137,7 @@ forbidden_modules = [
     "fastapi_users",
     "httpx",
     "httpx_oauth",
+    "opentelemetry",
     "PIL",
     "pydantic",
     "pydantic_settings",

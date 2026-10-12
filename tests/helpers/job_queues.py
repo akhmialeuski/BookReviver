@@ -18,10 +18,12 @@ from dishka.integrations.taskiq import FromDishka
 
 from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.jobs.taskiq_queue import TaskiqJobQueue
+from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import JobBroker
 from bookreviver.app.worker import create_broker, stop_broker
 from bookreviver.domain.enums import JobKind
 from bookreviver.domain.ids import JobId
+from bookreviver.ports.tracing import Tracer
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
@@ -59,16 +61,19 @@ class Probe:
 
 
 class ProbeProvider(Provider):
-    """Provides the probe to every task and a fresh marker to each one."""
+    """Provides the probe to every task, a fresh marker to each one, and the tracer the worker times the jobs with."""
 
-    def __init__(self, probe: Probe) -> None:
-        """Provide ``probe`` to every task.
+    def __init__(self, probe: Probe, tracer: Tracer | None = None) -> None:
+        """Provide ``probe`` and ``tracer`` to every task.
 
         :param probe: Probe the task records into.
         :type probe: Probe
+        :param tracer: Tracer the worker wraps every task in a span of, or None for one that records nothing.
+        :type tracer: Tracer | None
         """
         super().__init__()
         self._probe = probe
+        self._tracer = tracer or NullTracer()
 
     @provide(scope=Scope.APP)
     def probe(self) -> Probe:
@@ -78,6 +83,15 @@ class ProbeProvider(Provider):
         :rtype: Probe
         """
         return self._probe
+
+    @provide(scope=Scope.APP)
+    def tracer(self) -> Tracer:
+        """Return the tracer.
+
+        :returns: The tracer given to the constructor.
+        :rtype: Tracer
+        """
+        return self._tracer
 
     marker = provide(RequestMarker, scope=Scope.REQUEST)
 

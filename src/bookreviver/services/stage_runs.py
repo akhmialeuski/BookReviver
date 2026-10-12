@@ -38,8 +38,11 @@ from bookreviver.domain.enums import (
     ProcessorScope,
     Rendition,
     RunOutcome,
+    SpanAttribute,
+    SpanName,
     Stage,
     StageState,
+    StepOutcome,
     VersionData,
     VersionScale,
     VersionState,
@@ -65,6 +68,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock, EventPublisher
+    from bookreviver.ports.tracing import Tracer
     from bookreviver.services.recipes import RecipeBook
     from bookreviver.services.spread_splits import Unsplit
     from bookreviver.services.stage_records import StageRecords
@@ -129,6 +133,7 @@ class StageRuntime:
     :ivar clock: Clock stamping new versions.
     :ivar order_keys: Builder of the order key of the right half of a spread, which a split inserts after the left.
     :ivar preview_long_side_px: Longer side of a preview in pixels, from which the ratio of a preview is worked out.
+    :ivar tracer: Tracer the runs of pages and their steps are timed with.
     """
 
     runner: StepRunner
@@ -137,6 +142,7 @@ class StageRuntime:
     clock: Clock
     order_keys: OrderKeys
     preview_long_side_px: int
+    tracer: Tracer
 
 
 class StageWork:
@@ -159,6 +165,7 @@ class StageWork:
         self._publisher = runtime.publisher
         self._clock = runtime.clock
         self._preview_long_side_px = runtime.preview_long_side_px
+        self._tracer = runtime.tracer
         self._keys = ProjectKeys(project.id)
         self._inputs = StageInputs(uow=uow)
 
@@ -411,6 +418,12 @@ class StageWork:
         processor and the file store run between the blocks. The second block stores the result, after it reads the
         page again, and discards the files if it fails.
 
+        Everything after the processor is found runs inside a ``step`` span of the processor's key and the scale, whose
+        outcome says whether the version was found made, run, or failed, so the report of a run can tell the steps
+        that cost something from those a cache answered. The span opens as failed and is settled only when the version
+        is found made or run, so a step that leaves through an exception, such as parameters the processor refuses, a
+        page that was deleted or a book that is busy, still ends with an outcome.
+
         :param stage: Stage of the recipe.
         :type stage: Stage
         :param step: The step to run.
@@ -430,89 +443,109 @@ class StageWork:
         processor = self._catalogue.get(step.processor_key)
         if processor.spec.scope is ProcessorScope.SPLIT:
             raise ConflictError(SPLIT_NOT_AVAILABLE.format(key=step.processor_key))
-        # A leaf the program drew has nothing for a step to find, so it passes every step unchanged and unmarked
-        skipped = layers.page.is_leaf
-        state = (
-            None if skipped else await self._uow.page_step_states.find(PageStepKey(layers.page.id, stage, step.step_id))
-        )
-        # The values of the page and of the parts of the book it is in are laid over the parameters of the step before
-        # they are checked, so the identifier of the version hashes the parameters the step runs with, and two pages
-        # that end up with equal ones share it.
-        base = {**step.params, **source.book} if source.book and step.processor_key == NORMALIZE_KEY else step.params
-        laid = base if skipped else await layers.lay(step.step_id, base, None if state is None else state.params)
-        checked = processor.validate_params(laid)
-        params = {} if skipped else checked
-        edit = None if state is None else state.edit
-        # The side is part of what a step depends on, so a page moved to the other side of the book is made again
-        side = PageSide.of_position(await layers.position()) if processor.spec.by_page_side and not skipped else None
-        inputs = VersionInputs(
-            page_id=layers.page.id,
-            processor=processor.spec.ref,
-            params=params,
-            input_id=source.version_id,
-            edit_hash='' if edit is None else edit.edit_hash,
-            scale=source.scale,
-            side=side,
-            skipped=skipped,
-        )
-        existing = await self._uow.page_versions.find(inputs.identify())
-        if existing is not None and existing.state is VersionState.READY:
-            return existing
-        async with self._uow.change_book(self._project.id):
-            # The earlier steps took time, so the page may be gone and the version may have been made by another change
-            await self._uow.pages.get(layers.page.id)
+        with self._tracer.span(
+            SpanName.STEP,
+            {
+                SpanAttribute.STEP_TYPE: step.processor_key,
+                SpanAttribute.STEP_SCALE: source.scale,
+                SpanAttribute.STEP_OUTCOME: StepOutcome.FAILED,
+            },
+        ) as span:
+            # A leaf the program drew has nothing for a step to find, so it passes every step unchanged and unmarked
+            skipped = layers.page.is_leaf
+            state = (
+                None
+                if skipped
+                else await self._uow.page_step_states.find(PageStepKey(layers.page.id, stage, step.step_id))
+            )
+            # The values of the page and of the parts of the book it is in are laid over the parameters of the step
+            # before they are checked, so the identifier of the version hashes the parameters the step runs with, and
+            # two pages that end up with equal ones share it.
+            base = (
+                {**step.params, **source.book} if source.book and step.processor_key == NORMALIZE_KEY else step.params
+            )
+            laid = base if skipped else await layers.lay(step.step_id, base, None if state is None else state.params)
+            checked = processor.validate_params(laid)
+            params = {} if skipped else checked
+            edit = None if state is None else state.edit
+            # The side is part of what a step depends on, so a page moved to the other side of the book is made again
+            side = (
+                PageSide.of_position(await layers.position()) if processor.spec.by_page_side and not skipped else None
+            )
+            inputs = VersionInputs(
+                page_id=layers.page.id,
+                processor=processor.spec.ref,
+                params=params,
+                input_id=source.version_id,
+                edit_hash='' if edit is None else edit.edit_hash,
+                scale=source.scale,
+                side=side,
+                skipped=skipped,
+            )
             existing = await self._uow.page_versions.find(inputs.identify())
             if existing is not None and existing.state is VersionState.READY:
+                span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.CACHED)
                 return existing
-            version = PageVersion(
-                id=inputs.identify(),
-                page_id=layers.page.id,
-                stage=stage,
-                processor=processor.spec.ref,
-                input_id=source.version_id,
-                params=params,
-                renditions=None,
-                state=VersionState.RUNNING,
-                scale=source.scale,
-                edit_hash=inputs.edit_hash,
-                created_at=self._clock.now() if existing is None else existing.created_at,
-                mark=None if existing is None else existing.mark,
-                comment='' if existing is None else existing.comment,
-            )
-            await (
-                self._uow.page_versions.add(version) if existing is None else self._uow.page_versions.update(version)
-            )
-        run = StepRun(
-            processor_key=step.processor_key,
-            params=params,
-            input_data=source.data,
-            image=source.image,
-            edit=edit,
-            scale=source.scale,
-            ratio=source.ratio,
-            side=side,
-            skipped=skipped,
-        )
-        try:
-            made = await self._execute(version, run)
-        except DomainError as error:
-            made = evolve(version, state=VersionState.FAILED, data={VersionData.ERROR: str(error)})
-        except Exception:
-            logger.exception('The step %s on page %s failed', step.processor_key, layers.page.id)
-            made = evolve(version, state=VersionState.FAILED, data={VersionData.ERROR: UNEXPECTED_FAILURE})
-        try:
             async with self._uow.change_book(self._project.id):
+                # The earlier steps took time, so the page may be gone and the version may have been made by another
+                # change
                 await self._uow.pages.get(layers.page.id)
-                # A mark or a comment the user put on the version while it ran is kept
-                stored = await self._uow.page_versions.get(version.id)
-                await self._uow.page_versions.update(evolve(made, mark=stored.mark, comment=stored.comment))
-        except Exception:
-            # The files of the version belong to no stored result when its block failed
-            await self._runner.discard(self._keys.version_directory(version))
-            raise
-        if made.state is VersionState.READY:
-            await self._publisher.publish(PageVersionReady(project_id=layers.page.project_id, version=made))
-        return made
+                existing = await self._uow.page_versions.find(inputs.identify())
+                if existing is not None and existing.state is VersionState.READY:
+                    span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.CACHED)
+                    return existing
+                version = PageVersion(
+                    id=inputs.identify(),
+                    page_id=layers.page.id,
+                    stage=stage,
+                    processor=processor.spec.ref,
+                    input_id=source.version_id,
+                    params=params,
+                    renditions=None,
+                    state=VersionState.RUNNING,
+                    scale=source.scale,
+                    edit_hash=inputs.edit_hash,
+                    created_at=self._clock.now() if existing is None else existing.created_at,
+                    mark=None if existing is None else existing.mark,
+                    comment='' if existing is None else existing.comment,
+                )
+                await (
+                    self._uow.page_versions.add(version)
+                    if existing is None
+                    else self._uow.page_versions.update(version)
+                )
+            run = StepRun(
+                processor_key=step.processor_key,
+                params=params,
+                input_data=source.data,
+                image=source.image,
+                edit=edit,
+                scale=source.scale,
+                ratio=source.ratio,
+                side=side,
+                skipped=skipped,
+            )
+            try:
+                made = await self._execute(version, run)
+            except DomainError as error:
+                made = evolve(version, state=VersionState.FAILED, data={VersionData.ERROR: str(error)})
+            except Exception:
+                logger.exception('The step %s on page %s failed', step.processor_key, layers.page.id)
+                made = evolve(version, state=VersionState.FAILED, data={VersionData.ERROR: UNEXPECTED_FAILURE})
+            try:
+                async with self._uow.change_book(self._project.id):
+                    await self._uow.pages.get(layers.page.id)
+                    # A mark or a comment the user put on the version while it ran is kept
+                    stored = await self._uow.page_versions.get(version.id)
+                    await self._uow.page_versions.update(evolve(made, mark=stored.mark, comment=stored.comment))
+            except Exception:
+                # The files of the version belong to no stored result when its block failed
+                await self._runner.discard(self._keys.version_directory(version))
+                raise
+            if made.state is VersionState.READY:
+                span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.RAN)
+                await self._publisher.publish(PageVersionReady(project_id=layers.page.project_id, version=made))
+            return made
 
 
 class RecipeRun(StageWork):

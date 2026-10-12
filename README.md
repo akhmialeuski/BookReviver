@@ -269,6 +269,47 @@ enough, because the server looks for the tools once and keeps that answer until 
 The DjVu tests build their samples with the same package (`c44`, `cjb2`, `djvm`, `djvmcvt`) and are skipped, with
 the reason "DjVuLibre is not installed", when it is missing.
 
+## Measurements
+
+The backend can record how long its work takes as OpenTelemetry spans, one JSON object per line in a file. Nothing is
+recorded by default. Two variables switch it on, and the path is required with the switch and refused without it:
+
+| Variable                           | Meaning                                                              |
+| ---------------------------------- | -------------------------------------------------------------------- |
+| `BOOKREVIVER_TRACING__ENABLED`     | `true` records spans                                                 |
+| `BOOKREVIVER_TRACING__EXPORT_PATH` | The file spans are appended to, a new file for each run              |
+
+The spans are `http.request` (route template, method and status), `job` (kind and job), `run.page` (page, stage and
+outcome), `step` (processor, scale and outcome: cached, ran or failed), `write.block`, which times a block that holds
+SQLite's write lock: the wait for the lock, how long it was held and the commit, with the book, and `loop.lag`, one tick
+of a probe that records how much longer than its interval a sleep of the event loop took (0.1 s, set by
+`BOOKREVIVER_TRACING__LOOP_LAG_INTERVAL_SECONDS`). The durations of a write block are measured on the event loop and
+include its delay, which the `Event-loop lag, ms` line of the report shows. The file is complete once the server has
+stopped. `bookreviver-trace-report` summarises one run for a note:
+
+```bash
+uv run bookreviver-trace-report path/to/spans.jsonl
+```
+
+To measure a full end-to-end run, export the two variables with a path outside `frontend/.e2e-data`, which the server
+command deletes at its start, run the scenarios and read the report. Playwright stops the server with `SIGTERM`, so the
+last spans are written before the file is read:
+
+```bash
+export BOOKREVIVER_TRACING__ENABLED=true BOOKREVIVER_TRACING__EXPORT_PATH=/path/to/e2e-spans.jsonl
+npm --prefix frontend run e2e
+uv run bookreviver-trace-report /path/to/e2e-spans.jsonl
+```
+
+The option `--check` compares the run with two budgets, a preview job on the visible page under 1 s and the 99th
+percentile of the wait for the write lock under 100 ms. The preview is measured as the whole `job` span of the kind
+`preview-step`, with every step of it, and not the time the job waited in the queue before it started. The option prints
+a line for each budget and exits with 1 when a budget is exceeded:
+
+```bash
+uv run bookreviver-trace-report --check path/to/spans.jsonl
+```
+
 ## Development
 
 ```bash

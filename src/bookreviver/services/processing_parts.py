@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
+    from bookreviver.ports.tracing import Tracer
     from bookreviver.services.recipes import DefaultRecipes
 
 NOT_QUEUED: str = 'The job could not be queued.'
@@ -61,11 +62,13 @@ class ProcessingRuntime:
     :ivar publisher: Publisher of the events the browser follows.
     :ivar clock: Clock stamping recipes, versions and jobs.
     :ivar queue: Queue handing jobs to the workers.
+    :ivar tracer: Tracer the runs of stages are timed with.
     """
 
     publisher: EventPublisher
     clock: Clock
     queue: JobQueue
+    tracer: Tracer
 
 
 @frozen(kw_only=True)

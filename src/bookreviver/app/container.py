@@ -13,6 +13,7 @@ from bookreviver.app.providers.persistence import PERSISTENCE_PROVIDERS
 from bookreviver.app.providers.processing import ProcessingProvider
 from bookreviver.app.providers.projects import ProjectsProvider
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
+from bookreviver.app.providers.tracing import TracingProvider
 from bookreviver.app.settings import Settings
 
 if TYPE_CHECKING:
@@ -33,6 +34,7 @@ def build_container(settings: Settings, extra_providers: Sequence[Provider] = ()
     """
     return make_async_container(
         CoreProvider(),
+        TracingProvider(),
         DatabaseProvider(),
         PERSISTENCE_PROVIDERS[settings.persistence](),
         STORAGE_PROVIDERS[settings.storage](),

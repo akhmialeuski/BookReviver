@@ -31,6 +31,8 @@ MARKER_RADIUS_PX: int = 9
 REDNESS_LIMIT: int = 100
 # The tones of a colour image
 RGB_TONES: int = 3
+# How far the angle that is found may be from the angle a page was turned by, in degrees
+ANGLE_TOLERANCE: float = 0.2
 
 
 def text_page(width_px: int, height_px: int, *, seed: int = 7) -> Image.Image:

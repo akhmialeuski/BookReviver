@@ -7,11 +7,13 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 import pytest
+from delayed_assert import assert_expectations, expect
 from dishka import make_async_container
 from taskiq.exceptions import SendTaskError
 
+from bookreviver.adapters.tracing.recording import RecordingTracer
 from bookreviver.app.worker import JOB_TASKS
-from bookreviver.domain.enums import JobKind
+from bookreviver.domain.enums import JobKind, SpanAttribute, SpanName
 from bookreviver.domain.ids import ProjectId
 from tests.helpers.builders import make_job
 from tests.helpers.job_queues import PROBE_TASKS, Probe, ProbeProvider, running_taskiq_queue
@@ -80,6 +82,35 @@ class TestEnqueue:
         async with running_taskiq_queue(fx_container, tasks={}) as queue:
             with pytest.raises(SendTaskError):
                 await queue.enqueue(job)
+
+
+class TestJobSpan:
+    """Tests for the span the worker puts around every task it registers."""
+
+    async def test_task_runs_inside_a_root_job_span_of_its_kind_and_job(self, fx_probe: Probe) -> None:
+        """Verify each task is timed as one ``job`` span that names the kind and the job, and has no parent.
+
+        The job is enqueued inside the span of a request, which the in-process broker copies into the task it runs the
+        job in, so the span of the job would be its child without the ``parent`` of ``traced``. The probe task still
+        receives the services dishka resolves for it, so the wrapper passes them on.
+
+        :param fx_probe: Probe the task records into.
+        :type fx_probe: Probe
+        """
+        tracer = RecordingTracer()
+        container = make_async_container(ProbeProvider(fx_probe, tracer))
+        job = make_job(project_id=PROJECT_ID)
+        try:
+            async with running_taskiq_queue(container, tasks=PROBE_TASKS) as queue:
+                with tracer.span(SpanName.HTTP_REQUEST):
+                    await queue.enqueue(job)
+        finally:
+            await container.close()
+        (span,) = tracer.named(SpanName.JOB)
+        expect(span.attributes == {SpanAttribute.JOB_KIND: job.kind, SpanAttribute.JOB_ID: str(job.id)})
+        expect(span.parent is None)
+        expect(fx_probe.started == [job.id])
+        assert_expectations()
 
 
 class TestJobTasks:
