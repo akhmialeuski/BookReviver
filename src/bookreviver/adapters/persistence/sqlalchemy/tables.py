@@ -870,10 +870,10 @@ class RecipeRow(DefaultBase):
 class RecipeProfileRow(DefaultBase):
     """Row of one recipe profile of an account, of which at most one per stage is the default.
 
-    The steps are a JSON list of ``{processor_key, params, enabled}`` objects, as in a recipe. No column of the profile
-    refers to a book. A recipe may refer to the profile it was made from, and the database empties that reference when
-    the profile is deleted, so a profile outlives every recipe made from it and is removed only with its account or by
-    its owner.
+    The steps are a JSON list of ``{processor_key, params, enabled, step_id}`` objects, as in a recipe. No column of the
+    profile refers to a book. A recipe may refer to the profile it was made from, and the database empties that
+    reference when the profile is deleted, so a profile outlives every recipe made from it and is removed only with its
+    account or by its owner.
 
     :ivar id: Profile identifier, assigned by the domain.
     :ivar account_id: Account owning the profile, whose deletion removes the profile.
