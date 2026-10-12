@@ -190,6 +190,31 @@ class TestWriteBlockSpan:
             expect(milliseconds(span, key) >= 0, f'{key} is negative')
         assert_expectations()
 
+    async def test_block_is_a_child_of_the_span_current_at_its_caller(
+        self, fx_traced_database: SqlDatabase, fx_project: Project, fx_tracer: AskingTracer
+    ) -> None:
+        """Verify the ``write.block`` span, started in an engine listener, has the span of its caller as its parent.
+
+        The listener runs in a greenlet, and the block gets the span of the caller as its parent only because
+        SQLAlchemy copies the ``contextvars`` context of the caller into the greenlet. The report of a run attributes
+        the wait for the lock to a step through this link, so it is checked through the real adapter.
+
+        :param fx_traced_database: Database whose blocks are timed.
+        :type fx_traced_database: SqlDatabase
+        :param fx_project: Committed project of the database.
+        :type fx_project: Project
+        :param fx_tracer: Tracer of the test.
+        :type fx_tracer: AskingTracer
+        """
+        with fx_tracer.span(SpanName.STEP):
+            async with fx_traced_database.sessions() as session:
+                uow = SqlAlchemyUnitOfWork(session)
+                async with uow.change_book(fx_project.id):
+                    await uow.pages.add(make_page(project_id=fx_project.id))
+        (step,) = fx_tracer.named(SpanName.STEP)
+        (block,) = fx_tracer.named(SpanName.WRITE_BLOCK)
+        assert block.parent is step
+
     async def test_block_that_fails_makes_a_span_marked_rolled_back(
         self, fx_traced_database: SqlDatabase, fx_project: Project, fx_tracer: AskingTracer
     ) -> None:
