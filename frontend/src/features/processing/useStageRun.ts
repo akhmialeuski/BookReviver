@@ -17,9 +17,9 @@ import type { StripItem } from '@/features/workspace/strip';
  * The run of a stage as the foot of the panel asks for it, whole or up to one step: the scopes with the pages each
  * covers, whether a run can be asked for now, and the request that goes to the server.
  *
- * One instance serves the foot of the panel, which is the only place a run starts from, and the step panel, which reads
- * how many pages the book has. They share what is pending, what failed and the question a run that would send a scan back
- * to one page asks first.
+ * One instance serves the foot of the panel, which is the only place a run starts from, and the recipe section, which
+ * reads how many pages the book has. They share what is pending, what failed and the question a run that would send a
+ * scan back to one page asks first.
  */
 
 /** What a run is asked to do: over which pages, up to which step, and with what to do with the pages' own work. */

@@ -99,7 +99,8 @@ describe('StepsWindow', () => {
       'geometry.deskew',
       'geometry.deskew',
     ]);
-    expect(byId('step-condition')).toBeNull();
+    expect(byId('steps-window')?.querySelector('form')).toBeNull();
+    expect(byId('steps-window')?.querySelector('[data-testid="field-values"]')).toBeNull();
   });
 
   it('shows the bar that saves only while the draft differs from the saved recipe', async () => {

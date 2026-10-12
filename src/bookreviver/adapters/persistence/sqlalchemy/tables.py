@@ -1,9 +1,9 @@
 """Tables of the books feature, private to the SQLAlchemy persistence adapter.
 
 The module declares the ``projects``, ``jobs``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
-``page_step_states``, ``page_step_changes``, ``step_values``, ``pagination_sections``, ``book_places``, ``recipes``
-and ``recipe_profiles`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped`` annotations, ``mapped_column`` and
-``relationship`` with ``back_populates``. Every table derives from advanced-alchemy's
+``page_step_states``, ``page_step_changes``, ``step_values``, ``result_mark_changes``, ``pagination_sections``,
+``book_places``, ``recipes`` and ``recipe_profiles`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped``
+annotations, ``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from advanced-alchemy's
 :class:`~advanced_alchemy.base.DefaultBase`, which is a ``DeclarativeBase`` carrying the metadata shared with the
 account tables, the portable ``GUID`` and ``DateTimeUTC`` column types for ``UUID`` and ``datetime`` annotations, and
 the naming convention of keys and constraints. JSON columns name ``JSON_B`` themselves.
@@ -484,7 +484,8 @@ class PageRow(DefaultBase):
     :ivar project: Project owning the page, never loaded implicitly.
     :ivar versions: Versions of the page, never loaded implicitly.
     :ivar stages: Stage records of the page, never loaded implicitly.
-    :ivar edits: Manual edits of the page, never loaded implicitly.
+    :ivar step_states: Settings and manual edits of the steps on the page, never loaded implicitly.
+    :ivar step_changes: History of the steps on the page, never loaded implicitly.
     """
 
     __tablename__ = PAGES_TABLE
@@ -834,7 +835,8 @@ class BookPlaceRow(DefaultBase):
 class RecipeRow(DefaultBase):
     """Row of one recipe of a stage of a project, of which there is one for each kind of page.
 
-    The steps are a JSON list of ``{processor_key, params}`` objects, since no query looks inside them.
+    The steps are a JSON list of ``{processor_key, params, enabled, step_id}`` objects, since no query looks inside
+    them.
 
     :ivar id: Recipe identifier, assigned by the domain.
     :ivar project_id: Project owning the recipe.
@@ -868,10 +870,10 @@ class RecipeRow(DefaultBase):
 class RecipeProfileRow(DefaultBase):
     """Row of one recipe profile of an account, of which at most one per stage is the default.
 
-    The steps are a JSON list of ``{processor_key, params, enabled}`` objects, as in a recipe. No column of the profile
-    refers to a book. A recipe may refer to the profile it was made from, and the database empties that reference when
-    the profile is deleted, so a profile outlives every recipe made from it and is removed only with its account or by
-    its owner.
+    The steps are a JSON list of ``{processor_key, params, enabled, step_id}`` objects, as in a recipe. No column of the
+    profile refers to a book. A recipe may refer to the profile it was made from, and the database empties that
+    reference when the profile is deleted, so a profile outlives every recipe made from it and is removed only with its
+    account or by its owner.
 
     :ivar id: Profile identifier, assigned by the domain.
     :ivar account_id: Account owning the profile, whose deletion removes the profile.

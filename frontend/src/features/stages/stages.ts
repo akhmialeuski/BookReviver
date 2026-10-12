@@ -56,9 +56,6 @@ export const PAGE_STATUS_TONE: Record<PageStageStatus, string> = {
   'not-run': 'bg-status-idle',
 };
 
-/** The class marking a page whose result asks for a second look, which is not a state of the stage on its own. */
-export const REVIEW_TONE = 'bg-status-attention';
-
 /**
  * Give the number of a stage as the stage bar shows it, from one.
  *

@@ -426,7 +426,7 @@ describe('useEditorSession', () => {
     });
   });
 
-  it('has no editor on a page that did not meet the condition of the step, which passed it as it was', async () => {
+  it('has no editor on a leaf the program drew, which every step passed as it was', async () => {
     const skipped = joinRows(
       [page('page')],
       [row('page', { version: version('v', { data: { skipped_by_condition: true } }) })],

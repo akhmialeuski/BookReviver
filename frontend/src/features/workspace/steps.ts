@@ -1,8 +1,8 @@
 import type { FigureState, ProcessorSchema, RecipeSchema, Stage, StagePageSchema } from '@/api';
 
 /**
- * The steps of the open recipe as the step bar and the step panel read them: the saved steps with their titles, the step
- * the address names, and what a step did on the pages of the book.
+ * The steps of the open recipe as the step bar reads them: the saved steps with their titles, the step the address names
+ * or the one a stage opens on, and the state of each step on a page.
  *
  * The bar shows the saved recipe and not the draft, since a step is addressed by the identifier the server gave it, and a
  * step that was only added to the draft has none yet.
@@ -84,54 +84,6 @@ export function defaultStepOf(
   }
   const furthest = Math.max(...ran.map((row) => row.through_step ?? 0));
   return steps[furthest] ?? last;
-}
-
-/** How the pages of the book stand at one step. */
-export interface StepCounts {
-  /** Pages whose shape the step found. */
-  found: number;
-  /** Pages with a setting of their own for the step or a shape the reader set by hand. */
-  byHand: number;
-  /** Pages the step passed unchanged, which are the leaves the program drew. */
-  skipped: number;
-  /** Pages the step has not run on and that hold the default shape. */
-  notRun: number;
-  /** Pages the step was unsure of. */
-  check: number;
-  /** Pages whose value at the step departs notably from the rest of the book. */
-  unusual: number;
-}
-
-/**
- * Count the pages of the book by what the step did on them.
- *
- * The flags are the server's, which decides which page is unsure, unusual or set by hand, so the counts and the filters
- * of the strip never disagree.
- *
- * @param rows The rows of the stage asked for the step.
- */
-export function countStep(rows: readonly StagePageSchema[]): StepCounts {
-  const counts: StepCounts = { found: 0, byHand: 0, skipped: 0, notRun: 0, check: 0, unusual: 0 };
-  for (const row of rows) {
-    if (row.step === null) {
-      continue;
-    }
-    switch (row.step.state) {
-      case 'found':
-        counts.found += 1;
-        break;
-      case 'skipped':
-        counts.skipped += 1;
-        break;
-      case 'default':
-        counts.notRun += 1;
-        break;
-    }
-    counts.byHand += row.step.flags.includes('by-hand') ? 1 : 0;
-    counts.check += row.step.flags.includes('unsure') ? 1 : 0;
-    counts.unusual += row.step.flags.includes('unusual') ? 1 : 0;
-  }
-  return counts;
 }
 
 /** The state of the shape of each step on the open page, by the identifier of the step; null while it is read. */
