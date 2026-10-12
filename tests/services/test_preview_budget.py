@@ -1,9 +1,9 @@
-"""Tests for the budget of a preview of a step on the visible page, which they read from the ``step`` span.
+"""Tests for the budget of a preview on the visible page, which they read from the ``job`` span of the preview.
 
 The preview goes through the processing services as a request and a worker would take it, with the real
-``geometry.deskew``, so the span covers the values laid over the recipe, the processor, the version written and the
-files stored, which is what the report of a run measures as well. The tests need OpenCV, and are skipped with the
-reason where the optional group ``cv`` is not installed.
+``geometry.deskew``, so the span of the job covers every step of the preview, the values laid over the recipe, the
+processor, the version written and the files stored, which is what the report of a run measures as well. The tests need
+OpenCV, and are skipped with the reason where the optional group ``cv`` is not installed.
 """
 
 from typing import TYPE_CHECKING
@@ -12,7 +12,7 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.app import trace_report
-from bookreviver.domain.enums import SpanAttribute, SpanName, Stage, StepOutcome, VersionData, VersionScale
+from bookreviver.domain.enums import JobKind, SpanAttribute, SpanName, Stage, StepOutcome, VersionData, VersionScale
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.values import Step, StepPreview
 from tests.helpers.samples import ANGLE_TOLERANCE, png_bytes, text_page, turned
@@ -31,10 +31,10 @@ SKEW_DEGREES: float = 2.0
 
 
 class TestPreviewBudget:
-    """Tests for the time of a preview of the visible page, read from the span of its step."""
+    """Tests for the time of a preview of the visible page, read from the span of its job."""
 
     async def test_preview_of_the_visible_page_fits_the_budget(self, fx_cv_kit: ProcessingKit) -> None:
-        """Verify the ``step`` span of the deskew at the preview scale ran the processor and ended within the budget.
+        """Verify the ``job`` span of the preview, with the deskew that ran in it, ended within the budget.
 
         :param fx_cv_kit: The processing kit with the OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
@@ -47,19 +47,24 @@ class TestPreviewBudget:
             page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=DESKEW_KEY),), step_index=0
         )
         job = await fx_cv_kit.service().start_preview(actor, project.id, preview)
-        await fx_cv_kit.jobs().preview_step(job.id)
-        [span] = [
+        # The worker opens this span around the entry point of every job in app.worker.traced, which the kit has no
+        # broker to do, so it is opened here with the same name and attributes
+        job_attributes = {SpanAttribute.JOB_KIND: JobKind.PREVIEW_STEP, SpanAttribute.JOB_ID: str(job.id)}
+        with fx_cv_kit.tracer.span(SpanName.JOB, job_attributes):
+            await fx_cv_kit.jobs().preview_step(job.id)
+        [job_span] = fx_cv_kit.tracer.named(SpanName.JOB)
+        [step_span] = [
             span
             for span in fx_cv_kit.tracer.named(SpanName.STEP)
             if span.attributes[SpanAttribute.STEP_TYPE] == DESKEW_KEY
             and span.attributes[SpanAttribute.STEP_SCALE] is VersionScale.PREVIEW
         ]
         [ready] = [event for event in fx_cv_kit.events.published if isinstance(event, PageVersionReady)]
-        assert span.duration_ns is not None
-        expect(span.attributes[SpanAttribute.STEP_OUTCOME] is StepOutcome.RAN)
+        assert job_span.duration_ns is not None
+        expect(step_span.attributes[SpanAttribute.STEP_OUTCOME] is StepOutcome.RAN)
         # The limit is the one the report of a run checks, so the test and the report cannot drift apart
-        duration_ms = span.duration_ns / NANOSECONDS_PER_MILLISECOND
-        expect(duration_ms < trace_report.PREVIEW_BUDGET.limit_ms, f'The step took {duration_ms} ms.')
+        duration_ms = job_span.duration_ns / NANOSECONDS_PER_MILLISECOND
+        expect(duration_ms < trace_report.PREVIEW_BUDGET.limit_ms, f'The preview job took {duration_ms} ms.')
         # A page the step did not find the lines of would end as fast, and the budget would say nothing
         expect(abs(ready.version.data[VersionData.ANGLE] + SKEW_DEGREES) < ANGLE_TOLERANCE)
         assert_expectations()

@@ -24,9 +24,10 @@ With ``--check`` the command goes on to compare the run with two budgets and pri
 measured value and the verdict, ``met``, ``exceeded`` or ``no data`` where the run has nothing to measure. It exits with
 1 when a budget is exceeded:
 
-- a preview of a step on the visible page takes under 1 s, measured as the longest ``step`` span at the preview scale
-  that ran its processor (a step found made by an earlier run took no time of its own), on the full duration of the step
-  with the waits for the lock in it, because the budget NFR-PERF-3 is the latency a reader of the page sees;
+- a preview on the visible page takes under 1 s, measured as the longest ``job`` span of the kind ``preview-step``,
+  which is the whole preview job with every step of it and the waits for the lock in them, because the budget
+  NFR-PERF-3 is the latency a reader of the page sees. The time the job waited in the queue before it started is not in
+  the span;
 - the wait for the write lock stays under 100 ms at the 99th percentile over all write blocks.
 """
 
@@ -41,7 +42,7 @@ from pathlib import Path
 
 from attrs import frozen
 
-from bookreviver.domain.enums import BlockOutcome, SpanAttribute, SpanName, StepOutcome, VersionScale
+from bookreviver.domain.enums import BlockOutcome, JobKind, SpanAttribute, SpanName, StepOutcome
 
 MILLISECONDS_PER_SECOND: int = 1_000
 PERCENT: int = 100
@@ -79,8 +80,8 @@ class Budget:
     limit_ms: float
 
 
-# What a preview of a step on the visible page may take: the budget NFR-PERF-3, which the test of the preview reads too
-PREVIEW_BUDGET: Budget = Budget(name='Preview of a step on the visible page, max, ms', limit_ms=1_000.0)
+# What a preview job on the visible page may take: the budget NFR-PERF-3, which the test of the preview reads too
+PREVIEW_BUDGET: Budget = Budget(name='Preview job on the visible page, max, ms', limit_ms=1_000.0)
 LOCK_WAIT_BUDGET: Budget = Budget(name=f'Wait for the write lock, p{LOCK_WAIT_PERCENT}, ms', limit_ms=100.0)
 
 
@@ -254,19 +255,22 @@ def report(spans: list[Span], title: str) -> str:
 def check(spans: list[Span]) -> tuple[list[str], bool]:
     """Compare the run with the budgets.
 
+    The preview budget is measured on the longest ``job`` span of the kind ``preview-step``: the whole preview job, with
+    every step of it and the waits for the lock in them. The time the job waited in the queue before it started is not
+    in the span, so it is not measured.
+
     :param spans: The spans of the run.
     :type spans: list[Span]
     :returns: One line for each budget, with its limit, the measured value and the verdict, and whether any budget is
         exceeded. A budget the run has nothing to measure for is ``no data`` and is not exceeded.
     :rtype: tuple[list[str], bool]
     """
-    # A step found made by an earlier run took no time of its own, so only a step that ran is a preview that was made
+    # The reader waits for the whole job, which runs every step up to the one they asked for, so the job is measured
+    # and not its longest step. The wait in the queue before the job started is not part of its span
     previews = [
         span.duration_ms
         for span in spans
-        if span.name == SpanName.STEP
-        and span.attributes.get(SpanAttribute.STEP_SCALE) == VersionScale.PREVIEW
-        and span.attributes.get(SpanAttribute.STEP_OUTCOME) == StepOutcome.RAN
+        if span.name == SpanName.JOB and span.attributes.get(SpanAttribute.JOB_KIND) == JobKind.PREVIEW_STEP
     ]
     waits = attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.WAIT_MS)
     measurements = (

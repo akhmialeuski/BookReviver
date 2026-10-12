@@ -27,9 +27,10 @@ The expected values are worked out by hand:
 The line of the event-loop lag is tried on a file of its own, made of ``loop.lag`` spans of known lags and one block,
 and its absence on the file above, which has no such span.
 
-The budgets of ``--check`` are tried on files of their own, built from the same builders: a preview step that ran
-counts, and one found cached or one at the full scale does not, however long it lasted. The verdict lines hold the
-limit and the measured value, which are worked out in the cases.
+The budgets of ``--check`` are tried on files of their own, built from the same builders: the preview budget reads the
+``job`` spans of the kind ``preview-step`` and nothing else, so a job of another kind, or steps at the preview scale
+with no job around them, do not count, however long they lasted. A preview job counts for its whole duration, which
+holds all of its steps. The verdict lines hold the limit and the measured value, which are worked out in the cases.
 """
 
 import json
@@ -41,7 +42,7 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.app import trace_report
-from bookreviver.domain.enums import BlockOutcome, SpanAttribute, SpanName, StepOutcome, VersionScale
+from bookreviver.domain.enums import BlockOutcome, JobKind, SpanAttribute, SpanName, StepOutcome, VersionScale
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -92,10 +93,12 @@ class Placement(NamedTuple):
 
     :ivar start_s: Seconds after the start of the run at which the step started.
     :ivar span_id: Identifier of the step, or None to take the next one of the counter.
+    :ivar parent_id: Identifier of the span the step was started inside, or None for a root.
     """
 
     start_s: float = 1.0
     span_id: str | None = None
+    parent_id: str | None = None
 
 
 # A span of the next identifier of the counter that has no parent, and a step that starts one second into the run
@@ -190,7 +193,24 @@ def step(
         SpanAttribute.STEP_OUTCOME: outcome.value,
     }
     end_s = placement.start_s + run_ms / 1000
-    return span_line(SpanName.STEP, placement.start_s, end_s, attributes, lineage=Lineage(span_id=placement.span_id))
+    lineage = Lineage(span_id=placement.span_id, parent_id=placement.parent_id)
+    return span_line(SpanName.STEP, placement.start_s, end_s, attributes, lineage=lineage)
+
+
+def job(kind: JobKind, run_ms: int, *, lineage: Lineage = NEXT_LINEAGE) -> str:
+    """Write a ``job`` span of the given kind that starts at the start of the run.
+
+    :param kind: What the job does.
+    :type kind: JobKind
+    :param run_ms: Milliseconds the job lasted.
+    :type run_ms: int
+    :param lineage: The identifier of the job and of its parent.
+    :type lineage: Lineage
+    :returns: The line of the span.
+    :rtype: str
+    """
+    attributes = {SpanAttribute.JOB_KIND: kind.value, SpanAttribute.JOB_ID: JOB_NAME}
+    return span_line(SpanName.JOB, 0.0, run_ms / 1000, attributes, lineage=lineage)
 
 
 @pytest.fixture
@@ -261,14 +281,14 @@ class CheckCase(NamedTuple):
     lock_wait: str
 
 
-PREVIEW_LINE: str = 'Preview of a step on the visible page, max, ms: limit 1000.00, '
+PREVIEW_LINE: str = 'Preview job on the visible page, max, ms: limit 1000.00, '
 LOCK_WAIT_LINE: str = 'Wait for the write lock, p99, ms: limit 100.00, '
 CHECK_CASES: dict[str, CheckCase] = {
-    # The longest preview that ran is 400 ms, and of the waits of 0, 20 and 90 ms the 99th percentile is the largest
+    # The longest preview job is 400 ms, and of the waits of 0, 20 and 90 ms the 99th percentile is the largest
     'both-met': CheckCase(
         lines=(
-            step(DESKEW, StepOutcome.RAN, 250, VersionScale.PREVIEW),
-            step(DESKEW, StepOutcome.RAN, 400, VersionScale.PREVIEW),
+            job(JobKind.PREVIEW_STEP, 250),
+            job(JobKind.PREVIEW_STEP, 400),
             block(0.0, 1.0, 0, BlockOutcome.COMMITTED),
             block(1.0, 2.0, 20, BlockOutcome.COMMITTED),
             block(2.0, 3.0, 90, BlockOutcome.COMMITTED),
@@ -279,7 +299,7 @@ CHECK_CASES: dict[str, CheckCase] = {
     ),
     'lock-wait-exceeded': CheckCase(
         lines=(
-            step(DESKEW, StepOutcome.RAN, 400, VersionScale.PREVIEW),
+            job(JobKind.PREVIEW_STEP, 400),
             block(0.0, 1.0, 10, BlockOutcome.COMMITTED),
             block(1.0, 2.0, 250, BlockOutcome.COMMITTED),
         ),
@@ -288,20 +308,31 @@ CHECK_CASES: dict[str, CheckCase] = {
         lock_wait='measured 250.00, exceeded',
     ),
     'preview-exceeded': CheckCase(
-        lines=(
-            step(DESKEW, StepOutcome.RAN, 1_500, VersionScale.PREVIEW),
-            block(0.0, 1.0, 10, BlockOutcome.COMMITTED),
-        ),
+        lines=(job(JobKind.PREVIEW_STEP, 1_500), block(0.0, 1.0, 10, BlockOutcome.COMMITTED)),
         status=1,
         preview='measured 1500.00, exceeded',
         lock_wait='measured 10.00, met',
     ),
-    # A step found made took 5 s on paper and a step at the full scale took 6 s, and neither is a preview that was made
-    'cached-and-full-steps-ignored': CheckCase(
+    # Each of the two steps took 600 ms, which the old measure of the longest step called met, and the reader waited for
+    # both of them in one job of 1.2 s
+    'job-of-two-steps-exceeded': CheckCase(
         lines=(
-            step(DESKEW, StepOutcome.CACHED, 5_000, VersionScale.PREVIEW),
-            step(DESKEW, StepOutcome.RAN, 6_000, VersionScale.FULL),
-            step(DESKEW, StepOutcome.RAN, 300, VersionScale.PREVIEW),
+            job(JobKind.PREVIEW_STEP, 1_200, lineage=Lineage(span_id=JOB_ID)),
+            step(DESKEW, StepOutcome.RAN, 600, VersionScale.PREVIEW, placement=Placement(0.0, parent_id=JOB_ID)),
+            step(DESKEW, StepOutcome.RAN, 600, VersionScale.PREVIEW, placement=Placement(0.6, parent_id=JOB_ID)),
+            block(0.0, 1.0, 10, BlockOutcome.COMMITTED),
+        ),
+        status=1,
+        preview='measured 1200.00, exceeded',
+        lock_wait='measured 10.00, met',
+    ),
+    # A job of another kind took 6 s, and steps at the preview scale with no preview job around them took 5 s and
+    # 300 ms, and none of them is a preview job
+    'other-jobs-and-bare-steps-ignored': CheckCase(
+        lines=(
+            job(JobKind.RUN_STAGE, 6_000),
+            job(JobKind.PREVIEW_STEP, 300),
+            step(DESKEW, StepOutcome.RAN, 5_000, VersionScale.PREVIEW),
             block(0.0, 1.0, 10, BlockOutcome.COMMITTED),
         ),
         status=0,
@@ -309,13 +340,17 @@ CHECK_CASES: dict[str, CheckCase] = {
         lock_wait='measured 10.00, met',
     ),
     'no-write-blocks': CheckCase(
-        lines=(step(DESKEW, StepOutcome.RAN, 400, VersionScale.PREVIEW),),
+        lines=(job(JobKind.PREVIEW_STEP, 400),),
         status=0,
         preview='measured 400.00, met',
         lock_wait='measured -, no data',
     ),
-    'no-preview-steps': CheckCase(
-        lines=(step(DESKEW, StepOutcome.RAN, 6_000, VersionScale.FULL), block(0.0, 1.0, 10, BlockOutcome.COMMITTED)),
+    'no-preview-jobs': CheckCase(
+        lines=(
+            job(JobKind.RUN_STAGE, 6_000),
+            step(DESKEW, StepOutcome.RAN, 400, VersionScale.PREVIEW),
+            block(0.0, 1.0, 10, BlockOutcome.COMMITTED),
+        ),
         status=0,
         preview='measured -, no data',
         lock_wait='measured 10.00, met',
