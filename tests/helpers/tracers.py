@@ -22,7 +22,7 @@ from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.adapters.tracing.opentelemetry_tracer import OpenTelemetryTracer
 from bookreviver.adapters.tracing.recording import RecordingTracer
 from bookreviver.app.trace_report import load_spans
-from bookreviver.domain.enums import SpanName
+from bookreviver.domain.enums import SpanName, SpanParent
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -107,17 +107,25 @@ class AskingTracer(RecordingTracer):
         return self._asked
 
     @override
-    def start(self, name: SpanName, attributes: SpanAttributes | None = None) -> RecordingSpan:
+    def start(
+        self,
+        name: SpanName,
+        attributes: SpanAttributes | None = None,
+        *,
+        parent: SpanParent = SpanParent.CURRENT,
+    ) -> RecordingSpan:
         """Start the span as the recording tracer does, and set the event when it is the awaited one.
 
         :param name: What the span times.
         :type name: SpanName
         :param attributes: Facts known when the work starts.
         :type attributes: SpanAttributes | None
+        :param parent: The span that is current when this is called, or none for a root.
+        :type parent: SpanParent
         :returns: The span, to end explicitly.
         :rtype: RecordingSpan
         """
-        span = super().start(name, attributes)
+        span = super().start(name, attributes, parent=parent)
         if name is self._awaited and self._remaining:
             self._remaining -= 1
             if not self._remaining and self._asked is not None:

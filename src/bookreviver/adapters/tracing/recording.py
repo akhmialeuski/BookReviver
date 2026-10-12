@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, override
 
+from bookreviver.domain.enums import SpanParent
 from bookreviver.ports.tracing import StartedSpan, Tracer
 
 if TYPE_CHECKING:
@@ -100,17 +101,26 @@ class RecordingTracer(Tracer):
 
     @override
     @contextmanager
-    def span(self, name: SpanName, attributes: SpanAttributes | None = None) -> Iterator[Span]:
+    def span(
+        self,
+        name: SpanName,
+        attributes: SpanAttributes | None = None,
+        *,
+        parent: SpanParent = SpanParent.CURRENT,
+    ) -> Iterator[Span]:
         """Open a span that is current inside the block, and keep it when the block ends.
 
         :param name: What the span times.
         :type name: SpanName
         :param attributes: Facts known when the work starts.
         :type attributes: SpanAttributes | None
+        :param parent: The span that is current where the block is opened, or none for a root. The span of the block is
+                       current inside it either way.
+        :type parent: SpanParent
         :returns: Iterator yielding the span.
         :rtype: Iterator[Span]
         """
-        span = self.start(name, attributes)
+        span = self.start(name, attributes, parent=parent)
         token = _CURRENT.set(span)
         try:
             yield span
@@ -122,16 +132,24 @@ class RecordingTracer(Tracer):
             span.end()
 
     @override
-    def start(self, name: SpanName, attributes: SpanAttributes | None = None) -> RecordingSpan:
+    def start(
+        self,
+        name: SpanName,
+        attributes: SpanAttributes | None = None,
+        *,
+        parent: SpanParent = SpanParent.CURRENT,
+    ) -> RecordingSpan:
         """Start a span that is not current, as a child of the span of this tracer that is current, if any.
 
         :param name: What the span times.
         :type name: SpanName
         :param attributes: Facts known when the work starts.
         :type attributes: SpanAttributes | None
+        :param parent: The span that is current when this is called, or none for a root.
+        :type parent: SpanParent
         :returns: The span, to end explicitly.
         :rtype: RecordingSpan
         """
         current = _CURRENT.get()
-        parent = current if current is not None and current.tracer is self else None
-        return RecordingSpan(self, name, attributes, parent)
+        is_child = parent is SpanParent.CURRENT and current is not None and current.tracer is self
+        return RecordingSpan(self, name, attributes, current if is_child else None)

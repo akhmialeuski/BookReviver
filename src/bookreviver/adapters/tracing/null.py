@@ -7,6 +7,7 @@ code that is measured when the measurements are on pays no allocation when they 
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, override
 
+from bookreviver.domain.enums import SpanParent
 from bookreviver.ports.tracing import StartedSpan, Tracer
 
 if TYPE_CHECKING:
@@ -43,26 +44,42 @@ class NullTracer(Tracer):
         self._block = nullcontext(self._span)
 
     @override
-    def span(self, name: SpanName, attributes: SpanAttributes | None = None) -> AbstractContextManager[Span]:
+    def span(
+        self,
+        name: SpanName,
+        attributes: SpanAttributes | None = None,
+        *,
+        parent: SpanParent = SpanParent.CURRENT,
+    ) -> AbstractContextManager[Span]:
         """Return the shared block, which yields the shared span.
 
         :param name: What the span would time, ignored.
         :type name: SpanName
         :param attributes: Facts known when the work starts, ignored.
         :type attributes: SpanAttributes | None
+        :param parent: Which span the new span would be the child of, ignored.
+        :type parent: SpanParent
         :returns: A block that does nothing on entry and on exit.
         :rtype: AbstractContextManager[Span]
         """
         return self._block
 
     @override
-    def start(self, name: SpanName, attributes: SpanAttributes | None = None) -> StartedSpan:
+    def start(
+        self,
+        name: SpanName,
+        attributes: SpanAttributes | None = None,
+        *,
+        parent: SpanParent = SpanParent.CURRENT,
+    ) -> StartedSpan:
         """Return the shared span.
 
         :param name: What the span would time, ignored.
         :type name: SpanName
         :param attributes: Facts known when the work starts, ignored.
         :type attributes: SpanAttributes | None
+        :param parent: Which span the new span would be the child of, ignored.
+        :type parent: SpanParent
         :returns: A span that holds nothing.
         :rtype: StartedSpan
         """

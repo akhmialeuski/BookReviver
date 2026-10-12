@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import JobKind, SpanAttribute, SpanName
+from bookreviver.domain.enums import JobKind, SpanAttribute, SpanName, SpanParent
 from tests.helpers.tracers import FinishedSpan, open_tracer_under_test
 
 if TYPE_CHECKING:
@@ -136,6 +136,34 @@ class TestSpans:
         parents = {span.name: span.parent for span in under_test.finished()}
         expect(parents[SpanName.WRITE_BLOCK.value] == SpanName.JOB.value)
         expect(parents[SpanName.RUN_PAGE.value] == SpanName.JOB.value)
+        expect(parents[SpanName.JOB.value] is None)
+        assert_expectations()
+
+    def test_span_asked_to_have_no_parent_is_a_root_inside_another_span(
+        self, fx_recording_adapter: TracerAdapter, tmp_path: Path
+    ) -> None:
+        """Verify a block and a started span with no parent are roots, and a block with none is still current.
+
+        :param fx_recording_adapter: Adapter under test, one that keeps its spans.
+        :type fx_recording_adapter: TracerAdapter
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        with (
+            open_tracer_under_test(fx_recording_adapter, tmp_path) as under_test,
+            under_test.tracer.span(SpanName.JOB),
+        ):
+            # The span of the block is current for what is opened inside it, whatever its own parent is
+            with (
+                under_test.tracer.span(SpanName.RUN_PAGE, parent=SpanParent.NONE),
+                under_test.tracer.span(SpanName.STEP),
+            ):
+                pass
+            under_test.tracer.start(SpanName.WRITE_BLOCK, parent=SpanParent.NONE).end()
+        parents = {span.name: span.parent for span in under_test.finished()}
+        expect(parents[SpanName.RUN_PAGE.value] is None)
+        expect(parents[SpanName.WRITE_BLOCK.value] is None)
+        expect(parents[SpanName.STEP.value] == SpanName.RUN_PAGE.value)
         expect(parents[SpanName.JOB.value] is None)
         assert_expectations()
 

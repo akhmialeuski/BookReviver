@@ -9,10 +9,16 @@ Two operations match the two ways a span is needed. ``span`` is a ``with`` block
 spans opened there become its children, and it ends when the block ends, with the exception that leaves it recorded.
 ``start`` is for work that has no ``with`` around it, such as the callbacks of an engine that begin and end a
 transaction in two places: the span is not made current, and its owner ends it.
+
+Both operations take the parent of the new span: by default the span that is current where it is opened, or none, which
+starts a trace of its own. A unit of work that is its own, such as a background job, asks for none, so its span has the
+same place in a trace whichever component happened to start it from inside a request.
 """
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
+
+from bookreviver.domain.enums import SpanParent
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -51,26 +57,44 @@ class Tracer(ABC):
     """Records the spans of work the application is asked to measure."""
 
     @abstractmethod
-    def span(self, name: SpanName, attributes: SpanAttributes | None = None) -> AbstractContextManager[Span]:
+    def span(
+        self,
+        name: SpanName,
+        attributes: SpanAttributes | None = None,
+        *,
+        parent: SpanParent = SpanParent.CURRENT,
+    ) -> AbstractContextManager[Span]:
         """Open a span for the block, which is current while the block runs.
 
         :param name: What the span times.
         :type name: SpanName
         :param attributes: Facts known when the work starts.
         :type attributes: SpanAttributes | None
+        :param parent: The span that is current where the block is opened, or none to start a trace of its own. The
+                       span of the block is current inside it either way.
+        :type parent: SpanParent
         :returns: Context manager that yields the span, and ends it when the block ends. An exception that leaves the
                   block is recorded on the span and goes on.
         :rtype: AbstractContextManager[Span]
         """
 
     @abstractmethod
-    def start(self, name: SpanName, attributes: SpanAttributes | None = None) -> StartedSpan:
+    def start(
+        self,
+        name: SpanName,
+        attributes: SpanAttributes | None = None,
+        *,
+        parent: SpanParent = SpanParent.CURRENT,
+    ) -> StartedSpan:
         """Start a span that is not current and that the caller ends.
 
         :param name: What the span times.
         :type name: SpanName
         :param attributes: Facts known when the work starts.
         :type attributes: SpanAttributes | None
-        :returns: The span, which is the child of the span that is current when this is called.
+        :param parent: The span that is current when this is called, or none to start a trace of its own.
+        :type parent: SpanParent
+        :returns: The span, which is the child of the span that is current when this is called, unless ``parent`` is
+                  none.
         :rtype: StartedSpan
         """

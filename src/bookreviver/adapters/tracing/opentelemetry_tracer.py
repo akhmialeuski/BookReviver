@@ -13,10 +13,12 @@ spans of the earlier one, and a report of one run needs a file of its own.
 from contextlib import ExitStack, contextmanager
 from typing import TYPE_CHECKING, ClassVar, Self, override
 
+from opentelemetry.context import Context
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 
+from bookreviver.domain.enums import SpanParent
 from bookreviver.ports.tracing import StartedSpan, Tracer
 
 if TYPE_CHECKING:
@@ -39,6 +41,18 @@ def _keyed(attributes: SpanAttributes | None) -> dict[str, AttributeValue]:
     :rtype: dict[str, AttributeValue]
     """
     return {key.value: value for key, value in (attributes or {}).items()}
+
+
+def _context_of(parent: SpanParent) -> Context | None:
+    """Give the context the SDK starts a span in for the parent the caller asked for.
+
+    :param parent: Which span the new span is the child of.
+    :type parent: SpanParent
+    :returns: An empty context for none, so the SDK finds no current span and starts a trace; otherwise None, which is
+              the context current where the span is started.
+    :rtype: Context | None
+    """
+    return Context() if parent is SpanParent.NONE else None
 
 
 class OpenTelemetrySpan(StartedSpan):
@@ -124,7 +138,13 @@ class OpenTelemetryTracer(Tracer):
 
     @override
     @contextmanager
-    def span(self, name: SpanName, attributes: SpanAttributes | None = None) -> Iterator[Span]:
+    def span(
+        self,
+        name: SpanName,
+        attributes: SpanAttributes | None = None,
+        *,
+        parent: SpanParent = SpanParent.CURRENT,
+    ) -> Iterator[Span]:
         """Open a span that is current inside the block, as the SDK's ``start_as_current_span`` does.
 
         An exception that leaves the block is recorded on the span as an event, and sets its status to error.
@@ -133,21 +153,33 @@ class OpenTelemetryTracer(Tracer):
         :type name: SpanName
         :param attributes: Facts known when the work starts.
         :type attributes: SpanAttributes | None
+        :param parent: The span that is current where the block is opened, or none to start a trace of its own.
+        :type parent: SpanParent
         :returns: Iterator yielding the span.
         :rtype: Iterator[Span]
         """
-        with self._tracer.start_as_current_span(name.value, attributes=_keyed(attributes)) as span:
+        context = _context_of(parent)
+        with self._tracer.start_as_current_span(name.value, context=context, attributes=_keyed(attributes)) as span:
             yield OpenTelemetrySpan(span)
 
     @override
-    def start(self, name: SpanName, attributes: SpanAttributes | None = None) -> StartedSpan:
-        """Start a span that is not current, as a child of the span that is current.
+    def start(
+        self,
+        name: SpanName,
+        attributes: SpanAttributes | None = None,
+        *,
+        parent: SpanParent = SpanParent.CURRENT,
+    ) -> StartedSpan:
+        """Start a span that is not current, as a child of the span that is current unless ``parent`` is none.
 
         :param name: What the span times.
         :type name: SpanName
         :param attributes: Facts known when the work starts.
         :type attributes: SpanAttributes | None
+        :param parent: The span that is current when this is called, or none to start a trace of its own.
+        :type parent: SpanParent
         :returns: The span, to end explicitly.
         :rtype: StartedSpan
         """
-        return OpenTelemetrySpan(self._tracer.start_span(name.value, attributes=_keyed(attributes)))
+        context = _context_of(parent)
+        return OpenTelemetrySpan(self._tracer.start_span(name.value, context=context, attributes=_keyed(attributes)))

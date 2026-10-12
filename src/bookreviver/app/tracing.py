@@ -17,7 +17,7 @@ import anyio
 
 from bookreviver.app.security import RESPONSE_START
 from bookreviver.app.trace_report import MILLISECONDS_PER_SECOND
-from bookreviver.domain.enums import SpanAttribute, SpanName
+from bookreviver.domain.enums import SpanAttribute, SpanName, SpanParent
 from bookreviver.ports.tracing import Tracer
 
 if TYPE_CHECKING:
@@ -95,7 +95,8 @@ class LoopLagProbe:
 
     A tick sleeps for the interval and records how much longer than the interval the sleep took. A loop that is busy
     for 80 ms with a callback or a blocking call wakes the sleeper 80 ms late, so the lag is the delay every other
-    coroutine of the process saw at that moment, the waits of the write blocks included.
+    coroutine of the process saw at that moment, the waits of the write blocks included. A tick has no parent, since the
+    probe is started from the lifespan of the application and belongs to no request.
     """
 
     def __init__(self, *, tracer: Tracer, interval_seconds: float) -> None:
@@ -112,7 +113,7 @@ class LoopLagProbe:
     async def run(self) -> None:
         """Record one span for each tick, for ever; the caller stops the probe by cancelling it."""
         while True:
-            span = self._tracer.start(SpanName.LOOP_LAG)
+            span = self._tracer.start(SpanName.LOOP_LAG, parent=SpanParent.NONE)
             started_at = perf_counter()
             await anyio.sleep(self._interval_seconds)
             overrun = max(0.0, perf_counter() - started_at - self._interval_seconds)

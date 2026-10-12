@@ -12,7 +12,16 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.app import trace_report
-from bookreviver.domain.enums import JobKind, SpanAttribute, SpanName, Stage, StepOutcome, VersionData, VersionScale
+from bookreviver.domain.enums import (
+    JobKind,
+    SpanAttribute,
+    SpanName,
+    SpanParent,
+    Stage,
+    StepOutcome,
+    VersionData,
+    VersionScale,
+)
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.values import Step, StepPreview
 from tests.helpers.samples import ANGLE_TOLERANCE, png_bytes, text_page, turned
@@ -50,7 +59,7 @@ class TestPreviewBudget:
         # The worker opens this span around the entry point of every job in app.worker.traced, which the kit has no
         # broker to do, so it is opened here with the same name and attributes
         job_attributes = {SpanAttribute.JOB_KIND: JobKind.PREVIEW_STEP, SpanAttribute.JOB_ID: str(job.id)}
-        with fx_cv_kit.tracer.span(SpanName.JOB, job_attributes):
+        with fx_cv_kit.tracer.span(SpanName.JOB, job_attributes, parent=SpanParent.NONE):
             await fx_cv_kit.jobs().preview_step(job.id)
         [job_span] = fx_cv_kit.tracer.named(SpanName.JOB)
         [step_span] = [

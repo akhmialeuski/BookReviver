@@ -1276,6 +1276,13 @@ class SpanAttribute(LabeledStrEnum):
     LAG_MS = 'lag.ms', 'Milliseconds a sleep of the probe overran its interval'
 
 
+class SpanParent(LabeledStrEnum):
+    """Which span a new span is the child of, which a unit of work of its own does not leave to the context."""
+
+    CURRENT = 'current', 'The span current where it is opened'
+    NONE = 'none', 'No parent: the span starts a trace of its own'
+
+
 class StepOutcome(LabeledStrEnum):
     """How a step of a recipe on one page was settled, which says whether its processor ran."""
 

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 import pytest
+from delayed_assert import assert_expectations, expect
 from dishka import make_async_container
 from taskiq.exceptions import SendTaskError
 
@@ -86,10 +87,12 @@ class TestEnqueue:
 class TestJobSpan:
     """Tests for the span the worker puts around every task it registers."""
 
-    async def test_task_runs_inside_a_job_span_of_its_kind_and_job(self, fx_probe: Probe) -> None:
-        """Verify each task is timed as one ``job`` span that names the kind and the identifier of the job.
+    async def test_task_runs_inside_a_root_job_span_of_its_kind_and_job(self, fx_probe: Probe) -> None:
+        """Verify each task is timed as one ``job`` span that names the kind and the job, and has no parent.
 
-        The probe task still receives the services dishka resolves for it, so the wrapper passes them on.
+        The job is enqueued inside the span of a request, which the in-process broker copies into the task it runs the
+        job in, so the span of the job would be its child without the ``parent`` of ``traced``. The probe task still
+        receives the services dishka resolves for it, so the wrapper passes them on.
 
         :param fx_probe: Probe the task records into.
         :type fx_probe: Probe
@@ -99,12 +102,15 @@ class TestJobSpan:
         job = make_job(project_id=PROJECT_ID)
         try:
             async with running_taskiq_queue(container, tasks=PROBE_TASKS) as queue:
-                await queue.enqueue(job)
+                with tracer.span(SpanName.HTTP_REQUEST):
+                    await queue.enqueue(job)
         finally:
             await container.close()
         (span,) = tracer.named(SpanName.JOB)
-        assert span.attributes == {SpanAttribute.JOB_KIND: job.kind, SpanAttribute.JOB_ID: str(job.id)}
-        assert fx_probe.started == [job.id]
+        expect(span.attributes == {SpanAttribute.JOB_KIND: job.kind, SpanAttribute.JOB_ID: str(job.id)})
+        expect(span.parent is None)
+        expect(fx_probe.started == [job.id])
+        assert_expectations()
 
 
 class TestJobTasks:

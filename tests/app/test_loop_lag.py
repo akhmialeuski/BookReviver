@@ -41,17 +41,20 @@ class TestLoopLagProbe:
 
         The probe is known to be asleep once its first tick has started. The second wait is set before the block, so
         the tick that starts after the block is the one that follows the late one, which has ended and holds its lag.
+        The task group is opened inside a span, which its task copies as its current span, so a tick that has no
+        parent has asked for none.
         """
         tracer = AskingTracer()
         probe = LoopLagProbe(tracer=tracer, interval_seconds=INTERVAL_SECONDS)
         asleep = tracer.ask_after(1, name=SpanName.LOOP_LAG)
-        async with anyio.create_task_group() as group:
-            group.start_soon(probe.run)
-            await asleep.wait()
-            resumed = tracer.ask_after(1, name=SpanName.LOOP_LAG)
-            block_the_loop(BLOCKED_SECONDS)
-            await resumed.wait()
-            group.cancel_scope.cancel()
+        with tracer.span(SpanName.JOB):
+            async with anyio.create_task_group() as group:
+                group.start_soon(probe.run)
+                await asleep.wait()
+                resumed = tracer.ask_after(1, name=SpanName.LOOP_LAG)
+                block_the_loop(BLOCKED_SECONDS)
+                await resumed.wait()
+                group.cancel_scope.cancel()
         ticks = tracer.named(SpanName.LOOP_LAG)
         lags = [float(tick.attributes[SpanAttribute.LAG_MS]) for tick in ticks]
         expect(len(ticks) > 0, 'No tick was recorded.')

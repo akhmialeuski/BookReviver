@@ -8,7 +8,7 @@ dishka's Taskiq integration opens a request scope per task, so a task gets its o
 A job kind without an entry cannot be enqueued, and the in-process broker refuses it at once.
 
 Every entry point is registered inside a ``job`` span, made by ``traced`` at the registration and not in the entry
-points, so a new job kind is measured without the author doing anything.
+points, so a new job kind is measured without the author doing anything. The span is the root of a trace of its own.
 
 The in-process broker runs tasks in the API process, which suits one machine. The Redis broker is selectable in the
 settings but refused until taskiq-redis is a dependency.
@@ -25,7 +25,7 @@ from dishka.integrations.taskiq import FromDishka, inject, setup_dishka
 from taskiq import InMemoryBroker
 
 from bookreviver.app.settings import JobBroker
-from bookreviver.domain.enums import JobKind, SpanAttribute, SpanName, Stage
+from bookreviver.domain.enums import JobKind, SpanAttribute, SpanName, SpanParent, Stage
 from bookreviver.domain.ids import JobId
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.imports import ImportService
@@ -176,6 +176,10 @@ def traced(kind: JobKind, task: JobTask, container: AsyncContainer) -> JobTask:
     of the work the task does become its children. The tracer comes from the application container, which a
     request-scoped task container is a child of.
 
+    The span has no parent. A job is a unit of work of its own, and the in-process broker runs it in a task that copied
+    the context of whoever enqueued it, so the span of a request would become its parent there and not with a broker
+    that runs it elsewhere. With no parent, every broker gives a trace the same shape.
+
     :param kind: Kind of the job the entry point runs, put on the span.
     :type kind: JobKind
     :param task: The entry point.
@@ -199,7 +203,7 @@ def traced(kind: JobKind, task: JobTask, container: AsyncContainer) -> JobTask:
         """
         tracer = await container.get(Tracer)
         attributes = {SpanAttribute.JOB_KIND: kind, SpanAttribute.JOB_ID: job_id}
-        with tracer.span(SpanName.JOB, attributes):
+        with tracer.span(SpanName.JOB, attributes, parent=SpanParent.NONE):
             await task(job_id, *args, **kwargs)
 
     return run_in_span
