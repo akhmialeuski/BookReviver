@@ -70,6 +70,8 @@ MAX_BYTES: int = 10 * 1024 * 1024
 DEFAULT_PARALLEL_SCANS: int = 2
 # Long enough for two scans cut at once to overlap, short enough to keep a test fast
 OVERLAP_SECONDS: float = 0.05
+# Bound of an import whose cutters wait on events of the test, so a cutter that never comes fails it instead of hanging
+IMPORT_TIMEOUT_SECONDS: float = 30
 
 
 def pdf_upload(

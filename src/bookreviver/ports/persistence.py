@@ -1029,6 +1029,11 @@ class UnitOfWork(ABC):
     Every write goes through a ``change_book`` or a ``change`` block. A block commits when it ends normally and rolls
     back when an exception leaves it, so nothing outside a block can commit or discard a change.
 
+    One unit of work serves one coroutine at a time, since its blocks run one after another on one transaction and a
+    second block opened while another is open is refused as nested. Coroutines that share a unit of work must queue in
+    front of its blocks, for instance behind an ``anyio.Lock`` held around each block, and coroutines that must write
+    at once take a unit of work each, which the port then orders by the lock of the book.
+
     :ivar projects: Project repository of this transaction.
     :ivar sources: Source repository of this transaction.
     :ivar scans: Scan repository of this transaction.
