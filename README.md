@@ -280,9 +280,12 @@ recorded by default. Two variables switch it on, and the path is required with t
 | `BOOKREVIVER_TRACING__EXPORT_PATH` | The file spans are appended to, a new file for each run              |
 
 The spans are `http.request` (route template, method and status), `job` (kind and job), `run.page` (page, stage and
-outcome), `step` (processor, scale and outcome: cached, ran or failed) and `write.block`, which times a block that holds
-SQLite's write lock: the wait for the lock, how long it was held and the commit, with the book. The file is complete
-once the server has stopped. `bookreviver-trace-report` summarises one run for a note:
+outcome), `step` (processor, scale and outcome: cached, ran or failed), `write.block`, which times a block that holds
+SQLite's write lock: the wait for the lock, how long it was held and the commit, with the book, and `loop.lag`, one tick
+of a probe that records how much longer than its interval a sleep of the event loop took (0.1 s, set by
+`BOOKREVIVER_TRACING__LOOP_LAG_INTERVAL_SECONDS`). The durations of a write block are measured on the event loop and
+include its delay, which the `Event-loop lag, ms` line of the report shows. The file is complete once the server has
+stopped. `bookreviver-trace-report` summarises one run for a note:
 
 ```bash
 uv run bookreviver-trace-report path/to/spans.jsonl

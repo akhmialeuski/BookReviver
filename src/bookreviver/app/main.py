@@ -1,9 +1,10 @@
 """Application factory: wires the container, error handling, pagination, security and routers."""
 
 import logging
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING
 
+import anyio
 from dishka.integrations.fastapi import setup_dishka
 from fastapi import APIRouter, FastAPI
 from fastapi_pagination import add_pagination
@@ -17,8 +18,9 @@ from bookreviver.app.container import build_container
 from bookreviver.app.providers.accounts import account_routes
 from bookreviver.app.security import install_security, sign_in_throttle
 from bookreviver.app.settings import Settings
-from bookreviver.app.tracing import TracingMiddleware
+from bookreviver.app.tracing import LoopLagProbe, TracingMiddleware
 from bookreviver.domain.errors import DomainError
+from bookreviver.ports.tracing import Tracer
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.pages import PageService
 
@@ -65,6 +67,9 @@ def create_app(
         each of the two passes writes one book at a time, in a ``change_book`` block of that book, outside any block of
         the scope.
 
+        While the measurements are on, the probe of the event-loop lag runs in a task group around the application. It
+        is cancelled before the container closes, so its last tick is recorded before the exporter flushes the file.
+
         :param _app: The application, required by FastAPI's lifespan signature and unused.
         :type _app: FastAPI
         :returns: Iterator yielding once while the application runs.
@@ -76,7 +81,17 @@ def create_app(
             async with container() as request:
                 await (await request.get(OutdatedResults)).mark_stale()
                 await (await request.get(PageService)).remake_outdated_leaves()
-            yield
+            async with AsyncExitStack() as stack:
+                if resolved.tracing.enabled:
+                    probe = LoopLagProbe(
+                        tracer=await container.get(Tracer),
+                        interval_seconds=resolved.tracing.loop_lag_interval_seconds,
+                    )
+                    group = await stack.enter_async_context(anyio.create_task_group())
+                    group.start_soon(probe.run)
+                    # Registered after the group, so it runs first on exit and the group has nothing left to wait for
+                    stack.callback(group.cancel_scope.cancel)
+                yield
         finally:
             await container.close()
 

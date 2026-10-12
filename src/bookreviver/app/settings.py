@@ -126,10 +126,13 @@ class TracingSettings(BaseModel):
     :ivar enabled: Whether spans are recorded. Off, nothing is recorded and nothing is written.
     :ivar export_path: The JSON lines file spans are appended to, one object per span. Required when ``enabled``, and
                        refused otherwise, so a path left in the environment cannot suggest that measurements are on.
+    :ivar loop_lag_interval_seconds: Seconds between the ticks of the event-loop lag probe, which runs only while
+                                     spans are recorded.
     """
 
     enabled: bool = False
     export_path: Path | None = None
+    loop_lag_interval_seconds: PositiveFloat = 0.1
 
     @model_validator(mode='after')
     def _require_path_when_enabled(self) -> Self:

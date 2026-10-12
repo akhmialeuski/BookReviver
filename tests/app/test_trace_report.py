@@ -24,6 +24,9 @@ The expected values are worked out by hand:
   60 + 20 = 80 ms, so the median wait is (30 + 80) / 2 = 55 ms. ``split.none`` has one step that ran in 40 ms, with no
   block inside it, so its median run is 40 ms and its median wait is 0 ms.
 
+The line of the event-loop lag is tried on a file of its own, made of ``loop.lag`` spans of known lags and one block,
+and its absence on the file above, which has no such span.
+
 The budgets of ``--check`` are tried on files of their own, built from the same builders: a preview step that ran
 counts, and one found cached or one at the full scale does not, however long it lasted. The verdict lines hold the
 limit and the measured value, which are worked out in the cases.
@@ -67,6 +70,10 @@ Wait for the write lock, ms: p50 50.00, p90 1000.00, p99 1000.00, max 1000.00
 |-----------------|-------|-----------------|----------------|------------------------------|
 | {DESKEW} | 4     | 50.0            | 200.0          | 55.0                         |
 | {SPLIT}      | 1     | 0.0             | 40.0           | 0.0                          |"""
+# The lags of the probe ticks of one test, and the two lines the report prints for them and for one block of 20 ms
+LAG_VALUES_MS: tuple[float, ...] = (1.0, 2.0, 3.0, 4.0, 10.0)
+WAIT_LINE: str = 'Wait for the write lock, ms: p50 20.00, p90 20.00, p99 20.00, max 20.00'
+LAG_LINE: str = 'Event-loop lag, ms: p50 3.00, p90 10.00, p99 10.00, max 10.00'
 
 
 class Lineage(NamedTuple):
@@ -380,6 +387,34 @@ class TestReport:
         spans = trace_report.load_spans(path)
         row = trace_report.report(spans, path.name).splitlines()[-1]
         assert [cell.strip() for cell in row.strip('|').split('|')] == [DESKEW, '2', '50.0', '100.0', '0.0']
+
+    def test_lag_line_of_the_probe_follows_the_lock_wait_line(
+        self, fx_write_spans: Callable[[Sequence[str]], Path]
+    ) -> None:
+        """Verify the percentiles of the ``loop.lag`` spans are printed on the line after the wait for the lock.
+
+        The lags are 1, 2, 3, 4 and 10 ms, so by nearest rank over five values the 50th percentile is the 3rd, 3 ms,
+        the 90th and the 99th are the 5th, 10 ms, and the maximum is 10 ms. The wait line comes from the one block.
+
+        :param fx_write_spans: Function that writes lines of spans to a file.
+        :type fx_write_spans: Callable[[Sequence[str]], Path]
+        """
+        ticks = [
+            span_line(SpanName.LOOP_LAG, start_s, start_s + 0.1, {SpanAttribute.LAG_MS: lag_ms})
+            for start_s, lag_ms in enumerate(LAG_VALUES_MS)
+        ]
+        path = fx_write_spans([block(0.0, 1.0, 20, BlockOutcome.COMMITTED), *ticks])
+        lines = trace_report.report(trace_report.load_spans(path), path.name).splitlines()
+        assert lines[4:6] == [WAIT_LINE, LAG_LINE]
+
+    def test_report_without_probe_spans_has_no_lag_line(self, fx_span_file: Path) -> None:
+        """Verify a run recorded without the probe prints no line of the lag, instead of one made of zeros.
+
+        :param fx_span_file: File of the spans of a run, which holds no ``loop.lag`` span.
+        :type fx_span_file: Path
+        """
+        report = trace_report.report(trace_report.load_spans(fx_span_file), fx_span_file.name)
+        assert 'Event-loop lag' not in report
 
     def test_main_prints_the_report_and_succeeds(self, fx_span_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Verify the command line prints the report of the file it is given and exits with 0, budgets or not.

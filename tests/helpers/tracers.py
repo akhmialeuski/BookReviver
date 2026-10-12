@@ -4,24 +4,30 @@ The null tracer keeps nothing, the recording tracer keeps its spans in memory, a
 into a file when it is closed, so the reader of each is a function that turns what the adapter holds into one shape,
 ``FinishedSpan``, which the contract compares across adapters. The file of the OpenTelemetry adapter is complete only
 once its block is left, so a test reads the spans after the ``with`` block of ``open_tracer_under_test``.
+
+``AskingTracer`` is the recording tracer for a test that has to wait until a span has started, such as a write block
+asking for the lock or a tick of the lag probe, so it is ordered by an event and not by a sleep.
 """
 
 import enum
 import json
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
+import anyio
 from attrs import frozen
 
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.adapters.tracing.opentelemetry_tracer import OpenTelemetryTracer
 from bookreviver.adapters.tracing.recording import RecordingTracer
+from bookreviver.domain.enums import SpanName
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from pathlib import Path
 
-    from bookreviver.ports.tracing import AttributeValue, Tracer
+    from bookreviver.adapters.tracing.recording import RecordingSpan
+    from bookreviver.ports.tracing import AttributeValue, SpanAttributes, Tracer
 
 SPAN_FILE_NAME: str = 'spans.jsonl'
 ERROR_STATUS: str = 'ERROR'
@@ -66,6 +72,56 @@ class TracerUnderTest:
 
     tracer: Tracer
     finished: Callable[[], list[FinishedSpan]]
+
+
+class AskingTracer(RecordingTracer):
+    """A recording tracer that tells a test when a span of a name has started, so the test needs no sleep to order.
+
+    A write block span starts right before the block asks SQLite for the lock, in the same turn of the event loop, so a
+    test that waits for the event of ``ask_after`` knows the block is asking for the lock, and not that it has been
+    given it. A tick of the lag probe starts as the previous one ends, so waiting for the second tick to start means
+    the first has ended and carries its lag.
+    """
+
+    def __init__(self) -> None:
+        """Start with no span awaited."""
+        super().__init__()
+        self._asked: anyio.Event | None = None
+        self._awaited = SpanName.WRITE_BLOCK
+        self._remaining = 0
+
+    def ask_after(self, count: int, *, name: SpanName = SpanName.WRITE_BLOCK) -> anyio.Event:
+        """Await the ``count``-th span of ``name`` that starts from now on.
+
+        :param count: How many spans are to start, the awaited one the last of them.
+        :type count: int
+        :param name: Name of the spans that are counted.
+        :type name: SpanName
+        :returns: Event that is set when the awaited span has started.
+        :rtype: anyio.Event
+        """
+        self._asked = anyio.Event()
+        self._awaited = name
+        self._remaining = count
+        return self._asked
+
+    @override
+    def start(self, name: SpanName, attributes: SpanAttributes | None = None) -> RecordingSpan:
+        """Start the span as the recording tracer does, and set the event when it is the awaited one.
+
+        :param name: What the span times.
+        :type name: SpanName
+        :param attributes: Facts known when the work starts.
+        :type attributes: SpanAttributes | None
+        :returns: The span, to end explicitly.
+        :rtype: RecordingSpan
+        """
+        span = super().start(name, attributes)
+        if name is self._awaited and self._remaining:
+            self._remaining -= 1
+            if not self._remaining and self._asked is not None:
+                self._asked.set()
+        return span
 
 
 def read_span_file(path: Path) -> list[FinishedSpan]:

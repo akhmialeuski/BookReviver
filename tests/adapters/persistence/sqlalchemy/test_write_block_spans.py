@@ -7,7 +7,7 @@ only then is the first let go.
 """
 
 from time import perf_counter
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING
 
 import anyio
 import pytest
@@ -15,12 +15,12 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
-from bookreviver.adapters.tracing.recording import RecordingTracer
 from bookreviver.domain.enums import BlockKind, BlockOutcome, SpanAttribute, SpanName
 from bookreviver.domain.errors import BookBusyError
 from tests.helpers.builders import make_page, make_project
 from tests.helpers.schema import create_schema
 from tests.helpers.seeding import commit_account, store_project
+from tests.helpers.tracers import AskingTracer
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from bookreviver.adapters.tracing.recording import RecordingSpan
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Project
-    from bookreviver.ports.tracing import SpanAttributes
 
 pytestmark = pytest.mark.anyio
 
@@ -38,50 +37,6 @@ WAIT_SECONDS: float = 10.0
 IMPATIENT_SECONDS: float = 0.05
 MILLISECONDS_PER_SECOND: int = 1_000
 FAILED_BLOCK: str = 'The block failed after it wrote a page.'
-
-
-class AskingTracer(RecordingTracer):
-    """A recording tracer that tells a test when a write block has started to ask SQLite for the lock.
-
-    The span starts right before the block asks SQLite for the lock, in the same turn of the event loop, so a test
-    that waits for the event of ``ask_after`` knows the block is asking for the lock, and not that it has been given it.
-    """
-
-    def __init__(self) -> None:
-        """Start with no block awaited."""
-        super().__init__()
-        self._asked: anyio.Event | None = None
-        self._remaining = 0
-
-    def ask_after(self, count: int) -> anyio.Event:
-        """Await the ``count``-th write block span that starts from now on.
-
-        :param count: How many spans are to start, the awaited one the last of them.
-        :type count: int
-        :returns: Event that is set when the awaited span has started.
-        :rtype: anyio.Event
-        """
-        self._asked = anyio.Event()
-        self._remaining = count
-        return self._asked
-
-    @override
-    def start(self, name: SpanName, attributes: SpanAttributes | None = None) -> RecordingSpan:
-        """Start the span as the recording tracer does, and set the event when it is the awaited one.
-
-        :param name: What the span times.
-        :type name: SpanName
-        :param attributes: Facts known when the work starts.
-        :type attributes: SpanAttributes | None
-        :returns: The span, to end explicitly.
-        :rtype: RecordingSpan
-        """
-        span = super().start(name, attributes)
-        if name is SpanName.WRITE_BLOCK and self._remaining:
-            self._remaining -= 1
-            if not self._remaining and self._asked is not None:
-                self._asked.set()
-        return span
 
 
 def milliseconds(span: RecordingSpan, key: SpanAttribute) -> float:

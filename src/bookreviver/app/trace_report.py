@@ -9,11 +9,16 @@ report is meant to be pasted into a note:
 - how much of that time some write block held the write lock of the database, where blocks that overlap are counted
   once;
 - the number of write blocks and the wait for the lock, as the 50th, 90th and 99th percentile and the maximum;
+- the lag of the event loop in the same percentiles, when the run has ``loop.lag`` spans;
 - for every type of step, how many steps there were, how many of them were found made by an earlier run, and, over those
   that ran, the median milliseconds and the median of the wait for the write lock inside the step, which is the sum of
   the waits of the write blocks whose parent is the step.
 
 A percentile is the nearest rank: the smallest value that at least that share of the values does not exceed.
+
+The durations of a write block are measured on the event loop, as the time from a request of the block until the loop
+resumed it, so each includes the delay of the loop. The ``loop.lag`` spans show how long that delay was during the run,
+and a wait for the lock that is no longer than the lag of the loop says nothing about the lock.
 
 With ``--check`` the command goes on to compare the run with two budgets and prints a line for each, with the limit, the
 measured value and the verdict, ``met``, ``exceeded`` or ``no data`` where the run has nothing to measure. It exits with
@@ -43,6 +48,8 @@ PERCENT: int = 100
 PERCENTILES: tuple[int, ...] = (50, 90, 99)
 NO_VALUE: str = '-'
 FIELD_SEPARATOR: str = ', '
+# What stands between the name of a line of the report and what it measures
+LABEL_SEPARATOR: str = ': '
 # Format specifications of the numbers of the report
 ONE_DECIMAL: str = '.1f'
 TWO_DECIMALS: str = '.2f'
@@ -165,19 +172,19 @@ def percentile(values: list[float], percent: int) -> float:
     return ordered[math.ceil(percent / PERCENT * len(ordered)) - 1]
 
 
-def lock_waits(spans: list[Span]) -> list[float]:
-    """Collect the milliseconds every write block waited for the write lock.
+def attribute_values(spans: list[Span], name: SpanName, key: SpanAttribute) -> list[float]:
+    """Collect one numeric attribute from the spans of one name that recorded it.
 
     :param spans: The spans of the run.
     :type spans: list[Span]
-    :returns: The waits, one for each write block that recorded one, in the order of the file.
+    :param name: Name of the spans to read, such as ``write.block``.
+    :type name: SpanName
+    :param key: The attribute, such as the milliseconds of the wait for the lock.
+    :type key: SpanAttribute
+    :returns: The values, one for each span of the name that has the attribute, in the order of the file.
     :rtype: list[float]
     """
-    return [
-        float(span.attributes[SpanAttribute.WAIT_MS])
-        for span in spans
-        if span.name == SpanName.WRITE_BLOCK and SpanAttribute.WAIT_MS in span.attributes
-    ]
+    return [float(span.attributes[key]) for span in spans if span.name == name and key in span.attributes]
 
 
 def report(spans: list[Span], title: str) -> str:
@@ -205,9 +212,13 @@ def report(spans: list[Span], title: str) -> str:
         f'Write blocks: {len(blocks)}',
         f'Share of the run with the write lock held, %: {held / wall * PERCENT if wall else 0.0:{ONE_DECIMAL}}',
     ]
-    if waits := lock_waits(spans):
-        ranks = FIELD_SEPARATOR.join(f'p{rank} {percentile(waits, rank):{TWO_DECIMALS}}' for rank in PERCENTILES)
-        lines.append(f'Wait for the write lock, ms: {ranks}, max {max(waits):{TWO_DECIMALS}}')
+    for label, values in (
+        ('Wait for the write lock, ms', attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.WAIT_MS)),
+        ('Event-loop lag, ms', attribute_values(spans, SpanName.LOOP_LAG, SpanAttribute.LAG_MS)),
+    ):
+        if values:
+            ranks = FIELD_SEPARATOR.join(f'p{rank} {percentile(values, rank):{TWO_DECIMALS}}' for rank in PERCENTILES)
+            lines.append(f'{label}{LABEL_SEPARATOR}{ranks}, max {max(values):{TWO_DECIMALS}}')
 
     by_type: defaultdict[str, list[Span]] = defaultdict(list)
     for span in spans:
@@ -257,7 +268,7 @@ def check(spans: list[Span]) -> tuple[list[str], bool]:
         and span.attributes.get(SpanAttribute.STEP_SCALE) == VersionScale.PREVIEW
         and span.attributes.get(SpanAttribute.STEP_OUTCOME) == StepOutcome.RAN
     ]
-    waits = lock_waits(spans)
+    waits = attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.WAIT_MS)
     measurements = (
         (PREVIEW_BUDGET, max(previews) if previews else None),
         (LOCK_WAIT_BUDGET, percentile(waits, LOCK_WAIT_PERCENT) if waits else None),
@@ -274,7 +285,7 @@ def check(spans: list[Span]) -> tuple[list[str], bool]:
             verdict = EXCEEDED
             exceeded = True
         fields = (f'limit {budget.limit_ms:{TWO_DECIMALS}}', f'measured {shown}', verdict)
-        lines.append(f'{budget.name}: {FIELD_SEPARATOR.join(fields)}')
+        lines.append(f'{budget.name}{LABEL_SEPARATOR}{FIELD_SEPARATOR.join(fields)}')
     return lines, exceeded
 
 

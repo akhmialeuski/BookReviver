@@ -38,6 +38,11 @@ wait for the lock, and goes on while the block holds it. It is kept in ``connect
 rollback begins, which ends the holding and, for a commit, times the ``COMMIT`` statement. The kind of the block and the
 book it holds come with the execution options of the block.
 
+These durations are measured on the event loop, not inside SQLite. aiosqlite runs a statement in a thread of its own and
+wakes the coroutine through the loop, so the clock is read only when the loop reaches that wake-up. A loop that is busy
+makes the wait longer by its delay, the holding shorter by the same amount, and the commit longer, and the ``loop.lag``
+spans of the probe in ``bookreviver.app.tracing`` show how long that delay was.
+
 The schema is created and changed only by the revisions in ``migrations/``, applied by hand. The application reads
 :meth:`SqlDatabase.schema_revisions` at start and refuses to run against a schema it was not written for, which
 costs one read of the version table and needs no event loop of Alembic's own.
@@ -110,8 +115,9 @@ class WriteBlock:
     """A block that holds the write lock of a connection, between the end of its wait and its commit or rollback.
 
     :ivar span: The ``write.block`` span, started before the lock was asked for.
-    :ivar locked_at: Reading of the performance counter when ``BEGIN IMMEDIATE`` returned, which is when the holding
-                     began.
+    :ivar locked_at: Reading of the performance counter when the block resumed after ``BEGIN IMMEDIATE``, which is
+                     when the holding is counted from, and which lags the lock actually taken by the delay of the event
+                     loop.
     """
 
     span: StartedSpan
@@ -180,6 +186,10 @@ class SqlDatabase:
         and hold no lock. The span of the block starts before the statement, so the statement lasts as long as the
         wait for the lock, which is set as ``wait.ms`` whether the lock was taken or the busy timeout ran out.
 
+        The statement is awaited on the event loop, and aiosqlite wakes the coroutine through it, so the wait is the
+        time from the request until the loop resumed the block. It includes the delay of the loop, which the
+        ``loop.lag`` spans show, and the holding that begins at the same reading is shortened by it.
+
         :param connection: Connection that begins a transaction.
         :type connection: Connection
         """
@@ -223,7 +233,8 @@ class SqlDatabase:
         """Run the statement that ends the transaction, and end the span of the block that held the connection.
 
         The holding lasts until the statement begins. The statement of a commit is timed too, as the cost of making the
-        writes of the block durable, which a rollback has none of. A block whose statement did not run, because the
+        writes of the block durable, which a rollback has none of. Both durations are read on the event loop, so they
+        include its delay, as the wait of ``_begin_sqlite`` does. A block whose statement did not run, because the
         connection was invalidated, or failed, is recorded as rolled back, since SQLite gave its transaction up.
 
         :param connection: Connection that commits or rolls back.

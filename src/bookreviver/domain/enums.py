@@ -1244,6 +1244,7 @@ class SpanName(LabeledStrEnum):
 
     HTTP_REQUEST = 'http.request', 'HTTP request'
     JOB = 'job', 'Background job'
+    LOOP_LAG = 'loop.lag', 'One tick of the event-loop lag probe'
     RUN_PAGE = 'run.page', 'Run of a stage on one page'
     STEP = 'step', 'One step of a recipe on one page'
     WRITE_BLOCK = 'write.block', 'Block that holds the write lock of the database'
@@ -1266,9 +1267,13 @@ class SpanAttribute(LabeledStrEnum):
     STEP_OUTCOME = 'step.outcome', 'Whether the step was found made, run, or failed'
     BLOCK_KIND = 'block.kind', 'Whether the block holds a book or writes outside of one'
     BLOCK_OUTCOME = 'block.outcome', 'How the block ended'
-    WAIT_MS = 'wait.ms', 'Milliseconds the block waited for the write lock'
-    HOLD_MS = 'hold.ms', 'Milliseconds the block held the write lock before its commit began'
-    COMMIT_MS = 'commit.ms', 'Milliseconds the commit of the block took'
+    WAIT_MS = (
+        'wait.ms',
+        'Milliseconds from asking for the write lock until the block resumed, event-loop delay included',
+    )
+    HOLD_MS = 'hold.ms', 'Milliseconds from the block resuming until its commit began, event-loop delay included'
+    COMMIT_MS = 'commit.ms', 'Milliseconds the commit of the block took, event-loop delay included'
+    LAG_MS = 'lag.ms', 'Milliseconds a sleep of the probe overran its interval'
 
 
 class StepOutcome(LabeledStrEnum):

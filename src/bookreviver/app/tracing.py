@@ -4,11 +4,19 @@ The middleware is installed only when the measurements are on, so an application
 sits outside the CSRF middleware, so a refusal of that one is timed too. The span carries the method, the status of the
 answer and the template of the route that served the request, such as ``/api/projects/{project_id}``, never the
 concrete path, so the requests of a run group by the route and not by the identifiers.
+
+The module also holds the probe of the event-loop lag. The durations that the spans of the database take are read on the
+event loop, so they include the time the loop needed to get back to the coroutine, and the ``loop.lag`` spans of the
+probe say how long that was at each moment of the run.
 """
 
+from time import perf_counter
 from typing import TYPE_CHECKING
 
+import anyio
+
 from bookreviver.app.security import RESPONSE_START
+from bookreviver.app.trace_report import MILLISECONDS_PER_SECOND
 from bookreviver.domain.enums import SpanAttribute, SpanName
 from bookreviver.ports.tracing import Tracer
 
@@ -80,3 +88,33 @@ class TracingMiddleware:
                 path = getattr(effective, ROUTE_PATH, None) or getattr(scope.get('route'), ROUTE_PATH, None)
                 if path is not None:
                     span.set_attribute(SpanAttribute.ROUTE, path)
+
+
+class LoopLagProbe:
+    """Measures how late the event loop wakes a sleeper, as one ``loop.lag`` span for each tick.
+
+    A tick sleeps for the interval and records how much longer than the interval the sleep took. A loop that is busy
+    for 80 ms with a callback or a blocking call wakes the sleeper 80 ms late, so the lag is the delay every other
+    coroutine of the process saw at that moment, the waits of the write blocks included.
+    """
+
+    def __init__(self, *, tracer: Tracer, interval_seconds: float) -> None:
+        """Probe with ``tracer`` once for every ``interval_seconds``.
+
+        :param tracer: Tracer the ticks are recorded with.
+        :type tracer: Tracer
+        :param interval_seconds: How long a tick sleeps, which is the resolution of the probe.
+        :type interval_seconds: float
+        """
+        self._tracer = tracer
+        self._interval_seconds = interval_seconds
+
+    async def run(self) -> None:
+        """Record one span for each tick, for ever; the caller stops the probe by cancelling it."""
+        while True:
+            span = self._tracer.start(SpanName.LOOP_LAG)
+            started_at = perf_counter()
+            await anyio.sleep(self._interval_seconds)
+            overrun = max(0.0, perf_counter() - started_at - self._interval_seconds)
+            span.set_attribute(SpanAttribute.LAG_MS, overrun * MILLISECONDS_PER_SECOND)
+            span.end()
