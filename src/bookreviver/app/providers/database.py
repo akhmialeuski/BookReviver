@@ -26,14 +26,6 @@ MIGRATE_COMMAND: str = 'uv run bookreviver-migrate upgrade head'
 MIGRATE_DOWNGRADE_COMMAND: str = 'uv run bookreviver-migrate downgrade'
 # How the message names a database no revision was ever applied to
 NO_REVISION: str = 'none'
-REVISION_SEPARATOR: str = ', '
-# The refusal of a database whose revision the code does not ship, and of one that is behind the code
-SCHEMA_UNKNOWN: str = (
-    'Database schema is at revision {at}, which this code does not ship, and code expects {expected}: run '
-    '`{command} {expected}` with the code that ships {unknown}, or restore the copy of the data directory made '
-    'before migrating'
-)
-SCHEMA_BEHIND: str = 'Database schema is at revision {at}, code expects {expected}: run `{command}`'
 
 
 class DatabaseProvider(Provider):
@@ -57,16 +49,17 @@ class DatabaseProvider(Provider):
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         try:
             revisions = await database.schema_revisions()
-            at = REVISION_SEPARATOR.join(revisions.database) or NO_REVISION
-            expected = REVISION_SEPARATOR.join(revisions.code)
+            at, expected = ', '.join(revisions.database) or NO_REVISION, ', '.join(revisions.code)
             # upgrade head cannot move a database from a revision it cannot locate, so that case names the way back
-            if unknown := REVISION_SEPARATOR.join(revisions.unknown):
-                err_msg = SCHEMA_UNKNOWN.format(
-                    at=at, expected=expected, unknown=unknown, command=MIGRATE_DOWNGRADE_COMMAND
+            if unknown := ', '.join(revisions.unknown):
+                err_msg = (
+                    f'Database schema is at revision {at}, which this code does not ship, and code expects '
+                    f'{expected}: run `{MIGRATE_DOWNGRADE_COMMAND} {expected}` with the code that ships {unknown}, '
+                    f'or restore the copy of the data directory made before migrating'
                 )
                 raise RuntimeError(err_msg)
             if not revisions.is_current:
-                err_msg = SCHEMA_BEHIND.format(at=at, expected=expected, command=MIGRATE_COMMAND)
+                err_msg = f'Database schema is at revision {at}, code expects {expected}: run `{MIGRATE_COMMAND}`'
                 raise RuntimeError(err_msg)
             yield database
         finally:
