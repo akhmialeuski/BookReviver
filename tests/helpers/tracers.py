@@ -3,14 +3,15 @@
 The null tracer keeps nothing, the recording tracer keeps its spans in memory, and the OpenTelemetry tracer writes them
 into a file when it is closed, so the reader of each is a function that turns what the adapter holds into one shape,
 ``FinishedSpan``, which the contract compares across adapters. The file of the OpenTelemetry adapter is complete only
-once its block is left, so a test reads the spans after the ``with`` block of ``open_tracer_under_test``.
+once its block is left, so a test reads the spans after the ``with`` block of ``open_tracer_under_test``. The reader of
+the file is the parser of the trace report, ``load_spans``, so the contract suite is also what proves that the report
+reads what the real exporter writes.
 
 ``AskingTracer`` is the recording tracer for a test that has to wait until a span has started, such as a write block
 asking for the lock or a tick of the lag probe, so it is ordered by an event and not by a sleep.
 """
 
 import enum
-import json
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, override
 
@@ -20,6 +21,7 @@ from attrs import frozen
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.adapters.tracing.opentelemetry_tracer import OpenTelemetryTracer
 from bookreviver.adapters.tracing.recording import RecordingTracer
+from bookreviver.app.trace_report import load_spans
 from bookreviver.domain.enums import SpanName
 
 if TYPE_CHECKING:
@@ -30,7 +32,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.tracing import AttributeValue, SpanAttributes, Tracer
 
 SPAN_FILE_NAME: str = 'spans.jsonl'
-ERROR_STATUS: str = 'ERROR'
 
 
 class TracerAdapter(enum.StrEnum):
@@ -132,17 +133,16 @@ def read_span_file(path: Path) -> list[FinishedSpan]:
     :returns: The spans in the order of the file, which is the order they ended.
     :rtype: list[FinishedSpan]
     """
-    records = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()]
-    names = {record['context']['span_id']: record['name'] for record in records}
-    # The dictionary keeps the order of the file, so its identifiers run in step with the records
+    spans = load_spans(path)
+    names = {span.span_id: span.name for span in spans}
     return [
         FinishedSpan(
-            name=names[span_id],
-            attributes=record['attributes'],
-            parent=names.get(record['parent_id']),
-            failed=record['status']['status_code'] == ERROR_STATUS,
+            name=span.name,
+            attributes=dict(span.attributes),
+            parent=None if span.parent_id is None else names.get(span.parent_id),
+            failed=span.failed,
         )
-        for span_id, record in zip(names, records, strict=True)
+        for span in spans
     ]
 
 

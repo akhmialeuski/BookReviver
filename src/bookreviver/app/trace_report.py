@@ -51,6 +51,10 @@ NO_VALUE: str = '-'
 FIELD_SEPARATOR: str = ', '
 # What stands between the name of a line of the report and what it measures
 LABEL_SEPARATOR: str = ': '
+# Where ReadableSpan.to_json puts the status of a span, and the code of a span that an exception left
+STATUS_KEY: str = 'status'
+STATUS_CODE_KEY: str = 'status_code'
+STATUS_ERROR: str = 'ERROR'
 # Format specifications of the numbers of the report
 ONE_DECIMAL: str = '.1f'
 TWO_DECIMALS: str = '.2f'
@@ -95,6 +99,7 @@ class Span:
     :ivar span_id: Identifier of the span, which the spans started inside it name as their parent.
     :ivar parent_id: Identifier of the span this one was started inside, or None for the root of a trace.
     :ivar attributes: Facts the span carries.
+    :ivar failed: Whether an exception left the block of the span, which the exporter writes as the status ``ERROR``.
     """
 
     name: str
@@ -103,6 +108,7 @@ class Span:
     span_id: str
     parent_id: str | None
     attributes: dict[str, str | float]
+    failed: bool
 
     @property
     def duration_ms(self) -> float:
@@ -111,7 +117,7 @@ class Span:
 
 
 def load_spans(path: Path) -> list[Span]:
-    """Read the spans of a file, one JSON object per non-empty line.
+    """Read the spans of a file, one JSON object per non-empty line, as ``ReadableSpan.to_json`` writes them.
 
     :param path: The JSON lines file of a run.
     :type path: Path
@@ -134,6 +140,7 @@ def load_spans(path: Path) -> list[Span]:
                     span_id=record['context']['span_id'],
                     parent_id=record.get('parent_id'),
                     attributes=record.get('attributes', {}),
+                    failed=record[STATUS_KEY][STATUS_CODE_KEY] == STATUS_ERROR,
                 )
             )
     return spans

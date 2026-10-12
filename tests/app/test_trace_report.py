@@ -25,7 +25,8 @@ The expected values are worked out by hand:
   block inside it, so its median run is 40 ms and its median wait is 0 ms.
 
 The line of the event-loop lag is tried on a file of its own, made of ``loop.lag`` spans of known lags and one block,
-and its absence on the file above, which has no such span.
+and its absence on the file above, which has no such span. One test writes its file with the OpenTelemetry adapter
+instead of by hand, so the parser is also tried on what the real exporter writes.
 
 The budgets of ``--check`` are tried on files of their own, built from the same builders: the preview budget reads the
 ``job`` spans of the kind ``preview-step`` and nothing else, so a job of another kind, or steps at the preview scale
@@ -41,6 +42,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.adapters.tracing.opentelemetry_tracer import OpenTelemetryTracer
 from bookreviver.app import trace_report
 from bookreviver.domain.enums import BlockOutcome, JobKind, SpanAttribute, SpanName, StepOutcome, VersionScale
 
@@ -55,6 +57,8 @@ TIME_FORMAT: str = '%Y-%m-%dT%H:%M:%S.%fZ'
 DESKEW: str = 'geometry.deskew'
 SPLIT: str = 'split.none'
 TRACE_ID: str = '0x' + '1' * 32
+# The status of a span no exception left, which the exporter writes for every span
+UNSET_STATUS: str = 'UNSET'
 # Identifiers of the spans a test refers to as parents; the spans nobody refers to take the next one of the counter
 SPAN_IDS: Iterator[int] = count(1)
 JOB_NAME: str = 'job'
@@ -75,6 +79,8 @@ Wait for the write lock, ms: p50 50.00, p90 1000.00, p99 1000.00, max 1000.00
 LAG_VALUES_MS: tuple[float, ...] = (1.0, 2.0, 3.0, 4.0, 10.0)
 WAIT_LINE: str = 'Wait for the write lock, ms: p50 20.00, p90 20.00, p99 20.00, max 20.00'
 LAG_LINE: str = 'Event-loop lag, ms: p50 3.00, p90 10.00, p99 10.00, max 10.00'
+# The wait the block of the test that reads the exporter's file records, which one decimal shows exactly
+WRITTEN_WAIT_MS: float = 12.5
 
 
 class Lineage(NamedTuple):
@@ -140,6 +146,7 @@ def span_line(
         'start_time': (START + timedelta(seconds=start_s)).strftime(TIME_FORMAT),
         'end_time': (START + timedelta(seconds=end_s)).strftime(TIME_FORMAT),
         'attributes': {key.value: value for key, value in attributes.items()},
+        'status': {'status_code': UNSET_STATUS},
     }
     return json.dumps(record)
 
@@ -441,6 +448,34 @@ class TestReport:
         path = fx_write_spans([block(0.0, 1.0, 20, BlockOutcome.COMMITTED), *ticks])
         lines = trace_report.report(trace_report.load_spans(path), path.name).splitlines()
         assert lines[4:6] == [WAIT_LINE, LAG_LINE]
+
+    def test_report_reads_the_file_the_exporter_writes(self, tmp_path: Path) -> None:
+        """Verify the report of a file the real tracer wrote has the step type and the wait of the block inside it.
+
+        The hand-written lines of the other tests are what the author thinks the exporter writes. Here the file comes
+        from the OpenTelemetry adapter, so the parser of the report meets the real format: the times, the identifiers
+        of a span and of its parent, and the status.
+
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        path = tmp_path / FILE_NAME
+        step_attributes = {
+            SpanAttribute.STEP_TYPE: DESKEW,
+            SpanAttribute.STEP_SCALE: VersionScale.FULL,
+            SpanAttribute.STEP_OUTCOME: StepOutcome.RAN,
+        }
+        with OpenTelemetryTracer(path) as tracer, tracer.span(SpanName.STEP, step_attributes):
+            written = tracer.start(SpanName.WRITE_BLOCK)
+            written.set_attribute(SpanAttribute.WAIT_MS, WRITTEN_WAIT_MS)
+            written.end()
+        spans = trace_report.load_spans(path)
+        row = trace_report.report(spans, path.name).splitlines()[-1]
+        cells = [cell.strip() for cell in row.strip('|').split('|')]
+        expect(cells[0] == DESKEW)
+        expect(cells[-1] == f'{WRITTEN_WAIT_MS:{trace_report.ONE_DECIMAL}}')
+        expect(not any(span.failed for span in spans))
+        assert_expectations()
 
     def test_report_without_probe_spans_has_no_lag_line(self, fx_span_file: Path) -> None:
         """Verify a run recorded without the probe prints no line of the lag, instead of one made of zeros.
