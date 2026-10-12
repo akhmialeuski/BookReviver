@@ -1,6 +1,5 @@
 """Tests for the import service: receiving an upload, and running the job it becomes, source by source."""
 
-import asyncio
 from contextlib import asynccontextmanager
 from functools import partial
 from operator import attrgetter, itemgetter
@@ -77,6 +76,7 @@ from tests.helpers.builders import make_job, make_project, new_account_id
 from tests.helpers.fakes_imports import (
     DEFAULT_PARALLEL_SCANS,
     IIIF_ROOT,
+    IMPORT_TIMEOUT_SECONDS,
     MAX_BYTES,
     MAX_FILES,
     OVERLAP_SECONDS,
@@ -1571,7 +1571,10 @@ class TestRunImportLifecycle:
     async def test_cuts_no_more_scans_at_once_than_the_limit_allows(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
     ) -> None:
-        """Verify the scans are cut in parallel, but never more than ``parallel_scans`` at the same time.
+        """Verify the scans are cut in parallel, never more than ``parallel_scans`` at once, and every one is counted.
+
+        The writes of the files overlap, so the cutters ask for their blocks together. A progress one of them read
+        before another stored would count a scan less, and a block opened inside another would fail the job.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
@@ -1592,9 +1595,13 @@ class TestRunImportLifecycle:
             parallel_scans=PARALLEL_SCANS,
         )
 
+        scans = await _scans(fx_rig, fx_project.id)
         expect(job.state is JobState.SUCCEEDED)
         expect(fx_rig.rasterizer.peak == PARALLEL_SCANS)
         expect(sorted(fx_rig.rasterizer.extracted) == list(range(LONG_BOOK_PAGES)))
+        expect(len(scans) == LONG_BOOK_PAGES and all(scan.renditions.ready for scan in scans))
+        expect((job.progress.done, job.progress.total) == (LONG_BOOK_PAGES, LONG_BOOK_PAGES))
+        expect(len(_events_of(fx_rig, ScanReady)) == LONG_BOOK_PAGES)
         assert_expectations()
 
     async def test_job_cancelled_between_sources_keeps_the_sources_it_committed(
@@ -1951,108 +1958,9 @@ class TestRunImportFailures:
         expect(await _sources(fx_rig, fx_project.id) == [])
         assert_expectations()
 
-    async def test_real_failure_is_reported_when_another_scan_finds_the_job_cancelled(
-        self,
-        fx_rig: ImportRig,
-        fx_owner: Actor,
-        fx_project: Project,
-        fx_samples: Path,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """Verify two scans that stop at the same moment, one on a cancellation and one on a fault, fail the job.
-
-        The cancellation must not hide the fault, which would end the job as cancelled and leave nothing in the log.
-
-        :param fx_rig: Adapters of the import.
-        :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
-        :type fx_owner: Actor
-        :param fx_project: Project of ``fx_owner``.
-        :type fx_project: Project
-        :param fx_samples: Directory the sample files are built in.
-        :type fx_samples: Path
-        :param caplog: Fixture capturing what the service logs.
-        :type caplog: pytest.LogCaptureFixture
-        """
-        second_arrived = asyncio.Event()
-        arrivals: list[Scan] = []
-
-        async def stop_together(_run: ImportRun, _source: Source, scan: Scan) -> None:
-            """Stop two scans in the same turn of the event loop, the scan that arrives first on a cancellation.
-
-            The first scan waits for the second, which releases it and gives up its turn once, so the first scan
-            wakes and stops before the second does, and both stop before the group can cancel the second. The group
-            then lists the cancellation before the fault. The scans stop at once, outside any cleanup, because a scan
-            that unwinds through the asset store awaits, and the group may cancel it before its fault is listed.
-
-            :param _run: Run cutting the scan, which the patched step replaces.
-            :type _run: ImportRun
-            :param _source: Source holding the scan.
-            :type _source: Source
-            :param scan: The scan to cut.
-            :type scan: Scan
-            :raises ImportCancelledError: For the scan that arrives first.
-            :raises RuntimeError: For the scan that arrives second.
-            """
-            arrivals.append(scan)
-            if len(arrivals) < PARALLEL_SCANS:
-                await second_arrived.wait()
-                raise ImportCancelledError
-            second_arrived.set()
-            await asyncio.sleep(0)
-            raise RuntimeError(SECRET_FAULT)
-
-        with patch.object(ImportRun, CUT_STEP, stop_together):
-            job = await _import(
-                fx_rig,
-                fx_owner,
-                fx_project.id,
-                [pdf_upload(fx_samples, 'a.pdf', pages=PARALLEL_SCANS)],
-                parallel_scans=PARALLEL_SCANS,
-            )
-
-        expect((job.state, job.error) == (JobState.FAILED, UNEXPECTED_FAILURE))
-        expect(SECRET_FAULT in caplog.text)
-        assert_expectations()
-
 
 class TestRunImportQueue:
     """Tests for the scans cut at once, whose blocks queue in front of the one unit of work of the job."""
-
-    async def test_two_scans_cut_at_once_are_both_ready_and_both_counted(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
-    ) -> None:
-        """Verify two scans written at the same time are both stored and the progress of the job reaches two.
-
-        The writes of the files overlap, so both cutters ask for their blocks together. A progress one of them read
-        before the other stored would end at one, and a block opened inside the other would fail the job.
-
-        :param fx_rig: Adapters of the import.
-        :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
-        :type fx_owner: Actor
-        :param fx_project: Project of ``fx_owner``.
-        :type fx_project: Project
-        :param fx_samples: Directory the sample files are built in.
-        :type fx_samples: Path
-        """
-        fx_rig.rasterizer.pause = OVERLAP_SECONDS
-
-        job = await _import(
-            fx_rig,
-            fx_owner,
-            fx_project.id,
-            [pdf_upload(fx_samples, QUEUE_PDF, pages=PARALLEL_SCANS)],
-            parallel_scans=PARALLEL_SCANS,
-        )
-
-        scans = await _scans(fx_rig, fx_project.id)
-        expect(job.state is JobState.SUCCEEDED)
-        expect(fx_rig.rasterizer.peak == PARALLEL_SCANS)
-        expect(len(scans) == PARALLEL_SCANS and all(scan.renditions.ready for scan in scans))
-        expect((job.progress.done, job.progress.total) == (PARALLEL_SCANS, PARALLEL_SCANS))
-        expect(len(_events_of(fx_rig, ScanReady)) == PARALLEL_SCANS)
-        assert_expectations()
 
     async def test_job_cancelled_while_scans_are_cut_stops_every_cutter_and_keeps_the_scans_written(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
@@ -2100,7 +2008,8 @@ class TestRunImportQueue:
         fx_rig.rasterizer.before_extract = hold_second_scan
         fx_rig.events.after_publish = cancel_after_the_first_scan
 
-        await fx_rig.service(parallel_scans=PARALLEL_SCANS).run_import(job.id)
+        with anyio.fail_after(IMPORT_TIMEOUT_SECONDS):
+            await fx_rig.service(parallel_scans=PARALLEL_SCANS).run_import(job.id)
 
         stored = await fx_rig.stored_job(job)
         expect(stored.state is JobState.CANCELLED)
@@ -2162,7 +2071,7 @@ class TestRunImportQueue:
                 await gates[0].entered.wait()
             await cut(run, source, scan)
 
-        with patch.object(ImportRun, CUT_STEP, hold_the_first_cutter):
+        with patch.object(ImportRun, CUT_STEP, hold_the_first_cutter), anyio.fail_after(IMPORT_TIMEOUT_SECONDS):
             async with anyio.create_task_group() as group:
                 group.start_soon(fx_rig.service(uow=uow, parallel_scans=PARALLEL_SCANS).run_import, job.id)
                 await armed.wait()

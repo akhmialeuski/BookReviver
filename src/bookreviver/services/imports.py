@@ -445,9 +445,9 @@ class ImportRun:
                 for _ in range(min(self._limits.parallel_scans, len(scans))):
                     group.start_soon(worker)
         except ExceptionGroup as errors:
-            # The group of anyio holds every cutter that failed before the cancellation of the group reached it, in
-            # the order they finished. A cancellation is only the job's own state, so it must not hide a fault, which
-            # would end the job as cancelled unlogged.
+            # The group of anyio holds the fault of every cutter, in the order the cutters finished, whether the cutter
+            # raised it before the cancellation of the group reached it or while unwinding from it. A cancellation is
+            # only the job's own state, so it must not hide a fault, which would end the job as cancelled unlogged.
             _, faults = errors.split(ImportCancelledError)
             raise (faults or errors).exceptions[0] from errors
 

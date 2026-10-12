@@ -76,8 +76,7 @@ class NestedChangeError(RuntimeError):
     """A ``change_book`` or ``change`` block was opened inside another one of the same unit of work.
 
     It is a programming error and not a ``DomainError``. A second block inside the first would wait for a lock the
-    first one holds, so it is refused at once instead. A unit of work serves one coroutine at a time, so coroutines
-    that share one must queue in front of its blocks, and coroutines that must write at once take one each.
+    first one holds, so it is refused at once instead.
     """
 
     def __init__(self) -> None:

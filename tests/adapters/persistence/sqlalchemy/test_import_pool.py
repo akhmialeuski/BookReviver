@@ -19,7 +19,7 @@ from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.values import SliceRequest
 from tests.helpers.builders import make_project
-from tests.helpers.fakes_imports import ImportRig, pdf_upload
+from tests.helpers.fakes_imports import IMPORT_TIMEOUT_SECONDS, ImportRig, pdf_upload
 from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
@@ -117,10 +117,10 @@ class TestRunImportConnections:
 
         The rasterizer holds every write until all four cutters are writing, so they leave their writes together and
         each of them then asks for its block of the one unit of work at the same moment. A pause would not do: a block
-        on a SQLite file outlasts it, and the cutters would pass their writes one after another. The blocks queue on the lock of the import, so one coroutine at a
-        time holds the one connection of the session. Were each cutter given a session or a unit of work of its own,
-        the cutters that wait for the write lock of SQLite would each hold a connection while they wait, the count
-        would exceed one, and the peak assertion would fail.
+        on a SQLite file outlasts it, and the cutters would pass their writes one after another. The blocks queue on
+        the lock of the import, so one coroutine at a time holds the one connection of the session. Were each cutter
+        given a session or a unit of work of its own, the cutters that wait for the write lock of SQLite would each
+        hold a connection while they wait, the count would exceed one, and the peak assertion would fail.
 
         :param fx_database: Fresh SQLite database with every table created, which gives a file its queue pool.
         :type fx_database: SqlDatabase
@@ -157,7 +157,8 @@ class TestRunImportConnections:
             )
 
         async with fx_database.sessions() as session:
-            await rig.service(uow=SqlAlchemyUnitOfWork(session), parallel_scans=PARALLEL_SCANS).run_import(job.id)
+            with anyio.fail_after(IMPORT_TIMEOUT_SECONDS):
+                await rig.service(uow=SqlAlchemyUnitOfWork(session), parallel_scans=PARALLEL_SCANS).run_import(job.id)
 
         async with fx_database.sessions() as session:
             uow = SqlAlchemyUnitOfWork(session)
