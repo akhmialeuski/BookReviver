@@ -1,19 +1,24 @@
-"""Tests for the ``http.request`` span of the tracing middleware, which the application installs when tracing is on."""
+"""Tests for what the application measures once tracing is on.
+
+The tracing middleware times every request as an ``http.request`` span, and the lifespan runs the probe whose
+``loop.lag`` ticks show the delay of the event loop.
+"""
 
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
 from dishka import Provider, Scope, provide
 from fastapi import status
 
-from bookreviver.adapters.tracing.recording import RecordingTracer
 from bookreviver.app.settings import TracingSettings
 from bookreviver.domain.enums import SpanAttribute, SpanName
 from bookreviver.ports.tracing import Tracer
 from tests.helpers.builders import make_project
 from tests.helpers.seeding import commit_project
+from tests.helpers.tracers import AskingTracer
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -22,6 +27,7 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.tracing.recording import RecordingTracer
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Actor
 
@@ -31,6 +37,8 @@ PROJECTS_PATH: str = '/api/v1/projects'
 PROJECT_TEMPLATE: str = f'{PROJECTS_PATH}/{{project_id}}'
 UNKNOWN_PATH: str = '/api/v1/no-such-route'
 SPAN_FILE_NAME: str = 'spans.jsonl'
+# Many intervals of the probe, so a probe that runs is never the one this limit stops
+TICK_LIMIT_SECONDS: float = 5.0
 
 
 class RecordingTracerProvider(Provider):
@@ -58,13 +66,13 @@ class RecordingTracerProvider(Provider):
 
 
 @pytest.fixture
-def fx_tracer() -> RecordingTracer:
-    """Build the tracer of the test.
+def fx_tracer() -> AskingTracer:
+    """Build the tracer of the test, which can also tell when a span of a name has started.
 
     :returns: A tracer with no span recorded.
-    :rtype: RecordingTracer
+    :rtype: AskingTracer
     """
-    return RecordingTracer()
+    return AskingTracer()
 
 
 @pytest.fixture
@@ -136,4 +144,28 @@ class TestRequestSpan:
         expect(response.status_code == status.HTTP_404_NOT_FOUND)
         expect(span.attributes[SpanAttribute.STATUS] == status.HTTP_404_NOT_FOUND)
         expect(SpanAttribute.ROUTE not in span.attributes)
+        assert_expectations()
+
+
+class TestLoopLagProbe:
+    """Tests for the probe of the event-loop lag that the lifespan runs while tracing is on."""
+
+    @pytest.mark.usefixtures('fx_app')
+    async def test_running_application_records_ticks_of_the_probe_as_roots(self, fx_tracer: AskingTracer) -> None:
+        """Verify the lifespan starts the probe, whose ticks are ``loop.lag`` spans with a lag and no parent.
+
+        Without the probe in the lifespan the lock waits of a run could not be told from the delay of the loop, which
+        is what the ticks measure. The application runs inside its lifespan for the whole test.
+
+        :param fx_tracer: Tracer the application was given.
+        :type fx_tracer: AskingTracer
+        """
+        # The tick after the next one starts as the next one ends, so the next one is recorded by then
+        second_tick = fx_tracer.ask_after(2, name=SpanName.LOOP_LAG)
+        with anyio.fail_after(TICK_LIMIT_SECONDS):
+            await second_tick.wait()
+        ticks = fx_tracer.named(SpanName.LOOP_LAG)
+        expect(len(ticks) > 0, 'No tick was recorded.')
+        expect(all(SpanAttribute.LAG_MS in tick.attributes for tick in ticks))
+        expect(all(tick.parent is None for tick in ticks))
         assert_expectations()
