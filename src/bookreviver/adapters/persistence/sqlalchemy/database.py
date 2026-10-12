@@ -235,7 +235,8 @@ class SqlDatabase:
         The holding lasts until the statement begins. The statement of a commit is timed too, as the cost of making the
         writes of the block durable, which a rollback has none of. Both durations are read on the event loop, so they
         include its delay, as the wait of ``_begin_sqlite`` does. A block whose statement did not run, because the
-        connection was invalidated, or failed, is recorded as rolled back, since SQLite gave its transaction up.
+        connection was invalidated, is recorded as rolled back. A commit that failed keeps the time it took and is
+        recorded as rolled back, since the unit of work rolls it back next.
 
         :param connection: Connection that commits or rolls back.
         :type connection: Connection
@@ -247,16 +248,19 @@ class SqlDatabase:
         block = connection.info.pop(WRITE_BLOCK_INFO, None)
         ending_at = perf_counter()
         ended_as = BlockOutcome.ROLLED_BACK
+        attempted = False
         try:
             # An invalidated connection has no driver connection left, and nothing to end
             if (driver := connection.connection.driver_connection) is not None and driver.in_transaction:
+                attempted = True
                 connection.exec_driver_sql(statement)
                 ended_as = outcome
         finally:
             if isinstance(block, WriteBlock):
                 span = block.span
                 span.set_attribute(SpanAttribute.HOLD_MS, (ending_at - block.locked_at) * MILLISECONDS_PER_SECOND)
-                if ended_as is BlockOutcome.COMMITTED:
+                # A commit that raised waited too, for the locks of readers, and is the longest one a run has
+                if attempted and outcome is BlockOutcome.COMMITTED:
                     span.set_attribute(SpanAttribute.COMMIT_MS, (perf_counter() - ending_at) * MILLISECONDS_PER_SECOND)
                 span.set_attribute(SpanAttribute.BLOCK_OUTCOME, ended_as)
                 span.end()

@@ -3,15 +3,19 @@
 The recording tracer is given to the database, so each block of a unit of work leaves one span with the kind of the
 block, the book it held, the wait for the lock, the holding and how it ended. Two units of work over one file show the
 wait. They are ordered by events and never by a sleep: the second block asks for the lock while the first holds it, and
-only then is the first let go.
+only then is the first let go. A plain SQLite connection that sits in a transaction after a read holds the commit of a
+block up, which shows that a commit refused by a reader is timed as well.
 """
 
+import sqlite3
+from contextlib import closing
 from time import perf_counter
 from typing import TYPE_CHECKING
 
 import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
+from sqlalchemy.exc import OperationalError
 
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
@@ -37,6 +41,10 @@ WAIT_SECONDS: float = 10.0
 IMPATIENT_SECONDS: float = 0.05
 MILLISECONDS_PER_SECOND: int = 1_000
 FAILED_BLOCK: str = 'The block failed after it wrote a page.'
+# Any statement that reads, which makes the connection hold a shared lock for as long as its transaction is open
+SELECT_SCHEMA: str = 'SELECT count(*) FROM sqlite_master'
+# The share of the busy timeout a refused commit has to have waited, below 1 for the clocks that do not tick evenly
+BUSY_SHARE: float = 0.9
 
 
 def milliseconds(span: RecordingSpan, key: SpanAttribute) -> float:
@@ -308,4 +316,36 @@ class TestWaitForTheLock:
         expect(milliseconds(refused, SpanAttribute.WAIT_MS) > 0)
         expect(SpanAttribute.HOLD_MS not in refused.attributes)
         expect(held.attributes[SpanAttribute.BLOCK_OUTCOME] is BlockOutcome.COMMITTED)
+        assert_expectations()
+
+    async def test_commit_that_waits_for_a_reader_and_fails_keeps_its_time(
+        self, fx_impatient_database: SqlDatabase, fx_project: Project, fx_tracer: AskingTracer
+    ) -> None:
+        """Verify a commit refused by the lock of a reader is timed, and its block is recorded as rolled back.
+
+        In the rollback journal mode a commit waits for the shared lock of every reader to go, up to the busy timeout,
+        and then fails with SQLITE_BUSY, leaving the transaction open for the rollback. Such a commit is the longest
+        one a run has, so it must not be the one that goes unreported.
+
+        :param fx_impatient_database: Database whose blocks give up for a lock after a few milliseconds.
+        :type fx_impatient_database: SqlDatabase
+        :param fx_project: Committed project of the database.
+        :type fx_project: Project
+        :param fx_tracer: Tracer of the test.
+        :type fx_tracer: AskingTracer
+        """
+        path = fx_impatient_database.engine.url.database
+        assert path is not None
+        # The reader sits in a transaction that has read, so it holds a shared lock until it is closed
+        with closing(sqlite3.connect(path, autocommit=True)) as reader:
+            reader.execute('BEGIN')
+            reader.execute(SELECT_SCHEMA).fetchall()
+            async with fx_impatient_database.sessions() as session:
+                uow = SqlAlchemyUnitOfWork(session)
+                with pytest.raises(OperationalError):
+                    async with uow.change_book(fx_project.id):
+                        await uow.pages.add(make_page(project_id=fx_project.id))
+        (span,) = fx_tracer.named(SpanName.WRITE_BLOCK)
+        expect(span.attributes[SpanAttribute.BLOCK_OUTCOME] is BlockOutcome.ROLLED_BACK)
+        expect(milliseconds(span, SpanAttribute.COMMIT_MS) >= IMPATIENT_SECONDS * MILLISECONDS_PER_SECOND * BUSY_SHARE)
         assert_expectations()
