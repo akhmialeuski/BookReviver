@@ -14,6 +14,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.enums import SpanAttribute, SpanName, Stage, StepOutcome, VersionData, VersionScale
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.values import Step, StepPreview
+from scripts import trace_report
 from tests.helpers.samples import png_bytes, text_page, turned
 
 if TYPE_CHECKING:
@@ -22,8 +23,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 DESKEW_KEY: str = 'geometry.deskew'
-# What a preview of a step on the visible page may take, in nanoseconds, which is one second: the budget NFR-PERF-3
-PREVIEW_BUDGET_NS: int = 1_000_000_000
+NANOSECONDS_PER_MILLISECOND: int = 1_000_000
 # The page of the preview, which is as long as a preview goes, and the angle it was turned by, in degrees
 PAGE_WIDTH_PX: int = 1_400
 PAGE_HEIGHT_PX: int = 2_048
@@ -59,7 +59,9 @@ class TestPreviewBudget:
         [ready] = [event for event in fx_cv_kit.events.published if isinstance(event, PageVersionReady)]
         assert span.duration_ns is not None
         expect(span.attributes[SpanAttribute.STEP_OUTCOME] is StepOutcome.RAN)
-        expect(span.duration_ns < PREVIEW_BUDGET_NS, f'The step took {span.duration_ns} ns.')
+        # The limit is the one the report of a run checks, so the test and the report cannot drift apart
+        duration_ms = span.duration_ns / NANOSECONDS_PER_MILLISECOND
+        expect(duration_ms < trace_report.PREVIEW_BUDGET.limit_ms, f'The step took {duration_ms} ms.')
         # A page the step did not find the lines of would end as fast, and the budget would say nothing
         expect(abs(ready.version.data[VersionData.ANGLE] + SKEW_DEGREES) < ANGLE_TOLERANCE)
         assert_expectations()

@@ -1,6 +1,6 @@
 """Summarise the spans of one run of the backend, written by its measurements as a JSON lines file.
 
-Usage: ``uv run python scripts/trace_report.py PATH``
+Usage: ``uv run python scripts/trace_report.py PATH [--check]``
 
 The file is the one ``BOOKREVIVER_TRACING__EXPORT_PATH`` names. It holds one OpenTelemetry span per line, and the
 report is meant to be pasted into a note:
@@ -13,6 +13,14 @@ report is meant to be pasted into a note:
   milliseconds of those that ran.
 
 A percentile is the nearest rank: the smallest value that at least that share of the values does not exceed.
+
+With ``--check`` the script goes on to compare the run with two budgets and prints a line for each, with the limit, the
+measured value and the verdict, ``met``, ``exceeded`` or ``no data`` where the run has nothing to measure. It exits with
+1 when a budget is exceeded:
+
+- a preview of a step on the visible page takes under 1 s, measured as the longest ``step`` span at the preview scale
+  that ran its processor (a step found made by an earlier run took no time of its own);
+- the wait for the write lock stays under 100 ms at the 99th percentile over all write blocks.
 
 The script reads only the file and uses the standard library only. The names of the spans and of their attributes are
 written here as text on purpose, and ``tests/scripts/test_trace_report.py`` writes its fixture with the names the
@@ -34,20 +42,46 @@ STEP: str = 'step'
 WAIT_MS: str = 'wait.ms'
 BLOCK_OUTCOME: str = 'block.outcome'
 STEP_TYPE: str = 'step.type'
+STEP_SCALE: str = 'step.scale'
 STEP_OUTCOME: str = 'step.outcome'
 # The outcome of a block that never took the lock, so it held nothing; and of a step an earlier run had made, and of one
 # that ran
 NOT_BEGUN: str = 'not-begun'
 CACHED: str = 'cached'
 RAN: str = 'ran'
+# The scale of a step that ran on the preview image of a page
+PREVIEW: str = 'preview'
 MILLISECONDS_PER_SECOND: int = 1_000
 PERCENT: int = 100
 PERCENTILES: tuple[int, ...] = (50, 90, 99)
 NO_VALUE: str = '-'
+FIELD_SEPARATOR: str = ', '
 # Format specifications of the numbers of the report
 ONE_DECIMAL: str = '.1f'
 TWO_DECIMALS: str = '.2f'
 STEP_HEADER: tuple[str, ...] = ('Step type', 'Count', 'Found cached, %', 'Median run, ms')
+# The verdicts of the budgets
+MET: str = 'met'
+EXCEEDED: str = 'exceeded'
+NO_DATA: str = 'no data'
+LOCK_WAIT_PERCENT: int = 99
+
+
+@dataclass(frozen=True)
+class Budget:
+    """A limit on one measurement of a run, which the measured value has to stay under.
+
+    :ivar name: What is limited, with the statistic and the unit.
+    :ivar limit_ms: The limit in milliseconds, which a value equal to it already exceeds.
+    """
+
+    name: str
+    limit_ms: float
+
+
+# What a preview of a step on the visible page may take: the budget NFR-PERF-3, which the test of the preview reads too
+PREVIEW_BUDGET: Budget = Budget(name='Preview of a step on the visible page, max, ms', limit_ms=1_000.0)
+LOCK_WAIT_BUDGET: Budget = Budget(name=f'Wait for the write lock, p{LOCK_WAIT_PERCENT}, ms', limit_ms=100.0)
 
 
 @dataclass(frozen=True)
@@ -125,6 +159,19 @@ def percentile(values: list[float], percent: int) -> float:
     return ordered[math.ceil(percent / PERCENT * len(ordered)) - 1]
 
 
+def lock_waits(spans: list[Span]) -> list[float]:
+    """Collect the milliseconds every write block waited for the write lock.
+
+    :param spans: The spans of the run.
+    :type spans: list[Span]
+    :returns: The waits, one for each write block that recorded one, in the order of the file.
+    :rtype: list[float]
+    """
+    return [
+        float(span.attributes[WAIT_MS]) for span in spans if span.name == WRITE_BLOCK and WAIT_MS in span.attributes
+    ]
+
+
 def report(spans: list[Span], title: str) -> str:
     """Build the text of the report of a run.
 
@@ -150,9 +197,8 @@ def report(spans: list[Span], title: str) -> str:
         f'Write blocks: {len(blocks)}',
         f'Share of the run with the write lock held, %: {held / wall * PERCENT if wall else 0.0:{ONE_DECIMAL}}',
     ]
-    waits = [float(span.attributes[WAIT_MS]) for span in blocks if WAIT_MS in span.attributes]
-    if waits:
-        ranks = ', '.join(f'p{rank} {percentile(waits, rank):{TWO_DECIMALS}}' for rank in PERCENTILES)
+    if waits := lock_waits(spans):
+        ranks = FIELD_SEPARATOR.join(f'p{rank} {percentile(waits, rank):{TWO_DECIMALS}}' for rank in PERCENTILES)
         lines.append(f'Wait for the write lock, ms: {ranks}, max {max(waits):{TWO_DECIMALS}}')
 
     by_type: defaultdict[str, list[Span]] = defaultdict(list)
@@ -175,23 +221,67 @@ def report(spans: list[Span], title: str) -> str:
     return '\n'.join(lines)
 
 
+def check(spans: list[Span]) -> tuple[list[str], bool]:
+    """Compare the run with the budgets.
+
+    :param spans: The spans of the run.
+    :type spans: list[Span]
+    :returns: One line for each budget, with its limit, the measured value and the verdict, and whether any budget is
+        exceeded. A budget the run has nothing to measure for is ``no data`` and is not exceeded.
+    :rtype: tuple[list[str], bool]
+    """
+    # A step found made by an earlier run took no time of its own, so only a step that ran is a preview that was made
+    previews = [
+        span.duration_ms
+        for span in spans
+        if span.name == STEP and span.attributes.get(STEP_SCALE) == PREVIEW and span.attributes.get(STEP_OUTCOME) == RAN
+    ]
+    waits = lock_waits(spans)
+    measurements = (
+        (PREVIEW_BUDGET, max(previews) if previews else None),
+        (LOCK_WAIT_BUDGET, percentile(waits, LOCK_WAIT_PERCENT) if waits else None),
+    )
+    lines: list[str] = []
+    exceeded = False
+    for budget, measured in measurements:
+        shown = NO_VALUE if measured is None else f'{measured:{TWO_DECIMALS}}'
+        if measured is None:
+            verdict = NO_DATA
+        elif measured < budget.limit_ms:
+            verdict = MET
+        else:
+            verdict = EXCEEDED
+            exceeded = True
+        fields = (f'limit {budget.limit_ms:{TWO_DECIMALS}}', f'measured {shown}', verdict)
+        lines.append(f'{budget.name}: {FIELD_SEPARATOR.join(fields)}')
+    return lines, exceeded
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Print the report of the file named on the command line.
+    """Print the report of the file named on the command line, and with ``--check`` the verdicts on the budgets.
 
     :param argv: The arguments after the program name, or None to read them from the command line.
     :type argv: list[str] | None
-    :returns: The exit status: 0 when the report was printed, 1 when the file holds no span.
+    :returns: The exit status: 0 when the report was printed and no budget asked for is exceeded, 1 when the file holds
+        no span or a budget is exceeded.
     :rtype: int
     """
     parser = argparse.ArgumentParser(description='Summarise the spans of one run of the backend.')
     parser.add_argument('path', type=Path, help='the JSON lines file the measurements wrote')
+    parser.add_argument(
+        '--check', action='store_true', help='compare the run with the budgets and exit with 1 when one is exceeded'
+    )
     arguments = parser.parse_args(argv)
     spans = load_spans(arguments.path)
     if not spans:
         sys.stderr.write(f'{arguments.path} holds no span.\n')
         return 1
     sys.stdout.write(report(spans, arguments.path.name) + '\n')
-    return 0
+    if not arguments.check:
+        return 0
+    lines, exceeded = check(spans)
+    sys.stdout.write('\n'.join(lines) + '\n')
+    return 1 if exceeded else 0
 
 
 if __name__ == '__main__':

@@ -298,6 +298,14 @@ npm --prefix frontend run e2e
 uv run python scripts/trace_report.py /path/to/e2e-spans.jsonl
 ```
 
+The option `--check` compares the run with two budgets, a preview of a step on the visible page under 1 s and the 99th
+percentile of the wait for the write lock under 100 ms. It prints a line for each and exits with 1 when a budget is
+exceeded:
+
+```bash
+uv run python scripts/trace_report.py --check path/to/spans.jsonl
+```
+
 ## Development
 
 ```bash
