@@ -76,7 +76,8 @@ class NestedChangeError(RuntimeError):
     """A ``change_book`` or ``change`` block was opened inside another one of the same unit of work.
 
     It is a programming error and not a ``DomainError``. A second block inside the first would wait for a lock the
-    first one holds, so it is refused at once instead.
+    first one holds, so it is refused at once instead. ``UnitOfWork.release_reads`` is refused the same way, because
+    it would end the transaction of the block that is open.
     """
 
     def __init__(self) -> None:
@@ -1027,7 +1028,8 @@ class UnitOfWork(ABC):
     """One transaction over every repository; nothing is visible to others before its block ends.
 
     Every write goes through a ``change_book`` or a ``change`` block. A block commits when it ends normally and rolls
-    back when an exception leaves it, so nothing outside a block can commit or discard a change.
+    back when an exception leaves it, so nothing outside a block can commit or discard a change. The reads outside a
+    block may hold a transaction of the database until the unit of work ends, and ``release_reads`` ends it earlier.
 
     One unit of work serves one coroutine at a time, since its blocks run one after another on one transaction and a
     second block opened while another is open is refused as nested. Coroutines that share a unit of work must queue in
@@ -1102,4 +1104,19 @@ class UnitOfWork(ABC):
         :rtype: AbstractAsyncContextManager[None]
         :raises BookBusyError: On entry, if another block did not end within the wait limit of the adapter.
         :raises NestedChangeError: On entry, if a block of this unit of work is open already.
+        """
+
+    @abstractmethod
+    async def release_reads(self) -> None:
+        """End what the reads outside any block hold, so that a long wait afterwards holds no database resource.
+
+        A database adapter begins a transaction at the first read outside a block, and that transaction keeps the
+        connection it took from the pool until it ends. The unit of work of a request ends with the request, which for
+        a response that streams is the end of the stream, so a caller that has read what it needs and is about to wait
+        for hours calls this first. It writes nothing and discards nothing: what earlier reads returned stays usable,
+        and the next read or block begins a transaction of its own. The port promises nothing about whether a row read
+        before is read again from the database afterwards. Calling it with nothing read is harmless.
+
+        :raises NestedChangeError: If a block of this unit of work is open, whose transaction this would end.
+        :raises NoChangeOpenError: If a repository wrote outside a block and that write was left pending.
         """

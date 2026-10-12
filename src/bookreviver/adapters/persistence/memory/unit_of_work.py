@@ -2167,6 +2167,19 @@ class InMemoryUnitOfWork(UnitOfWork):
         async with self._block(self._database.change_lock):
             yield
 
+    @override
+    async def release_reads(self) -> None:
+        """Hold nothing outside a block, so there is nothing to end, and refuse the call inside one as a database does.
+
+        A read outside a block takes no lock and no connection from the in-memory database, and a write there is
+        refused at once, so no transaction is open between the blocks. The copy of the tables is not retaken, as a
+        database adapter does not promise the next read to be fresher either.
+
+        :raises NestedChangeError: If a block of this unit of work is open, whose transaction this would end.
+        """
+        if self._change.is_open:
+            raise NestedChangeError
+
     @asynccontextmanager
     async def _block(self, lock: anyio.Semaphore) -> AsyncIterator[None]:
         """Hold a lock for a transaction that publishes its rows on exit and is discarded on an exception.

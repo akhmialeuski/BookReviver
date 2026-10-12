@@ -609,6 +609,69 @@ class TestNesting:
         assert await (await fx_uow_factory()).jobs.get(job.id) == job
 
 
+class TestReleaseReads:
+    """Contract of ``release_reads``: it ends what the reads outside a block hold and changes nothing else."""
+
+    async def test_unit_of_work_reads_and_changes_after_a_release(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_project: Project
+    ) -> None:
+        """Verify a unit of work that released its reads reads the same row again and opens a block as usual.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_project: Stored project that is read and then changed.
+        :type fx_project: Project
+        """
+        job = make_job(project_id=fx_project.id)
+        uow = await fx_uow_factory()
+        read_before = await uow.projects.get(fx_project.id)
+        await uow.release_reads()
+        read_after = await uow.projects.get(fx_project.id)
+        await uow.release_reads()
+        async with uow.change_book(fx_project.id):
+            await uow.jobs.add(job)
+        expect(read_before == fx_project)
+        expect(read_after == fx_project)
+        expect(await (await fx_uow_factory()).jobs.get(job.id) == job)
+        assert_expectations()
+
+    async def test_release_with_nothing_read_changes_nothing(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_project: Project
+    ) -> None:
+        """Verify a release before any read, and two in a row, are harmless.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_project: Stored project that is read afterwards.
+        :type fx_project: Project
+        """
+        uow = await fx_uow_factory()
+        await uow.release_reads()
+        await uow.release_reads()
+        assert await uow.projects.get(fx_project.id) == fx_project
+
+    @pytest.mark.parametrize(OPENER_ARG, OPENER_PARAMS, ids=OPENER_IDS)
+    async def test_release_inside_a_block_raises(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_project: Project, opener: Opener
+    ) -> None:
+        """Verify a release inside a block is refused at once, and the block still commits what it wrote.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_project: Stored project the block changes.
+        :type fx_project: Project
+        :param opener: Opens the kind of block under test.
+        :type opener: Opener
+        """
+        job = make_job(project_id=fx_project.id)
+        uow = await fx_uow_factory()
+        async with opener(uow, fx_project):
+            await uow.jobs.add(job)
+            with pytest.raises(NestedChangeError):
+                await uow.release_reads()
+        assert await (await fx_uow_factory()).jobs.get(job.id) == job
+
+
 class TestWriteGuard:
     """Contract of NoChangeOpenError: no repository writes while no block is open."""
 

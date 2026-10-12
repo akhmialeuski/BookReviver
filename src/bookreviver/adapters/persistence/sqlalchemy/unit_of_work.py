@@ -11,6 +11,11 @@ the database from the first line of the block to its commit. ``change_book`` als
 for each other and changes of different books do not. ``change`` takes no row lock, so on PostgreSQL two of its blocks
 may overlap, and PostgreSQL has no wait limit of its own here: the limit is the busy timeout of SQLite.
 
+A read outside a block begins a transaction of the session, which keeps its connection until the session commits,
+rolls back or closes, and the session of a request closes only with the request. ``release_reads`` ends that
+transaction by the same commit a block begins with, for a caller that is about to wait long, such as the stream of the
+events of a book, so that the wait holds no connection of the pool.
+
 The session carries one unit of work, which registers its write guard on it. Two units of work over one session would
 each guard against the block of the other.
 """
@@ -140,6 +145,17 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         async with self._block():
             yield
 
+    @override
+    async def release_reads(self) -> None:
+        """End the read-only transaction that reads outside a block left open, and so give its connection back.
+
+        :raises NestedChangeError: If a block of this unit of work is open, whose transaction this would commit.
+        :raises NoChangeOpenError: If a row of the adapter's tables was left pending outside a block.
+        """
+        if self._is_open:
+            raise NestedChangeError
+        await self._end_reads()
+
     @asynccontextmanager
     async def _block(self) -> AsyncIterator[None]:
         """Run a transaction that begins holding the write lock, commits on exit and rolls back on an exception.
@@ -169,19 +185,13 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
 
         The session's read-only transaction is ended first, and every row of the adapter's tables it loaded is expired,
         so the block reads what has been committed since and not what an earlier read or block left in the session.
-        The account rows are the exception, as the next paragraph says.
-
-        The read-only transaction ends by a commit, which sends nothing to SQLite in autocommit mode and, as the
-        sessions do not expire on commit, keeps every other object loaded. A rollback, or expiring the whole session,
-        would expire the account row that fastapi-users loaded for the request too, and its next attribute read would
-        need a lazy load that an async session cannot run. The account rows are therefore never expired here, and the
-        account database writes through the attributes of the row it holds.
+        The account rows are the exception: :meth:`_end_reads` says why the session is never expired as a whole, so
+        they are never expired here either, and the account database writes through the attributes of the row it holds.
 
         :raises BookBusyError: If SQLite's write lock was not free within the busy timeout.
         :raises NoChangeOpenError: If a row of the adapter's tables was left pending outside a block.
         """
-        if self._session.in_transaction():
-            await self._session.commit()
+        await self._end_reads()
         for row in list(self._session.identity_map.values()):
             if isinstance(row, DefaultBase) and not isinstance(row, AccountRow):
                 self._session.expire(row)
@@ -191,6 +201,19 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
             if isinstance(error.orig, SqliteOperationalError) and error.orig.sqlite_errorname == SQLITE_BUSY:
                 raise BookBusyError from error
             raise
+
+    async def _end_reads(self) -> None:
+        """End the read-only transaction of the session, which returns its connection to the pool.
+
+        The transaction ends by a commit, which sends nothing to SQLite in autocommit mode and, as the sessions do not
+        expire on commit, keeps every object loaded. A rollback, or expiring the whole session, would expire the
+        account row that fastapi-users loaded for the request too, and its next attribute read would need a lazy load
+        that an async session cannot run. A session with no transaction open has nothing to end.
+
+        :raises NoChangeOpenError: If a row of the adapter's tables was left pending outside a block.
+        """
+        if self._session.in_transaction():
+            await self._session.commit()
 
     def _guard_flush(self, session: Session, _context: object, _instances: object) -> None:
         """Refuse a flush that writes a row of the adapter's tables while no block is open.
