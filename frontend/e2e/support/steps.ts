@@ -2,7 +2,7 @@ import { expect, type Locator, type Page } from '@playwright/test';
 
 /**
  * The steps of a stage with a step bar, as a scenario reaches them: the window of the gear, which holds the order, the
- * conditions, the switches and the removal of the steps, and the bar with the panel of the open step.
+ * switches and the removal of the steps, the bar that opens a step, and the picture of the open step on the canvas.
  */
 
 /** The window of the gear. */
