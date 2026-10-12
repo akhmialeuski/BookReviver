@@ -420,7 +420,9 @@ class StageWork:
 
         Everything after the processor is found runs inside a ``step`` span of the processor's key and the scale, whose
         outcome says whether the version was found made, run, or failed, so the report of a run can tell the steps
-        that cost something from those a cache answered.
+        that cost something from those a cache answered. The span opens as failed and is settled only when the version
+        is found made or run, so a step that leaves through an exception, such as parameters the processor refuses, a
+        page that was deleted or a book that is busy, still ends with an outcome.
 
         :param stage: Stage of the recipe.
         :type stage: Stage
@@ -442,7 +444,12 @@ class StageWork:
         if processor.spec.scope is ProcessorScope.SPLIT:
             raise ConflictError(SPLIT_NOT_AVAILABLE.format(key=step.processor_key))
         with self._tracer.span(
-            SpanName.STEP, {SpanAttribute.STEP_TYPE: step.processor_key, SpanAttribute.STEP_SCALE: source.scale}
+            SpanName.STEP,
+            {
+                SpanAttribute.STEP_TYPE: step.processor_key,
+                SpanAttribute.STEP_SCALE: source.scale,
+                SpanAttribute.STEP_OUTCOME: StepOutcome.FAILED,
+            },
         ) as span:
             # A leaf the program drew has nothing for a step to find, so it passes every step unchanged and unmarked
             skipped = layers.page.is_leaf
@@ -538,8 +545,6 @@ class StageWork:
             if made.state is VersionState.READY:
                 span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.RAN)
                 await self._publisher.publish(PageVersionReady(project_id=layers.page.project_id, version=made))
-            else:
-                span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.FAILED)
             return made
 
 

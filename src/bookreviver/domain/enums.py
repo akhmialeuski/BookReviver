@@ -1276,7 +1276,7 @@ class StepOutcome(LabeledStrEnum):
 
     CACHED = 'cached', 'Found made by an earlier run'
     RAN = 'ran', 'Run by the processor'
-    FAILED = 'failed', 'Run and failed'
+    FAILED = 'failed', 'Failed or refused'
 
 
 class BlockKind(LabeledStrEnum):

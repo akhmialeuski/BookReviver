@@ -3,9 +3,10 @@
 from typing import TYPE_CHECKING
 
 import pytest
+from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.enums import RunOutcome, SpanAttribute, SpanName, Stage, StepOutcome, VersionScale
+from bookreviver.domain.enums import RecipeKind, RunOutcome, SpanAttribute, SpanName, Stage, StepOutcome, VersionScale
 from bookreviver.domain.values import StageRun
 from tests.helpers.processors import FakeProcessor
 
@@ -17,6 +18,7 @@ pytestmark = pytest.mark.anyio
 
 FAKE_KEY: str = FakeProcessor.spec.key
 ORDER_KEYS: tuple[str, ...] = ('a0', 'a1')
+UNKNOWN_PARAMETER: str = 'unknown'
 
 
 async def run_geometry(kit: ProcessingKit, actor: Actor, project: Project) -> None:
@@ -88,4 +90,25 @@ class TestRunSpans:
         expect(first == [StepOutcome.RAN] * len(ORDER_KEYS))
         expect(second == [StepOutcome.CACHED] * len(ORDER_KEYS))
         expect(fx_kit.fake.runs == len(ORDER_KEYS))
+        assert_expectations()
+
+    async def test_a_step_the_processor_refuses_the_parameters_of_ends_failed(self, fx_kit: ProcessingKit) -> None:
+        """Verify a step that leaves through an exception still has the outcome ``failed``, not none.
+
+        The recipe is stored with a parameter the fake processor does not know, which the service of the recipes would
+        have refused, so ``validate_params`` raises inside the ``step`` span before the version is looked for.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, _ = await seeded_pages(fx_kit)
+        recipe = await fx_kit.recipe_of(actor, project, Stage.GEOMETRY, RecipeKind.TEXT)
+        refused = evolve(recipe.steps[0], params=fx_kit.params(**{UNKNOWN_PARAMETER: 1}))
+        uow = fx_kit.uow()
+        async with uow.change_book(project.id):
+            await uow.recipes.update(evolve(recipe, steps=(refused,)))
+        await run_geometry(fx_kit, actor, project)
+        outcomes = [span.attributes.get(SpanAttribute.STEP_OUTCOME) for span in fx_kit.tracer.named(SpanName.STEP)]
+        expect(outcomes == [StepOutcome.FAILED] * len(ORDER_KEYS))
+        expect(fx_kit.fake.runs == 0)
         assert_expectations()
