@@ -1,6 +1,6 @@
 """Summarise the spans of one run of the backend, written by its measurements as a JSON lines file.
 
-Usage: ``uv run python scripts/trace_report.py PATH [--check]``
+Usage: ``uv run bookreviver-trace-report PATH [--check]``
 
 The file is the one ``BOOKREVIVER_TRACING__EXPORT_PATH`` names. It holds one OpenTelemetry span per line, and the
 report is meant to be pasted into a note:
@@ -14,17 +14,13 @@ report is meant to be pasted into a note:
 
 A percentile is the nearest rank: the smallest value that at least that share of the values does not exceed.
 
-With ``--check`` the script goes on to compare the run with two budgets and prints a line for each, with the limit, the
+With ``--check`` the command goes on to compare the run with two budgets and prints a line for each, with the limit, the
 measured value and the verdict, ``met``, ``exceeded`` or ``no data`` where the run has nothing to measure. It exits with
 1 when a budget is exceeded:
 
 - a preview of a step on the visible page takes under 1 s, measured as the longest ``step`` span at the preview scale
   that ran its processor (a step found made by an earlier run took no time of its own);
 - the wait for the write lock stays under 100 ms at the 99th percentile over all write blocks.
-
-The script reads only the file and uses the standard library only. The names of the spans and of their attributes are
-written here as text on purpose, and ``tests/scripts/test_trace_report.py`` writes its fixture with the names the
-application records, so a renamed span fails the test instead of emptying the report.
 """
 
 import argparse
@@ -33,24 +29,13 @@ import math
 import statistics
 import sys
 from collections import defaultdict
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-WRITE_BLOCK: str = 'write.block'
-STEP: str = 'step'
-WAIT_MS: str = 'wait.ms'
-BLOCK_OUTCOME: str = 'block.outcome'
-STEP_TYPE: str = 'step.type'
-STEP_SCALE: str = 'step.scale'
-STEP_OUTCOME: str = 'step.outcome'
-# The outcome of a block that never took the lock, so it held nothing; and of a step an earlier run had made, and of one
-# that ran
-NOT_BEGUN: str = 'not-begun'
-CACHED: str = 'cached'
-RAN: str = 'ran'
-# The scale of a step that ran on the preview image of a page
-PREVIEW: str = 'preview'
+from attrs import frozen
+
+from bookreviver.domain.enums import BlockOutcome, SpanAttribute, SpanName, StepOutcome, VersionScale
+
 MILLISECONDS_PER_SECOND: int = 1_000
 PERCENT: int = 100
 PERCENTILES: tuple[int, ...] = (50, 90, 99)
@@ -67,7 +52,7 @@ NO_DATA: str = 'no data'
 LOCK_WAIT_PERCENT: int = 99
 
 
-@dataclass(frozen=True)
+@frozen
 class Budget:
     """A limit on one measurement of a run, which the measured value has to stay under.
 
@@ -84,7 +69,7 @@ PREVIEW_BUDGET: Budget = Budget(name='Preview of a step on the visible page, max
 LOCK_WAIT_BUDGET: Budget = Budget(name=f'Wait for the write lock, p{LOCK_WAIT_PERCENT}, ms', limit_ms=100.0)
 
 
-@dataclass(frozen=True)
+@frozen
 class Span:
     """One span of the file.
 
@@ -168,7 +153,9 @@ def lock_waits(spans: list[Span]) -> list[float]:
     :rtype: list[float]
     """
     return [
-        float(span.attributes[WAIT_MS]) for span in spans if span.name == WRITE_BLOCK and WAIT_MS in span.attributes
+        float(span.attributes[SpanAttribute.WAIT_MS])
+        for span in spans
+        if span.name == SpanName.WRITE_BLOCK and SpanAttribute.WAIT_MS in span.attributes
     ]
 
 
@@ -183,12 +170,12 @@ def report(spans: list[Span], title: str) -> str:
     :rtype: str
     """
     wall = max(span.end for span in spans) - min(span.start for span in spans)
-    blocks = [span for span in spans if span.name == WRITE_BLOCK]
+    blocks = [span for span in spans if span.name == SpanName.WRITE_BLOCK]
     # A block holds the lock from the end of its wait to its end; one that never took the lock held nothing
     holding = [
-        (span.start + float(span.attributes.get(WAIT_MS, 0)) / MILLISECONDS_PER_SECOND, span.end)
+        (span.start + float(span.attributes.get(SpanAttribute.WAIT_MS, 0)) / MILLISECONDS_PER_SECOND, span.end)
         for span in blocks
-        if span.attributes.get(BLOCK_OUTCOME) != NOT_BEGUN
+        if span.attributes.get(SpanAttribute.BLOCK_OUTCOME) != BlockOutcome.NOT_BEGUN
     ]
     held = merged_length(holding)
     lines = [
@@ -203,12 +190,14 @@ def report(spans: list[Span], title: str) -> str:
 
     by_type: defaultdict[str, list[Span]] = defaultdict(list)
     for span in spans:
-        if span.name == STEP and STEP_TYPE in span.attributes:
-            by_type[str(span.attributes[STEP_TYPE])].append(span)
+        if span.name == SpanName.STEP and SpanAttribute.STEP_TYPE in span.attributes:
+            by_type[str(span.attributes[SpanAttribute.STEP_TYPE])].append(span)
     rows: list[tuple[str, ...]] = []
     for step_type, steps in sorted(by_type.items()):
-        cached = sum(1 for step in steps if step.attributes.get(STEP_OUTCOME) == CACHED)
-        runs = [step.duration_ms for step in steps if step.attributes.get(STEP_OUTCOME) == RAN]
+        cached = sum(1 for step in steps if step.attributes.get(SpanAttribute.STEP_OUTCOME) == StepOutcome.CACHED)
+        runs = [
+            step.duration_ms for step in steps if step.attributes.get(SpanAttribute.STEP_OUTCOME) == StepOutcome.RAN
+        ]
         median = f'{statistics.median(runs):{ONE_DECIMAL}}' if runs else NO_VALUE
         rows.append((step_type, str(len(steps)), f'{cached / len(steps) * PERCENT:{ONE_DECIMAL}}', median))
     if rows:
@@ -234,7 +223,9 @@ def check(spans: list[Span]) -> tuple[list[str], bool]:
     previews = [
         span.duration_ms
         for span in spans
-        if span.name == STEP and span.attributes.get(STEP_SCALE) == PREVIEW and span.attributes.get(STEP_OUTCOME) == RAN
+        if span.name == SpanName.STEP
+        and span.attributes.get(SpanAttribute.STEP_SCALE) == VersionScale.PREVIEW
+        and span.attributes.get(SpanAttribute.STEP_OUTCOME) == StepOutcome.RAN
     ]
     waits = lock_waits(spans)
     measurements = (
@@ -266,7 +257,9 @@ def main(argv: list[str] | None = None) -> int:
         no span or a budget is exceeded.
     :rtype: int
     """
-    parser = argparse.ArgumentParser(description='Summarise the spans of one run of the backend.')
+    parser = argparse.ArgumentParser(
+        prog='bookreviver-trace-report', description='Summarise the spans of one run of the backend.'
+    )
     parser.add_argument('path', type=Path, help='the JSON lines file the measurements wrote')
     parser.add_argument(
         '--check', action='store_true', help='compare the run with the budgets and exit with 1 when one is exceeded'

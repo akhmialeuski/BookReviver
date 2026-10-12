@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING
 import pytest
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.app import trace_report
 from bookreviver.domain.enums import SpanAttribute, SpanName, Stage, StepOutcome, VersionData, VersionScale
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.values import Step, StepPreview
-from scripts import trace_report
 from tests.helpers.samples import png_bytes, text_page, turned
 
 if TYPE_CHECKING:

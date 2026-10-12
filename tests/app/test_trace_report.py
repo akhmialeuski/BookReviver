@@ -1,4 +1,4 @@
-"""Tests for ``scripts/trace_report.py``, run on a small file of spans written to the temporary directory.
+"""Tests for ``bookreviver.app.trace_report``, run on a small file of spans written to the temporary directory.
 
 The file holds the spans of a run of ten seconds with four write blocks, of which two overlap and one never took the
 lock, and five steps of two types. The names in it are the ones the application records, taken from the enumerations,
@@ -28,8 +28,8 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.app import trace_report
 from bookreviver.domain.enums import BlockOutcome, SpanAttribute, SpanName, StepOutcome, VersionScale
-from scripts import trace_report
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence

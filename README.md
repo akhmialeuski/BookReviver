@@ -282,10 +282,10 @@ recorded by default. Two variables switch it on, and the path is required with t
 The spans are `http.request` (route template, method and status), `job` (kind and job), `run.page` (page, stage and
 outcome), `step` (processor, scale and outcome: cached, ran or failed) and `write.block`, which times a block that holds
 SQLite's write lock: the wait for the lock, how long it was held and the commit, with the book. The file is complete
-once the server has stopped. `scripts/trace_report.py` summarises one run for a note:
+once the server has stopped. `bookreviver-trace-report` summarises one run for a note:
 
 ```bash
-uv run python scripts/trace_report.py path/to/spans.jsonl
+uv run bookreviver-trace-report path/to/spans.jsonl
 ```
 
 To measure a full end-to-end run, export the two variables with a path outside `frontend/.e2e-data`, which the server
@@ -295,7 +295,7 @@ last spans are written before the file is read:
 ```bash
 export BOOKREVIVER_TRACING__ENABLED=true BOOKREVIVER_TRACING__EXPORT_PATH=/path/to/e2e-spans.jsonl
 npm --prefix frontend run e2e
-uv run python scripts/trace_report.py /path/to/e2e-spans.jsonl
+uv run bookreviver-trace-report /path/to/e2e-spans.jsonl
 ```
 
 The option `--check` compares the run with two budgets, a preview of a step on the visible page under 1 s and the 99th
@@ -303,7 +303,7 @@ percentile of the wait for the write lock under 100 ms. It prints a line for eac
 exceeded:
 
 ```bash
-uv run python scripts/trace_report.py --check path/to/spans.jsonl
+uv run bookreviver-trace-report --check path/to/spans.jsonl
 ```
 
 ## Development
