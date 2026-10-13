@@ -19,7 +19,9 @@ if TYPE_CHECKING:
 ACCOUNT_DOMAIN: str = 'example.org'
 
 
-async def commit_account(database: SqlDatabase, *, account_id: AccountId | None = None) -> AccountId:
+async def commit_account(
+    database: SqlDatabase, *, account_id: AccountId | None = None, hashed_password: str = ''
+) -> AccountId:
     """Commit a verified account, which the owner key of a project in the SQL database refers to.
 
     :param database: SQL database to commit into.
@@ -27,6 +29,9 @@ async def commit_account(database: SqlDatabase, *, account_id: AccountId | None 
     :param account_id: Identifier the account gets, for a test whose signed-in actor exists before the database does;
                        a new one when omitted.
     :type account_id: AccountId | None
+    :param hashed_password: Password hash the account stores, for a test that signs in; empty, which matches no
+                            password, when omitted.
+    :type hashed_password: str
     :returns: Identifier of the account.
     :rtype: AccountId
     """
@@ -37,7 +42,7 @@ async def commit_account(database: SqlDatabase, *, account_id: AccountId | None 
             AccountTable(
                 id=account_id,
                 email=f'{account_id}@{ACCOUNT_DOMAIN}',
-                hashed_password='',
+                hashed_password=hashed_password,
                 is_active=True,
                 is_superuser=False,
                 is_verified=True,

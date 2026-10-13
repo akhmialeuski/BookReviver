@@ -1,15 +1,16 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { type Browser, type BrowserContext, expect, test } from '@playwright/test';
+import { type Browser, type BrowserContext, expect } from '@playwright/test';
 import {
   createBook,
+  openLibrary,
   openOrderStage,
   openProjectId,
   readPlace,
-  registerAndSignIn,
   uploadFolder,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { pageIds } from './support/page-work';
 
 /**
@@ -75,7 +76,7 @@ test('twenty open tabs of a book do not hinder saving the reading place and edit
   const contexts: BrowserContext[] = [];
 
   try {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book in many tabs');
     await uploadFolder(page, folder, PAGES);
     const projectId = openProjectId(page);

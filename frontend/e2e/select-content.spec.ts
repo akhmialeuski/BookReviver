@@ -1,16 +1,17 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   uploadFolder,
   waitForIdleJobs,
   writeSheetsFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { dragFrom, numbersOf, pairOf } from './support/layer';
 import { pageIds, runPages } from './support/page-work';
 
@@ -156,7 +157,7 @@ test('a border of the content is dragged on Select content without the picture l
   };
 
   await test.step('the stage runs on a scan and Select content shows the borders it found', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book of borders');
     await uploadFolder(page, folder, 1);
     projectId = openProjectId(page);

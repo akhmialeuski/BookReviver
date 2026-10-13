@@ -5,11 +5,14 @@ from typing import TYPE_CHECKING, Any, override
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
+import jwt
+from anyio import to_thread
 from dishka import FromDishka, Provider, Scope, provide
 from dishka.integrations.fastapi import inject
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin, exceptions
 from fastapi_users.authentication import AuthenticationBackend, CookieTransport
 from fastapi_users.authentication.strategy.db import DatabaseStrategy
+from fastapi_users.jwt import decode_jwt, generate_jwt
 from httpx_oauth.clients.facebook import FacebookOAuth2
 from httpx_oauth.clients.google import GoogleOAuth2
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +38,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from fastapi import Request, Response, params
+    from fastapi.security import OAuth2PasswordRequestForm
     from fastapi_users.schemas import BaseUserCreate
     from httpx_oauth.oauth2 import BaseOAuth2
 
@@ -46,6 +50,14 @@ SESSION_COOKIE: str = 'bookreviver_session'
 AUTH_BACKEND: str = 'cookie'
 PASSWORD_TOO_SHORT: str = 'Use a password of at least {length} characters.'
 PASSWORD_CONTAINS_EMAIL: str = 'The password must not contain the email address.'
+
+# Names of the account fields and of the reset token claims that the overridden methods of fastapi-users read and write
+EMAIL_FIELD: str = 'email'
+PASSWORD_FIELD: str = 'password'
+HASHED_PASSWORD_FIELD: str = 'hashed_password'
+IS_VERIFIED_FIELD: str = 'is_verified'
+TOKEN_SUBJECT_CLAIM: str = 'sub'
+TOKEN_FINGERPRINT_CLAIM: str = 'password_fgpt'
 
 
 class AccountMail(enum.Enum):
@@ -120,6 +132,13 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
     registration and mails the owner instead. An account is deleted only after its projects, whose owner key refuses
     to leave them without an owner.
 
+    Hashing a password with argon2id takes tens of milliseconds, and the ``PasswordHelper`` protocol of fastapi-users is
+    synchronous, so ``BaseUserManager`` runs it inside the event loop, where it stalls every other request and event.
+    The methods that hash or verify a password (``create``, ``forgot_password``, ``reset_password``, ``authenticate``
+    and ``_update``) are therefore overridden to mirror ``BaseUserManager`` of fastapi-users 15.0.5, step by step, with
+    only the hashing moved to a worker thread by ``_hash`` and ``_verify``. Compare them with the upstream methods
+    when fastapi-users is upgraded.
+
     :ivar password_min_length: Fewest characters a password may have.
     """
 
@@ -147,11 +166,36 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         self._projects = projects
         self._public_url = settings.public_url
 
+    async def _hash(self, password: str) -> str:
+        """Hash ``password`` in a worker thread, so the event loop keeps serving while argon2id runs.
+
+        :param password: Password to hash, as typed or an unknown one.
+        :type password: str
+        :returns: The hash to store.
+        :rtype: str
+        """
+        return await to_thread.run_sync(self.password_helper.hash, password)
+
+    async def _verify(self, password: str, hashed_password: str) -> tuple[bool, str | None]:
+        """Check ``password`` against ``hashed_password`` in a worker thread, as ``_hash`` does.
+
+        :param password: Password to check, as typed.
+        :type password: str
+        :param hashed_password: Stored hash to check it against.
+        :type hashed_password: str
+        :returns: Whether the password matches, and a stronger hash to store instead when the stored one is outdated.
+        :rtype: tuple[bool, str | None]
+        """
+        return await to_thread.run_sync(self.password_helper.verify_and_update, password, hashed_password)
+
     @override
     async def create(
         self, user_create: BaseUserCreate, safe: bool = False, request: Request | None = None
     ) -> AccountTable:
         """Register an account, answering a taken address like a new one and mailing its owner instead.
+
+        Mirrors ``BaseUserManager.create``, with the hash made by ``_hash`` and the taken address handled in place of
+        ``UserAlreadyExists``.
 
         :param user_create: Registration data, email address and password.
         :type user_create: BaseUserCreate
@@ -161,15 +205,148 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         :type request: Request | None
         :returns: The stored account, or for a taken address an account that is never stored.
         :rtype: AccountTable
+        :raises InvalidPasswordException: If the password is too short or contains the email address.
+        """
+        await self.validate_password(user_create.password, user_create)
+
+        if await self.user_db.get_by_email(user_create.email) is not None:
+            # Spend the time a new account costs, and answer with an account that is never stored
+            await self._hash(user_create.password)
+            await self._mailer.send(AccountMail.ALREADY_REGISTERED.to(user_create.email, public_url=self._public_url))
+            return AccountTable(
+                id=uuid4(), email=user_create.email, is_active=True, is_superuser=False, is_verified=False
+            )
+
+        user_dict = user_create.create_update_dict() if safe else user_create.create_update_dict_superuser()
+        password = user_dict.pop(PASSWORD_FIELD)
+        user_dict[HASHED_PASSWORD_FIELD] = await self._hash(password)
+        created_user = await self.user_db.create(user_dict)
+        await self.on_after_register(created_user, request)
+        return created_user
+
+    @override
+    async def forgot_password(self, user: AccountTable, request: Request | None = None) -> None:
+        """Start a password reset, fingerprinting the current hash with a second one made off the event loop.
+
+        Mirrors ``BaseUserManager.forgot_password``.
+
+        :param user: The account that forgot its password.
+        :type user: AccountTable
+        :param request: Request that triggered the reset, if any.
+        :type request: Request | None
+        :raises UserInactive: If the account is inactive.
+        """
+        if not user.is_active:
+            raise exceptions.UserInactive
+        token_data = {
+            TOKEN_SUBJECT_CLAIM: str(user.id),
+            TOKEN_FINGERPRINT_CLAIM: await self._hash(user.hashed_password),
+            'aud': self.reset_password_token_audience,
+        }
+        token = generate_jwt(token_data, self.reset_password_token_secret, self.reset_password_token_lifetime_seconds)
+        await self.on_after_forgot_password(user, token, request)
+
+    @override
+    async def reset_password(self, token: str, password: str, request: Request | None = None) -> AccountTable:
+        """Set a new password for the account the reset token was issued to, once the fingerprint in it matches.
+
+        Mirrors ``BaseUserManager.reset_password``.
+
+        :param token: Token mailed by ``forgot_password``.
+        :type token: str
+        :param password: The new password.
+        :type password: str
+        :param request: Request that triggered the reset, if any.
+        :type request: Request | None
+        :returns: The account with the new password.
+        :rtype: AccountTable
+        :raises InvalidResetPasswordToken: If the token is invalid, expired or issued for an earlier password.
+        :raises UserInactive: If the account is inactive.
+        :raises InvalidPasswordException: If the new password is invalid.
         """
         try:
-            return await super().create(user_create, safe, request)
-        except exceptions.UserAlreadyExists:
-            pass
-        # Spend the time a new account costs, and answer with an account that is never stored
-        self.password_helper.hash(user_create.password)
-        await self._mailer.send(AccountMail.ALREADY_REGISTERED.to(user_create.email, public_url=self._public_url))
-        return AccountTable(id=uuid4(), email=user_create.email, is_active=True, is_superuser=False, is_verified=False)
+            data = decode_jwt(token, self.reset_password_token_secret, [self.reset_password_token_audience])
+        except jwt.PyJWTError:
+            raise exceptions.InvalidResetPasswordToken from None
+        try:
+            user_id = data[TOKEN_SUBJECT_CLAIM]
+            password_fingerprint = data[TOKEN_FINGERPRINT_CLAIM]
+        except KeyError:
+            raise exceptions.InvalidResetPasswordToken from None
+        try:
+            parsed_id = self.parse_id(user_id)
+        except exceptions.InvalidID:
+            raise exceptions.InvalidResetPasswordToken from None
+
+        user = await self.get(parsed_id)
+        valid_password_fingerprint, _ = await self._verify(user.hashed_password, password_fingerprint)
+        if not valid_password_fingerprint:
+            raise exceptions.InvalidResetPasswordToken
+        if not user.is_active:
+            raise exceptions.UserInactive
+
+        updated_user = await self._update(user, {PASSWORD_FIELD: password})
+        await self.on_after_reset_password(user, request)
+        return updated_user
+
+    @override
+    async def authenticate(self, credentials: OAuth2PasswordRequestForm) -> AccountTable | None:
+        """Return the account the credentials belong to, upgrading its stored hash when it is outdated.
+
+        Mirrors ``BaseUserManager.authenticate``: an unknown address still costs one hash, so the answer takes about
+        as long as for a known one.
+
+        :param credentials: The login form, whose user name is the email address.
+        :type credentials: OAuth2PasswordRequestForm
+        :returns: The account when the password matches, otherwise ``None``.
+        :rtype: AccountTable | None
+        """
+        try:
+            user = await self.get_by_email(credentials.username)
+        except exceptions.UserNotExists:
+            # Run the hasher to mitigate a timing attack, as Django does: https://code.djangoproject.com/ticket/20760
+            await self._hash(credentials.password)
+            return None
+
+        verified, updated_password_hash = await self._verify(credentials.password, user.hashed_password)
+        if not verified:
+            return None
+        # Replace the stored hash with a more robust one if needed
+        if updated_password_hash is not None:
+            await self.user_db.update(user, {HASHED_PASSWORD_FIELD: updated_password_hash})
+        return user
+
+    @override
+    async def _update(self, user: AccountTable, update_dict: dict[str, Any]) -> AccountTable:
+        """Apply validated changes to the account, hashing a new password off the event loop.
+
+        Mirrors ``BaseUserManager._update``.
+
+        :param user: The account to change.
+        :type user: AccountTable
+        :param update_dict: Fields to change, a new password under ``password``.
+        :type update_dict: dict[str, Any]
+        :returns: The changed account.
+        :rtype: AccountTable
+        :raises UserAlreadyExists: If a new email address is taken.
+        :raises InvalidPasswordException: If a new password is invalid.
+        """
+        validated_update_dict: dict[str, Any] = {}
+        for field, value in update_dict.items():
+            if field == EMAIL_FIELD and value != user.email:
+                try:
+                    await self.get_by_email(value)
+                except exceptions.UserNotExists:
+                    validated_update_dict[EMAIL_FIELD] = value
+                    validated_update_dict[IS_VERIFIED_FIELD] = False
+                else:
+                    raise exceptions.UserAlreadyExists
+            elif field == PASSWORD_FIELD and value is not None:
+                await self.validate_password(value, user)
+                validated_update_dict[HASHED_PASSWORD_FIELD] = await self._hash(value)
+            else:
+                validated_update_dict[field] = value
+        return await self.user_db.update(user, validated_update_dict)
 
     @override
     async def validate_password(self, password: str, user: BaseUserCreate | AccountTable) -> None:
@@ -243,8 +420,8 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         # registered it before anyone proved owning it, so that password is replaced by an unknown one.
         if user.is_verified:
             return
-        unknown_password = self.password_helper.hash(self.password_helper.generate())
-        await self.user_db.update(user, {'is_verified': True, 'hashed_password': unknown_password})
+        unknown_password = await self._hash(self.password_helper.generate())
+        await self.user_db.update(user, {IS_VERIFIED_FIELD: True, HASHED_PASSWORD_FIELD: unknown_password})
 
     @override
     async def on_before_delete(self, user: AccountTable, request: Request | None = None) -> None:

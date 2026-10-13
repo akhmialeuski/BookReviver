@@ -1,17 +1,18 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   stepIdsOf,
   uploadFolder,
   waitForIdleJobs,
   writeSheetsFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { runPages } from './support/page-work';
 
 /**
@@ -59,7 +60,7 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
   let stepId = '';
 
   await test.step('three sheets are cut to their frames by the Geometry stage, which Cleanup reads', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book to clean in steps');
     await uploadFolder(page, folder, PAGES);
     await waitForIdleJobs(page, openProjectId(page));

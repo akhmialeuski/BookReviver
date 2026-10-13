@@ -1,9 +1,12 @@
-"""Fakes and steps of the accounts feature: a recording mailer, its provider, and a visitor using the routes."""
+"""Fakes and steps of the accounts feature: a recording mailer and password helper, and a visitor using the routes."""
 
+import enum
+import threading
 from typing import TYPE_CHECKING, override
 from urllib.parse import parse_qs, urlsplit
 
 from dishka import Provider, Scope, provide
+from fastapi_users.password import PasswordHelper
 
 from bookreviver.app.providers.accounts import AccountMail
 from bookreviver.ports.runtime import Mailer
@@ -82,6 +85,85 @@ class RecordingMailerProvider(Provider):
         :rtype: Mailer
         """
         return self._mailer
+
+
+class HashStep(enum.StrEnum):
+    """The calls of the password helper that take long enough to stall an event loop."""
+
+    HASH = 'hash'
+    VERIFY = 'verify'
+
+
+class HashCalls:
+    """Keeps which password helper call ran on which thread, in call order."""
+
+    def __init__(self) -> None:
+        """Start with no calls recorded."""
+        self._calls: list[tuple[HashStep, int]] = []
+
+    def record(self, step: HashStep) -> None:
+        """Record a call made now, on the calling thread.
+
+        :param step: The helper call being made.
+        :type step: HashStep
+        """
+        self._calls.append((step, threading.get_ident()))
+
+    def clear(self) -> None:
+        """Forget the calls so far, so a test records only the request it is about."""
+        self._calls.clear()
+
+    @property
+    def steps(self) -> list[HashStep]:
+        """The recorded calls in the order they were made, one step per call."""
+        return [step for step, _ in self._calls]
+
+    @property
+    def threads(self) -> set[int]:
+        """The identifiers of the threads the recorded calls ran on."""
+        return {thread for _, thread in self._calls}
+
+
+class RecordingPasswordHelper(PasswordHelper):
+    """The real password helper, noting the thread of every hash and every check.
+
+    :ivar calls: Record the calls are noted in.
+    """
+
+    def __init__(self, calls: HashCalls) -> None:
+        """Note the calls of this helper in ``calls``.
+
+        :param calls: Record shared by the helpers of one test.
+        :type calls: HashCalls
+        """
+        super().__init__()
+        self.calls = calls
+
+    @override
+    def hash(self, password: str) -> str:
+        """Note the call, then hash ``password``.
+
+        :param password: Password to hash.
+        :type password: str
+        :returns: The hash.
+        :rtype: str
+        """
+        self.calls.record(HashStep.HASH)
+        return super().hash(password)
+
+    @override
+    def verify_and_update(self, plain_password: str, hashed_password: str) -> tuple[bool, str | None]:
+        """Note the call, then check ``plain_password`` against ``hashed_password``.
+
+        :param plain_password: Password to check.
+        :type plain_password: str
+        :param hashed_password: Stored hash to check it against.
+        :type hashed_password: str
+        :returns: Whether it matches, and a stronger hash when the stored one is outdated.
+        :rtype: tuple[bool, str | None]
+        """
+        self.calls.record(HashStep.VERIFY)
+        return super().verify_and_update(plain_password, hashed_password)
 
 
 class Visitor:

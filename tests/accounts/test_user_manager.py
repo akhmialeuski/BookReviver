@@ -4,6 +4,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 from delayed_assert import assert_expectations, expect
+from fastapi.security import OAuth2PasswordRequestForm
+from fastapi_users.password import PasswordHelper
+from pwdlib import PasswordHash
+from pwdlib.hashers.bcrypt import BcryptHasher
 
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.app.container import build_container
@@ -14,6 +18,7 @@ from bookreviver.domain.ids import AccountId
 from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.storage import AssetStore, SourceStore
 from tests.helpers.builders import make_page, make_project
+from tests.helpers.fakes_accounts import PASSWORD
 from tests.helpers.schema import create_schema
 from tests.helpers.seeding import commit_account
 from tests.helpers.storage import BookFiles
@@ -112,4 +117,31 @@ class TestDelete:
         expect(all(files.gone(project.id) for project in owned))
         expect(await _stored(fx_container, kept))
         expect(files.kept(pages[kept.id]))
+        assert_expectations()
+
+
+class TestAuthenticate:
+    """Tests for UserManager.authenticate(), which upgrades an outdated password hash after a successful check."""
+
+    async def test_outdated_hash_is_replaced_after_sign_in(self, fx_container: AsyncContainer) -> None:
+        """Verify signing in with a password stored as a bcrypt hash writes the argon2id hash of the same password.
+
+        :param fx_container: The application's container on the SQL backend.
+        :type fx_container: AsyncContainer
+        """
+        outdated = PasswordHelper(PasswordHash((BcryptHasher(),))).hash(PASSWORD)
+        account_id = await commit_account(await fx_container.get(SqlDatabase), hashed_password=outdated)
+
+        async with fx_container() as scope:
+            manager = await scope.get(UserManager)
+            account = await manager.get(account_id)
+            signed_in = await manager.authenticate(OAuth2PasswordRequestForm(username=account.email, password=PASSWORD))
+        async with fx_container() as scope:
+            stored = (await (await scope.get(UserManager)).get(account_id)).hashed_password
+
+        current = PasswordHelper()
+        expect(current.verify_and_update(PASSWORD, outdated)[1] is not None)
+        expect(signed_in is not None)
+        expect(stored != outdated)
+        expect(current.verify_and_update(PASSWORD, stored) == (True, None))
         assert_expectations()

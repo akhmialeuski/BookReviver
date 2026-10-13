@@ -1,14 +1,15 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   openImportStage,
+  openLibrary,
   openOrderStage,
-  registerAndSignIn,
   uploadFolder,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 
 /**
  * Arranging the pages of a book: open a page from the grid, and a scan and a file from the Import stage, move a page
@@ -51,7 +52,7 @@ test('a reader arranges the pages of a book', async ({ page }) => {
   let ids: string[] = [];
 
   await test.step('upload five pages and see them in the grid', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book to arrange');
     await uploadFolder(page, folder, PAGES);
     await openOrderStage(page);

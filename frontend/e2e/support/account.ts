@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
+import { DEFAULT_LANDING } from '../../src/features/auth/redirect';
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../../src/shared/http/csrf';
 import { SERVER_LOG } from './env';
 import { platePng, sheetPng, solidPng } from './png';
@@ -83,6 +84,17 @@ export async function signIn(page: Page, email: string): Promise<void> {
   await page.getByLabel('Email address').fill(email);
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByRole('heading', { name: 'Your books' })).toBeVisible();
+}
+
+/**
+ * Open the list of the books of the signed-in reader, where `registerAndSignIn` leaves the page.
+ *
+ * A scenario that runs with the account of its worker (see `fixtures.ts`) starts here, since the context is signed in
+ * already and no registration has taken the page to the list.
+ */
+export async function openLibrary(page: Page): Promise<void> {
+  await page.goto(DEFAULT_LANDING);
   await expect(page.getByRole('heading', { name: 'Your books' })).toBeVisible();
 }
 

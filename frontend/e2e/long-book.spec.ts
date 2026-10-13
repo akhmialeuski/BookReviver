@@ -1,14 +1,15 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import {
   addPlaceholderPages,
   createBook,
   openImportStage,
-  registerAndSignIn,
+  openLibrary,
   snap,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 
 /**
  * A long book and a long job: the strip of a book of a thousand pages keeps only the pages in sight in the document
@@ -32,7 +33,7 @@ test('the strip of a book of a thousand pages keeps only the pages in sight', as
   const scroller = page.getByTestId('strip-scroll');
 
   await test.step('a book gets a thousand pages', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A long book');
     await addPlaceholderPages(page, LONG_BOOK_PAGES, 'geometry');
   });
@@ -65,7 +66,7 @@ test('the activity of a book stops an import that is still running', async ({ pa
 
   try {
     await test.step('a large folder starts an import that the chip shows with its progress', async () => {
-      await registerAndSignIn(page);
+      await openLibrary(page);
       await createBook(page, 'A stopped import');
       await openImportStage(page);
       await page.getByTestId('folder-input').setInputFiles(folder);

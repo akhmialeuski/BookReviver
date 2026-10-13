@@ -1,15 +1,16 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import {
   createBook,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   uploadFolder,
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { openTimeline, RESULT_ROWS, runPages } from './support/page-work';
 
 /**
@@ -36,7 +37,7 @@ test('a result of a step is marked bad, which marks its page in the strip, and t
   const entry = section.locator(RESULT_ROWS);
 
   await test.step('the recipe is run on every page and its first step is opened', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book with results to mark');
     await uploadFolder(page, folder, PAGES);
     const projectId = openProjectId(page);

@@ -1,5 +1,6 @@
-import { expect, type Page, test } from '@playwright/test';
-import { createBook, registerAndSignIn } from './support/account';
+import { expect, type Page } from '@playwright/test';
+import { createBook, openLibrary } from './support/account';
+import { test } from './support/fixtures';
 
 /**
  * The About tab and the library: a description saves by itself and is still there after a reload, a field the
@@ -20,7 +21,7 @@ test('a reader describes a book and finds the description after a reload', async
   let aboutUrl = '';
 
   await test.step('open the About tab of a new book', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, TITLE);
     const projectId = new URL(page.url()).pathname.split('/')[2] ?? '';
     aboutUrl = `/projects/${projectId}/about`;

@@ -1,15 +1,16 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
   createBook,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   uploadFolder,
   waitForIdleJobs,
   writeMixedFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { readStageRows, runPages, selectPagesInGrid } from './support/page-work';
 
 /**
@@ -58,7 +59,7 @@ test('the program finds what each page shows, the strip marks it, and the select
   const selectedScope = page.getByTestId('content-scope-selected');
 
   await test.step('the pages made from the scans are detected without being asked', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book with plates');
     await uploadFolder(page, folder, PAGES);
     await expect

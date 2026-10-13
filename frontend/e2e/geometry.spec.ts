@@ -1,17 +1,18 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   stepIdsOf,
   uploadFolder,
   waitForIdleJobs,
   writeSheetsFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { dragFrom, numbersOf, pairOf } from './support/layer';
 import { runPages } from './support/page-work';
 
@@ -73,7 +74,7 @@ test('a reader corrects the sheet, the angle and the frame of a page, and the co
   let frame: number[] = [];
 
   await test.step('the stage runs on the scans and gives each page its sheet, its angle and its frame', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book of sheets');
     await uploadFolder(page, folder, PAGES);
     await waitForIdleJobs(page, openProjectId(page));

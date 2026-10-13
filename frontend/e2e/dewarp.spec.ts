@@ -1,17 +1,18 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   stepIdsOf,
   uploadFolder,
   waitForIdleJobs,
   writeBentSheetsFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { dragFrom, pairOf } from './support/layer';
 import { pageIds, readEffective, runPages } from './support/page-work';
 
@@ -113,7 +114,7 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
   let node = { x: 0, y: 0 };
 
   await test.step('the pages are bent before the stage runs, and the recipe has a dewarping step after the deskew', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book bent at the gutter');
     await uploadFolder(page, folder, PAGES);
     await waitForIdleJobs(page, openProjectId(page));

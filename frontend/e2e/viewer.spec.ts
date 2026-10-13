@@ -1,7 +1,8 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
-import { createBook, registerAndSignIn, uploadFolder, writePagesFolder } from './support/account';
+import { expect } from '@playwright/test';
+import { createBook, openLibrary, uploadFolder, writePagesFolder } from './support/account';
+import { test } from './support/fixtures';
 
 /**
  * Reading a book in the viewer: open it from the header of the book, turn pages with the buttons, the keys, the slider and
@@ -16,7 +17,7 @@ test('a reader turns the pages of a book in the viewer', async ({ page }) => {
   const caption = page.getByTestId('viewer-caption');
 
   await test.step('upload six pages into a new book', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book to read');
     await uploadFolder(page, folder, PAGES);
   });

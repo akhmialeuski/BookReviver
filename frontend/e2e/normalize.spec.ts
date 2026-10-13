@@ -1,16 +1,17 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   uploadFolder,
   waitForIdleJobs,
   writeScaledSheetsFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { runPages } from './support/page-work';
 
 /**
@@ -96,7 +97,7 @@ test('the book is measured and its pages come out of one size with the lines at 
   let projectId = '';
 
   await test.step('the stage runs on the scans with the settings a book starts with', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book of two scales');
     await uploadFolder(page, folder, PAGES);
     projectId = openProjectId(page);

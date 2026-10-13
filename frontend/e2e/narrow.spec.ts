@@ -1,13 +1,8 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Locator, type Page, test } from '@playwright/test';
-import {
-  createBook,
-  registerAndSignIn,
-  snap,
-  uploadFolder,
-  writePagesFolder,
-} from './support/account';
+import { expect, type Locator, type Page } from '@playwright/test';
+import { createBook, openLibrary, snap, uploadFolder, writePagesFolder } from './support/account';
+import { test } from './support/fixtures';
 
 /**
  * The workspace of a book in a narrow window: the canvas takes the whole width, the strip and the panel open as sheets
@@ -58,7 +53,7 @@ test('a reader works in a narrow window and gets the wide layout back', async ({
 
   await test.step('a book with pages opens on the Geometry stage in a wide window', async () => {
     await page.setViewportSize(WIDE);
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book in a narrow window');
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await uploadFolder(page, folder, PAGES);

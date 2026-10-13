@@ -1,18 +1,19 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openLibrary,
   openOrderStage,
   openProjectId,
-  registerAndSignIn,
   setKind,
   snap,
   uploadFolder,
   waitForIdleJobs,
   writeSheetsFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { runPages } from './support/page-work';
 
 /**
@@ -103,7 +104,7 @@ test('a blank scan gets a leaf of the paper of the book in its place, and the sc
   const geometryThumbnails = new Map<number, string>();
 
   await test.step('the pages ran through Geometry as scans, then two of them are blank, and the panel offers the image of a blank page', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book with blank leaves');
     await uploadFolder(page, folder, PAGES);
     await markPagesAsText(page);

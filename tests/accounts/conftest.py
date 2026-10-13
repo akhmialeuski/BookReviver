@@ -1,16 +1,20 @@
-"""Fixtures of the account tests: a recording mailer, and a signed-out browser that passes the CSRF check."""
+"""Fixtures of the account tests: recording mail and password hashing, and a signed-out browser that passes CSRF."""
 
+from functools import partial
 from typing import TYPE_CHECKING
 
 import pytest
+from fastapi_users import manager as fastapi_users_manager
 
 from bookreviver.api.auth import current_actor
 from tests.helpers.fakes_accounts import (
     CSRF_COOKIE,
     CSRF_HEADER,
     ME_PATH,
+    HashCalls,
     RecordingMailer,
     RecordingMailerProvider,
+    RecordingPasswordHelper,
     Visitor,
 )
 
@@ -42,6 +46,23 @@ def fx_extra_providers(fx_mailer: RecordingMailer) -> Sequence[Provider]:
     :rtype: Sequence[Provider]
     """
     return (RecordingMailerProvider(fx_mailer),)
+
+
+@pytest.fixture
+def fx_hash_calls(monkeypatch: pytest.MonkeyPatch) -> HashCalls:
+    """Make every user manager of the test use a password helper that records the thread of each hash and check.
+
+    fastapi-users builds its default helper by name when a manager is created, so replacing the name covers the
+    managers the application creates later, one per request.
+
+    :param monkeypatch: Fixture that undoes the replacement after the test.
+    :type monkeypatch: pytest.MonkeyPatch
+    :returns: The record the helpers write into, empty.
+    :rtype: HashCalls
+    """
+    calls = HashCalls()
+    monkeypatch.setattr(fastapi_users_manager, 'PasswordHelper', partial(RecordingPasswordHelper, calls))
+    return calls
 
 
 @pytest.fixture
