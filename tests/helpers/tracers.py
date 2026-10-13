@@ -78,7 +78,7 @@ class TracerUnderTest:
 class AskingTracer(RecordingTracer):
     """A recording tracer that tells a test when a span of a name has started, so the test needs no sleep to order.
 
-    A write block span starts right before the block asks SQLite for the lock, in the same turn of the event loop, so a
+    A write block span starts right before the block joins the write queue, in the same turn of the event loop, so a
     test that waits for the event of ``ask_after`` knows the block is asking for the lock, and not that it has been
     given it. A tick of the lag probe starts as the previous one ends, so waiting for the second tick to start means
     the first has ended and carries its lag.

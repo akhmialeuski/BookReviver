@@ -4,11 +4,13 @@ The session is opened per HTTP request or background job by the application's ``
 so the unit of work owns no connection. It binds every port repository to that session, which makes every
 change they make part of one transaction, visible to others only after its block commits.
 
-A block of the port, ``change_book`` or ``change``, ends the read-only transaction the session may have open, takes a
-connection with the execution option that makes SQLite begin with ``BEGIN IMMEDIATE``, and so holds the write lock of
-the database from the first line of the block to its commit. The options also name the kind of the block and, for
-``change_book``, the project, which the engine's listeners put on the span that times the wait, the holding and the
-commit. ``change_book`` also locks the row of the project with
+A block of the port, ``change_book`` or ``change``, ends the read-only transaction the session may have open, waits
+for its turn in the write queue that the session of SQLite carries, then takes a connection with the execution option
+that makes SQLite begin with ``BEGIN IMMEDIATE``, and so holds the write lock of the database from the first line of
+the block to its commit. Its read connection goes back to the pool before it queues, and it takes another only when its
+turn has come, so a block that waits holds no connection. The turn starts the span that times the wait, the holding and
+the commit, with the kind of the block and, for ``change_book``, the project. ``change_book`` also locks the row of the
+project with
 ``FOR NO KEY UPDATE``, which PostgreSQL renders and SQLite leaves out, so on PostgreSQL two changes of one book wait
 for each other and changes of different books do not. ``change`` takes no row lock, so on PostgreSQL two of its blocks
 may overlap, and PostgreSQL has no wait limit of its own here: the limit is the busy timeout of SQLite.
@@ -22,7 +24,7 @@ The session carries one unit of work, which registers its write guard on it. Two
 each guard against the block of the other.
 """
 
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from itertools import chain
 from sqlite3 import OperationalError as SqliteOperationalError
 from typing import TYPE_CHECKING, override
@@ -33,7 +35,7 @@ from sqlalchemy import event, select
 from sqlalchemy.exc import OperationalError
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountRow
-from bookreviver.adapters.persistence.sqlalchemy.database import CHANGE_BLOCK_OPTION, CHANGE_BOOK_OPTION
+from bookreviver.adapters.persistence.sqlalchemy.database import CHANGE_BLOCK_OPTION, WRITE_QUEUE_INFO, WriteQueue
 from bookreviver.adapters.persistence.sqlalchemy.mappers import ProjectMapper
 from bookreviver.adapters.persistence.sqlalchemy.repositories import (
     SqlAlchemyBookPlaceRepository,
@@ -129,7 +131,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         :raises BookBusyError: If SQLite's write lock was not free within the busy timeout.
         :raises NestedChangeError: If a block of this unit of work is open already.
         """
-        async with self._block({CHANGE_BLOCK_OPTION: BlockKind.BOOK, CHANGE_BOOK_OPTION: project_id}):
+        async with self._block(BlockKind.BOOK, project_id):
             locked = select(ProjectRow).where(ProjectRow.id == project_id).with_for_update(key_share=True)
             if (row := await self._session.scalar(locked)) is None:
                 raise NotFoundError(project_id)
@@ -145,7 +147,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         :raises BookBusyError: If SQLite's write lock was not free within the busy timeout.
         :raises NestedChangeError: If a block of this unit of work is open already.
         """
-        async with self._block({CHANGE_BLOCK_OPTION: BlockKind.OTHER}):
+        async with self._block(BlockKind.OTHER, None):
             yield
 
     @override
@@ -160,46 +162,74 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         await self._end_reads()
 
     @asynccontextmanager
-    async def _block(self, options: Mapping[str, object]) -> AsyncIterator[None]:
+    async def _block(self, kind: BlockKind, book: ProjectId | None) -> AsyncIterator[None]:
         """Run a transaction that begins holding the write lock, commits on exit and rolls back on an exception.
 
-        :param options: Execution options of the connection the block procures: the kind of the block, which also
-                        makes SQLite begin with ``BEGIN IMMEDIATE``, and the project of a block that holds a book.
-        :type options: Mapping[str, object]
+        The read-only transaction of the session ends before the block queues, so its connection goes back to the pool
+        while the block waits, and the block takes a connection only when its turn has come. The turn is held until the
+        commit or the rollback has ended, so the next block cannot ask SQLite for a lock this one still holds. A session
+        of PostgreSQL carries no queue, and its block goes straight to the row lock of ``change_book``.
+
+        :param kind: Kind of the block, which its span carries.
+        :type kind: BlockKind
+        :param book: Project of a block that holds a book, or None for a block outside the content of a book.
+        :type book: ProjectId | None
         :returns: Iterator yielding once the transaction has begun.
         :rtype: AsyncIterator[None]
-        :raises BookBusyError: If SQLite's write lock was not free within the busy timeout.
+        :raises BookBusyError: If the turn of the block or SQLite's write lock was not given within the wait limit.
         :raises NestedChangeError: If a block of this unit of work is open already.
+        :raises NoChangeOpenError: If a row of the adapter's tables was left pending outside a block.
         """
         if self._is_open:
             raise NestedChangeError
         self._is_open = True
         try:
-            await self._begin_holding_the_lock(options)
-            yield
-            await self._session.commit()
-        except BaseException:
-            # A cancelled task still has to give the lock back
-            with anyio.CancelScope(shield=True):
-                await self._session.rollback()
-            raise
+            async with AsyncExitStack() as turn:
+                try:
+                    await self._end_reads()
+                    options = await turn.enter_async_context(self._turn(kind, book))
+                    await self._begin_holding_the_lock(options)
+                    yield
+                    await self._session.commit()
+                except BaseException:
+                    # A cancelled task still has to give the lock back
+                    with anyio.CancelScope(shield=True):
+                        await self._session.rollback()
+                    raise
         finally:
             self._is_open = False
+
+    @asynccontextmanager
+    async def _turn(self, kind: BlockKind, book: ProjectId | None) -> AsyncIterator[Mapping[str, object]]:
+        """Wait for the turn of a block in the write queue the session carries, and hold it until the block ends.
+
+        :param kind: Kind of the block, which its span carries.
+        :type kind: BlockKind
+        :param book: Project of a block that holds a book, or None for a block outside the content of a book.
+        :type book: ProjectId | None
+        :returns: Iterator yielding the execution options of the block's connection once its turn has come, which are
+                  empty for a session of PostgreSQL, since it carries no queue.
+        :rtype: AsyncIterator[Mapping[str, object]]
+        :raises BookBusyError: If the turn of the block did not come within the wait limit.
+        """
+        if not isinstance(queue := self._session.info.get(WRITE_QUEUE_INFO), WriteQueue):
+            yield {}
+            return
+        async with queue.turn(kind, book) as block:
+            yield {CHANGE_BLOCK_OPTION: block}
 
     async def _begin_holding_the_lock(self, options: Mapping[str, object]) -> None:
         """Begin the transaction of a block, which takes the write lock of SQLite.
 
-        The session's read-only transaction is ended first, and every row of the adapter's tables it loaded is expired,
-        so the block reads what has been committed since and not what an earlier read or block left in the session.
-        The account rows are the exception: :meth:`_end_reads` says why the session is never expired as a whole, so
-        they are never expired here either, and the account database writes through the attributes of the row it holds.
+        Every row of the adapter's tables the session loaded is expired, so the block reads what has been committed
+        since and not what an earlier read or block left in the session. The account rows are the exception:
+        :meth:`_end_reads` says why the session is never expired as a whole, so they are never expired here either, and
+        the account database writes through the attributes of the row it holds.
 
         :param options: Execution options of the block's connection, which the engine's listeners read.
         :type options: Mapping[str, object]
         :raises BookBusyError: If SQLite's write lock was not free within the busy timeout.
-        :raises NoChangeOpenError: If a row of the adapter's tables was left pending outside a block.
         """
-        await self._end_reads()
         for row in list(self._session.identity_map.values()):
             if isinstance(row, DefaultBase) and not isinstance(row, AccountRow):
                 self._session.expire(row)

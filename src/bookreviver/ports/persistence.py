@@ -1034,7 +1034,9 @@ class UnitOfWork(ABC):
     One unit of work serves one coroutine at a time, since its blocks run one after another on one transaction and a
     second block opened while another is open is refused as nested. Coroutines that share a unit of work must queue in
     front of its blocks, for instance behind an ``anyio.Lock`` held around each block, and coroutines that must write
-    at once take a unit of work each, which the port then orders by the lock of the book.
+    at once take a unit of work each, which the port then orders by the lock of the book. Blocks of one process that
+    wait for one lock enter in the order they asked for it, so a block that came early is never overtaken by one that
+    came later.
 
     :ivar projects: Project repository of this transaction.
     :ivar sources: Source repository of this transaction.

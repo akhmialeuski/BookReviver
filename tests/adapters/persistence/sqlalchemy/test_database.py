@@ -1,5 +1,7 @@
 """Tests for SqlDatabase: the engine, the sessions and the SQLite transactions the listeners of the engine own."""
 
+import sqlite3
+from contextlib import closing
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -29,6 +31,12 @@ ROLLBACK_STATEMENT: str = 'ROLLBACK'
 TRANSACTION_WORDS: tuple[str, ...] = ('BEGIN', COMMIT_STATEMENT, ROLLBACK_STATEMENT)
 # The title a test gives a stored project
 NEW_TITLE: str = 'Renamed'
+# The pragma reading the journal mode, its answer for a database in the write-ahead log, and that of synchronous=NORMAL
+JOURNAL_MODE_PRAGMA: str = 'PRAGMA journal_mode'
+WAL_MODE: str = 'wal'
+SYNCHRONOUS_NORMAL: int = 1
+# Any statement that reads, which makes a connection hold its snapshot for as long as its transaction is open
+SELECT_SCHEMA: str = 'SELECT count(*) FROM sqlite_master'
 
 
 @pytest.fixture
@@ -94,6 +102,28 @@ class TestSqlDatabase:
 
         assert (timeout, foreign_keys) == (BUSY_TIMEOUT_MS, 1)
 
+    async def test_connections_write_ahead_with_normal_sync_and_the_file_keeps_the_mode(
+        self, fx_database: SqlDatabase
+    ) -> None:
+        """Verify a connection of the engine runs in the WAL with ``synchronous=NORMAL``, and the file keeps the WAL.
+
+        A plain ``sqlite3`` connection opened after the engine is disposed sets no pragma of its own, so it reads the
+        mode the file stores, which a restarted application finds.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        """
+        async with fx_database.engine.connect() as connection:
+            mode: Any = (await connection.execute(text(JOURNAL_MODE_PRAGMA))).scalar_one()
+            synchronous: Any = (await connection.execute(text('PRAGMA synchronous'))).scalar_one()
+        await fx_database.dispose()
+        path = fx_database.engine.url.database
+        assert path is not None
+        with closing(sqlite3.connect(path)) as reopened:
+            (stored_mode,) = reopened.execute(JOURNAL_MODE_PRAGMA).fetchone()
+
+        assert (mode, synchronous, stored_mode) == (WAL_MODE, SYNCHRONOUS_NORMAL, WAL_MODE)
+
 
 class TestSqliteTransactions:
     """Tests for the transactions the listeners of the engine put around a block of the port."""
@@ -156,6 +186,30 @@ class TestSqliteTransactions:
             await store_project(SqlAlchemyUnitOfWork(writing), written)
             assert await SqlAlchemyUnitOfWork(reading).projects.get(written.id) == written
         assert [statement for statement in log.statements if statement.startswith(TRANSACTION_WORDS)] == []
+
+    async def test_block_commits_while_a_reader_sits_in_a_read_transaction(
+        self, fx_database: SqlDatabase, fx_owner_id: AccountId
+    ) -> None:
+        """Verify a block commits at once while another connection holds a read transaction open.
+
+        In the rollback journal a commit waits for every reader to leave the file, so this one would wait for the wait
+        limit and fail. In the write-ahead log the reader keeps its snapshot and the commit appends to the log.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
+        """
+        project = make_project(owner_id=fx_owner_id)
+        path = fx_database.engine.url.database
+        assert path is not None
+        with closing(sqlite3.connect(path, autocommit=True)) as reader:
+            reader.execute('BEGIN')
+            reader.execute(SELECT_SCHEMA).fetchall()
+            async with fx_database.sessions() as session:
+                await store_project(SqlAlchemyUnitOfWork(session), project)
+        async with fx_database.sessions() as session:
+            assert await SqlAlchemyUnitOfWork(session).projects.get(project.id) == project
 
     async def test_block_reads_a_row_another_session_changed_after_the_session_loaded_it(
         self, fx_database: SqlDatabase, fx_owner_id: AccountId
