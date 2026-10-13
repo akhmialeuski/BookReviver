@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, override
 
 import anyio
 
+from bookreviver.adapters.execution.in_process import InProcessStepExecutor
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.plugins.blank import BlankPage
@@ -116,7 +117,7 @@ def make_page_service(
             base_versions=BaseVersions(assets=assets, tiler=tiler, iiif_root=IIIF_ROOT),
             runner=StepRunner(
                 assets=assets,
-                catalogue=FakeCatalogue([SplitNone(), BlankPage()]),
+                executor=InProcessStepExecutor(FakeCatalogue([SplitNone(), BlankPage()])),
                 renditions=renditions or FakeRenditionWriter(),
                 tiler=tiler,
                 iiif_root=IIIF_ROOT,

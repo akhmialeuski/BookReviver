@@ -20,6 +20,7 @@ from tests.helpers.builders import new_account_id
 from tests.helpers.job_queues import QueueAdapter
 from tests.helpers.schema import create_schema
 from tests.helpers.seeding import commit_account
+from tests.helpers.step_executors import StepExecutorAdapter
 from tests.helpers.tracers import TracerAdapter
 
 if TYPE_CHECKING:
@@ -153,6 +154,18 @@ def fx_queue_adapter(request: pytest.FixtureRequest) -> QueueAdapter:
     :rtype: QueueAdapter
     """
     return QueueAdapter(request.param)
+
+
+@pytest.fixture(params=list(StepExecutorAdapter), ids=str)
+def fx_step_executor_adapter(request: pytest.FixtureRequest) -> StepExecutorAdapter:
+    """Return each adapter of the StepExecutor port in turn.
+
+    :param request: Request of the parametrized fixture, whose ``param`` is the adapter.
+    :type request: pytest.FixtureRequest
+    :returns: The adapter under test, built by ``build_executor_under_test``.
+    :rtype: StepExecutorAdapter
+    """
+    return StepExecutorAdapter(request.param)
 
 
 @pytest.fixture(params=list(TracerAdapter), ids=str)

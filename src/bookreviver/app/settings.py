@@ -1,6 +1,7 @@
 """Settings read once from ``BOOKREVIVER_*`` environment variables or a ``.env`` file."""
 
 import enum
+import os
 from functools import cached_property
 from pathlib import Path
 from typing import Self
@@ -15,6 +16,15 @@ TRACING_NEEDS_PATH: str = 'Tracing is enabled, so tracing.export_path must name 
 TRACING_PATH_WITHOUT_TRACING: str = (
     'tracing.export_path is set while tracing is disabled. Enable tracing, or remove the path.'
 )
+STEP_PROCESSES_NEED_PREVIEW_SHARE: str = (
+    'processing.preview_step_processes must be smaller than processing.step_processes, '
+    'so that full runs keep at least one process.'
+)
+
+# The share of the cores the processes of the steps take by default, two thirds, and the fewest they are
+STEP_PROCESSES_CORES_NUMERATOR: int = 2
+STEP_PROCESSES_CORES_DENOMINATOR: int = 3
+MIN_STEP_PROCESSES: int = 2
 
 
 class PersistenceBackend(enum.StrEnum):
@@ -106,6 +116,16 @@ class ImagingSettings(BaseModel):
     djvulibre_timeout_s: PositiveInt = 120
 
 
+def default_step_processes() -> int:
+    """Count the processes the steps of processors run in when no setting names a number.
+
+    :returns: Two thirds of the cores of the machine, and at least two.
+    :rtype: int
+    """
+    cores = os.cpu_count() or MIN_STEP_PROCESSES
+    return max(MIN_STEP_PROCESSES, cores * STEP_PROCESSES_CORES_NUMERATOR // STEP_PROCESSES_CORES_DENOMINATOR)
+
+
 class ProcessingSettings(BaseModel):
     """Processing of pages by plugins.
 
@@ -113,11 +133,32 @@ class ProcessingSettings(BaseModel):
     :ivar preview_retention_hours: Hours a preview is kept before a collection may delete it.
     :ivar models_dir: Directory of the files of neural models, into which a processor downloads a model the first time
                       it runs.
+    :ivar step_processes: Most processes the steps of processors run in at the same time, two thirds of the cores by
+                          default and at least two, so the work of OpenCV and Pillow never holds the interpreter of
+                          the API process.
+    :ivar preview_step_processes: Processes of ``step_processes`` that run previews only, so a preview never waits
+                                  behind the full runs of other books. The full runs get the rest, which is why it
+                                  must be smaller than ``step_processes``.
     """
 
     worker_pools: frozenset[WorkerPool] = frozenset(WorkerPool)
     preview_retention_hours: PositiveInt = 24
     models_dir: Path = Path('data/models')
+    step_processes: PositiveInt = Field(default_factory=default_step_processes)
+    preview_step_processes: PositiveInt = 1
+
+    # A literal mode: the pydantic plugin of mypy reads the mode only from a literal, even a Final constant fails it
+    @model_validator(mode='after')
+    def _require_slots_for_full_runs(self) -> Self:
+        """Check that the processes of previews leave some for the full runs.
+
+        :returns: The settings, once checked.
+        :rtype: Self
+        :raises ValueError: If the previews would take every process.
+        """
+        if self.preview_step_processes >= self.step_processes:
+            raise ValueError(STEP_PROCESSES_NEED_PREVIEW_SHARE)
+        return self
 
 
 class TracingSettings(BaseModel):

@@ -1,7 +1,8 @@
 """Provider of the processing feature: the catalogue of processors and the services that run recipes and keep edits.
 
-The catalogue and the runner of processors keep no per-request state, so one of each serves the whole application, and
-the catalogue loads the plugins of the pools the settings name when it is built. Everything that works through a
+The catalogue, the executor and the runner of processors keep no per-request state, so one of each serves the whole
+application. The catalogue loads the plugins of the pools the settings name when it is built, from the same source
+that each process of the executor builds its own catalogue from. Everything that works through a
 unit of work is built per request or job: the parts the use cases share, the service of the requests, the jobs of the
 workers and the services of the manual edits, of the settings of pages, of carrying them over, of what a run takes
 away and of the resets of steps. The IIIF root comes from the mount point of the IIIF routes, which only ``api``
@@ -12,13 +13,14 @@ from datetime import timedelta
 
 from dishka import Provider, Scope, provide
 
+from bookreviver.adapters.execution.process_pool import ProcessPoolStepExecutor
 from bookreviver.api.routing import IIIF_ROOT
-from bookreviver.app.plugins import EntryPointCatalog
+from bookreviver.app.plugins import EntryPointCatalogSource
 from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import RenditionWriter, Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import UnitOfWork
-from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings
+from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings, StepExecutor
 from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
 from bookreviver.ports.storage import AssetStore
 from bookreviver.ports.tracing import Tracer
@@ -43,18 +45,46 @@ class ProcessingProvider(Provider):
     """Builds the processing adapters once per application, and the processing services per request or job."""
 
     @provide(scope=Scope.APP)
-    def processor_catalog(self, settings: Settings) -> ProcessorCatalog:
-        """Load the processors of the pools this process serves from the entry points.
+    def catalog_source(self, settings: Settings) -> EntryPointCatalogSource:
+        """Name the processors to load, in a value that each process of the steps builds the same catalogue from.
 
         :param settings: Application settings, of which ``processing.worker_pools`` and ``processing.models_dir`` are
                          read.
         :type settings: Settings
+        :returns: The source of the catalogue.
+        :rtype: EntryPointCatalogSource
+        """
+        return EntryPointCatalogSource(
+            pools=settings.processing.worker_pools,
+            settings=ProcessorSettings(models_dir=settings.processing.models_dir.resolve()),
+        )
+
+    @provide(scope=Scope.APP)
+    def processor_catalog(self, source: EntryPointCatalogSource) -> ProcessorCatalog:
+        """Load the processors of the pools this process serves from the entry points.
+
+        :param source: The source every catalogue of the application is built from.
+        :type source: EntryPointCatalogSource
         :returns: The catalogue of processors.
         :rtype: ProcessorCatalog
         """
-        return EntryPointCatalog(
-            pools=settings.processing.worker_pools,
-            settings=ProcessorSettings(models_dir=settings.processing.models_dir.resolve()),
+        return source()
+
+    @provide(scope=Scope.APP)
+    def step_executor(self, source: EntryPointCatalogSource, settings: Settings) -> StepExecutor:
+        """Build the executor that runs the steps of processors in a pool of processes.
+
+        :param source: The source each pool process builds its own catalogue from.
+        :type source: EntryPointCatalogSource
+        :param settings: Application settings, of which ``processing.step_processes`` and
+                         ``processing.preview_step_processes`` are read.
+        :type settings: Settings
+        :returns: The executor, whose previews have processes of their own and whose full runs have the rest.
+        :rtype: StepExecutor
+        """
+        previews = settings.processing.preview_step_processes
+        return ProcessPoolStepExecutor(
+            source=source, run_slots=settings.processing.step_processes - previews, preview_slots=previews
         )
 
     @provide(scope=Scope.APP)
@@ -112,14 +142,14 @@ class ProcessingProvider(Provider):
 
     @provide(scope=Scope.APP)
     def step_runner(
-        self, assets: AssetStore, catalogue: ProcessorCatalog, renditions: RenditionWriter, tiler: Tiler
+        self, assets: AssetStore, executor: StepExecutor, renditions: RenditionWriter, tiler: Tiler
     ) -> StepRunner:
         """Build the runner of processors over the asset store and the imaging ports.
 
         :param assets: Asset store of the application.
         :type assets: AssetStore
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param executor: Executor that runs the steps of the processors.
+        :type executor: StepExecutor
         :param renditions: Writer of the files of a page version.
         :type renditions: RenditionWriter
         :param tiler: Tiler of the application.
@@ -127,7 +157,7 @@ class ProcessingProvider(Provider):
         :returns: The runner.
         :rtype: StepRunner
         """
-        return StepRunner(assets=assets, catalogue=catalogue, renditions=renditions, tiler=tiler, iiif_root=IIIF_ROOT)
+        return StepRunner(assets=assets, executor=executor, renditions=renditions, tiler=tiler, iiif_root=IIIF_ROOT)
 
     @provide(scope=Scope.REQUEST)
     def processing_parts(

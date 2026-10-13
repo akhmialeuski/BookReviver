@@ -6,6 +6,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.adapters.execution.in_process import InProcessStepExecutor
 from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.domain.enums import (
     ColorMode,
@@ -78,7 +79,7 @@ class Rig:
         self.fake = FakeProcessor()
         self.runner = StepRunner(
             assets=assets,
-            catalogue=FakeCatalogue([SplitNone(), self.fake]),
+            executor=InProcessStepExecutor(FakeCatalogue([SplitNone(), self.fake])),
             renditions=self.writer,
             tiler=self.tiler,
             iiif_root=IIIF_ROOT,

@@ -15,6 +15,7 @@ import anyio
 from attrs import field, frozen
 
 from bookreviver.adapters.clock.system import FixedClock
+from bookreviver.adapters.execution.in_process import InProcessStepExecutor
 from bookreviver.adapters.imaging import (
     DjvuFormat,
     DjvuLibreTools,
@@ -141,6 +142,8 @@ class TickingClock(FixedClock):
 
     Sources are listed in the order of their import times, and a stopped clock would leave the order to their random
     identifiers.
+
+    :ivar moment: The time the clock shows on its next reading.
     """
 
     @override
@@ -454,7 +457,7 @@ class ImportRig:
         """
         return StepRunner(
             assets=self.assets,
-            catalogue=FakeCatalogue([SplitNone()]),
+            executor=InProcessStepExecutor(FakeCatalogue([SplitNone()])),
             renditions=VipsRenditionWriter(
                 preview_long_side_px=ImagingSettings().preview_long_side_px,
                 thumbnail_long_side_px=ImagingSettings().thumbnail_long_side_px,

@@ -3,8 +3,9 @@
 A processor is one step of a recipe, such as deskewing a page. It is a plugin: the built-in ones live in ``plugins/``
 and are registered through the entry point group ``bookreviver.processors`` that an external package also uses, so the
 application cannot tell them apart. The processor itself is synchronous and touches only the local paths of its
-``StepInput``, since the libraries it uses, OpenCV and libvips, block. The service runs it in a worker thread, hands it
-the paths the asset store gives, and stores what it writes.
+``StepInput``, since the libraries it uses, OpenCV and libvips, block. The step executor port decides where it runs,
+in a thread or in a pool of processes, so the work stays off the event loop of the application. The service hands the
+executor the paths the asset store gives, and stores what the processor writes.
 
 A processor writes its image without loss, in a PNG, or leaves an image the service may read as it is, such as the file
 the page was already stored in. The format a version stores is chosen later by the service from the project's image
@@ -24,7 +25,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.entities import PageEdit
-    from bookreviver.domain.enums import ColorMode, PageSide, ReviewReason
+    from bookreviver.domain.enums import ColorMode, PageSide, ReviewReason, VersionScale
     from bookreviver.domain.values import MetadataMap, ProcessorSpec
 
 
@@ -176,4 +177,24 @@ class ProcessorCatalog(ABC):
 
         :returns: The specs of all the processors of the catalogue.
         :rtype: Sequence[ProcessorSpec]
+        """
+
+
+class StepExecutor(ABC):
+    """Runs one step of a processor of the catalogue in a place the application chooses, off the event loop."""
+
+    @abstractmethod
+    async def run(self, *, processor_key: str, scale: VersionScale, step_input: StepInput) -> StepResult:
+        """Run a processor on an input: ``Processor.run`` for a full run and ``Processor.preview`` for a preview.
+
+        :param processor_key: Key of the processor, such as ``geometry.deskew``.
+        :type processor_key: str
+        :param scale: Whether the step runs on the full image or on the preview.
+        :type scale: VersionScale
+        :param step_input: What the step reads, with the directory it writes into.
+        :type step_input: StepInput
+        :returns: The outputs of the step.
+        :rtype: StepResult
+        :raises NotFoundError: If no processor has this key.
+        :raises DomainError: If the processor cannot run on this input, with the type and the message it raised.
         """
