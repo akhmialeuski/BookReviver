@@ -10,10 +10,12 @@ is a small value, and a call carries only the key of the processor, the scale an
 parameters. The source is the key of a cache, so it must be hashable, and it is pickled for every call, so it must be
 picklable; a frozen ``attrs`` class of plain values is both.
 
-``anyio`` keeps the processes it started and hands a call to an idle one, so the catalogue of a process is built on its
-first call and reused after it. A process that stays idle for 300 seconds is stopped, and the next call starts a new
-one that builds the catalogue again. The count of processes at work is bounded by capacity limiters, one for the full
-runs and one for the previews, so a preview waits behind no full run of another book.
+``anyio`` keeps the processes it started and hands a call to the idle one used last, so the catalogue of a process is
+built on its first call and reused after it. When a call takes an idle process, the other processes idle for 300
+seconds or more are stopped, while the one it takes runs however long it was idle, so a pause alone costs no new start.
+
+The count of processes at work is bounded by capacity limiters, one for the full runs and one for the previews, so a
+preview waits behind no full run of another book.
 
 A pool process imports the main module of the application again, as ``multiprocessing`` does with the spawn method, so
 that module must run the application only under ``if __name__ == '__main__'``. The FastAPI command line does.
