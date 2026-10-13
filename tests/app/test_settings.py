@@ -26,7 +26,7 @@ TRUE_VALUE: str = 'true'
 STEP_PROCESSES_VARIABLE: str = 'BOOKREVIVER_PROCESSING__STEP_PROCESSES'
 PREVIEW_STEP_PROCESSES_VARIABLE: str = 'BOOKREVIVER_PROCESSING__PREVIEW_STEP_PROCESSES'
 # Where the default number of processes reads the cores, which a test replaces
-CPU_COUNT_TARGET: str = 'bookreviver.app.settings.os.cpu_count'
+CPU_COUNT_TARGET: str = 'bookreviver.app.settings.os.process_cpu_count'
 
 
 class TestTracingSettings:
@@ -100,11 +100,11 @@ class TestProcessingSettings:
     def test_the_default_is_two_thirds_of_the_cores_and_at_least_two(
         self, monkeypatch: pytest.MonkeyPatch, cores: int | None, expected: int
     ) -> None:
-        """Verify the number of processes follows the cores of the machine, rounded down, with two as the floor.
+        """Verify the number of processes follows the cores the process may use, rounded down, with two as the floor.
 
-        :param monkeypatch: Fixture that restores ``os.cpu_count`` after the test.
+        :param monkeypatch: Fixture that restores ``os.process_cpu_count`` after the test.
         :type monkeypatch: pytest.MonkeyPatch
-        :param cores: What ``os.cpu_count`` reports.
+        :param cores: What ``os.process_cpu_count`` reports.
         :type cores: int | None
         :param expected: The number of processes the default names.
         :type expected: int

@@ -119,10 +119,13 @@ class ImagingSettings(BaseModel):
 def default_step_processes() -> int:
     """Count the processes the steps of processors run in when no setting names a number.
 
-    :returns: Two thirds of the cores of the machine, and at least two.
+    The cores are those this process may run on, so a CPU affinity set by ``taskset`` or a container limits the pool.
+    ``os.cpu_count`` would count every core of the machine instead.
+
+    :returns: Two thirds of the cores this process may use, and at least two.
     :rtype: int
     """
-    cores = os.cpu_count() or MIN_STEP_PROCESSES
+    cores = os.process_cpu_count() or MIN_STEP_PROCESSES
     return max(MIN_STEP_PROCESSES, cores * STEP_PROCESSES_CORES_NUMERATOR // STEP_PROCESSES_CORES_DENOMINATOR)
 
 
