@@ -7,6 +7,7 @@ only then is the first let go. A block refused the lock ends its span as not beg
 or SQLite refused it.
 """
 
+from enum import StrEnum
 from time import perf_counter
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,14 @@ pytestmark = pytest.mark.anyio
 
 MILLISECONDS_PER_SECOND: int = 1_000
 FAILED_BLOCK: str = 'The block failed after it wrote a page.'
+REFUSER_ARG: str = 'refuser'
+
+
+class Refuser(StrEnum):
+    """What refuses a block the write lock, named as the test cases are."""
+
+    SQLITE = 'refused-by-sqlite-busy-timeout'
+    QUEUE = 'refused-by-the-queue-of-the-process'
 
 
 def milliseconds(span: RecordingSpan, key: SpanAttribute) -> float:
@@ -205,19 +214,22 @@ class TestWaitForTheLock:
         expect(milliseconds(held, SpanAttribute.HOLD_MS) >= still_held_ms)
         assert_expectations()
 
-    async def test_block_refused_the_lock_ends_its_span_as_not_begun_with_its_wait(
+    @pytest.mark.parametrize(REFUSER_ARG, list(Refuser), ids=list(Refuser))
+    async def test_refused_block_ends_its_span_as_not_begun_with_its_wait(
         self,
         fx_traced_database: SqlDatabase,
         fx_impatient_database: SqlDatabase,
         fx_project: Project,
         fx_tracer: AskingTracer,
+        refuser: Refuser,
     ) -> None:
-        """Verify a block that SQLite refuses the lock ends its span with the time it waited, and held nothing.
+        """Verify a block refused the lock ends its span with the time it waited, and held nothing.
 
-        The two blocks belong to two databases over one file, each with its own queue, as two processes would, so the
-        second meets the first at the busy timeout of SQLite.
+        When the holder belongs to the other database over the same file, each database has its own queue, as two
+        processes would, so the asker meets the holder at the busy timeout of SQLite. When both blocks belong to the
+        impatient database, the asker never reaches SQLite: the queue of the process refuses it.
 
-        :param fx_traced_database: Database whose block holds the lock.
+        :param fx_traced_database: Database over the file, whose blocks wait long.
         :type fx_traced_database: SqlDatabase
         :param fx_impatient_database: Database over the same file, whose blocks give up after a few milliseconds.
         :type fx_impatient_database: SqlDatabase
@@ -225,38 +237,12 @@ class TestWaitForTheLock:
         :type fx_project: Project
         :param fx_tracer: Tracer of the test.
         :type fx_tracer: AskingTracer
+        :param refuser: What refuses the asking block, which decides the database of the holder.
+        :type refuser: Refuser
         """
+        holding = fx_traced_database if refuser is Refuser.SQLITE else fx_impatient_database
         async with (
-            fx_traced_database.sessions() as holder,
-            fx_impatient_database.sessions() as asker,
-            SqlAlchemyUnitOfWork(holder).change_book(fx_project.id),
-        ):
-            with pytest.raises(BookBusyError):
-                async with SqlAlchemyUnitOfWork(asker).change_book(fx_project.id):
-                    pass
-        refused, held = fx_tracer.named(SpanName.WRITE_BLOCK)
-        expect(refused.attributes[SpanAttribute.BLOCK_OUTCOME] is BlockOutcome.NOT_BEGUN)
-        expect(milliseconds(refused, SpanAttribute.WAIT_MS) > 0)
-        expect(SpanAttribute.HOLD_MS not in refused.attributes)
-        expect(held.attributes[SpanAttribute.BLOCK_OUTCOME] is BlockOutcome.COMMITTED)
-        assert_expectations()
-
-    async def test_block_refused_its_turn_ends_its_span_as_not_begun_with_its_wait(
-        self, fx_impatient_database: SqlDatabase, fx_project: Project, fx_tracer: AskingTracer
-    ) -> None:
-        """Verify a block whose turn in the queue does not come in time ends its span with its wait, and held nothing.
-
-        Both blocks belong to one database, so the second never reaches SQLite: the queue of the process refuses it.
-
-        :param fx_impatient_database: Database whose blocks give up for their turn after a few milliseconds.
-        :type fx_impatient_database: SqlDatabase
-        :param fx_project: Committed project of the database.
-        :type fx_project: Project
-        :param fx_tracer: Tracer of the test.
-        :type fx_tracer: AskingTracer
-        """
-        async with (
-            fx_impatient_database.sessions() as holder,
+            holding.sessions() as holder,
             fx_impatient_database.sessions() as asker,
             SqlAlchemyUnitOfWork(holder).change_book(fx_project.id),
         ):

@@ -20,18 +20,16 @@ transaction isolation:
 - Isolation: a unit of work reads and writes a private copy of the tables, and a block that ends normally merges only
   the rows it added, replaced or removed, so two units of work touching different rows do not overwrite each other.
 - Locks: the database holds one single-holder semaphore for each book and one for the blocks outside a book. A block
-  of the port takes its semaphore under the wait limit, and takes a fresh copy of the tables once it holds it, so it
-  reads what the previous change of the book committed. Nothing writes outside a block, which the repositories enforce.
-  A semaphore and not an ``anyio.Lock``, because a lock belongs to the task that took it and refuses that task a
-  second time at once, while the holder here is the unit of work, as a database holds its lock for a connection: a
-  second unit of work waits for the wait limit whichever task opens it.
+  of the port takes its semaphore in its turn under the wait limit, as :mod:`bookreviver.adapters.persistence.turns`
+  describes, and takes a fresh copy of the tables once it holds it, so it reads what the previous change of the book
+  committed. Nothing writes outside a block, which the repositories enforce.
 
 Each repository states its table's keys in two hooks of the generic repository, ``_check`` before a row is stored and
 ``_cascade`` after one is removed, so the generic operations stay in one place.
 """
 
 from collections import Counter
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 from functools import partial
 from operator import attrgetter
 from typing import TYPE_CHECKING, override
@@ -39,6 +37,7 @@ from typing import TYPE_CHECKING, override
 import anyio
 from attrs import define, evolve, field, fields
 
+from bookreviver.adapters.persistence.turns import hold_in_turn
 from bookreviver.domain.entities import (
     BookPlace,
     Job,
@@ -68,7 +67,7 @@ from bookreviver.domain.enums import (
     VersionScale,
     VersionState,
 )
-from bookreviver.domain.errors import BookBusyError, ConflictError, DomainError, NotFoundError
+from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.ids import (
     JobId,
     PageId,
@@ -2198,12 +2197,7 @@ class InMemoryUnitOfWork(UnitOfWork):
         """
         if self._change.is_open:
             raise NestedChangeError
-        async with AsyncExitStack() as held:
-            try:
-                with anyio.fail_after(self._database.wait_seconds):
-                    await held.enter_async_context(lock)
-            except TimeoutError as error:
-                raise BookBusyError from error
+        async with hold_in_turn(lock, wait_seconds=self._database.wait_seconds):
             self._begin()
             self._change.is_open = True
             try:

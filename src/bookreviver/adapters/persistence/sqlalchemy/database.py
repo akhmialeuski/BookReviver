@@ -62,7 +62,7 @@ The schema is created and changed only by the revisions in ``migrations/``, appl
 costs one read of the version table and needs no event loop of Alembic's own.
 """
 
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING
@@ -77,8 +77,8 @@ from attrs import define, frozen
 from sqlalchemy import event
 from sqlalchemy.engine import make_url
 
+from bookreviver.adapters.persistence.turns import hold_in_turn
 from bookreviver.domain.enums import BlockOutcome, SpanAttribute, SpanName
-from bookreviver.domain.errors import BookBusyError
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 
 if TYPE_CHECKING:
@@ -94,7 +94,7 @@ if TYPE_CHECKING:
 
 SQLITE_DIALECT: str = 'sqlite'
 # The execution option a block of the persistence port sets when it procures its connection, which makes a connection
-# to SQLite begin with BEGIN IMMEDIATE. Its value is the WriteRequest the queue gave the block
+# to SQLite begin with BEGIN IMMEDIATE. Its value is the WriteBlock the queue gave the block
 CHANGE_BLOCK_OPTION: str = 'bookreviver_change_block'
 # The key of Session.info under which a session of SQLite finds the WriteQueue of its database
 WRITE_QUEUE_INFO: str = 'bookreviver_write_queue'
@@ -129,43 +129,27 @@ class SchemaRevisions:
         return tuple(revision for revision in self.database if revision not in self.shipped)
 
 
-@frozen
-class WriteBlock:
-    """A block that holds the write lock of a connection, between the end of its wait and its commit or rollback.
-
-    :ivar span: The ``write.block`` span, started before the lock was asked for.
-    :ivar locked_at: Reading of the performance counter when the block resumed after ``BEGIN IMMEDIATE``, which is
-                     when the holding is counted from, and which lags the lock actually taken by the delay of the event
-                     loop.
-    """
-
-    span: StartedSpan
-    locked_at: float
-
-
 @define
-class WriteRequest:
-    """A block that asked for the write lock, from the moment it joined the queue until ``BEGIN IMMEDIATE`` took it.
+class WriteBlock:
+    """A block of the port, from the moment it joined the write queue until its commit or rollback.
 
     :ivar span: The ``write.block`` span, started when the block joined the queue.
     :ivar asked_at: Reading of the performance counter when the block joined the queue, which the wait is counted from.
-    :ivar begun: Whether ``BEGIN IMMEDIATE`` took the lock, after which the listeners of the engine end the span.
+    :ivar locked_at: Reading of the performance counter when the block resumed after ``BEGIN IMMEDIATE``, which is
+                     when the holding is counted from and which lags the lock actually taken by the delay of the event
+                     loop, or None while the block has not taken the lock.
     """
 
     span: StartedSpan
     asked_at: float
-    begun: bool = False
+    locked_at: float | None = None
 
 
 class WriteQueue:
     """The turns of the write blocks of one process at the write lock of SQLite, given in the order they were asked.
 
-    A single-holder ``anyio.Semaphore`` keeps the order, since its waiters are woken first in, first out. It is a
-    semaphore and not an ``anyio.Lock`` for the reason the in-memory adapter gives: the holder is the unit of work, so a
-    second block opened by the same task waits for the wait limit, as it would at the busy timeout of SQLite, instead of
-    being refused at once.
-
-    :ivar wait_seconds: How long a block waits for its turn before it gives up with ``BookBusyError``.
+    A second block opened by the same task waits for the wait limit, as it would at the busy timeout of SQLite, for the
+    reason :mod:`bookreviver.adapters.persistence.turns` gives.
     """
 
     def __init__(self, *, tracer: Tracer, wait_seconds: float) -> None:
@@ -173,15 +157,15 @@ class WriteQueue:
 
         :param tracer: Tracer the ``write.block`` spans are started with.
         :type tracer: Tracer
-        :param wait_seconds: How long a block waits for its turn.
+        :param wait_seconds: How long a block waits for its turn before it gives up with ``BookBusyError``.
         :type wait_seconds: float
         """
         self._tracer = tracer
-        self.wait_seconds = wait_seconds
+        self._wait_seconds = wait_seconds
         self._turn = anyio.Semaphore(1)
 
     @asynccontextmanager
-    async def turn(self, kind: BlockKind, book: ProjectId | None) -> AsyncIterator[WriteRequest]:
+    async def turn(self, kind: BlockKind, book: ProjectId | None) -> AsyncIterator[WriteBlock]:
         """Wait for the turn of a block and hold it until the block ends.
 
         The span of the block starts here, before the wait. When the block ends without ``BEGIN IMMEDIATE`` having
@@ -192,29 +176,25 @@ class WriteQueue:
         :type kind: BlockKind
         :param book: Project the block holds, or None for a block outside the content of a book.
         :type book: ProjectId | None
-        :returns: Iterator yielding the request of the block once its turn has come, which the block hands to its
-                  connection through :data:`CHANGE_BLOCK_OPTION`.
-        :rtype: AsyncIterator[WriteRequest]
+        :returns: Iterator yielding the block once its turn has come, which the block hands to its connection through
+                  :data:`CHANGE_BLOCK_OPTION`.
+        :rtype: AsyncIterator[WriteBlock]
         :raises BookBusyError: If the turn did not come within the wait limit.
         """
         attributes: dict[SpanAttribute, str] = {SpanAttribute.BLOCK_KIND: kind}
         if book is not None:
             attributes[SpanAttribute.BOOK] = str(book)
-        request = WriteRequest(span=self._tracer.start(SpanName.WRITE_BLOCK, attributes), asked_at=perf_counter())
+        block = WriteBlock(span=self._tracer.start(SpanName.WRITE_BLOCK, attributes), asked_at=perf_counter())
         try:
-            async with AsyncExitStack() as held:
-                try:
-                    with anyio.fail_after(self.wait_seconds):
-                        await held.enter_async_context(self._turn)
-                except TimeoutError as error:
-                    raise BookBusyError from error
-                yield request
+            async with hold_in_turn(self._turn, wait_seconds=self._wait_seconds):
+                yield block
         finally:
-            if not request.begun:
-                waited_ms = (perf_counter() - request.asked_at) * MILLISECONDS_PER_SECOND
-                request.span.set_attribute(SpanAttribute.WAIT_MS, waited_ms)
-                request.span.set_attribute(SpanAttribute.BLOCK_OUTCOME, BlockOutcome.NOT_BEGUN)
-                request.span.end()
+            if block.locked_at is None:
+                block.span.set_attribute(
+                    SpanAttribute.WAIT_MS, (perf_counter() - block.asked_at) * MILLISECONDS_PER_SECOND
+                )
+                block.span.set_attribute(SpanAttribute.BLOCK_OUTCOME, BlockOutcome.NOT_BEGUN)
+                block.span.end()
 
 
 class SqlDatabase:
@@ -292,13 +272,12 @@ class SqlDatabase:
         :param connection: Connection that begins a transaction.
         :type connection: Connection
         """
-        if not isinstance(request := connection.get_execution_options().get(CHANGE_BLOCK_OPTION), WriteRequest):
+        if not isinstance(block := connection.get_execution_options().get(CHANGE_BLOCK_OPTION), WriteBlock):
             return
         connection.exec_driver_sql('BEGIN IMMEDIATE')
-        locked_at = perf_counter()
-        request.span.set_attribute(SpanAttribute.WAIT_MS, (locked_at - request.asked_at) * MILLISECONDS_PER_SECOND)
-        request.begun = True
-        connection.info[WRITE_BLOCK_INFO] = WriteBlock(span=request.span, locked_at=locked_at)
+        block.locked_at = perf_counter()
+        block.span.set_attribute(SpanAttribute.WAIT_MS, (block.locked_at - block.asked_at) * MILLISECONDS_PER_SECOND)
+        connection.info[WRITE_BLOCK_INFO] = block
 
     def _commit_sqlite(self, connection: Connection) -> None:
         """End the transaction with COMMIT, which the driver's own commit does not do in autocommit mode.
@@ -344,7 +323,8 @@ class SqlDatabase:
                 connection.exec_driver_sql(statement)
                 ended_as = outcome
         finally:
-            if isinstance(block, WriteBlock):
+            # Only a block that took the lock is kept in connection.info, so its locked_at is always read
+            if isinstance(block, WriteBlock) and block.locked_at is not None:
                 span = block.span
                 span.set_attribute(SpanAttribute.HOLD_MS, (ending_at - block.locked_at) * MILLISECONDS_PER_SECOND)
                 # A commit that raised, on a full disk for instance, is timed as well
