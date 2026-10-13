@@ -2,13 +2,16 @@
 
 The catalogue, the executor and the runner of processors keep no per-request state, so one of each serves the whole
 application. The catalogue loads the plugins of the pools the settings name when it is built, from the same source
-that each process of the executor builds its own catalogue from. Everything that works through a
-unit of work is built per request or job: the parts the use cases share, the service of the requests, the jobs of the
-workers and the services of the manual edits, of the settings of pages, of carrying them over, of what a run takes
-away and of the resets of steps. The IIIF root comes from the mount point of the IIIF routes, which only ``api``
-knows, as it does for the import.
+that each process of the executor builds its own catalogue from. The executor starts its processes when the container
+first builds it, which the lifespan does at start-up, and stops them when the container closes. Everything that works
+through a unit of work is built per request or job: the parts the use cases share, the service of the requests, the
+jobs of the workers and the services of the manual edits, of the settings of pages, of carrying them over, of what a
+run takes away and of the resets of steps. The IIIF root comes from the mount point of the IIIF routes, which only
+``api`` knows, as it does for the import.
 """
 
+from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack
 from datetime import timedelta
 
 from dishka import Provider, Scope, provide
@@ -71,21 +74,29 @@ class ProcessingProvider(Provider):
         return source()
 
     @provide(scope=Scope.APP)
-    def step_executor(self, source: EntryPointCatalogSource, settings: Settings) -> StepExecutor:
-        """Build the executor that runs the steps of processors in a pool of processes.
+    async def step_executor(self, source: EntryPointCatalogSource, settings: Settings) -> AsyncIterator[StepExecutor]:
+        """Start the pool of processes that runs the steps of processors, and stop it with the application.
 
         :param source: The source each pool process builds its own catalogue from.
         :type source: EntryPointCatalogSource
         :param settings: Application settings, of which ``processing.step_processes`` and
                          ``processing.preview_step_processes`` are read.
         :type settings: Settings
-        :returns: The executor, whose previews have processes of their own and whose full runs have the rest.
-        :rtype: StepExecutor
+        :returns: Iterator yielding the started executor, whose previews have processes of their own and whose full
+                  runs have the rest, and stopping its processes afterwards.
+        :rtype: AsyncIterator[StepExecutor]
         """
         previews = settings.processing.preview_step_processes
-        return ProcessPoolStepExecutor(
-            source=source, run_slots=settings.processing.step_processes - previews, preview_slots=previews
-        )
+        # An exit stack rather than `async with` around the yield: dishka drives this generator (ASYNC119)
+        stack = AsyncExitStack()
+        try:
+            yield await stack.enter_async_context(
+                ProcessPoolStepExecutor(
+                    source=source, run_slots=settings.processing.step_processes - previews, preview_slots=previews
+                )
+            )
+        finally:
+            await stack.aclose()
 
     @provide(scope=Scope.APP)
     def recipe_order(self, catalogue: ProcessorCatalog) -> RecipeOrder:

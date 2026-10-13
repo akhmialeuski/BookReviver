@@ -162,7 +162,7 @@ def fx_step_executor_adapter(request: pytest.FixtureRequest) -> StepExecutorAdap
 
     :param request: Request of the parametrized fixture, whose ``param`` is the adapter.
     :type request: pytest.FixtureRequest
-    :returns: The adapter under test, built by ``build_executor_under_test``.
+    :returns: The adapter under test, set up by ``open_executor_under_test``.
     :rtype: StepExecutorAdapter
     """
     return StepExecutorAdapter(request.param)

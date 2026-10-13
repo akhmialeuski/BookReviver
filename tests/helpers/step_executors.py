@@ -2,20 +2,22 @@
 
 The processors need no image library and are module-level classes, so a pool process imports them by the path of this
 module, as it must for the source of its catalogue. ``ProbeProcessor`` reports the method that ran and the process it
-ran in, ``FailingProcessor`` raises a domain error with a plain message, and ``WaitingProcessor`` holds its run until a
-file exists, which lets a test keep a slot of the pool busy as long as it needs.
+ran in, ``FailingProcessor`` raises a domain error with a plain message, ``WaitingProcessor`` holds its run until a
+file exists, which lets a test keep a slot of the pool busy as long as it needs, and ``ThreadsProcessor`` reports the
+thread limits its process was started with.
 """
 
 import enum
 import os
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, override
 
 from attrs import frozen
 
 from bookreviver.adapters.execution.in_process import InProcessStepExecutor
-from bookreviver.adapters.execution.process_pool import ProcessPoolStepExecutor
+from bookreviver.adapters.execution.process_pool import ProcessPoolStepExecutor, ThreadVariable
 from bookreviver.domain.enums import ColorMode, Stage
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
 from bookreviver.domain.values import ProcessorSpec
@@ -23,6 +25,8 @@ from bookreviver.ports.processing import Processor, StepInput, StepOutput, StepR
 from tests.helpers.fake_processing import FakeCatalogue
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.processing import StepExecutor
 
@@ -30,6 +34,7 @@ if TYPE_CHECKING:
 PROBE_KEY: str = 'geometry.probe'
 FAILING_KEY: str = 'geometry.failing'
 WAITING_KEY: str = 'geometry.waiting'
+THREADS_KEY: str = 'geometry.threads'
 
 # What a probe writes into the data of its output
 METHOD_KEY: str = 'method'
@@ -147,17 +152,35 @@ class WaitingProcessor(ProbeProcessor):
         return self._reported(RUN_METHOD)
 
 
+class ThreadsProcessor(ProbeProcessor):
+    """A processor whose run reports the value of every thread limit in the environment of its process."""
+
+    spec = ProcessorSpec(key=THREADS_KEY, version='1', title='Threads', stage=Stage.GEOMETRY)
+
+    @override
+    def run(self, step_input: StepInput) -> StepResult:
+        """Report the thread limits.
+
+        :param step_input: What the step reads.
+        :type step_input: StepInput
+        :returns: One output whose data maps the name of each ``ThreadVariable`` to its value, or to None when unset.
+        :rtype: StepResult
+        """
+        data = {variable.value: os.environ.get(variable.value) for variable in ThreadVariable}
+        return StepResult(outputs=[StepOutput(color_mode=ColorMode.GRAY, data=data)])
+
+
 @frozen
 class ProbeCatalogueSource:
-    """Builds the catalogue of the three processors above; a value, so it is hashable and travels to a pool process."""
+    """Builds the catalogue of the four processors above; a value, so it travels to a pool process."""
 
     def __call__(self) -> FakeCatalogue:
         """Build the catalogue.
 
-        :returns: A catalogue of a probe, a failing processor and a waiting one.
+        :returns: A catalogue of a probe, a failing processor, a waiting one and one that reports the thread limits.
         :rtype: FakeCatalogue
         """
-        return FakeCatalogue([ProbeProcessor(), FailingProcessor(), WaitingProcessor()])
+        return FakeCatalogue([ProbeProcessor(), FailingProcessor(), WaitingProcessor(), ThreadsProcessor()])
 
 
 def make_step_input(workdir: Path, **params: object) -> StepInput:
@@ -173,23 +196,25 @@ def make_step_input(workdir: Path, **params: object) -> StepInput:
     return StepInput(image=None, params=params, workdir=workdir)
 
 
-def build_executor_under_test(
+@asynccontextmanager
+async def open_executor_under_test(
     adapter: StepExecutorAdapter, *, run_slots: int = 1, preview_slots: int = 1
-) -> StepExecutor:
-    """Build an adapter over the catalogue of the probes.
+) -> AsyncGenerator[StepExecutor]:
+    """Set up an adapter over the catalogue of the probes; leaving stops the processes of a pool.
 
-    :param adapter: Adapter to build.
+    :param adapter: Adapter to set up.
     :type adapter: StepExecutorAdapter
     :param run_slots: Processes for full runs, which the pool adapter reads and the thread adapter ignores.
     :type run_slots: int
     :param preview_slots: Processes for previews, which the pool adapter reads and the thread adapter ignores.
     :type preview_slots: int
-    :returns: The executor. A pool stops its processes when the event loop of the test ends.
-    :rtype: StepExecutor
+    :returns: Generator yielding the executor, with every process of a pool started.
+    :rtype: AsyncGenerator[StepExecutor]
     """
     source = ProbeCatalogueSource()
     match adapter:
         case StepExecutorAdapter.IN_PROCESS:
-            return InProcessStepExecutor(source())
+            yield InProcessStepExecutor(source())
         case StepExecutorAdapter.PROCESS_POOL:
-            return ProcessPoolStepExecutor(source=source, run_slots=run_slots, preview_slots=preview_slots)
+            async with ProcessPoolStepExecutor(source=source, run_slots=run_slots, preview_slots=preview_slots) as pool:
+                yield pool

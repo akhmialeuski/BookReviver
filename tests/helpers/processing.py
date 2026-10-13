@@ -472,3 +472,24 @@ class ProcessingFakesProvider(Provider):
         :rtype: DefaultRecipes
         """
         return DEFAULTS
+
+
+class InProcessExecutorProvider(Provider):
+    """Replaces only the application's pool of step processes with a thread executor over its own catalogue.
+
+    The lifespan starts the pool, and every process of it builds the catalogue of all the plugins, which takes seconds
+    that the tests of the API, which run no step of the real plugins, would pay one by one.
+    """
+
+    scope = Scope.APP
+
+    @provide(override=True)
+    def step_executor(self, catalogue: ProcessorCatalog) -> StepExecutor:
+        """Run the steps in a thread over the catalogue of the application.
+
+        :param catalogue: The catalogue of the application.
+        :type catalogue: ProcessorCatalog
+        :returns: The executor that calls the processors in this process.
+        :rtype: StepExecutor
+        """
+        return InProcessStepExecutor(catalogue)

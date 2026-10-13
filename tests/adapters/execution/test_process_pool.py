@@ -4,13 +4,19 @@ The processors and the executor come from ``tests.helpers.step_executors``, whic
 """
 
 import os
+import re
 from typing import TYPE_CHECKING
 
 import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.execution.process_pool import ProcessPoolStepExecutor
+from bookreviver.adapters.execution.process_pool import (
+    NOT_STARTED_MESSAGE,
+    ProcessPoolStepExecutor,
+    ThreadVariable,
+    threads_per_process,
+)
 from bookreviver.app.plugins import EntryPointCatalogSource
 from bookreviver.domain.enums import VersionData, VersionScale, WorkerPool
 from bookreviver.ports.processing import StepInput
@@ -20,10 +26,12 @@ from tests.helpers.step_executors import (
     PID_KEY,
     PREVIEW_METHOD,
     PROBE_KEY,
+    THREADS_KEY,
     WAITING_KEY,
+    ProbeCatalogueSource,
     StepExecutorAdapter,
-    build_executor_under_test,
     make_step_input,
+    open_executor_under_test,
 )
 
 if TYPE_CHECKING:
@@ -36,6 +44,9 @@ pytestmark = pytest.mark.anyio
 # Seconds a test lets the pool work before it fails, which bounds a run that never ends
 TIMEOUT_S: float = 30.0
 DESKEW_KEY: str = 'geometry.deskew'
+# The slots of the pools the tests start: processes enough to tell them apart, and few enough to start quickly
+RUN_SLOTS: int = 2
+PREVIEW_SLOTS: int = 1
 PAGE_SIZE_PX: tuple[int, int] = (900, 1_200)
 
 
@@ -48,13 +59,86 @@ class TestProcessPoolStepExecutor:
         :param tmp_path: Temporary directory of the test, the work directory of the step.
         :type tmp_path: Path
         """
-        executor = build_executor_under_test(StepExecutorAdapter.PROCESS_POOL)
         with anyio.fail_after(TIMEOUT_S):
-            result = await executor.run(
-                processor_key=PROBE_KEY, scale=VersionScale.FULL, step_input=make_step_input(tmp_path)
-            )
+            async with open_executor_under_test(StepExecutorAdapter.PROCESS_POOL) as executor:
+                result = await executor.run(
+                    processor_key=PROBE_KEY, scale=VersionScale.FULL, step_input=make_step_input(tmp_path)
+                )
         [output] = result.outputs
         assert output.data[PID_KEY] != os.getpid()
+
+    async def test_every_process_is_started_before_the_first_step(self) -> None:
+        """Verify entering the executor leaves one live process for each slot, none of them the test's own.
+
+        The processes are the ones the warm-up calls ran in, which wait for each other, so each took exactly one.
+        """
+        slots = RUN_SLOTS + PREVIEW_SLOTS
+        with anyio.fail_after(TIMEOUT_S):
+            async with ProcessPoolStepExecutor(
+                source=ProbeCatalogueSource(), run_slots=RUN_SLOTS, preview_slots=PREVIEW_SLOTS
+            ) as executor:
+                pids = executor._pids
+                for pid in pids:
+                    os.kill(pid, 0)
+        expect(len(set(pids)) == slots)
+        expect(os.getpid() not in pids)
+        assert_expectations()
+
+    async def test_leaving_the_executor_stops_every_process(self) -> None:
+        """Verify no process of the pool is left after the block ends, and a step is refused after it."""
+        with anyio.fail_after(TIMEOUT_S):
+            async with ProcessPoolStepExecutor(
+                source=ProbeCatalogueSource(), run_slots=RUN_SLOTS, preview_slots=PREVIEW_SLOTS
+            ) as executor:
+                pids = executor._pids
+        for pid in pids:
+            with pytest.raises(ProcessLookupError):
+                os.kill(pid, 0)
+
+    async def test_a_step_before_the_executor_is_entered_is_refused(self, tmp_path: Path) -> None:
+        """Verify a step that arrives before the processes are started fails with a clear error.
+
+        :param tmp_path: Temporary directory of the test, the work directory of the step.
+        :type tmp_path: Path
+        """
+        executor = ProcessPoolStepExecutor(
+            source=ProbeCatalogueSource(), run_slots=RUN_SLOTS, preview_slots=PREVIEW_SLOTS
+        )
+        with pytest.raises(RuntimeError, match=re.escape(NOT_STARTED_MESSAGE)):
+            await executor.run(processor_key=PROBE_KEY, scale=VersionScale.FULL, step_input=make_step_input(tmp_path))
+
+    async def test_a_step_after_the_executor_is_left_is_refused(self, tmp_path: Path) -> None:
+        """Verify a step that arrives after the processes are stopped fails with the same error.
+
+        :param tmp_path: Temporary directory of the test, the work directory of the step.
+        :type tmp_path: Path
+        """
+        with anyio.fail_after(TIMEOUT_S):
+            async with ProcessPoolStepExecutor(
+                source=ProbeCatalogueSource(), run_slots=RUN_SLOTS, preview_slots=PREVIEW_SLOTS
+            ) as executor:
+                pass
+        with pytest.raises(RuntimeError, match=re.escape(NOT_STARTED_MESSAGE)):
+            await executor.run(processor_key=PROBE_KEY, scale=VersionScale.FULL, step_input=make_step_input(tmp_path))
+
+    async def test_each_process_limits_the_threads_of_its_libraries_to_its_share_of_the_cores(
+        self, tmp_path: Path
+    ) -> None:
+        """Verify a processor sees every thread limit set to the share of the cores that its process may use.
+
+        :param tmp_path: Temporary directory of the test, the work directory of the step.
+        :type tmp_path: Path
+        """
+        share = str(threads_per_process(processes=RUN_SLOTS + PREVIEW_SLOTS))
+        with anyio.fail_after(TIMEOUT_S):
+            async with ProcessPoolStepExecutor(
+                source=ProbeCatalogueSource(), run_slots=RUN_SLOTS, preview_slots=PREVIEW_SLOTS
+            ) as executor:
+                result = await executor.run(
+                    processor_key=THREADS_KEY, scale=VersionScale.FULL, step_input=make_step_input(tmp_path)
+                )
+        [output] = result.outputs
+        assert output.data == {variable.value: share for variable in ThreadVariable}
 
     async def test_a_preview_finishes_while_a_full_run_holds_the_only_run_slot(self, tmp_path: Path) -> None:
         """Verify a preview does not wait for the full run that keeps every slot of the full runs busy.
@@ -65,19 +149,22 @@ class TestProcessPoolStepExecutor:
         :param tmp_path: Temporary directory of the test, the work directory of the steps.
         :type tmp_path: Path
         """
-        executor = build_executor_under_test(StepExecutorAdapter.PROCESS_POOL, run_slots=1, preview_slots=1)
         flag = tmp_path / 'flag'
         full_input = make_step_input(tmp_path, flag=str(flag))
         full_results: list[StepResult] = []
 
-        async def run_full() -> None:
-            """Run the processor that waits for the flag and keep its result."""
-            full_results.append(
-                await executor.run(processor_key=WAITING_KEY, scale=VersionScale.FULL, step_input=full_input)
-            )
-
         with anyio.fail_after(TIMEOUT_S):
-            async with anyio.create_task_group() as tasks:
+            async with (
+                open_executor_under_test(StepExecutorAdapter.PROCESS_POOL, run_slots=1, preview_slots=1) as executor,
+                anyio.create_task_group() as tasks,
+            ):
+
+                async def run_full() -> None:
+                    """Run the processor that waits for the flag and keep its result."""
+                    full_results.append(
+                        await executor.run(processor_key=WAITING_KEY, scale=VersionScale.FULL, step_input=full_input)
+                    )
+
                 tasks.start_soon(run_full)
                 await anyio.wait_all_tasks_blocked()
                 preview = await executor.run(
@@ -105,8 +192,34 @@ class TestProcessPoolStepExecutor:
             params=source().get(DESKEW_KEY).validate_params({}),
             workdir=workdir,
         )
-        executor = ProcessPoolStepExecutor(source=source, run_slots=1, preview_slots=1)
         with anyio.fail_after(TIMEOUT_S):
-            result = await executor.run(processor_key=DESKEW_KEY, scale=VersionScale.FULL, step_input=step_input)
+            async with ProcessPoolStepExecutor(source=source, run_slots=1, preview_slots=1) as executor:
+                result = await executor.run(processor_key=DESKEW_KEY, scale=VersionScale.FULL, step_input=step_input)
         [output] = result.outputs
         assert VersionData.ANGLE in output.data
+
+
+class TestThreadsPerProcess:
+    """Tests for threads_per_process()."""
+
+    @pytest.mark.parametrize(
+        ('cores', 'processes', 'expected'),
+        [(14, 8, 1), (14, 2, 7), (14, 3, 4), (1, 4, 1), (None, 2, 1)],
+        ids=['more-cores-than-processes', 'even-share', 'rounded-down', 'one-core', 'unknown-cores'],
+    )
+    def test_the_cores_are_shared_between_the_processes_at_least_one_thread_each(
+        self, monkeypatch: pytest.MonkeyPatch, cores: int | None, processes: int, expected: int
+    ) -> None:
+        """Verify each process gets the whole share of the cores rounded down, and at least one thread.
+
+        :param monkeypatch: Fixture that replaces the count of cores for the test.
+        :type monkeypatch: pytest.MonkeyPatch
+        :param cores: Cores the process may use, or None when the platform cannot tell.
+        :type cores: int | None
+        :param processes: Processes of the pool.
+        :type processes: int
+        :param expected: Threads each process may start.
+        :type expected: int
+        """
+        monkeypatch.setattr(os, 'process_cpu_count', lambda: cores)
+        assert threads_per_process(processes=processes) == expected
