@@ -10,10 +10,11 @@ import { BASE_URL, RUN_DIR } from './env';
  * signed in as.
  *
  * This is the approach "one account per parallel worker" of https://playwright.dev/docs/auth. The scenarios of a worker
- * run one after another, so they never meet in the books of the account, and each creates a book with a title of its
- * own. A scenario that is about the account itself, such as the registration, the sign-in, the sign-out and the
- * password, or that reads the whole library, the profiles or the settings of the account, imports `test` from
- * `@playwright/test` instead and registers the account it needs with `registerAndSignIn`.
+ * run one after another, but the books of one scenario stay in the library for the next, so `createBook` gives every
+ * book a title of its own by a random suffix and returns it. A scenario that is about the account itself, such as the
+ * registration, the sign-in, the sign-out and the password, or that reads the whole library, the profiles or the
+ * settings of the account, imports `test` from `@playwright/test` instead and registers the account it needs with
+ * `registerAndSignIn`.
  *
  * Each registration and each sign-in hashes a password, which costs the server tens of milliseconds of one core, so
  * registering once for a worker spares the run about a hundred hashes.

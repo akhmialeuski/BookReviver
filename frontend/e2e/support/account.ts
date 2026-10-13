@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -21,6 +22,8 @@ const IMPORT_TIMEOUT_MS = 60_000;
 const JOBS_TIMEOUT_MS = 90_000;
 // The most pages one batch request adds, which is the limit of the server
 const PAGES_PER_BATCH = 1000;
+// Hex digits of the random suffix of a title, enough that two titles of one run never share it
+const SUFFIX_LENGTH = 8;
 
 /**
  * Wait for a mail to the given address in the server log and return the link of the given page that it holds.
@@ -98,12 +101,37 @@ export async function openLibrary(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: 'Your books' })).toBeVisible();
 }
 
-/** Create a book with a title, which opens on its first stage with the title in the header. */
-export async function createBook(page: Page, title: string): Promise<void> {
+/**
+ * Make a title that no other scenario of the run produces, by appending a random suffix to the given words.
+ *
+ * The scenarios of a worker share the library of its account (see `fixtures.ts`), and Playwright matches a role name
+ * or a text as a substring unless it is exact, so two books titled "A long book" and "A long book to resume" would
+ * answer to one locator. A scenario that needs a second title of its own, such as the one a book is renamed to, takes
+ * it from here.
+ *
+ * @param title The words of the title that a reader of the scenario recognises the book by.
+ */
+export function uniqueTitle(title: string): string {
+  return `${title} ${randomUUID().slice(0, SUFFIX_LENGTH)}`;
+}
+
+/**
+ * Create a book with a title, which opens on its first stage with the title in the header.
+ *
+ * The title gets a suffix of its own (see `uniqueTitle`), so the book never collides with a book of another scenario
+ * of the same account.
+ *
+ * @param title The words of the title, without the suffix.
+ * @returns The title the book was created with. A scenario that finds the book by its title, in a heading, a card or a
+ * field, takes the title from here and never repeats the words it passed in.
+ */
+export async function createBook(page: Page, title: string): Promise<string> {
+  const unique = uniqueTitle(title);
   await page.getByRole('button', { name: 'New book' }).click();
-  await page.getByLabel('Title', { exact: true }).fill(title);
+  await page.getByLabel('Title', { exact: true }).fill(unique);
   await page.getByRole('button', { name: 'Create book' }).click();
-  await expect(page.getByRole('heading', { name: title })).toBeVisible();
+  await expect(page.getByRole('heading', { name: unique, exact: true })).toBeVisible();
+  return unique;
 }
 
 /**
