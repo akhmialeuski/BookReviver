@@ -6,13 +6,14 @@ from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
 import jwt
-from anyio import to_thread
+from anyio import CapacityLimiter, to_thread
 from dishka import FromDishka, Provider, Scope, provide
 from dishka.integrations.fastapi import inject
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin, exceptions
 from fastapi_users.authentication import AuthenticationBackend, CookieTransport
 from fastapi_users.authentication.strategy.db import DatabaseStrategy
 from fastapi_users.jwt import decode_jwt, generate_jwt
+from fastapi_users.password import PasswordHelper, PasswordHelperProtocol
 from httpx_oauth.clients.facebook import FacebookOAuth2
 from httpx_oauth.clients.google import GoogleOAuth2
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,13 +52,20 @@ AUTH_BACKEND: str = 'cookie'
 PASSWORD_TOO_SHORT: str = 'Use a password of at least {length} characters.'
 PASSWORD_CONTAINS_EMAIL: str = 'The password must not contain the email address.'
 
-# Names of the account fields and of the reset token claims that the overridden methods of fastapi-users read and write
+# Names of the account fields, of the reset token claims and of the OAuth account fields that the overridden methods of
+# fastapi-users read and write
 EMAIL_FIELD: str = 'email'
 PASSWORD_FIELD: str = 'password'
 HASHED_PASSWORD_FIELD: str = 'hashed_password'
 IS_VERIFIED_FIELD: str = 'is_verified'
 TOKEN_SUBJECT_CLAIM: str = 'sub'
 TOKEN_FINGERPRINT_CLAIM: str = 'password_fgpt'
+OAUTH_NAME_FIELD: str = 'oauth_name'
+ACCESS_TOKEN_FIELD: str = 'access_token'
+ACCOUNT_ID_FIELD: str = 'account_id'
+ACCOUNT_EMAIL_FIELD: str = 'account_email'
+EXPIRES_AT_FIELD: str = 'expires_at'
+REFRESH_TOKEN_FIELD: str = 'refresh_token'
 
 
 class AccountMail(enum.Enum):
@@ -125,6 +133,50 @@ class AccountMail(enum.Enum):
         return MailMessage(to=address, subject=self.subject, body=self.body.format(link=link))
 
 
+class PasswordHasher:
+    """Hashes and checks passwords with a fastapi-users helper in worker threads, a bounded number at a time.
+
+    argon2-cffi releases the GIL, so a hash in a worker thread leaves the event loop serving. The limiter is the
+    hasher's own rather than the default one of anyio, so a burst of sign-ins runs only as many argon2id hashes at once
+    as the limiter allows, and never takes the threads that file and image work wait for.
+
+    :ivar helper: The synchronous helper that does the hashing, which the user manager also generates passwords with.
+    """
+
+    def __init__(self, helper: PasswordHelperProtocol, *, limiter: CapacityLimiter) -> None:
+        """Hash with ``helper``, in as many threads at once as ``limiter`` allows.
+
+        :param helper: The synchronous password helper.
+        :type helper: PasswordHelperProtocol
+        :param limiter: Limiter shared by every hash and check of the application.
+        :type limiter: CapacityLimiter
+        """
+        self.helper = helper
+        self._limiter = limiter
+
+    async def hash(self, password: str) -> str:
+        """Hash ``password`` in a worker thread.
+
+        :param password: Password to hash, as typed or an unknown one.
+        :type password: str
+        :returns: The hash to store.
+        :rtype: str
+        """
+        return await to_thread.run_sync(self.helper.hash, password, limiter=self._limiter)
+
+    async def verify(self, password: str, hashed_password: str) -> tuple[bool, str | None]:
+        """Check ``password`` against ``hashed_password`` in a worker thread.
+
+        :param password: Password to check, as typed.
+        :type password: str
+        :param hashed_password: Stored hash to check it against.
+        :type hashed_password: str
+        :returns: Whether the password matches, and a stronger hash to store instead when the stored one is outdated.
+        :rtype: tuple[bool, str | None]
+        """
+        return await to_thread.run_sync(self.helper.verify_and_update, password, hashed_password, limiter=self._limiter)
+
+
 class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
     """fastapi-users' account rules, with mail sent through the ``Mailer`` port.
 
@@ -134,10 +186,10 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
 
     Hashing a password with argon2id takes tens of milliseconds, and the ``PasswordHelper`` protocol of fastapi-users is
     synchronous, so ``BaseUserManager`` runs it inside the event loop, where it stalls every other request and event.
-    The methods that hash or verify a password (``create``, ``forgot_password``, ``reset_password``, ``authenticate``
-    and ``_update``) are therefore overridden to mirror ``BaseUserManager`` of fastapi-users 15.0.5, step by step, with
-    only the hashing moved to a worker thread by ``_hash`` and ``_verify``. Compare them with the upstream methods
-    when fastapi-users is upgraded.
+    The methods that hash or verify a password (``create``, ``oauth_callback``, ``forgot_password``,
+    ``reset_password``, ``authenticate`` and ``_update``) are therefore overridden to mirror ``BaseUserManager`` of
+    fastapi-users 15.0.5, step by step, with only the hashing moved to the worker threads of ``PasswordHasher``. Compare
+    them with the upstream methods when fastapi-users is upgraded.
 
     :ivar password_min_length: Fewest characters a password may have.
     """
@@ -145,12 +197,20 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
     password_min_length: int = 12
 
     def __init__(
-        self, user_db: AccountDatabase, *, mailer: Mailer, projects: ProjectService, settings: Settings
+        self,
+        user_db: AccountDatabase,
+        *,
+        hasher: PasswordHasher,
+        mailer: Mailer,
+        projects: ProjectService,
+        settings: Settings,
     ) -> None:
         """Build the manager over ``user_db``, signing tokens with the accounts secret.
 
         :param user_db: Users of the current request's session.
         :type user_db: AccountDatabase
+        :param hasher: Hasher of the application, whose helper also generates the passwords nobody knows.
+        :type hasher: PasswordHasher
         :param mailer: Port the verification, reset and already-registered messages go through.
         :type mailer: Mailer
         :param projects: Project service of the request, which deletes an account's projects with their files.
@@ -158,35 +218,14 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         :param settings: Application settings holding the token secret and the public URL of the web interface.
         :type settings: Settings
         """
-        super().__init__(user_db)
+        super().__init__(user_db, hasher.helper)
         secret = settings.auth.secret.get_secret_value()
         self.verification_token_secret = secret
         self.reset_password_token_secret = secret
+        self._hasher = hasher
         self._mailer = mailer
         self._projects = projects
         self._public_url = settings.public_url
-
-    async def _hash(self, password: str) -> str:
-        """Hash ``password`` in a worker thread, so the event loop keeps serving while argon2id runs.
-
-        :param password: Password to hash, as typed or an unknown one.
-        :type password: str
-        :returns: The hash to store.
-        :rtype: str
-        """
-        return await to_thread.run_sync(self.password_helper.hash, password)
-
-    async def _verify(self, password: str, hashed_password: str) -> tuple[bool, str | None]:
-        """Check ``password`` against ``hashed_password`` in a worker thread, as ``_hash`` does.
-
-        :param password: Password to check, as typed.
-        :type password: str
-        :param hashed_password: Stored hash to check it against.
-        :type hashed_password: str
-        :returns: Whether the password matches, and a stronger hash to store instead when the stored one is outdated.
-        :rtype: tuple[bool, str | None]
-        """
-        return await to_thread.run_sync(self.password_helper.verify_and_update, password, hashed_password)
 
     @override
     async def create(
@@ -194,7 +233,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
     ) -> AccountTable:
         """Register an account, answering a taken address like a new one and mailing its owner instead.
 
-        Mirrors ``BaseUserManager.create``, with the hash made by ``_hash`` and the taken address handled in place of
+        Mirrors ``BaseUserManager.create``, with the hash made by the hasher and the taken address handled in place of
         ``UserAlreadyExists``.
 
         :param user_create: Registration data, email address and password.
@@ -211,7 +250,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
 
         if await self.user_db.get_by_email(user_create.email) is not None:
             # Spend the time a new account costs, and answer with an account that is never stored
-            await self._hash(user_create.password)
+            await self._hasher.hash(user_create.password)
             await self._mailer.send(AccountMail.ALREADY_REGISTERED.to(user_create.email, public_url=self._public_url))
             return AccountTable(
                 id=uuid4(), email=user_create.email, is_active=True, is_superuser=False, is_verified=False
@@ -219,10 +258,89 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
 
         user_dict = user_create.create_update_dict() if safe else user_create.create_update_dict_superuser()
         password = user_dict.pop(PASSWORD_FIELD)
-        user_dict[HASHED_PASSWORD_FIELD] = await self._hash(password)
+        user_dict[HASHED_PASSWORD_FIELD] = await self._hasher.hash(password)
         created_user = await self.user_db.create(user_dict)
         await self.on_after_register(created_user, request)
         return created_user
+
+    # fastapi-users 15.0.5 declares ``UserOAuthProtocol`` with ``Generic`` instead of ``Protocol`` in its bases
+    # (fastapi_users/models.py:33), so by PEP 544 it is a plain class, and ``UOAP``, which it bounds, accepts only its
+    # subclasses. ``AccountTable`` has every member it asks for but does not inherit it, so ty and pyrefly refuse this
+    # override of a method bound to ``UOAP``, the calls of the OAuth methods of ``user_db`` and the user they return.
+    # Once fastapi-users declares it a protocol, ty reports these ignores as unused: remove them then, together with the
+    # pyrefly ones on the same calls.
+    @override
+    async def oauth_callback(  # ty: ignore[invalid-method-override]
+        self,
+        oauth_name: str,
+        access_token: str,
+        account_id: str,
+        account_email: str,
+        expires_at: int | None = None,
+        refresh_token: str | None = None,
+        request: Request | None = None,
+        *,
+        associate_by_email: bool = False,
+        is_verified_by_default: bool = False,
+    ) -> AccountTable:
+        """Sign in the account a provider vouches for, creating it with a password nobody knows when there is none.
+
+        Mirrors ``BaseUserManager.oauth_callback``, with the hash of the unknown password made by the hasher.
+
+        :param oauth_name: Name of the OAuth client.
+        :type oauth_name: str
+        :param access_token: Access token the provider issued.
+        :type access_token: str
+        :param account_id: Identifier of the account at the provider.
+        :type account_id: str
+        :param account_email: Email address of the account at the provider.
+        :type account_email: str
+        :param expires_at: When the access token expires, as a Unix timestamp, if the provider says.
+        :type expires_at: int | None
+        :param refresh_token: Token that renews the access token, if the provider issued one.
+        :type refresh_token: str | None
+        :param request: Request that triggered the sign-in, if any.
+        :type request: Request | None
+        :param associate_by_email: Whether to join an existing account of the same address.
+        :type associate_by_email: bool
+        :param is_verified_by_default: Whether a new account starts with its address verified.
+        :type is_verified_by_default: bool
+        :returns: The signed-in account.
+        :rtype: AccountTable
+        :raises UserAlreadyExists: If an account of the address exists and ``associate_by_email`` is off.
+        """
+        oauth_account_dict: dict[str, Any] = {
+            OAUTH_NAME_FIELD: oauth_name,
+            ACCESS_TOKEN_FIELD: access_token,
+            ACCOUNT_ID_FIELD: account_id,
+            ACCOUNT_EMAIL_FIELD: account_email,
+            EXPIRES_AT_FIELD: expires_at,
+            REFRESH_TOKEN_FIELD: refresh_token,
+        }
+
+        try:
+            user = await self.get_by_oauth_account(oauth_name, account_id)
+        except exceptions.UserNotExists:
+            try:
+                user = await self.get_by_email(account_email)
+                if not associate_by_email:
+                    raise exceptions.UserAlreadyExists from None
+                user = await self.user_db.add_oauth_account(user, oauth_account_dict)  # ty: ignore[invalid-argument-type]  # pyrefly: ignore[bad-specialization]
+            except exceptions.UserNotExists:
+                user_dict = {
+                    EMAIL_FIELD: account_email,
+                    HASHED_PASSWORD_FIELD: await self._hasher.hash(self.password_helper.generate()),
+                    IS_VERIFIED_FIELD: is_verified_by_default,
+                }
+                user = await self.user_db.create(user_dict)
+                user = await self.user_db.add_oauth_account(user, oauth_account_dict)  # ty: ignore[invalid-argument-type]  # pyrefly: ignore[bad-specialization]
+                await self.on_after_register(user, request)
+        else:
+            for existing_oauth_account in user.oauth_accounts:
+                if existing_oauth_account.account_id == account_id and existing_oauth_account.oauth_name == oauth_name:
+                    user = await self.user_db.update_oauth_account(user, existing_oauth_account, oauth_account_dict)  # ty: ignore[invalid-argument-type]  # pyrefly: ignore[bad-specialization]
+
+        return user  # ty: ignore[unsound-return-statement]
 
     @override
     async def forgot_password(self, user: AccountTable, request: Request | None = None) -> None:
@@ -240,7 +358,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
             raise exceptions.UserInactive
         token_data = {
             TOKEN_SUBJECT_CLAIM: str(user.id),
-            TOKEN_FINGERPRINT_CLAIM: await self._hash(user.hashed_password),
+            TOKEN_FINGERPRINT_CLAIM: await self._hasher.hash(user.hashed_password),
             'aud': self.reset_password_token_audience,
         }
         token = generate_jwt(token_data, self.reset_password_token_secret, self.reset_password_token_lifetime_seconds)
@@ -279,7 +397,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
             raise exceptions.InvalidResetPasswordToken from None
 
         user = await self.get(parsed_id)
-        valid_password_fingerprint, _ = await self._verify(user.hashed_password, password_fingerprint)
+        valid_password_fingerprint, _ = await self._hasher.verify(user.hashed_password, password_fingerprint)
         if not valid_password_fingerprint:
             raise exceptions.InvalidResetPasswordToken
         if not user.is_active:
@@ -305,10 +423,10 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
             user = await self.get_by_email(credentials.username)
         except exceptions.UserNotExists:
             # Run the hasher to mitigate a timing attack, as Django does: https://code.djangoproject.com/ticket/20760
-            await self._hash(credentials.password)
+            await self._hasher.hash(credentials.password)
             return None
 
-        verified, updated_password_hash = await self._verify(credentials.password, user.hashed_password)
+        verified, updated_password_hash = await self._hasher.verify(credentials.password, user.hashed_password)
         if not verified:
             return None
         # Replace the stored hash with a more robust one if needed
@@ -343,7 +461,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
                     raise exceptions.UserAlreadyExists
             elif field == PASSWORD_FIELD and value is not None:
                 await self.validate_password(value, user)
-                validated_update_dict[HASHED_PASSWORD_FIELD] = await self._hash(value)
+                validated_update_dict[HASHED_PASSWORD_FIELD] = await self._hasher.hash(value)
             else:
                 validated_update_dict[field] = value
         return await self.user_db.update(user, validated_update_dict)
@@ -420,7 +538,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         # registered it before anyone proved owning it, so that password is replaced by an unknown one.
         if user.is_verified:
             return
-        unknown_password = await self._hash(self.password_helper.generate())
+        unknown_password = await self._hasher.hash(self.password_helper.generate())
         await self.user_db.update(user, {IS_VERIFIED_FIELD: True, HASHED_PASSWORD_FIELD: unknown_password})
 
     @override
@@ -439,7 +557,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
 
 
 class AccountsProvider(Provider):
-    """Builds the mailer, and per request the fastapi-users user manager and session strategy."""
+    """Builds the mailer and the password hasher, and per request the user manager and the session strategy."""
 
     @provide(scope=Scope.APP)
     def mailer(self, settings: Settings) -> Mailer:
@@ -462,21 +580,56 @@ class AccountsProvider(Provider):
         )
         return SmtpMailer(server)
 
+    @provide(scope=Scope.APP)
+    def password_helper(self) -> PasswordHelperProtocol:
+        """Build the helper of fastapi-users, which hashes with argon2id and still checks the bcrypt hashes of before.
+
+        :returns: The default password helper.
+        :rtype: PasswordHelperProtocol
+        """
+        return PasswordHelper()
+
+    @provide(scope=Scope.APP)
+    def password_hasher(self, helper: PasswordHelperProtocol, settings: Settings) -> PasswordHasher:
+        """Build the one hasher of the application, so its limiter bounds every hash of every request together.
+
+        :param helper: Helper that does the hashing.
+        :type helper: PasswordHelperProtocol
+        :param settings: Application settings holding how many hashes may run at once.
+        :type settings: Settings
+        :returns: The hasher of the application.
+        :rtype: PasswordHasher
+        """
+        return PasswordHasher(helper, limiter=CapacityLimiter(settings.auth.password_hash_concurrency))
+
     @provide(scope=Scope.REQUEST)
-    def user_manager(
-        self,
-        session: AsyncSession,
-        uow: SqlAlchemyUnitOfWork,
-        mailer: Mailer,
-        projects: ProjectService,
-        settings: Settings,
-    ) -> UserManager:
-        """Build the user manager over the request's session and the unit of work that guards it.
+    def account_database(self, session: AsyncSession, uow: SqlAlchemyUnitOfWork) -> AccountDatabase:
+        """Build the users of the request's session, written in the blocks of the unit of work that guards it.
 
         :param session: Database session of the request.
         :type session: AsyncSession
         :param uow: Unit of work of that session, whose blocks the account writes run in.
         :type uow: SqlAlchemyUnitOfWork
+        :returns: The users of the request.
+        :rtype: AccountDatabase
+        """
+        return AccountDatabase(session, uow)
+
+    @provide(scope=Scope.REQUEST)
+    def user_manager(
+        self,
+        user_db: AccountDatabase,
+        hasher: PasswordHasher,
+        mailer: Mailer,
+        projects: ProjectService,
+        settings: Settings,
+    ) -> UserManager:
+        """Build the user manager over the users of the request.
+
+        :param user_db: Users of the request's session.
+        :type user_db: AccountDatabase
+        :param hasher: Hasher of the application, shared by every request.
+        :type hasher: PasswordHasher
         :param mailer: Port the account messages go through.
         :type mailer: Mailer
         :param projects: Project service of the request, which deletes the projects of a deleted account.
@@ -486,7 +639,7 @@ class AccountsProvider(Provider):
         :returns: The user manager of the request.
         :rtype: UserManager
         """
-        return UserManager(AccountDatabase(session, uow), mailer=mailer, projects=projects, settings=settings)
+        return UserManager(user_db, hasher=hasher, mailer=mailer, projects=projects, settings=settings)
 
     @provide(scope=Scope.REQUEST)
     def session_strategy(self, session: AsyncSession, uow: SqlAlchemyUnitOfWork, settings: Settings) -> SessionStrategy:

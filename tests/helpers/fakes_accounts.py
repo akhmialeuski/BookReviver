@@ -1,4 +1,4 @@
-"""Fakes and steps of the accounts feature: a recording mailer and password helper, and a visitor using the routes."""
+"""Fakes and steps of the accounts feature: a recording mailer and password helper with their providers, and a visitor."""
 
 import enum
 import threading
@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, override
 from urllib.parse import parse_qs, urlsplit
 
 from dishka import Provider, Scope, provide
-from fastapi_users.password import PasswordHelper
+from fastapi_users.password import PasswordHelper, PasswordHelperProtocol
 
 from bookreviver.app.providers.accounts import AccountMail
 from bookreviver.ports.runtime import Mailer
@@ -164,6 +164,28 @@ class RecordingPasswordHelper(PasswordHelper):
         """
         self.calls.record(HashStep.VERIFY)
         return super().verify_and_update(plain_password, hashed_password)
+
+
+class RecordingPasswordHelperProvider(Provider):
+    """Replaces the application's password helper with one that records into a given record."""
+
+    def __init__(self, calls: HashCalls) -> None:
+        """Provide a recording helper writing into ``calls`` in place of the application's own.
+
+        :param calls: Record of the test.
+        :type calls: HashCalls
+        """
+        super().__init__()
+        self._calls = calls
+
+    @provide(scope=Scope.APP, override=True)
+    def password_helper(self) -> PasswordHelperProtocol:
+        """Return a recording password helper.
+
+        :returns: A helper noting its calls in the record given to the constructor.
+        :rtype: PasswordHelperProtocol
+        """
+        return RecordingPasswordHelper(self._calls)
 
 
 class Visitor:

@@ -1,10 +1,8 @@
 """Fixtures of the account tests: recording mail and password hashing, and a signed-out browser that passes CSRF."""
 
-from functools import partial
 from typing import TYPE_CHECKING
 
 import pytest
-from fastapi_users import manager as fastapi_users_manager
 
 from bookreviver.api.auth import current_actor
 from tests.helpers.fakes_accounts import (
@@ -14,7 +12,7 @@ from tests.helpers.fakes_accounts import (
     HashCalls,
     RecordingMailer,
     RecordingMailerProvider,
-    RecordingPasswordHelper,
+    RecordingPasswordHelperProvider,
     Visitor,
 )
 
@@ -37,32 +35,27 @@ def fx_mailer() -> RecordingMailer:
 
 
 @pytest.fixture
-def fx_extra_providers(fx_mailer: RecordingMailer) -> Sequence[Provider]:
-    """Replace the application's mailer with the recording one.
+def fx_hash_calls() -> HashCalls:
+    """Build the record of the password helper calls of one test.
 
-    :param fx_mailer: Recording mailer of the test.
-    :type fx_mailer: RecordingMailer
-    :returns: One provider that supplies the recording mailer.
-    :rtype: Sequence[Provider]
+    :returns: An empty record, which the application's password helper writes into.
+    :rtype: HashCalls
     """
-    return (RecordingMailerProvider(fx_mailer),)
+    return HashCalls()
 
 
 @pytest.fixture
-def fx_hash_calls(monkeypatch: pytest.MonkeyPatch) -> HashCalls:
-    """Make every user manager of the test use a password helper that records the thread of each hash and check.
+def fx_extra_providers(fx_mailer: RecordingMailer, fx_hash_calls: HashCalls) -> Sequence[Provider]:
+    """Replace the application's mailer and password helper with recording ones.
 
-    fastapi-users builds its default helper by name when a manager is created, so replacing the name covers the
-    managers the application creates later, one per request.
-
-    :param monkeypatch: Fixture that undoes the replacement after the test.
-    :type monkeypatch: pytest.MonkeyPatch
-    :returns: The record the helpers write into, empty.
-    :rtype: HashCalls
+    :param fx_mailer: Recording mailer of the test.
+    :type fx_mailer: RecordingMailer
+    :param fx_hash_calls: Record the password helper writes the thread of each hash and check into.
+    :type fx_hash_calls: HashCalls
+    :returns: The providers that supply the recording mailer and password helper.
+    :rtype: Sequence[Provider]
     """
-    calls = HashCalls()
-    monkeypatch.setattr(fastapi_users_manager, 'PasswordHelper', partial(RecordingPasswordHelper, calls))
-    return calls
+    return (RecordingMailerProvider(fx_mailer), RecordingPasswordHelperProvider(fx_hash_calls))
 
 
 @pytest.fixture

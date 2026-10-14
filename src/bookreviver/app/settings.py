@@ -59,6 +59,9 @@ class AuthSettings(BaseModel):
     :ivar secret: Key signing verification and reset tokens and the CSRF cookie; required.
     :ivar session_lifetime_seconds: How long a sign-in lasts, 30 days by default.
     :ivar cookie_secure: Whether the session cookie requires HTTPS; off only for local development over HTTP.
+    :ivar password_hash_concurrency: Most password hashes and checks run at once, each in a worker thread of its own.
+                                     An argon2id hash holds 64 MiB and four lanes, so the bound keeps a burst of
+                                     sign-ins from taking the memory and the cores, and the threads file work shares.
     :ivar google: OAuth application for Google sign-in.
     :ivar facebook: OAuth application for Facebook sign-in.
     """
@@ -66,6 +69,7 @@ class AuthSettings(BaseModel):
     secret: SecretStr = Field(description='Signs verification and reset tokens, and the CSRF cookie')
     session_lifetime_seconds: PositiveInt = 30 * 24 * 60 * 60
     cookie_secure: bool = True
+    password_hash_concurrency: PositiveInt = 2
     google: OAuthClient = OAuthClient()
     facebook: OAuthClient = OAuthClient()
 
