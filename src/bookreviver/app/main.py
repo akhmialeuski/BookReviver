@@ -20,6 +20,7 @@ from bookreviver.app.security import install_security, sign_in_throttle
 from bookreviver.app.settings import Settings
 from bookreviver.app.tracing import LoopLagProbe, TracingMiddleware
 from bookreviver.domain.errors import DomainError
+from bookreviver.ports.processing import StepExecutor
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.pages import PageService
@@ -67,6 +68,9 @@ def create_app(
         each of the two passes writes one book at a time, in a ``change_book`` block of that book, outside any block of
         the scope.
 
+        The container also starts the pool of processes that run the steps here, so every process has built its
+        catalogue before the first request and the first preview does not wait for it.
+
         While the measurements are on, the probe of the event-loop lag runs in a task group around the application. It
         is cancelled before the container closes, so its last tick is recorded before the exporter flushes the file.
 
@@ -78,6 +82,7 @@ def create_app(
         """
         try:
             await container.get(SqlDatabase)
+            await container.get(StepExecutor)
             async with container() as request:
                 await (await request.get(OutdatedResults)).mark_stale()
                 await (await request.get(PageService)).remake_outdated_leaves()

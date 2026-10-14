@@ -1,9 +1,9 @@
 """Running one processor on one input and storing what it made as the files of a page version.
 
 The runner touches no database. It takes the processor, its checked parameters and the keys of its input files, lets the
-asset store hand out local paths, runs the synchronous processor in a worker thread inside a work directory made next to
-the files it will write, and stores each output with the rendition writer. The service that calls it owns the rows of
-the versions, and decides which output is which version.
+asset store hand out local paths, has the step executor run the synchronous processor, in a place the executor chooses,
+inside a work directory made next to the files it will write, and stores each output with the rendition writer. The
+service that calls it owns the rows of the versions, and decides which output is which version.
 
 A processor makes its image without loss, or leaves one the runner can read as it is. The format of ``full`` is chosen
 here from the image policy of the project and the colour of the output, so the processor knows nothing of that setting.
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.keys import ProjectKeys
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.imaging import RenditionWriter, Tiler
-    from bookreviver.ports.processing import ProcessorCatalog
+    from bookreviver.ports.processing import StepExecutor
     from bookreviver.ports.storage import AssetStore
 
 NOT_READY: str = 'The version {version_id} has no image that is ready to cut.'
@@ -88,17 +88,17 @@ class StepRunner:
         self,
         *,
         assets: AssetStore,
-        catalogue: ProcessorCatalog,
+        executor: StepExecutor,
         renditions: RenditionWriter,
         tiler: Tiler,
         iiif_root: str,
     ) -> None:
-        """Run processors of the catalogue, storing files through the asset store.
+        """Run processors through the executor, storing files through the asset store.
 
         :param assets: Store of the derived files, which hands out the local paths processors work on.
         :type assets: AssetStore
-        :param catalogue: The processors the application can run.
-        :type catalogue: ProcessorCatalog
+        :param executor: Runs the step of a processor of the catalogue, in a thread or in another process.
+        :type executor: StepExecutor
         :param renditions: Writer of the ``full``, ``preview`` and ``thumb`` files of an output.
         :type renditions: RenditionWriter
         :param tiler: Port cutting the pyramid, and the preview of a preview run.
@@ -107,14 +107,14 @@ class StepRunner:
         :type iiif_root: str
         """
         self._assets = assets
-        self._catalogue = catalogue
+        self._executor = executor
         self._renditions = renditions
         self._tiler = tiler
         self._iiif_root = iiif_root
 
     @asynccontextmanager
     async def execute(self, run: StepRun) -> AsyncIterator[StepResult]:
-        """Run the processor in a worker thread while its input files and its work directory are open.
+        """Run the processor through the executor while its input files and its work directory are open.
 
         The outputs name files in the work directory, which is removed when the context exits, so they are stored
         inside it. The work directory is made in the temporary directory of the machine, which ``TMPDIR`` moves to a
@@ -127,7 +127,6 @@ class StepRunner:
         :raises NotFoundError: If the processor, or a file it reads, is not stored.
         :raises DomainError: If the processor cannot run on this input.
         """
-        processor = self._catalogue.get(run.processor_key)
         async with AsyncExitStack() as stack:
             image = None if run.image is None else await stack.enter_async_context(self._assets.readable(run.image))
             if run.skipped:
@@ -149,8 +148,7 @@ class StepRunner:
                 references=references,
                 workdir=Path(workdir),
             )
-            work = processor.run if run.scale is VersionScale.FULL else processor.preview
-            yield await anyio.to_thread.run_sync(work, step_input)
+            yield await self._executor.run(processor_key=run.processor_key, scale=run.scale, step_input=step_input)
 
     @staticmethod
     def _unchanged(run: StepRun, image: Path | None) -> StepResult:

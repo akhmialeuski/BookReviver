@@ -10,6 +10,7 @@ from bookreviver.app.main import create_app
 from bookreviver.app.settings import AuthSettings, PersistenceBackend, Settings
 from bookreviver.domain.entities import Actor
 from tests.helpers.builders import new_account_id
+from tests.helpers.processing import InProcessExecutorProvider
 from tests.helpers.schema import create_schema
 
 if TYPE_CHECKING:
@@ -92,7 +93,9 @@ async def fx_app(
 ) -> AsyncIterator[FastAPI]:
     """Run the application lifespan with ``fx_actor`` signed in and ``fx_extra_providers`` applied.
 
-    The account tables live in the SQL database whatever the persistence backend, so its schema is created first.
+    The account tables live in the SQL database whatever the persistence backend, so its schema is created first. The
+    steps run in threads instead of the pool of processes the lifespan would start, unless a provider of the test
+    replaces the executor itself.
 
     :param fx_settings: Settings with in-memory persistence and a fresh data directory.
     :type fx_settings: Settings
@@ -106,7 +109,7 @@ async def fx_app(
     :rtype: AsyncIterator[FastAPI]
     """
     await create_schema(fx_settings)
-    app = create_app(fx_settings, fx_extra_providers, fx_social_clients)
+    app = create_app(fx_settings, [InProcessExecutorProvider(), *fx_extra_providers], fx_social_clients)
     app.dependency_overrides[current_actor] = lambda: fx_actor
     async with app.router.lifespan_context(app):
         yield app

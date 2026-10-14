@@ -16,6 +16,8 @@ import logging
 from importlib.metadata import entry_points
 from typing import TYPE_CHECKING, override
 
+from attrs import frozen
+
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.ports.processing import Processor, ProcessorCatalog
 
@@ -99,3 +101,27 @@ class EntryPointCatalog(ProcessorCatalog):
         :rtype: Sequence[ProcessorSpec]
         """
         return [self._processors[key].spec for key in sorted(self._processors)]
+
+
+@frozen(kw_only=True)
+class EntryPointCatalogSource:
+    """What builds the catalogue of the entry points, a value that a pool process receives to build its own.
+
+    The API process builds its catalogue by calling one source, and the step executor hands the same source to its pool
+    processes, so the processors of the two never differ. The source holds plain values, so it is hashable and travels
+    to another process by value.
+
+    :ivar pools: Pools of workers the catalogue serves; the processors of other pools are left out.
+    :ivar settings: What every loaded processor is told about the machine, or None to tell it nothing.
+    """
+
+    pools: frozenset[WorkerPool]
+    settings: ProcessorSettings | None = None
+
+    def __call__(self) -> EntryPointCatalog:
+        """Load the processors of the pools from the entry points.
+
+        :returns: The catalogue, loaded in the process that calls this.
+        :rtype: EntryPointCatalog
+        """
+        return EntryPointCatalog(pools=self.pools, settings=self.settings)

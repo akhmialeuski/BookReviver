@@ -13,6 +13,7 @@ from attrs import evolve
 from dishka import Provider, Scope, provide
 
 from bookreviver.adapters.clock.system import FixedClock
+from bookreviver.adapters.execution.in_process import InProcessStepExecutor
 from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
@@ -32,7 +33,7 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import PageStepKey, RecipeKey, Renditions, SliceRequest
 from bookreviver.plugins.split_none import SplitNone
-from bookreviver.ports.processing import ProcessorCatalog
+from bookreviver.ports.processing import ProcessorCatalog, StepExecutor
 from bookreviver.services.edits import EditService
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
@@ -138,7 +139,11 @@ class ProcessingKit:
         self.tracer = RecordingTracer()
         self.catalogue = FakeCatalogue(processors or [SplitNone(), self.fake, self.cleanup])
         self._runner = StepRunner(
-            assets=assets, catalogue=self.catalogue, renditions=self.writer, tiler=self.tiler, iiif_root=IIIF_ROOT
+            assets=assets,
+            executor=InProcessStepExecutor(self.catalogue),
+            renditions=self.writer,
+            tiler=self.tiler,
+            iiif_root=IIIF_ROOT,
         )
 
     def parts(self, uow: InMemoryUnitOfWork) -> ProcessingParts:
@@ -435,6 +440,7 @@ class ProcessingFakesProvider(Provider):
     """Replaces the application's catalogue of processors and its default recipes with the fakes of the tests.
 
     The imaging adapters stay the application's own, so a run of the fake processors writes real files with libvips.
+    The steps run in threads over this catalogue through ``InProcessExecutorProvider``, which ``fx_app`` adds first.
     """
 
     scope = Scope.APP
@@ -456,3 +462,24 @@ class ProcessingFakesProvider(Provider):
         :rtype: DefaultRecipes
         """
         return DEFAULTS
+
+
+class InProcessExecutorProvider(Provider):
+    """Replaces only the application's pool of step processes with a thread executor over its own catalogue.
+
+    The lifespan starts the pool, and every process of it builds the catalogue of all the plugins, which takes seconds
+    that the tests of the API, which run no step of the real plugins, would pay one by one.
+    """
+
+    scope = Scope.APP
+
+    @provide(override=True)
+    def step_executor(self, catalogue: ProcessorCatalog) -> StepExecutor:
+        """Run the steps in a thread over the catalogue of the application.
+
+        :param catalogue: The catalogue of the application.
+        :type catalogue: ProcessorCatalog
+        :returns: The executor that calls the processors in this process.
+        :rtype: StepExecutor
+        """
+        return InProcessStepExecutor(catalogue)
