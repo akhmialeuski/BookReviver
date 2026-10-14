@@ -4,7 +4,9 @@ OpenCV, Pillow and the Python between their calls keep the interpreter of the AP
 loop, and with it every HTTP answer and every server-sent event. A step therefore runs in another process of a
 ``concurrent.futures.ProcessPoolExecutor``, while the job coroutine, the write blocks, the events and the file copies
 stay in the API process. A call submits the step and waits for its future in a worker thread, so the event loop stays
-free, and a step that has started cannot be cancelled: the caller is released when the process answers.
+free, and a step that has started cannot be cancelled: the caller is released when the process answers. Those threads
+come from a limiter of the executor sized to its processes, never from the default threads of anyio, which would
+otherwise sit idle in the wait while the file copies of the application queued behind them.
 
 The processor itself is not pickled. The catalogue of the API process holds configured processors, and one of them,
 the dewarp, has loaded a neural model into memory. Each pool process builds its own catalogue once, from a source that
@@ -26,6 +28,13 @@ exactly one of them and the pool is known to hold that many live processes befor
 The count of processes at work is bounded by capacity limiters, one for the full runs and one for the previews, so a
 preview waits behind no full run of another book.
 
+A ``ProcessPoolExecutor`` whose process dies, killed by the system for its memory or crashed in native code, stops for
+good: every running and every later call fails with ``BrokenProcessPool``, and the standard library offers no way to
+mend it. The executor therefore starts a new pool in its place and lets the broken one go, while the steps that were in
+the broken pool fail with that error, so a job reports them as unexpected and the next step runs in the new pool. The
+same happens when a result cannot be unpickled in the API process, so an error a processor raises other than a domain
+error crosses the boundary as a ``RuntimeError`` that names its class and message, and never breaks the pool.
+
 A pool process imports the main module of the application again, as ``multiprocessing`` does with the forkserver and
 spawn methods, so that module must run the application only under ``if __name__ == '__main__'``. The FastAPI command
 line does.
@@ -35,12 +44,14 @@ import enum
 import multiprocessing
 import os
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from functools import partial
 from typing import TYPE_CHECKING, ClassVar, Self, assert_never, override
 
 import anyio
 
 from bookreviver.domain.enums import VersionScale
+from bookreviver.domain.errors import DomainError
 from bookreviver.ports.processing import StepExecutor
 
 if TYPE_CHECKING:
@@ -54,6 +65,7 @@ if TYPE_CHECKING:
 WARM_UP_TIMEOUT_S: float = 120.0
 NOT_STARTED_MESSAGE: str = 'The process pool is not started: enter the executor before running a step.'
 NOT_INITIALIZED_MESSAGE: str = 'The pool process ran a call before its initializer.'
+FOREIGN_ERROR_MESSAGE: str = 'The processor {key} failed with {kind}: {message}'
 
 
 class ThreadVariable(enum.StrEnum):
@@ -103,18 +115,15 @@ def _initialize(source: Callable[[], ProcessorCatalog], threads: int, barrier: B
     _Worker.barrier = barrier
 
 
-def _ready() -> int:
+def _ready() -> None:
     """Wait until every process of the pool has taken a call of the warm-up; the function a pool process executes.
 
-    :returns: The identifier of this process.
-    :rtype: int
     :raises RuntimeError: If the initializer has not run in this process.
     :raises BrokenBarrierError: If the other processes did not come within ``WARM_UP_TIMEOUT_S`` seconds.
     """
     if _Worker.barrier is None:
         raise RuntimeError(NOT_INITIALIZED_MESSAGE)
     _Worker.barrier.wait(WARM_UP_TIMEOUT_S)
-    return os.getpid()
 
 
 def _run_step(processor_key: str, scale: VersionScale, step_input: StepInput) -> StepResult:
@@ -128,7 +137,8 @@ def _run_step(processor_key: str, scale: VersionScale, step_input: StepInput) ->
     :type step_input: StepInput
     :returns: The outputs of the step.
     :rtype: StepResult
-    :raises RuntimeError: If the initializer has not run in this process.
+    :raises RuntimeError: If the initializer has not run in this process, or the processor raised an error other than a
+                          domain error, whose class and message it carries.
     :raises NotFoundError: If the catalogue has no processor with this key.
     :raises DomainError: If the processor cannot run on this input.
     """
@@ -136,7 +146,14 @@ def _run_step(processor_key: str, scale: VersionScale, step_input: StepInput) ->
         raise RuntimeError(NOT_INITIALIZED_MESSAGE)
     processor = _Worker.catalogue.get(processor_key)
     work = processor.run if scale is VersionScale.FULL else processor.preview
-    return work(step_input)
+    try:
+        return work(step_input)
+    except DomainError:
+        raise
+    # A library error may not unpickle in the API process, which would break the whole pool, so only its text crosses
+    except Exception as error:
+        err_msg = FOREIGN_ERROR_MESSAGE.format(key=processor_key, kind=type(error).__qualname__, message=error)
+        raise RuntimeError(err_msg) from error
 
 
 class ProcessPoolStepExecutor(StepExecutor):
@@ -160,8 +177,12 @@ class ProcessPoolStepExecutor(StepExecutor):
         self._processes = run_slots + preview_slots
         self._run_limiter = anyio.CapacityLimiter(run_slots)
         self._preview_limiter = anyio.CapacityLimiter(preview_slots)
+        # The threads that wait for the processes come from here, so a waiting step takes none of the default threads
+        # of anyio, which the file copies and the other blocking calls of the application need
+        self._waiters = anyio.CapacityLimiter(self._processes)
         self._pool: ProcessPoolExecutor | None = None
-        self._pids: tuple[int, ...] = ()
+        # Held while the pool is replaced or stopped, so a step never meets an executor without a pool in between
+        self._swap = anyio.Lock()
 
     async def __aenter__(self) -> Self:
         """Start every process of the pool and wait until each has built its catalogue.
@@ -171,19 +192,55 @@ class ProcessPoolStepExecutor(StepExecutor):
         :raises BrokenProcessPool: If a process died while it started.
         :raises BrokenBarrierError: If the processes did not all start within ``WARM_UP_TIMEOUT_S`` seconds.
         """
+        self._pool = await self._start_pool()
+        return self
+
+    async def _start_pool(self) -> ProcessPoolExecutor:
+        """Start a pool of every process and wait until each has built its catalogue.
+
+        :returns: The started pool, whose processes have all run the initializer.
+        :rtype: ProcessPoolExecutor
+        :raises BrokenProcessPool: If a process died while it started.
+        :raises BrokenBarrierError: If the processes did not all start within ``WARM_UP_TIMEOUT_S`` seconds.
+        """
         barrier = multiprocessing.Barrier(self._processes)
-        self._pool = ProcessPoolExecutor(
+        pool = ProcessPoolExecutor(
             max_workers=self._processes,
             initializer=_initialize,
             initargs=(self._source, threads_per_process(processes=self._processes), barrier),
         )
         try:
-            futures = [self._pool.submit(_ready) for _ in range(self._processes)]
-            self._pids = tuple([await anyio.to_thread.run_sync(future.result) for future in futures])
+            futures = [pool.submit(_ready) for _ in range(self._processes)]
+            for future in futures:
+                await anyio.to_thread.run_sync(future.result, limiter=self._waiters)
         except BaseException:
-            await self._stop()
+            await self._shut_down(pool)
             raise
-        return self
+        return pool
+
+    @staticmethod
+    async def _shut_down(pool: ProcessPoolExecutor) -> None:
+        """Cancel the calls of the pool that wait for a process, wait for the others, and let the processes exit.
+
+        :param pool: The pool to stop, which may be broken already.
+        :type pool: ProcessPoolExecutor
+        """
+        await anyio.to_thread.run_sync(partial(pool.shutdown, wait=True, cancel_futures=True))
+
+    async def _replace(self, broken: ProcessPoolExecutor) -> None:
+        """Put a new pool in the place of a broken one, unless another step or the exit has done it already.
+
+        The steps that met the same broken pool all call this, and only the first starts a new pool.
+
+        :param broken: The pool a step found broken.
+        :type broken: ProcessPoolExecutor
+        :raises BrokenProcessPool: If a process of the new pool died while it started.
+        :raises BrokenBarrierError: If the processes of the new pool did not all start within ``WARM_UP_TIMEOUT_S``.
+        """
+        async with self._swap:
+            if self._pool is broken:
+                self._pool = await self._start_pool()
+        await self._shut_down(broken)
 
     async def __aexit__(
         self, exc_type: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None
@@ -200,10 +257,11 @@ class ProcessPoolStepExecutor(StepExecutor):
         await self._stop()
 
     async def _stop(self) -> None:
-        """Cancel the calls that wait for a process, wait for the others, and let the processes exit."""
-        pool, self._pool, self._pids = self._pool, None, ()
+        """Stop the current pool, after a replacement that has begun, so the pool it starts is stopped too."""
+        async with self._swap:
+            pool, self._pool = self._pool, None
         if pool is not None:
-            await anyio.to_thread.run_sync(partial(pool.shutdown, wait=True, cancel_futures=True))
+            await self._shut_down(pool)
 
     @override
     async def run(self, *, processor_key: str, scale: VersionScale, step_input: StepInput) -> StepResult:
@@ -217,9 +275,11 @@ class ProcessPoolStepExecutor(StepExecutor):
         :type step_input: StepInput
         :returns: The outputs of the step.
         :rtype: StepResult
-        :raises RuntimeError: If the executor is not entered, or was left.
+        :raises RuntimeError: If the executor is not entered, or was left, or the processor raised an error other than a
+                              domain error, whose class and message it carries.
         :raises NotFoundError: If the catalogue has no processor with this key.
         :raises DomainError: If the processor cannot run on this input, with the type and the message it raised.
+        :raises BrokenProcessPool: If a process of the pool died during the step; a new pool runs the next steps.
         """
         match scale:
             case VersionScale.FULL:
@@ -229,7 +289,11 @@ class ProcessPoolStepExecutor(StepExecutor):
             case _:
                 assert_never(scale)
         async with limiter:
-            if self._pool is None:
+            if (pool := self._pool) is None:
                 raise RuntimeError(NOT_STARTED_MESSAGE)
-            future = self._pool.submit(_run_step, processor_key, scale, step_input)
-            return await anyio.to_thread.run_sync(future.result)
+            try:
+                future = pool.submit(_run_step, processor_key, scale, step_input)
+                return await anyio.to_thread.run_sync(future.result, limiter=self._waiters)
+            except BrokenProcessPool:
+                await self._replace(pool)
+                raise

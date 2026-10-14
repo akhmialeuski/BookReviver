@@ -1,18 +1,19 @@
 """Tests for the processing provider: the executor of the steps the container builds."""
 
-import os
+import multiprocessing
 from typing import TYPE_CHECKING
+from unittest.mock import ANY, patch
 
 import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.execution.process_pool import ProcessPoolStepExecutor
 from bookreviver.app.container import build_container
 from bookreviver.ports.processing import StepExecutor
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+    from unittest.mock import MagicMock
 
     from dishka import AsyncContainer
 
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
+EXECUTOR_PATCH: str = 'bookreviver.app.providers.processing.ProcessPoolStepExecutor'
 STEP_PROCESSES: int = 4
 PREVIEW_STEP_PROCESSES: int = 1
 TIMEOUT_S: float = 30.0
@@ -50,35 +52,38 @@ class TestStepExecutorProvider:
         finally:
             await container.close()
 
+    # No autospec: mock evaluates the signature of the constructor, whose annotations name types imported for checking only
+    @patch(EXECUTOR_PATCH)
     async def test_previews_get_their_own_processes_and_full_runs_get_the_rest(
+        self, mock_executor: MagicMock, fx_container: AsyncContainer
+    ) -> None:
+        """Verify the executor is built with the preview processes of the settings and the rest for full runs.
+
+        :param mock_executor: The executor class, replaced so that no process starts.
+        :type mock_executor: MagicMock
+        :param fx_container: Container of the test.
+        :type fx_container: AsyncContainer
+        """
+        await fx_container.get(StepExecutor)
+        mock_executor.assert_called_once_with(
+            source=ANY,
+            run_slots=STEP_PROCESSES - PREVIEW_STEP_PROCESSES,
+            preview_slots=PREVIEW_STEP_PROCESSES,
+        )
+
+    async def test_the_container_starts_the_processes_and_closing_it_stops_them(
         self, fx_container: AsyncContainer
     ) -> None:
-        """Verify the pool is started with the processes of the settings, split between full runs and previews.
+        """Verify building the executor starts the processes of the settings, and closing the container ends them all.
 
         :param fx_container: Container of the test.
         :type fx_container: AsyncContainer
         """
+        before = set(multiprocessing.active_children())
         with anyio.fail_after(TIMEOUT_S):
-            executor = await fx_container.get(StepExecutor)
-        assert isinstance(executor, ProcessPoolStepExecutor)
-        expect(len(set(executor._pids)) == STEP_PROCESSES)
-        expect(
-            (executor._run_limiter.total_tokens, executor._preview_limiter.total_tokens)
-            == (STEP_PROCESSES - PREVIEW_STEP_PROCESSES, PREVIEW_STEP_PROCESSES)
-        )
-        assert_expectations()
-
-    async def test_closing_the_container_stops_the_processes(self, fx_container: AsyncContainer) -> None:
-        """Verify the processes the provider started are gone once the container is closed.
-
-        :param fx_container: Container of the test.
-        :type fx_container: AsyncContainer
-        """
-        with anyio.fail_after(TIMEOUT_S):
-            executor = await fx_container.get(StepExecutor)
-            assert isinstance(executor, ProcessPoolStepExecutor)
-            pids = executor._pids
+            await fx_container.get(StepExecutor)
+            started = set(multiprocessing.active_children()) - before
             await fx_container.close()
-        for pid in pids:
-            with pytest.raises(ProcessLookupError):
-                os.kill(pid, 0)
+        expect(len(started) == STEP_PROCESSES)
+        expect(not any(process.is_alive() for process in started))
+        assert_expectations()

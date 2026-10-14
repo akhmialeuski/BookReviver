@@ -3,12 +3,14 @@
 The processors need no image library and are module-level classes, so a pool process imports them by the path of this
 module, as it must for the source of its catalogue. ``ProbeProcessor`` reports the method that ran and the process it
 ran in, ``FailingProcessor`` raises a domain error with a plain message, ``WaitingProcessor`` holds its run until a
-file exists, which lets a test keep a slot of the pool busy as long as it needs, and ``ThreadsProcessor`` reports the
-thread limits its process was started with.
+file exists, which lets a test keep a slot of the pool busy as long as it needs, ``ThreadsProcessor`` reports the
+thread limits its process was started with, ``KillingProcessor`` kills its own process and ``ForeignErrorProcessor``
+raises an error that is not a domain error and cannot be unpickled.
 """
 
 import enum
 import os
+import signal
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -35,6 +37,8 @@ PROBE_KEY: str = 'geometry.probe'
 FAILING_KEY: str = 'geometry.failing'
 WAITING_KEY: str = 'geometry.waiting'
 THREADS_KEY: str = 'geometry.threads'
+KILLING_KEY: str = 'geometry.killing'
+FOREIGN_KEY: str = 'geometry.foreign'
 
 # What a probe writes into the data of its output
 METHOD_KEY: str = 'method'
@@ -44,6 +48,10 @@ PREVIEW_METHOD: str = 'preview'
 
 # The message the failing processor raises with
 FAILING_MESSAGE: str = 'The probe was told to fail.'
+
+# The error the foreign processor raises, which is not a domain error
+FOREIGN_CODE: int = 7
+FOREIGN_MESSAGE: str = 'The library failed with code {code}.'
 
 # The parameter of the waiting processor naming the file its run waits for
 FLAG_PARAMETER: str = 'flag'
@@ -170,17 +178,78 @@ class ThreadsProcessor(ProbeProcessor):
         return StepResult(outputs=[StepOutput(color_mode=ColorMode.GRAY, data=data)])
 
 
+class KillingProcessor(ProbeProcessor):
+    """A processor whose run kills its own process, as the system does to a process that takes too much memory.
+
+    Only a pool test may run it: in the thread executor it would kill the test run itself.
+    """
+
+    spec = ProcessorSpec(key=KILLING_KEY, version='1', title='Killing', stage=Stage.GEOMETRY)
+
+    @override
+    def run(self, step_input: StepInput) -> StepResult:
+        """Kill the process the run is in.
+
+        :param step_input: What the step reads.
+        :type step_input: StepInput
+        :returns: Nothing, since the process ends first.
+        :rtype: StepResult
+        """
+        os.kill(os.getpid(), signal.SIGKILL)
+        return self._reported(RUN_METHOD)
+
+
+class KeywordOnlyError(Exception):
+    """An error of a library whose constructor takes keywords only, so pickle cannot build it again from its message."""
+
+    def __init__(self, *, code: int) -> None:
+        """Report the code.
+
+        :param code: Code of the failure.
+        :type code: int
+        """
+        super().__init__(FOREIGN_MESSAGE.format(code=code))
+
+
+class ForeignErrorProcessor(ProbeProcessor):
+    """A processor whose run fails with an error that is not a domain error and does not unpickle."""
+
+    spec = ProcessorSpec(key=FOREIGN_KEY, version='1', title='Foreign error', stage=Stage.GEOMETRY)
+
+    @override
+    def run(self, step_input: StepInput) -> StepResult:
+        """Fail the run with ``KeywordOnlyError``.
+
+        :param step_input: What the step reads.
+        :type step_input: StepInput
+        :returns: Nothing, since it always fails.
+        :rtype: StepResult
+        :raises KeywordOnlyError: Always, with ``FOREIGN_CODE``.
+        """
+        raise KeywordOnlyError(code=FOREIGN_CODE)
+
+
 @frozen
 class ProbeCatalogueSource:
-    """Builds the catalogue of the four processors above; a value, so it travels to a pool process."""
+    """Builds the catalogue of the processors above; a value, so it travels to a pool process."""
 
     def __call__(self) -> FakeCatalogue:
         """Build the catalogue.
 
-        :returns: A catalogue of a probe, a failing processor, a waiting one and one that reports the thread limits.
+        :returns: A catalogue of a probe, a failing processor, a waiting one, one that reports the thread limits, one
+                  that kills its process and one that raises an error that does not unpickle.
         :rtype: FakeCatalogue
         """
-        return FakeCatalogue([ProbeProcessor(), FailingProcessor(), WaitingProcessor(), ThreadsProcessor()])
+        return FakeCatalogue(
+            [
+                ProbeProcessor(),
+                FailingProcessor(),
+                WaitingProcessor(),
+                ThreadsProcessor(),
+                KillingProcessor(),
+                ForeignErrorProcessor(),
+            ]
+        )
 
 
 def make_step_input(workdir: Path, **params: object) -> StepInput:

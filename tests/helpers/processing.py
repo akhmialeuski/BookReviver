@@ -440,6 +440,7 @@ class ProcessingFakesProvider(Provider):
     """Replaces the application's catalogue of processors and its default recipes with the fakes of the tests.
 
     The imaging adapters stay the application's own, so a run of the fake processors writes real files with libvips.
+    The steps run in threads over this catalogue through ``InProcessExecutorProvider``, which ``fx_app`` adds first.
     """
 
     scope = Scope.APP
@@ -452,17 +453,6 @@ class ProcessingFakesProvider(Provider):
         :rtype: ProcessorCatalog
         """
         return FakeCatalogue([SplitNone(), FakeProcessor(), CleanupProcessor()])
-
-    @provide(override=True)
-    def step_executor(self, catalogue: ProcessorCatalog) -> StepExecutor:
-        """Run the steps in a thread over the catalogue of the tests, since a pool process builds the real catalogue.
-
-        :param catalogue: The catalogue of the tests.
-        :type catalogue: ProcessorCatalog
-        :returns: The executor that calls the fake processors of the tests in this process.
-        :rtype: StepExecutor
-        """
-        return InProcessStepExecutor(catalogue)
 
     @provide(override=True)
     def default_recipes(self) -> DefaultRecipes:
