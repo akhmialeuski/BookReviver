@@ -57,7 +57,12 @@ from bookreviver.adapters.persistence.sqlalchemy.repositories import (
 from bookreviver.adapters.persistence.sqlalchemy.tables import ProjectRow
 from bookreviver.domain.enums import BlockKind
 from bookreviver.domain.errors import BookBusyError, NotFoundError
-from bookreviver.ports.persistence import NestedChangeError, NoChangeOpenError, UnitOfWork
+from bookreviver.ports.persistence import (
+    DEFAULT_CHANGE_WAIT_SECONDS,
+    NestedChangeError,
+    NoChangeOpenError,
+    UnitOfWork,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
@@ -92,13 +97,17 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     :ivar book_places: Book place repository bound to the session.
     """
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, *, wait_seconds: float = DEFAULT_CHANGE_WAIT_SECONDS) -> None:
         """Bind the repositories to ``session``.
 
         :param session: Session of the current request or job, owned and closed by its provider.
         :type session: AsyncSession
+        :param wait_seconds: How long a block of this unit of work waits for its turn and for the write lock before it
+                             gives up with ``BookBusyError``.
+        :type wait_seconds: float
         """
         self._session = session
+        self._wait_seconds = wait_seconds
         self.projects = SqlAlchemyProjectRepository(session)
         self.sources = SqlAlchemySourceRepository(session)
         self.scans = SqlAlchemyScanRepository(session)
@@ -215,7 +224,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         if not isinstance(queue := self._session.info.get(WRITE_QUEUE_INFO), WriteQueue):
             yield {}
             return
-        async with queue.turn(kind, book) as block:
+        async with queue.turn(kind, book, wait_seconds=self._wait_seconds) as block:
             yield {CHANGE_BLOCK_OPTION: block}
 
     async def _begin_holding_the_lock(self, options: Mapping[str, object]) -> None:

@@ -11,7 +11,7 @@ programming error, reported as ``NoChangeOpenError``.
 """
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, NewType, override
 
 from bookreviver.domain.entities import (
     BookPlace,
@@ -58,6 +58,10 @@ if TYPE_CHECKING:
 
 # How long, in seconds, a change waits for another change of the same book before it gives up with ``BookBusyError``
 DEFAULT_CHANGE_WAIT_SECONDS: float = 30.0
+# The dependency key of the limit, in seconds, that one unit of work waits for a block with before it gives up with
+# ``BookBusyError``. The container chooses it per scope, a shorter one for a unit of work that serves an HTTP request
+# than for one of a job, and hands it to the adapter that builds the unit of work
+ChangeWaitSeconds = NewType('ChangeWaitSeconds', float)
 
 
 class NoChangeOpenError(RuntimeError):
@@ -1089,7 +1093,8 @@ class UnitOfWork(ABC):
         :returns: Context manager yielding the project as it stands at entry.
         :rtype: AbstractAsyncContextManager[Project]
         :raises NotFoundError: On entry, if the project is not stored.
-        :raises BookBusyError: On entry, if another change of the book did not end within the wait limit of the adapter.
+        :raises BookBusyError: On entry, if another change of the book did not end within the wait limit of the unit
+            of work.
         :raises NestedChangeError: On entry, if a block of this unit of work is open already.
         """
 
@@ -1104,7 +1109,7 @@ class UnitOfWork(ABC):
 
         :returns: Context manager yielding nothing.
         :rtype: AbstractAsyncContextManager[None]
-        :raises BookBusyError: On entry, if another block did not end within the wait limit of the adapter.
+        :raises BookBusyError: On entry, if another block did not end within the wait limit of the unit of work.
         :raises NestedChangeError: On entry, if a block of this unit of work is open already.
         """
 

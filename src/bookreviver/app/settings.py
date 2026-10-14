@@ -202,6 +202,19 @@ class TracingSettings(BaseModel):
         return self.export_path if self.enabled else None
 
 
+class ChangeWaitSettings(BaseModel):
+    """How long a block of the persistence port waits for the write lock before it gives up as busy.
+
+    :ivar request_seconds: Limit of a unit of work that serves an HTTP request, 3 seconds by default, so an interface
+                           never hangs for the long wait of a job and is told at once to try again.
+    :ivar job_seconds: Limit of every other unit of work, the background jobs and the work of the startup, 30 seconds by
+                       default, so a job does not lose its work to a short wait.
+    """
+
+    request_seconds: PositiveFloat = 3.0
+    job_seconds: PositiveFloat = DEFAULT_CHANGE_WAIT_SECONDS
+
+
 class Settings(BaseSettings):
     """All runtime configuration of the API server and the workers.
 
@@ -217,8 +230,8 @@ class Settings(BaseSettings):
     :ivar max_upload_bytes: Largest total size of one upload, 4 GiB by default.
     :ivar max_upload_files: Largest number of files in one upload, 10000 by default.
     :ivar event_queue_size: Undelivered events each event subscriber keeps before dropping the oldest.
-    :ivar change_wait_seconds: How long a change of a book waits for another change of the same book, 30 seconds by
-                               default, before the request is refused as busy.
+    :ivar change_wait: How long a block of a unit of work waits for the write lock, one limit for the units of work of
+                       HTTP requests and one for those of jobs, before it is refused as busy.
     :ivar auth: Accounts, sessions and social sign-in; required, since it holds the signing secret.
     :ivar mail: Outgoing mail.
     :ivar imaging: Page extraction and tiling.
@@ -244,7 +257,7 @@ class Settings(BaseSettings):
     max_upload_bytes: PositiveInt = 4 * 1024**3
     max_upload_files: PositiveInt = 10_000
     event_queue_size: PositiveInt = 256
-    change_wait_seconds: PositiveFloat = DEFAULT_CHANGE_WAIT_SECONDS
+    change_wait: ChangeWaitSettings = ChangeWaitSettings()
     auth: AuthSettings
     mail: MailSettings = MailSettings()
     imaging: ImagingSettings = ImagingSettings()

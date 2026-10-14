@@ -7,13 +7,16 @@ two tasks of an ``anyio`` task group, ordered by events and ``anyio.wait_all_tas
 
 from datetime import timedelta
 from itertools import product
+from time import perf_counter
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import anyio
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
+from starlette.requests import Request
 
+from bookreviver.app.settings import ChangeWaitSettings
 from bookreviver.domain.enums import JobState, Stage, ValueScope
 from bookreviver.domain.errors import BookBusyError, DomainError, NotFoundError
 from bookreviver.domain.values import PageStepKey
@@ -47,8 +50,13 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
-# The wait limit of the suite, short enough for a test of a refused wait and long enough for a wait that ends in time
-WAIT_SECONDS: float = 0.5
+# The limit of a unit of work of a request, short enough for a test of a refused wait to take a fraction of a second
+REQUEST_WAIT_SECONDS: float = 0.2
+# The limit of every other unit of work, long enough that a wait the test ends by itself never reaches it
+JOB_WAIT_SECONDS: float = 5.0
+# What a refusal in the scope of a request must be quicker than, well over the limit of a request and well under that of
+# a job, so that a request given the limit of a job fails the test
+REFUSAL_BOUND_SECONDS: float = 2.0
 ONE_MINUTE: timedelta = timedelta(minutes=1)
 LEFT_THE_BLOCK: str = 'left the block'
 RENAMED: str = 'Renamed'
@@ -57,6 +65,7 @@ STAMP: str = 'Stamp'
 FIRST_IN: str = 'first in'
 FIRST_OUT: str = 'first out'
 SECOND_IN: str = 'second in'
+REQUEST_GAVE_UP: str = 'request gave up'
 # How many blocks queue behind a held one in the test of the order they enter in
 WAITERS: int = 4
 OPENER_ARG: str = 'opener'
@@ -131,14 +140,25 @@ WRITE_PARAMS: list[Any] = [
 
 @pytest.fixture
 def fx_settings(fx_settings: Settings) -> Settings:
-    """Shorten the wait limit of a change, so a refused wait takes a fraction of a second.
+    """Shorten the wait limit of a request, so a refused wait takes a fraction of a second.
 
     :param fx_settings: Settings with a fresh data directory of the test.
     :type fx_settings: Settings
-    :returns: The same settings with the wait limit of the suite.
+    :returns: The same settings with the wait limits of the suite.
     :rtype: Settings
     """
-    return fx_settings.model_copy(update={'change_wait_seconds': WAIT_SECONDS})
+    limits = ChangeWaitSettings(request_seconds=REQUEST_WAIT_SECONDS, job_seconds=JOB_WAIT_SECONDS)
+    return fx_settings.model_copy(update={'change_wait': limits})
+
+
+@pytest.fixture
+def fx_request_context() -> dict[Any, Any]:
+    """Build the context dishka's FastAPI integration puts into the scope of every HTTP request.
+
+    :returns: The context holding a ``Request``, which a scope opened with it takes the limit of a request from.
+    :rtype: dict[Any, Any]
+    """
+    return {Request: Request({'type': 'http'})}
 
 
 @pytest.fixture
@@ -605,27 +625,93 @@ class TestBlockWait:
         assert entered == list(range(WAITERS))
 
     @pytest.mark.parametrize(OPENER_ARG, OPENER_PARAMS, ids=OPENER_IDS)
-    async def test_wait_longer_than_the_limit_raises_book_busy(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_project: Project, opener: Opener
+    async def test_wait_longer_than_the_request_limit_raises_book_busy_in_a_request_scope(
+        self,
+        fx_uow_factory: UnitOfWorkFactory,
+        fx_request_context: dict[Any, Any],
+        fx_project: Project,
+        opener: Opener,
     ) -> None:
-        """Verify a block that cannot enter within the wait limit of the settings raises ``BookBusyError``.
+        """Verify a block of a unit of work whose scope has a ``Request`` gives up after the limit of a request.
 
-        Once the first block has exited, the second unit of work opens the same block at once.
+        The scope of the second unit of work is the scope of an HTTP request, so its limit is ``request_seconds`` of
+        the settings, not the long limit of a job. Once the first block has exited, the second unit of work opens the
+        same block at once.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_request_context: Context of the scope of an HTTP request.
+        :type fx_request_context: dict[Any, Any]
         :param fx_project: Stored project both blocks change.
         :type fx_project: Project
         :param opener: Opens the kind of block under test.
         :type opener: Opener
         """
-        first, second = await fx_uow_factory(), await fx_uow_factory()
+        first, second = await fx_uow_factory(), await fx_uow_factory(fx_request_context)
         async with opener(first, fx_project):
+            started = perf_counter()
             with pytest.raises(BookBusyError):
                 async with opener(second, fx_project):
                     pass
+            gave_up_after = perf_counter() - started
         async with opener(second, fx_project):
             pass
+        assert gave_up_after < REFUSAL_BOUND_SECONDS
+
+    @pytest.mark.parametrize(OPENER_ARG, OPENER_PARAMS, ids=OPENER_IDS)
+    async def test_wait_longer_than_the_request_limit_enters_in_a_scope_without_a_request(
+        self,
+        fx_uow_factory: UnitOfWorkFactory,
+        fx_request_context: dict[Any, Any],
+        fx_project: Project,
+        opener: Opener,
+    ) -> None:
+        """Verify a block of a unit of work whose scope has no ``Request`` waits for the holder past a request limit.
+
+        A unit of work of a request gives up while the holder still holds the book, which proves that more than the
+        limit of a request has passed, and only then is the holder let go. The unit of work of a job asked before that
+        one, so it has waited at least as long, and enters after the holder instead of raising ``BookBusyError``.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_request_context: Context of the scope of an HTTP request.
+        :type fx_request_context: dict[Any, Any]
+        :param fx_project: Stored project every block changes.
+        :type fx_project: Project
+        :param opener: Opens the kind of block under test.
+        :type opener: Opener
+        """
+        holder, job, request = (
+            await fx_uow_factory(),
+            await fx_uow_factory(),
+            await fx_uow_factory(fx_request_context),
+        )
+        order: list[str] = []
+        inside, release = anyio.Event(), anyio.Event()
+
+        async def hold() -> None:
+            """Hold the block until released."""
+            async with opener(holder, fx_project):
+                inside.set()
+                await release.wait()
+                order.append(FIRST_OUT)
+
+        async def wait_as_a_job() -> None:
+            """Ask for the block in the scope of a job and note when it is inside."""
+            async with opener(job, fx_project):
+                order.append(SECOND_IN)
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(hold)
+            await inside.wait()
+            tasks.start_soon(wait_as_a_job)
+            await anyio.wait_all_tasks_blocked()
+            with pytest.raises(BookBusyError):
+                async with opener(request, fx_project):
+                    pass
+            order.append(REQUEST_GAVE_UP)
+            release.set()
+        assert order == [REQUEST_GAVE_UP, FIRST_OUT, SECOND_IN]
 
 
 class TestNesting:

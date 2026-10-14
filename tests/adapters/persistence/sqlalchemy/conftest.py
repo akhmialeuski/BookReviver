@@ -89,10 +89,11 @@ async def fx_traced_database(fx_settings: Settings, fx_tracer: AskingTracer) -> 
 
 @pytest.fixture
 async def fx_impatient_database(fx_traced_database: SqlDatabase, fx_tracer: AskingTracer) -> AsyncIterator[SqlDatabase]:
-    """Open a second database over the file of the first, whose blocks give up for the lock almost at once.
+    """Open a second database over the file of the first, for the units of work that give up for the lock at once.
 
     The second database has a write queue of its own, so its blocks meet those of the first at the busy timeout of
-    SQLite, as the blocks of another process do, and meet each other in its queue.
+    SQLite, as the blocks of another process do, and meet each other in its queue. The limit of a block is that of its
+    unit of work, so a test that wants a refusal opens its unit of work with ``IMPATIENT_SECONDS``.
 
     :param fx_traced_database: The database whose file and schema the second one shares.
     :type fx_traced_database: SqlDatabase

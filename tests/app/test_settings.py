@@ -9,6 +9,7 @@ from bookreviver.app.settings import (
     STEP_PROCESSES_NEED_PREVIEW_SHARE,
     TRACING_NEEDS_PATH,
     TRACING_PATH_WITHOUT_TRACING,
+    ChangeWaitSettings,
     ProcessingSettings,
     Settings,
     TracingSettings,
@@ -25,6 +26,11 @@ SECRET_VARIABLE: str = 'BOOKREVIVER_AUTH__SECRET'
 TRUE_VALUE: str = 'true'
 STEP_PROCESSES_VARIABLE: str = 'BOOKREVIVER_PROCESSING__STEP_PROCESSES'
 PREVIEW_STEP_PROCESSES_VARIABLE: str = 'BOOKREVIVER_PROCESSING__PREVIEW_STEP_PROCESSES'
+REQUEST_SECONDS_VARIABLE: str = 'BOOKREVIVER_CHANGE_WAIT__REQUEST_SECONDS'
+JOB_SECONDS_VARIABLE: str = 'BOOKREVIVER_CHANGE_WAIT__JOB_SECONDS'
+# The limits the settings document: 3 seconds for a request and 30 for every other unit of work
+DEFAULT_REQUEST_SECONDS: float = 3.0
+DEFAULT_JOB_SECONDS: float = 30.0
 # Where the default number of processes reads the cores, which a test replaces
 CPU_COUNT_TARGET: str = 'bookreviver.app.settings.os.process_cpu_count'
 
@@ -146,3 +152,43 @@ class TestProcessingSettings:
         monkeypatch.setenv(PREVIEW_STEP_PROCESSES_VARIABLE, '2')
         processing = Settings(_env_file=None).processing
         assert (processing.step_processes, processing.preview_step_processes) == (5, 2)
+
+
+class TestChangeWaitSettings:
+    """Tests for the limits a block of a unit of work waits for the write lock with."""
+
+    def test_defaults_are_three_seconds_for_a_request_and_thirty_for_a_job(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify a request gives up after 3 seconds and every other unit of work after 30.
+
+        :param monkeypatch: Fixture that restores the environment after the test.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        monkeypatch.setenv(SECRET_VARIABLE, SECRET)
+        change_wait = Settings(_env_file=None).change_wait
+        assert (change_wait.request_seconds, change_wait.job_seconds) == (DEFAULT_REQUEST_SECONDS, DEFAULT_JOB_SECONDS)
+
+    def test_environment_variables_set_each_limit_through_the_nested_delimiter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify the two variables of the group set the two limits.
+
+        :param monkeypatch: Fixture that restores the environment after the test.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        monkeypatch.setenv(SECRET_VARIABLE, SECRET)
+        monkeypatch.setenv(REQUEST_SECONDS_VARIABLE, '1.5')
+        monkeypatch.setenv(JOB_SECONDS_VARIABLE, '45')
+        change_wait = Settings(_env_file=None).change_wait
+        assert (change_wait.request_seconds, change_wait.job_seconds) == (1.5, 45.0)
+
+    @pytest.mark.parametrize('seconds', [0, -1], ids=['zero', 'negative'])
+    def test_a_limit_that_is_not_positive_is_refused(self, seconds: float) -> None:
+        """Verify neither limit may be zero or negative, which would refuse every block at once.
+
+        :param seconds: The value given to both limits.
+        :type seconds: float
+        """
+        with pytest.raises(ValidationError):
+            ChangeWaitSettings(request_seconds=seconds, job_seconds=seconds)

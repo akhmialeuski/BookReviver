@@ -18,6 +18,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import BlockKind, BlockOutcome, SpanAttribute, SpanName
 from bookreviver.domain.errors import BookBusyError
+from tests.adapters.persistence.sqlalchemy.conftest import IMPATIENT_SECONDS
 from tests.helpers.builders import make_page
 
 if TYPE_CHECKING:
@@ -225,13 +226,15 @@ class TestWaitForTheLock:
     ) -> None:
         """Verify a block refused the lock ends its span with the time it waited, and held nothing.
 
-        When the holder belongs to the other database over the same file, each database has its own queue, as two
-        processes would, so the asker meets the holder at the busy timeout of SQLite. When both blocks belong to the
+        The asker's unit of work has a limit of a few milliseconds. When the holder belongs to the other database over
+        the same file, each database has its own queue, as two processes would, so the asker meets the holder at the
+        busy timeout of SQLite, which its block sets to that limit before it begins. When both blocks belong to the
         impatient database, the asker never reaches SQLite: the queue of the process refuses it.
 
         :param fx_traced_database: Database over the file, whose blocks wait long.
         :type fx_traced_database: SqlDatabase
-        :param fx_impatient_database: Database over the same file, whose blocks give up after a few milliseconds.
+        :param fx_impatient_database: Database over the same file, whose queue is its own, that the asker's unit of
+                                      work gives up in after a few milliseconds.
         :type fx_impatient_database: SqlDatabase
         :param fx_project: Committed project of the database.
         :type fx_project: Project
@@ -247,7 +250,7 @@ class TestWaitForTheLock:
             SqlAlchemyUnitOfWork(holder).change_book(fx_project.id),
         ):
             with pytest.raises(BookBusyError):
-                async with SqlAlchemyUnitOfWork(asker).change_book(fx_project.id):
+                async with SqlAlchemyUnitOfWork(asker, wait_seconds=IMPATIENT_SECONDS).change_book(fx_project.id):
                     pass
         refused, held = fx_tracer.named(SpanName.WRITE_BLOCK)
         expect(refused.attributes[SpanAttribute.BLOCK_OUTCOME] is BlockOutcome.NOT_BEGUN)

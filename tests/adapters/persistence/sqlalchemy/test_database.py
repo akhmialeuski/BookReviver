@@ -6,10 +6,12 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from attrs import evolve
+from delayed_assert import assert_expectations, expect
 from sqlalchemy import inspect, text
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
+from bookreviver.app.settings import ChangeWaitSettings
 from tests.helpers.builders import make_project
 from tests.helpers.seeding import store_project
 from tests.helpers.statements import StatementLog
@@ -21,9 +23,17 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
-# A wait limit that is not the default of the settings, so a test cannot pass on the default by chance
+# A wait limit of a job that is not the default of the settings, so a test cannot pass on the default by chance
 WAIT_SECONDS: float = 2.5
 BUSY_TIMEOUT_MS: int = 2_500
+# The limits of two units of work of requests, both different from that of a job and from each other
+SHORT_WAIT_SECONDS: float = 0.5
+SHORT_BUSY_TIMEOUT_MS: int = 500
+MIDDLE_WAIT_SECONDS: float = 1.5
+MIDDLE_BUSY_TIMEOUT_MS: int = 1_500
+# The statement that reads the busy timeout of a connection, and the start of the statement that sets it
+BUSY_TIMEOUT_PRAGMA: str = 'PRAGMA busy_timeout'
+BUSY_TIMEOUT_SETTER: str = f'{BUSY_TIMEOUT_PRAGMA}='
 BEGIN_STATEMENT: str = 'BEGIN IMMEDIATE'
 COMMIT_STATEMENT: str = 'COMMIT'
 ROLLBACK_STATEMENT: str = 'ROLLBACK'
@@ -41,14 +51,14 @@ SELECT_SCHEMA: str = 'SELECT count(*) FROM sqlite_master'
 
 @pytest.fixture
 def fx_settings(fx_settings: Settings) -> Settings:
-    """Give the settings of the suite a wait limit that is not the default.
+    """Give the settings of the suite a wait limit of a job that is not the default.
 
     :param fx_settings: Settings with a fresh data directory of the test.
     :type fx_settings: Settings
     :returns: The same settings with the wait limit of this module.
     :rtype: Settings
     """
-    return fx_settings.model_copy(update={'change_wait_seconds': WAIT_SECONDS})
+    return fx_settings.model_copy(update={'change_wait': ChangeWaitSettings(job_seconds=WAIT_SECONDS)})
 
 
 class TestSqlDatabase:
@@ -91,13 +101,13 @@ class TestSqlDatabase:
             assert driver_connection._conn.autocommit is True
 
     async def test_connections_wait_for_a_lock_and_enforce_foreign_keys(self, fx_database: SqlDatabase) -> None:
-        """Verify every SQLite connection waits the wait limit of the settings for a lock and enforces foreign keys.
+        """Verify every SQLite connection waits the limit of a job for a lock when it opens, and enforces foreign keys.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
         """
         async with fx_database.engine.connect() as connection:
-            timeout: Any = (await connection.execute(text('PRAGMA busy_timeout'))).scalar_one()
+            timeout: Any = (await connection.execute(text(BUSY_TIMEOUT_PRAGMA))).scalar_one()
             foreign_keys: Any = (await connection.execute(text('PRAGMA foreign_keys'))).scalar_one()
 
         assert (timeout, foreign_keys) == (BUSY_TIMEOUT_MS, 1)
@@ -135,11 +145,48 @@ class TestSqliteTransactions:
         :type fx_database: SqlDatabase
         """
         async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
+            uow = SqlAlchemyUnitOfWork(session, wait_seconds=WAIT_SECONDS)
             with StatementLog(fx_database.engine.sync_engine) as log:
                 async with uow.change():
                     pass
         assert log.statements == [BEGIN_STATEMENT, COMMIT_STATEMENT]
+
+    async def test_block_sets_the_busy_timeout_of_its_unit_of_work_only_when_the_connection_has_another(
+        self, fx_database: SqlDatabase
+    ) -> None:
+        """Verify a block gives its connection the limit of its unit of work, and sends nothing when it has it already.
+
+        The blocks run one after another over the one connection of the pool, whose busy timeout is that of a job
+        from when it opened. The first and the last block have the limit of a job, so they send no statement, and the
+        two blocks of the same short limit send one between them.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        """
+        limits = [WAIT_SECONDS, SHORT_WAIT_SECONDS, MIDDLE_WAIT_SECONDS, MIDDLE_WAIT_SECONDS, WAIT_SECONDS]
+        timeouts: list[Any] = []
+        with StatementLog(fx_database.engine.sync_engine) as log:
+            for limit in limits:
+                async with (
+                    fx_database.sessions() as session,
+                    SqlAlchemyUnitOfWork(session, wait_seconds=limit).change(),
+                ):
+                    timeouts.append((await session.execute(text(BUSY_TIMEOUT_PRAGMA))).scalar_one())
+        setters = [statement for statement in log.statements if statement.startswith(BUSY_TIMEOUT_SETTER)]
+        expected_timeouts = [
+            BUSY_TIMEOUT_MS,
+            SHORT_BUSY_TIMEOUT_MS,
+            MIDDLE_BUSY_TIMEOUT_MS,
+            MIDDLE_BUSY_TIMEOUT_MS,
+            BUSY_TIMEOUT_MS,
+        ]
+        expected_setters = [
+            f'{BUSY_TIMEOUT_SETTER}{milliseconds}'
+            for milliseconds in (SHORT_BUSY_TIMEOUT_MS, MIDDLE_BUSY_TIMEOUT_MS, BUSY_TIMEOUT_MS)
+        ]
+        expect(timeouts == expected_timeouts)
+        expect(setters == expected_setters)
+        assert_expectations()
 
     async def test_block_left_by_an_exception_ends_with_rollback(self, fx_database: SqlDatabase) -> None:
         """Verify a block that an exception leaves rolls the transaction back, so it holds the lock no longer.
@@ -159,7 +206,7 @@ class TestSqliteTransactions:
                 raise ValueError
 
         async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
+            uow = SqlAlchemyUnitOfWork(session, wait_seconds=WAIT_SECONDS)
             with StatementLog(fx_database.engine.sync_engine) as log, pytest.raises(ValueError, match=r'^$'):
                 await leave_by_exception(uow)
         assert log.statements == [BEGIN_STATEMENT, ROLLBACK_STATEMENT]

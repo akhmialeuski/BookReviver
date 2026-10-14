@@ -26,11 +26,12 @@ class TestChangeBook:
         Both blocks are opened by one task, one inside the other, so a block that waited for the lock of the other
         book would wait for the limit and raise ``BookBusyError`` instead of entering.
         """
-        database = InMemoryDatabase(wait_seconds=WAIT_SECONDS)
+        database = InMemoryDatabase()
         owner_id = new_account_id()
         first_book, second_book = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         await store_project(InMemoryUnitOfWork(database), first_book)
         await store_project(InMemoryUnitOfWork(database), second_book)
-        first, second = InMemoryUnitOfWork(database), InMemoryUnitOfWork(database)
+        first = InMemoryUnitOfWork(database, wait_seconds=WAIT_SECONDS)
+        second = InMemoryUnitOfWork(database, wait_seconds=WAIT_SECONDS)
         async with first.change_book(first_book.id), second.change_book(second_book.id) as project:
             assert project == second_book

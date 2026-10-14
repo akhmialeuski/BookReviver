@@ -184,12 +184,10 @@ class InMemoryDatabase:
     """The committed state shared by every unit of work, like a database server, and the locks of its changes.
 
     :ivar tables: Committed rows of every table.
-    :ivar wait_seconds: How long a block of the port waits for its lock before it gives up with ``BookBusyError``.
     :ivar change_lock: Single-holder semaphore of the blocks that write outside the content of a book.
     """
 
     tables: InMemoryTables = field(factory=InMemoryTables)
-    wait_seconds: float = DEFAULT_CHANGE_WAIT_SECONDS
     change_lock: anyio.Semaphore = field(factory=lambda: anyio.Semaphore(1), init=False)
     _book_locks: dict[ProjectId, anyio.Semaphore] = field(factory=dict, init=False)
 
@@ -2103,13 +2101,17 @@ class InMemoryUnitOfWork(UnitOfWork):
     :ivar book_places: Book place repository over the working copy.
     """
 
-    def __init__(self, database: InMemoryDatabase) -> None:
+    def __init__(self, database: InMemoryDatabase, *, wait_seconds: float = DEFAULT_CHANGE_WAIT_SECONDS) -> None:
         """Begin a transaction over ``database``.
 
         :param database: Committed state shared with every other unit of work.
         :type database: InMemoryDatabase
+        :param wait_seconds: How long a block of this unit of work waits for its lock before it gives up with
+                             ``BookBusyError``.
+        :type wait_seconds: float
         """
         self._database = database
+        self._wait_seconds = wait_seconds
         self._change = ChangeState()
         # The repositories are built once and keep these tables for the life of the unit of work, as the repositories
         # of a database adapter keep their session; every transaction refills the tables in place
@@ -2197,7 +2199,7 @@ class InMemoryUnitOfWork(UnitOfWork):
         """
         if self._change.is_open:
             raise NestedChangeError
-        async with hold_in_turn(lock, wait_seconds=self._database.wait_seconds):
+        async with hold_in_turn(lock, wait_seconds=self._wait_seconds):
             self._begin()
             self._change.is_open = True
             try:

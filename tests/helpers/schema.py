@@ -29,7 +29,7 @@ async def create_schema(settings: Settings) -> None:
     """
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     database = SqlDatabase(
-        settings.resolved_database_url, tracer=NullTracer(), wait_seconds=settings.change_wait_seconds
+        settings.resolved_database_url, tracer=NullTracer(), wait_seconds=settings.change_wait.job_seconds
     )
     script = ScriptDirectory.from_config(database.migrations.config)
     options = {'version_table': database.config.alembic_config.version_table_name}
