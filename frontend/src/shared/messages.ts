@@ -80,6 +80,7 @@ export const MESSAGES = {
     notFound: 'This item does not exist or was deleted.',
     conflict: 'This cannot be done right now. Try again in a moment.',
     tooLarge: 'The upload is larger than the server accepts.',
+    busy: 'This book is being changed right now. Try again in a moment.',
     invalidInput: 'Some of the values are not valid.',
     // The wording of a code the account routes send in the detail of a problem
     codes: {

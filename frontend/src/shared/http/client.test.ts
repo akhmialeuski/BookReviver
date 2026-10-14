@@ -5,9 +5,12 @@ import {
   usersCurrentUserApiV1UsersMeGet,
 } from '@/api';
 import { client } from '@/api/client.gen';
+import { queryClient } from '@/app/query-client';
+import { MESSAGES } from '@/shared/messages';
 import { configureApiClient } from './client';
 import { CSRF_HEADER_NAME } from './csrf';
 import { ProblemError } from './problem';
+import { HttpStatus } from './status';
 
 /**
  * The generated client with its interceptors installed, run against a fake `fetch` and a fake cookie jar.
@@ -116,6 +119,34 @@ describe('the configured API client', () => {
 
     await expect(failure).rejects.toBeInstanceOf(ProblemError);
     await expect(failure).rejects.toMatchObject({ status: 400, code: 'LOGIN_BAD_CREDENTIALS' });
+  });
+
+  it('sends the request of a mutation once when the book is busy', async () => {
+    cookies = 'csrftoken=token-1';
+    fetchMock.mockResolvedValue(
+      problemResponse(
+        {
+          type: 'http-service-unavailable',
+          title: 'Service Unavailable',
+          status: HttpStatus.ServiceUnavailable,
+          detail: 'The book is being changed by something else right now. Try again in a moment.',
+        },
+        HttpStatus.ServiceUnavailable,
+      ),
+    );
+
+    const failure = queryClient
+      .getMutationCache()
+      .build(queryClient, {
+        mutationFn: () => authCookieLoginApiV1AuthLoginPost({ body: LOGIN, throwOnError: true }),
+      })
+      .execute(undefined);
+
+    await expect(failure).rejects.toMatchObject({
+      status: HttpStatus.ServiceUnavailable,
+      message: MESSAGES.problems.busy,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('throws a network problem when the server cannot be reached', async () => {

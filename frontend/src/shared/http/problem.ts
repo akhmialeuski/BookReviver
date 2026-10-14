@@ -74,6 +74,8 @@ function messageForStatus(status: number | null): string {
       return MESSAGES.problems.conflict;
     case HttpStatus.PayloadTooLarge:
       return MESSAGES.problems.tooLarge;
+    case HttpStatus.ServiceUnavailable:
+      return MESSAGES.problems.busy;
     default:
       return MESSAGES.problems.unknown;
   }

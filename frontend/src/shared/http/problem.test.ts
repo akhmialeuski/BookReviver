@@ -97,6 +97,22 @@ describe('parseProblem', () => {
     expect(error.message).toBe(MESSAGES.problems.unknown);
   });
 
+  it('words a busy book by its own sentence and hides the detail the server sent', () => {
+    const error = parseProblem(
+      {
+        type: 'http-service-unavailable',
+        title: 'Service Unavailable',
+        status: 503,
+        detail: 'The book is being changed by something else right now. Try again in a moment.',
+      },
+      503,
+    );
+
+    expect(error.message).toBe(MESSAGES.problems.busy);
+    expect(error.status).toBe(503);
+    expect(error.code).toBeNull();
+  });
+
   it('reports a failed request with no response as a network problem', () => {
     const error = parseProblem(new TypeError('Failed to fetch'), null);
 
