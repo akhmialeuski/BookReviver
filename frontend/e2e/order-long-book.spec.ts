@@ -1,5 +1,6 @@
-import { expect, type Page, test } from '@playwright/test';
-import { addPlaceholderPages, createBook, registerAndSignIn } from './support/account';
+import { expect, type Page } from '@playwright/test';
+import { addPlaceholderPages, createBook, openLibrary } from './support/account';
+import { test } from './support/fixtures';
 
 /**
  * The grid of the Order stage on a book of a thousand pages: only the rows in sight are in the document while it
@@ -27,7 +28,7 @@ function positionOf(text: string | null): number {
 }
 
 async function openLongBook(page: Page): Promise<void> {
-  await registerAndSignIn(page);
+  await openLibrary(page);
   await createBook(page, 'A long book');
   await addPlaceholderPages(page, LONG_BOOK_PAGES, 'page-order');
   await expect(page.getByTestId('order-grid')).toBeVisible();

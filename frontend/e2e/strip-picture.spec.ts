@@ -1,16 +1,17 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   uploadFolder,
   waitForIdleJobs,
   writeSheetsFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { runPages } from './support/page-work';
 import { versionIdOf } from './support/steps';
 
@@ -88,7 +89,7 @@ test('the strip and the canvas show the same picture of the page at every step o
   };
 
   await test.step('the stage runs from its last step, so Margins makes the result of the stage', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book of strip pictures');
     await uploadFolder(page, folder, 1);
     projectId = openProjectId(page);

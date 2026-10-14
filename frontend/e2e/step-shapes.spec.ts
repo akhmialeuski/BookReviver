@@ -1,15 +1,16 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import {
   createBook,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   uploadFolder,
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { numbersOf, pairOf } from './support/layer';
 import { runPages } from './support/page-work';
 
@@ -65,7 +66,7 @@ test('the shape of a step is on the page in its three states, they survive a cha
   }
 
   await test.step('a book of three pages opens on Geometry with a step bar', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book of shapes');
     await uploadFolder(page, folder, PAGES);
     await waitForIdleJobs(page, openProjectId(page));

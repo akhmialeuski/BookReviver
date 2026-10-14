@@ -1,16 +1,17 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   uploadFolder,
   waitForIdleJobs,
   writeScaledSheetsFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { dragFrom, numbersOf, pairOf } from './support/layer';
 import { countEdits, pageIds, readSettings, runPages } from './support/page-work';
 
@@ -133,7 +134,7 @@ test('the content box and the border of a page are found on opening, edited with
   };
 
   await test.step('a book with two sheets of text opens on Geometry, with no page run yet', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book of margins');
     await uploadFolder(page, folder, PAGES);
     projectId = openProjectId(page);

@@ -1,16 +1,17 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   uploadFolder,
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { runPages } from './support/page-work';
 
 /**
@@ -45,7 +46,7 @@ test('Geometry and Cleanup lay out their panels in one order, with the facts of 
   let bookPath = '';
 
   await test.step('a book of two pages of text is run through Geometry and Cleanup', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book with one panel');
     await uploadFolder(page, folder, PAGES);
     await waitForIdleJobs(page, openProjectId(page));

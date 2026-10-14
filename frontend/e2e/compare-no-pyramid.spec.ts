@@ -1,15 +1,16 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
   createBook,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   uploadFolder,
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { changeHeaders, pageIds, runPages } from './support/page-work';
 
 /**
@@ -78,7 +79,7 @@ test('a page whose result has no pyramid says the picture failed, and draws it o
   let here = '';
 
   await test.step('the stage has run, and its swipe on Margins draws the result from its tile pyramid', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book without tiles for a moment');
     await uploadFolder(page, folder, PAGES);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');

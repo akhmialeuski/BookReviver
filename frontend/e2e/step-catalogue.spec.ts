@@ -1,16 +1,17 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import {
   createBook,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   stepIdsOf,
   uploadFolder,
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 
 /**
  * The catalogue of steps and the window of the gear in the step bar, and the carrying of a shape over to other pages.
@@ -42,7 +43,7 @@ test('a step is added from the catalogue twice, removed in the window of the gea
   let stepsBefore = 0;
 
   await test.step('a book of three pages opens on Geometry with its step bar', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book of added steps');
     await uploadFolder(page, folder, PAGES);
     await waitForIdleJobs(page, openProjectId(page));

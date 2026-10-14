@@ -1,14 +1,14 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Locator, type Page, test } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../src/shared/http/csrf';
 import {
   createBook,
   markPagesAsText,
   openImportStage,
+  openLibrary,
   openOrderStage,
   openProjectId,
-  registerAndSignIn,
   snap,
   stepIdsOf,
   uploadFolder,
@@ -16,6 +16,7 @@ import {
   writePagesFolder,
   writeSheetsFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { dragFrom, pairOf } from './support/layer';
 import { CHANGE_ROWS, openTimeline, RESULT_ROWS, runPages } from './support/page-work';
 
@@ -164,7 +165,7 @@ test('a reader sees what changed on a page, takes the last change back with the 
   let stepId = '';
 
   await test.step('a book opens on the Geometry stage, and its first page has an edit saved by hand', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book with a history');
     await uploadFolder(page, folder, PAGES);
     await waitForIdleJobs(page, openProjectId(page));
@@ -251,7 +252,7 @@ test('a reader reads a long history three changes at a time, undoes back to an o
   let stepId = '';
 
   await test.step('a page has a setting changed four times, and its history is collapsed with the number of changes', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book with a long history');
     await uploadFolder(page, folder, PAGES);
     await waitForIdleJobs(page, openProjectId(page));
@@ -348,7 +349,7 @@ test('a reader reads the changes and the results of a step in one timeline that 
   };
 
   await test.step('a run through Select content makes a result, which the collapsed section counts', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book with a timeline');
     await uploadFolder(page, folder, 1);
     projectId = openProjectId(page);

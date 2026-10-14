@@ -1,15 +1,16 @@
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../src/shared/http/csrf';
 import {
   createBook,
+  openLibrary,
   openOrderStage,
   openProjectId,
-  registerAndSignIn,
   setKind,
   snap,
   uploadFolder,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 
 /**
  * The pagination of the book on the Order stage: the panel that lists the sections, the colour of a section on the
@@ -53,7 +54,7 @@ test('a reader numbers a book by sections, sees them on the thumbnails and chang
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
-  await registerAndSignIn(page);
+  await openLibrary(page);
   await createBook(page, 'A book with a preface');
   await uploadFolder(page, folder, PAGES);
   await setKind(page, PLATE, 'plate');

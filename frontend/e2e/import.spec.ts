@@ -1,13 +1,14 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import {
   createBook,
   openImportStage,
-  registerAndSignIn,
+  openLibrary,
   uploadFolder,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { pageIds } from './support/page-work';
 
 /**
@@ -24,7 +25,7 @@ test('the Import stage lists the files, opens their scans and leads on to Order'
   let importPath = '';
 
   await test.step('upload a folder into a new book', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book of files');
     await uploadFolder(page, folder, FILES);
     importPath = new URL(page.url()).pathname;

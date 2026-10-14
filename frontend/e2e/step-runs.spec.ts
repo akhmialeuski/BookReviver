@@ -1,16 +1,17 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
   createBook,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   setContentType,
   snap,
   stepIdsOf,
   uploadFolder,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import {
   changedPages,
   countEdits,
@@ -72,14 +73,14 @@ async function geometryVersions(page: Page): Promise<StoredVersion[]> {
 }
 
 /**
- * Sign in, make a book of the pages of a folder and open it on the Geometry stage.
+ * Open the library, make a book of the pages of a folder and open it on the Geometry stage.
  *
  * @param page The page of the browser.
  * @param folder The folder of the pages of the book.
  * @param title The title of the book.
  */
 async function openGeometryBook(page: Page, folder: string, title: string): Promise<void> {
-  await registerAndSignIn(page);
+  await openLibrary(page);
   await createBook(page, title);
   await uploadFolder(page, folder, PAGES);
   const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');

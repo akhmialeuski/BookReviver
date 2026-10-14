@@ -1,5 +1,6 @@
 """Tests for registration, verification, sign-in, sign-out and password reset through the HTTP API."""
 
+import threading
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 
@@ -17,10 +18,13 @@ from tests.helpers.fakes_accounts import (
     FORGOT_PATH,
     LOGOUT_PATH,
     ME_PATH,
+    PASSWORD,
     PASSWORD_FIELD,
     RESET_PATH,
     TOKEN_PARAMETER,
     VERIFY_PATH,
+    HashStep,
+    RecordingPasswordHelper,
 )
 
 if TYPE_CHECKING:
@@ -29,7 +33,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from bookreviver.app.settings import Settings
-    from tests.helpers.fakes_accounts import RecordingMailer, Visitor
+    from tests.helpers.fakes_accounts import HashCalls, RecordingMailer, Visitor
 
 pytestmark = pytest.mark.anyio
 
@@ -356,3 +360,159 @@ class TestUpdateMe:
         await fx_visitor.sign_up(EMAIL)
         response = await fx_visitor.client.patch(ME_PATH, json={EMAIL_FIELD: OTHER_EMAIL})
         assert response.status_code == HTTPStatus.UNPROCESSABLE_CONTENT
+
+
+class TestHashingOffTheLoop:
+    """Tests that argon2id runs in a worker thread, so a hash or a check never stalls the event loop.
+
+    The application runs in the thread of the test's event loop, so a call recorded on any other thread was made off
+    the loop. Each test clears the record after its setup, so it holds only the request the test is about.
+    """
+
+    async def test_recording_sees_a_call_made_on_the_loop(self, fx_hash_calls: HashCalls) -> None:
+        """Verify the record shows a hash made on the loop's own thread, so an empty verdict below cannot be blind.
+
+        :param fx_hash_calls: Record of the password helper calls of the test.
+        :type fx_hash_calls: HashCalls
+        """
+        RecordingPasswordHelper(fx_hash_calls).hash(PASSWORD)
+        expect(fx_hash_calls.steps == [HashStep.HASH])
+        expect(fx_hash_calls.threads == {threading.get_ident()})
+        assert_expectations()
+
+    async def test_registration_hashes_off_the_loop(self, fx_visitor: Visitor, fx_hash_calls: HashCalls) -> None:
+        """Verify registering an account hashes its password once, in a worker thread.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        :param fx_hash_calls: Record of the password helper calls of the test.
+        :type fx_hash_calls: HashCalls
+        """
+        await fx_visitor.register(EMAIL)
+        expect(fx_hash_calls.steps == [HashStep.HASH])
+        expect(threading.get_ident() not in fx_hash_calls.threads)
+        assert_expectations()
+
+    async def test_taken_address_hashes_off_the_loop(self, fx_visitor: Visitor, fx_hash_calls: HashCalls) -> None:
+        """Verify registering a taken address still spends one hash, in a worker thread.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        :param fx_hash_calls: Record of the password helper calls of the test.
+        :type fx_hash_calls: HashCalls
+        """
+        await fx_visitor.sign_up(EMAIL)
+        fx_hash_calls.clear()
+        await fx_visitor.register(EMAIL, NEW_PASSWORD)
+        expect(fx_hash_calls.steps == [HashStep.HASH])
+        expect(threading.get_ident() not in fx_hash_calls.threads)
+        assert_expectations()
+
+    async def test_sign_in_checks_off_the_loop(self, fx_visitor: Visitor, fx_hash_calls: HashCalls) -> None:
+        """Verify signing in with the right password checks it once, in a worker thread.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        :param fx_hash_calls: Record of the password helper calls of the test.
+        :type fx_hash_calls: HashCalls
+        """
+        await fx_visitor.sign_up(EMAIL)
+        await fx_visitor.client.post(LOGOUT_PATH)
+        fx_hash_calls.clear()
+        response = await fx_visitor.login(EMAIL)
+        expect(response.status_code == HTTPStatus.NO_CONTENT)
+        expect(fx_hash_calls.steps == [HashStep.VERIFY])
+        expect(threading.get_ident() not in fx_hash_calls.threads)
+        assert_expectations()
+
+    async def test_wrong_password_checks_off_the_loop(self, fx_visitor: Visitor, fx_hash_calls: HashCalls) -> None:
+        """Verify signing in with a wrong password checks it once, in a worker thread, and is refused.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        :param fx_hash_calls: Record of the password helper calls of the test.
+        :type fx_hash_calls: HashCalls
+        """
+        await fx_visitor.sign_up(EMAIL)
+        await fx_visitor.client.post(LOGOUT_PATH)
+        fx_hash_calls.clear()
+        response = await fx_visitor.login(EMAIL, NEW_PASSWORD)
+        expect(response.status_code == HTTPStatus.BAD_REQUEST)
+        expect(fx_hash_calls.steps == [HashStep.VERIFY])
+        expect(threading.get_ident() not in fx_hash_calls.threads)
+        assert_expectations()
+
+    async def test_unknown_address_hashes_off_the_loop(self, fx_visitor: Visitor, fx_hash_calls: HashCalls) -> None:
+        """Verify signing in with an unknown address spends one hash, in a worker thread, and is refused.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        :param fx_hash_calls: Record of the password helper calls of the test.
+        :type fx_hash_calls: HashCalls
+        """
+        response = await fx_visitor.login(OTHER_EMAIL)
+        expect(response.status_code == HTTPStatus.BAD_REQUEST)
+        expect(fx_hash_calls.steps == [HashStep.HASH])
+        expect(threading.get_ident() not in fx_hash_calls.threads)
+        assert_expectations()
+
+    async def test_forgot_password_hashes_off_the_loop(
+        self, fx_visitor: Visitor, fx_hash_calls: HashCalls, fx_mailer: RecordingMailer
+    ) -> None:
+        """Verify asking to reset a password hashes the stored hash once for the token, in a worker thread.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        :param fx_hash_calls: Record of the password helper calls of the test.
+        :type fx_hash_calls: HashCalls
+        :param fx_mailer: Recording mailer of the application.
+        :type fx_mailer: RecordingMailer
+        """
+        await fx_visitor.sign_up(EMAIL)
+        await fx_visitor.client.post(LOGOUT_PATH)
+        fx_hash_calls.clear()
+        response = await fx_visitor.client.post(FORGOT_PATH, json={EMAIL_FIELD: EMAIL})
+        expect(response.status_code == HTTPStatus.ACCEPTED)
+        expect([message.subject for message in fx_mailer.sent][-1:] == [AccountMail.RESET.subject])
+        expect(fx_hash_calls.steps == [HashStep.HASH])
+        expect(threading.get_ident() not in fx_hash_calls.threads)
+        assert_expectations()
+
+    async def test_reset_password_checks_and_hashes_off_the_loop(
+        self, fx_visitor: Visitor, fx_hash_calls: HashCalls, fx_mailer: RecordingMailer
+    ) -> None:
+        """Verify a reset checks the token's fingerprint, then hashes the new password, both in a worker thread.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        :param fx_hash_calls: Record of the password helper calls of the test.
+        :type fx_hash_calls: HashCalls
+        :param fx_mailer: Recording mailer of the application.
+        :type fx_mailer: RecordingMailer
+        """
+        await fx_visitor.sign_up(EMAIL)
+        await fx_visitor.client.post(LOGOUT_PATH)
+        await fx_visitor.client.post(FORGOT_PATH, json={EMAIL_FIELD: EMAIL})
+        token = fx_mailer.token(AccountMail.RESET.subject)
+        fx_hash_calls.clear()
+        response = await fx_visitor.client.post(RESET_PATH, json={TOKEN_PARAMETER: token, PASSWORD_FIELD: NEW_PASSWORD})
+        expect(response.status_code == HTTPStatus.OK)
+        expect(fx_hash_calls.steps == [HashStep.VERIFY, HashStep.HASH])
+        expect(threading.get_ident() not in fx_hash_calls.threads)
+        assert_expectations()
+
+    async def test_password_change_hashes_off_the_loop(self, fx_visitor: Visitor, fx_hash_calls: HashCalls) -> None:
+        """Verify changing the password of the signed-in account hashes the new one once, in a worker thread.
+
+        :param fx_visitor: Signed-out visitor of the application.
+        :type fx_visitor: Visitor
+        :param fx_hash_calls: Record of the password helper calls of the test.
+        :type fx_hash_calls: HashCalls
+        """
+        await fx_visitor.sign_up(EMAIL)
+        fx_hash_calls.clear()
+        response = await fx_visitor.client.patch(ME_PATH, json={PASSWORD_FIELD: NEW_PASSWORD})
+        expect(response.status_code == HTTPStatus.OK)
+        expect(fx_hash_calls.steps == [HashStep.HASH])
+        expect(threading.get_ident() not in fx_hash_calls.threads)
+        assert_expectations()

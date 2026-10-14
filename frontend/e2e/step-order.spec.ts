@@ -1,15 +1,16 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import { MESSAGES } from '../src/shared/messages';
 import {
   createBook,
+  openLibrary,
   recipeOf,
-  registerAndSignIn,
   snap,
   uploadFolder,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import {
   closeStepsWindow,
   openStepsWindow,
@@ -91,7 +92,7 @@ test('a step off its usual place is marked and put back, a place where it cannot
   const marks = window.getByTestId('step-order-mark');
 
   await test.step('a new book opens the Geometry stage with its steps in the usual order, none of them marked', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book for the order of steps');
     await uploadFolder(page, folder, PAGES);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');

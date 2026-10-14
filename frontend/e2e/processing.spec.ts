@@ -1,15 +1,16 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import {
   createBook,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   uploadFolder,
   waitForIdleJobs,
   writePagesFolder,
   writeScansFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { openTimeline, RESULT_ROWS, runPages } from './support/page-work';
 
 /**
@@ -40,7 +41,7 @@ test('a reader runs and checks the Geometry stage', async ({ page }) => {
   let bookPath = '';
 
   await test.step('a book with pages opens on the Geometry stage', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book to straighten');
     await uploadFolder(page, folder, PAGES);
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
@@ -210,7 +211,7 @@ test('an imported folder of spreads and single pages is split by itself, and the
   const strip = page.getByTestId('strip-page');
 
   await test.step('the book has its pages as soon as the import is done, with no action of the reader', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book of spreads');
     await uploadFolder(page, folder, WIDE_SCANS + 1);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
@@ -254,7 +255,7 @@ test('the choice of one page or two is kept through a run on all pages, and Auto
   };
 
   await test.step('the book is split by the import', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book with choices');
     await uploadFolder(page, folder, WIDE_SCANS + 1);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');

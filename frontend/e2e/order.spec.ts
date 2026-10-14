@@ -1,13 +1,14 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
   createBook,
+  openLibrary,
   openOrderStage,
-  registerAndSignIn,
   uploadFolder,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 
 /**
  * The Order stage: a grid of the pages of the book that is selected with the click, Shift and Ctrl, rearranged by
@@ -71,10 +72,10 @@ async function arrowRight(page: Page, announcement: string): Promise<void> {
   await expect(page.locator('[aria-live="assertive"]')).toHaveText(announcement);
 }
 
-/** Sign in, make a book of `PAGES` pages and open its Order stage. */
+/** Open the library, make a book of `PAGES` pages and open its Order stage. */
 async function openBook(page: Page, title: string): Promise<string> {
   const folder = await writePagesFolder(PAGES);
-  await registerAndSignIn(page);
+  await openLibrary(page);
   await createBook(page, title);
   await uploadFolder(page, folder, PAGES);
   await openOrderStage(page);

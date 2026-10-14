@@ -1,17 +1,18 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Locator, type Page, test } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   stepIdsOf,
   uploadFolder,
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { openTimeline, pageIds, putSetting } from './support/page-work';
 
 /**
@@ -121,7 +122,7 @@ test('the book screen stays in place on Import, Order and Geometry while its str
   let bookPath = '';
 
   await test.step('a book of three pages is imported, and its first page has a history at Deskew', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book that keeps its header');
     await uploadFolder(page, folder, PAGES);
     await waitForIdleJobs(page, openProjectId(page));
@@ -251,7 +252,7 @@ test('the panel of a stage is never wider than its column at 1280 px, nor at its
   let bookPath = '';
 
   await test.step('a book of three pages of text is imported', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book with a panel that fits');
     await uploadFolder(page, folder, PAGES);
     await waitForIdleJobs(page, openProjectId(page));

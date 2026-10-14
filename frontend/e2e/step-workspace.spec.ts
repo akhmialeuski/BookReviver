@@ -1,10 +1,10 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import {
   createBook,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   setKind,
   snap,
   stepIdsOf,
@@ -12,6 +12,7 @@ import {
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { countRunJobs, readStageRows, runPages } from './support/page-work';
 
 /**
@@ -48,7 +49,7 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
   let stepCount = 0;
 
   await test.step('a book with a plate opens on Geometry, and the bar of steps holds the buttons of the strip and the panel', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book of steps');
     await uploadFolder(page, folder, PAGES);
     await waitForIdleJobs(page, openProjectId(page));

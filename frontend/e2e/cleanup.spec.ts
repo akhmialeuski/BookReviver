@@ -1,11 +1,11 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   setKind,
   snap,
   stepIdsOf,
@@ -13,6 +13,7 @@ import {
   waitForIdleJobs,
   writeSheetsFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { dragFrom } from './support/layer';
 import { runPages } from './support/page-work';
 import { waitForStepPicture } from './support/steps';
@@ -112,7 +113,7 @@ test('the Cleanup stage binarizes, despeckles and erases, with a recipe for plat
   let bookPath = '';
 
   await test.step('three sheets, one of them a plate, are cut to their frames by the Geometry stage', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book to clean');
     await uploadFolder(page, folder, PAGES);
     await waitForIdleJobs(page, openProjectId(page));

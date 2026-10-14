@@ -1,5 +1,6 @@
-import { expect, type Page, test } from '@playwright/test';
-import { createBook, registerAndSignIn } from './support/account';
+import { expect, type Page } from '@playwright/test';
+import { createBook, openLibrary, uniqueTitle } from './support/account';
+import { test } from './support/fixtures';
 
 /**
  * The About tab and the library: a description saves by itself and is still there after a reload, a field the
@@ -8,7 +9,7 @@ import { createBook, registerAndSignIn } from './support/account';
  */
 
 const TITLE = 'A book to describe';
-const RENAMED = 'A book that was described';
+const RENAMED_WORDS = 'A book that was described';
 const STAGE_COUNT = 10;
 
 /** Wait until the line under the form says the changes were saved. */
@@ -18,21 +19,23 @@ async function expectSaved(page: Page): Promise<void> {
 
 test('a reader describes a book and finds the description after a reload', async ({ page }) => {
   let aboutUrl = '';
+  // The title the book is renamed to is unique too, since the library of the account holds the books of other scenarios
+  const renamed = uniqueTitle(RENAMED_WORDS);
 
   await test.step('open the About tab of a new book', async () => {
-    await registerAndSignIn(page);
-    await createBook(page, TITLE);
+    await openLibrary(page);
+    const title = await createBook(page, TITLE);
     const projectId = new URL(page.url()).pathname.split('/')[2] ?? '';
     aboutUrl = `/projects/${projectId}/about`;
     await page.goto(aboutUrl);
-    await expect(page.getByLabel('Title', { exact: true })).toHaveValue(TITLE);
+    await expect(page.getByLabel('Title', { exact: true })).toHaveValue(title);
   });
 
   await test.step('change the title and see it saved by itself, and kept after a reload', async () => {
-    await page.getByLabel('Title', { exact: true }).fill(RENAMED);
+    await page.getByLabel('Title', { exact: true }).fill(renamed);
     await expectSaved(page);
     await page.reload();
-    await expect(page.getByLabel('Title', { exact: true })).toHaveValue(RENAMED);
+    await expect(page.getByLabel('Title', { exact: true })).toHaveValue(renamed);
   });
 
   await test.step('add a contributor and a language, and keep them after a reload', async () => {
@@ -65,7 +68,7 @@ test('a reader describes a book and finds the description after a reload', async
 
   await test.step('see the library card with the ten stages and the next one', async () => {
     await page.goto('/projects');
-    const card = page.getByTestId('project-card').filter({ hasText: RENAMED });
+    const card = page.getByTestId('project-card').filter({ hasText: renamed });
     await expect(card).toBeVisible();
     await expect(card.getByTestId('stage-segment')).toHaveCount(STAGE_COUNT);
     await expect(card.getByTestId('next-stage')).toContainText('Import');
@@ -77,6 +80,6 @@ test('a reader describes a book and finds the description after a reload', async
     await expect(page.getByText('Delete this book?')).toBeVisible();
     await page.getByRole('button', { name: 'Delete book', exact: true }).click();
     await expect(page).toHaveURL(/\/projects(\?.*)?$/);
-    await expect(page.getByTestId('project-card').filter({ hasText: RENAMED })).toHaveCount(0);
+    await expect(page.getByTestId('project-card').filter({ hasText: renamed })).toHaveCount(0);
   });
 });

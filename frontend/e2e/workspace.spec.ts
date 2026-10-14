@@ -1,14 +1,15 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import {
   createBook,
+  openLibrary,
   openProjectId,
   readPlace,
-  registerAndSignIn,
   uploadFolder,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 
 /**
  * The stage workspace of a book: it opens on a stage, the stage bar shows the ten stages with their state, moving
@@ -41,7 +42,7 @@ test('a reader works through the stages of a book', async ({ page }) => {
   let bookPath = '';
 
   await test.step('a new book opens on the Import stage', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book by stages');
     await expect(page).toHaveURL(/\/projects\/[^/]+\/stages\/import$/);
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');

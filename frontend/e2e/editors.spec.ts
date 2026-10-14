@@ -1,15 +1,16 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import {
   createBook,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   uploadFolder,
   waitForIdleJobs,
   writePagesFolder,
   writeScansFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { dragFrom, pairOf } from './support/layer';
 import { runPages } from './support/page-work';
 
@@ -48,7 +49,7 @@ test('a reader turns a page by hand with the handle, the field and the wheel, ta
   });
 
   await test.step('a page opens on the Geometry stage, on the step the stage opens on', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book to turn');
     await uploadFolder(page, folder, PAGES);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
@@ -152,7 +153,7 @@ test('a reader moves the split line of the automatic split with the keys and the
   let found = 0;
 
   await test.step('the wide scans are cut, and the first one opens with its line over the scan', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book of spreads');
     await uploadFolder(page, folder, total);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');

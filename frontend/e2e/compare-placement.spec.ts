@@ -1,15 +1,16 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, type Locator, test } from '@playwright/test';
+import { expect, type Locator } from '@playwright/test';
 import {
   createBook,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   stepIdsOf,
   uploadFolder,
   writeSheetsFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { runPages } from './support/page-work';
 
 /**
@@ -52,7 +53,7 @@ test('the compare of Margins draws the block of text inside the page at the plac
   let swipeBoxes: { before: number[]; after: number[] } = { before: [], after: [] };
 
   await test.step('the stage runs on a scan, so that Margins has a block and a page', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book of one sheet');
     await uploadFolder(page, folder, PAGES);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');

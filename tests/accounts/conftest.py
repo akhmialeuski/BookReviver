@@ -1,4 +1,4 @@
-"""Fixtures of the account tests: a recording mailer, and a signed-out browser that passes the CSRF check."""
+"""Fixtures of the account tests: recording mail and password hashing, and a signed-out browser that passes CSRF."""
 
 from typing import TYPE_CHECKING
 
@@ -9,8 +9,10 @@ from tests.helpers.fakes_accounts import (
     CSRF_COOKIE,
     CSRF_HEADER,
     ME_PATH,
+    HashCalls,
     RecordingMailer,
     RecordingMailerProvider,
+    RecordingPasswordHelperProvider,
     Visitor,
 )
 
@@ -33,15 +35,27 @@ def fx_mailer() -> RecordingMailer:
 
 
 @pytest.fixture
-def fx_extra_providers(fx_mailer: RecordingMailer) -> Sequence[Provider]:
-    """Replace the application's mailer with the recording one.
+def fx_hash_calls() -> HashCalls:
+    """Build the record of the password helper calls of one test.
+
+    :returns: An empty record, which the application's password helper writes into.
+    :rtype: HashCalls
+    """
+    return HashCalls()
+
+
+@pytest.fixture
+def fx_extra_providers(fx_mailer: RecordingMailer, fx_hash_calls: HashCalls) -> Sequence[Provider]:
+    """Replace the application's mailer and password helper with recording ones.
 
     :param fx_mailer: Recording mailer of the test.
     :type fx_mailer: RecordingMailer
-    :returns: One provider that supplies the recording mailer.
+    :param fx_hash_calls: Record the password helper writes the thread of each hash and check into.
+    :type fx_hash_calls: HashCalls
+    :returns: The providers that supply the recording mailer and password helper.
     :rtype: Sequence[Provider]
     """
-    return (RecordingMailerProvider(fx_mailer),)
+    return (RecordingMailerProvider(fx_mailer), RecordingPasswordHelperProvider(fx_hash_calls))
 
 
 @pytest.fixture

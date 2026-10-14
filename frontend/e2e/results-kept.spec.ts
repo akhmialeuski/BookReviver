@@ -1,15 +1,16 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import {
   createBook,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   uploadFolder,
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { changeHeaders, openTimeline, pageIds, RESULT_ROWS, runPages } from './support/page-work';
 
 /**
@@ -93,7 +94,7 @@ test('a collection deletes the results a run replaced and keeps the good and the
   };
 
   await test.step('a page is run, so it has one result', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book that keeps its results');
     await uploadFolder(page, folder, PAGES);
     projectId = openProjectId(page);

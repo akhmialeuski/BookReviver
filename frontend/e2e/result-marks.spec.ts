@@ -1,15 +1,16 @@
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 import {
   createBook,
+  openLibrary,
   openProjectId,
-  registerAndSignIn,
   snap,
   uploadFolder,
   waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
+import { test } from './support/fixtures';
 import { openTimeline, RESULT_ROWS, runPages } from './support/page-work';
 
 /**
@@ -38,7 +39,7 @@ test('a result is marked and commented, and the notes can be changed later', asy
   let bookPath = '';
 
   await test.step('a page is run and has one result', async () => {
-    await registerAndSignIn(page);
+    await openLibrary(page);
     await createBook(page, 'A book with notes on its results');
     await uploadFolder(page, folder, PAGES);
     projectId = openProjectId(page);

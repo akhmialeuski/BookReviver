@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { confirmationLink, PASSWORD } from './support/account';
+import { confirmationLink, PASSWORD, uniqueTitle } from './support/account';
 import { pageIds } from './support/page-work';
 import { solidPng } from './support/png';
 
@@ -73,9 +73,10 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
     await expect(page.getByText('You have no books yet')).toBeVisible();
 
     await page.getByRole('button', { name: 'New book' }).click();
-    await page.getByLabel('Title', { exact: true }).fill('An old primer');
+    const title = uniqueTitle('An old primer');
+    await page.getByLabel('Title', { exact: true }).fill(title);
     await page.getByRole('button', { name: 'Create book' }).click();
-    await expect(page.getByRole('heading', { name: 'An old primer' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
     await expect(page).toHaveURL(/\/projects\/[^/]+\/stages\/import$/);
   });
 
