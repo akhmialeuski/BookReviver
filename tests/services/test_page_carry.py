@@ -20,10 +20,11 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import StepId
-from bookreviver.domain.values import CarryRequest, NewPageEdit, PageStageKey, StageRun
+from bookreviver.domain.values import CarryRequest, NewPageEdit, StageRun
 from tests.helpers.builders import new_account_id
 from tests.helpers.page_batches import PageValues, carry_over
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
+from tests.helpers.spreads import stage_of
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, Project
@@ -69,7 +70,7 @@ async def strength_of(kit: ProcessingKit, key: PageStepKey) -> object:
     :returns: The value the page stores for the field.
     :rtype: object
     """
-    state = await kit.uow().page_step_states.find(key)
+    state = await kit.uow().read(lambda repos: repos.page_step_states.find(key))
     return None if state is None else state.params.get(STRENGTH_PARAMETER)
 
 
@@ -83,7 +84,7 @@ async def angle_of(kit: ProcessingKit, key: PageStepKey) -> float | None:
     :returns: The angle in degrees.
     :rtype: float | None
     """
-    state = await kit.uow().page_step_states.find(key)
+    state = await kit.uow().read(lambda repos: repos.page_step_states.find(key))
     if state is None or state.edit is None or not isinstance(state.edit.geometry, Rotation):
         return None
     return state.edit.geometry.degrees
@@ -121,7 +122,8 @@ class TestShapeSetByHand:
         carried = await carry_over(fx_kit).carry(actor, project.id, shape_of(keys[SOURCE_INDEX]))
         expect(sorted(change.page_id for change in carried.changes) == sorted(page.id for page in pages[2:]))
         expect([await angle_of(fx_kit, key) for key in keys] == [None, SHAPE_ANGLE, SHAPE_ANGLE, SHAPE_ANGLE])
-        expect((await fx_kit.uow().page_step_states.get(keys[2])).params == {FAILING_PARAMETER: NOT_FAILING})
+        own = await fx_kit.uow().read(lambda repos: repos.page_step_states.get(keys[2]))
+        expect(own.params == {FAILING_PARAMETER: NOT_FAILING})
         expect(await strength_of(fx_kit, keys[3]) is None)
         expect(all(change.layer is StepLayer.HAND for change in carried.changes))
         expect(all(change.source is ChangeSource.CARRY_OVER for change in carried.changes))
@@ -230,7 +232,7 @@ class TestShapeSetByHand:
         await fx_kit.jobs().run_stage(job.id)
         await fx_kit.work_queue()
         await carry_over(fx_kit).carry(actor, project.id, shape_of(keys[SOURCE_INDEX]))
-        states = [(await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))).state for page in pages]
+        states = [(await stage_of(fx_kit, page, Stage.GEOMETRY)).state for page in pages]
         assert states == [StageState.FRESH, StageState.FRESH, StageState.STALE, StageState.STALE]
 
     async def test_a_source_with_no_shape_of_its_own_is_not_found(self, fx_kit: ProcessingKit) -> None:

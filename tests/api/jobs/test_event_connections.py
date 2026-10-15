@@ -48,8 +48,7 @@ async def _store_project_of(database: SqlDatabase, owner_id: AccountId) -> Proje
     :rtype: Project
     """
     project = make_project(owner_id=owner_id)
-    async with database.sessions() as session:
-        await store_project(SqlAlchemyUnitOfWork(session), project)
+    await store_project(SqlAlchemyUnitOfWork(database), project)
     return project
 
 

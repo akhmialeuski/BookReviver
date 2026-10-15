@@ -32,15 +32,16 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.events import PagesChanged
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import ContentDetection, SliceRequest
+from bookreviver.domain.values import ContentDetection
+from bookreviver.services.projects import book_pages
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Job, Page, PageVersion
+    from bookreviver.domain.entities import Job, Page, PageStage, PageVersion, Project
     from bookreviver.domain.ids import PageId, ProjectId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.services.job_runs import JobTracker
     from bookreviver.services.stage_records import StageRecords
     from bookreviver.services.stage_runs import StageRuntime
@@ -62,7 +63,7 @@ class ContentDetector:
     def __init__(self, *, uow: UnitOfWork, runtime: StageRuntime, records: StageRecords, tracker: JobTracker) -> None:
         """Work over the ports of one job.
 
-        :param uow: Unit of work whose ``change_book`` block holds the write of each page.
+        :param uow: Unit of work whose ``change_book`` holds the write of each page.
         :type uow: UnitOfWork
         :param runtime: The runner of the processor that finds the content of an image, the publisher and the clock.
         :type runtime: StageRuntime
@@ -130,20 +131,27 @@ class ContentDetector:
         :rtype: Sequence[Page]
         :raises NotFoundError: If the job names a page that is gone.
         """
-        if detection.page_ids is not None:
-            named = await self._uow.pages.list_by_ids(project_id, detection.page_ids)
-            return [page for page in named if self._readable(page)]
-        pages: list[Page] = []
-        while True:
-            window = await self._uow.pages.list_for_project(
-                project_id, SliceRequest(offset=len(pages), limit=self.WINDOW)
-            )
-            pages.extend(window.items)
-            if len(pages) >= window.total or not window.items:
-                break
-        return [
-            page for page in pages if self._readable(page) and page.content_type is None and page.kind in self.KINDS
-        ]
+
+        def work(repos: Repositories) -> list[Page]:
+            """Read the pages of the job from one snapshot of the book.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The pages in book order that have an image to read.
+            :rtype: list[Page]
+            :raises NotFoundError: If the job names a page that is gone.
+            """
+            if detection.page_ids is not None:
+                return [
+                    page for page in repos.pages.list_by_ids(project_id, detection.page_ids) if self._readable(page)
+                ]
+            return [
+                page
+                for page in book_pages(repos.pages, project_id)
+                if self._readable(page) and page.content_type is None and page.kind in self.KINDS
+            ]
+
+        return await self._uow.read(work)
 
     @staticmethod
     def _readable(page: Page) -> bool:
@@ -164,7 +172,9 @@ class ContentDetector:
         :returns: The latest ready base version of each page that has one.
         :rtype: dict[PageId, PageVersion]
         """
-        versions = await self._uow.page_versions.list_base_versions([page.id for page in pages])
+        versions = await self._uow.read(
+            lambda repos: repos.page_versions.list_base_versions([page.id for page in pages])
+        )
         # The versions come earliest first, so the latest of a page that was cut again is the one that stays
         return {
             version.page_id: version
@@ -196,11 +206,11 @@ class ContentDetector:
         return ContentType(output.data[VersionData.CONTENT_TYPE])
 
     async def _write(self, project_id: ProjectId, page_id: PageId, content: ContentType, *, forced: bool) -> bool:
-        """Write what was detected into the page in one short ``change_book`` block, which reads the page again first.
+        """Write what was detected into the page in one short ``change_book``, which reads the page again first.
 
-        Opens its own block, so it is called outside any block. The page is read inside the block, so a change of
-        another request that committed after the probe stays. Nothing is written when the page is gone, when the user
-        set its content by hand and did not ask for the page by name, or when the page already shows the content.
+        The page is read inside the transaction, so a change of another request that committed after the probe stays.
+        Nothing is written when the page is gone, when the user set its content by hand and did not ask for the page by
+        name, or when the page already shows the content.
 
         :param project_id: Project owning the page.
         :type project_id: ProjectId
@@ -213,18 +223,31 @@ class ContentDetector:
         :returns: True when the page was written.
         :rtype: bool
         """
-        async with self._uow.change_book(project_id):
+
+        def work(repos: Repositories, _project: Project) -> list[PageStage] | None:
+            """Write the content type into the page, and mark its later stages stale when its kind changed.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: The project as the change finds it, which the write does not read.
+            :type _project: Project
+            :returns: The records that became stale, or None when nothing was written.
+            :rtype: list[PageStage] | None
+            """
             try:
-                before = await self._uow.pages.get(page_id)
+                before = repos.pages.get(page_id)
             except NotFoundError:
-                return False
+                return None
             if before.content_by_hand and not forced:
-                return False
+                return None
             after = evolve(before, content_type=content, content_by_hand=False, updated_at=self._clock.now())
             if after == evolve(before, updated_at=after.updated_at):
-                return False
-            await self._uow.pages.update(after)
+                return None
+            repos.pages.update(after)
             shown = before.recipe_kind is not after.recipe_kind
-            stale = await self._records.mark_content_stale(page_id) if shown else []
+            return self._records.mark_content_stale(repos, page_id) if shown else []
+
+        if (stale := await self._uow.change_book(project_id, work)) is None:
+            return False
         await self._records.announce(project_id, stale)
         return True

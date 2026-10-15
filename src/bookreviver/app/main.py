@@ -65,8 +65,7 @@ def create_app(
         Then the stages whose result a replaced version of a processor made are marked stale, before the first request,
         so the workspace never shows them as up to date, and the blank leaves among them are made again by the job that
         makes leaves, which leaves their page order fresh. It runs in a request scope of its own, as a job does, and
-        each of the two passes writes one book at a time, in a ``change_book`` block of that book, outside any block of
-        the scope.
+        each of the two passes writes one book at a time, in a ``change_book`` of that book.
 
         The container also starts the pool of processes that run the steps here, so every process has built its
         catalogue before the first request and the first preview does not wait for it.

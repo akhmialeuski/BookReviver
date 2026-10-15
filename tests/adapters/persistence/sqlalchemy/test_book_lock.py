@@ -1,9 +1,12 @@
-"""Test of a move of pages and a write of one of them by a job that race on one SQLite file with two sessions.
+"""Test of a move of pages and a write of one of them by a job that race on one SQLite file through two changes.
 
-The move is inside its ``change_book`` block when the job starts its own, so the job's block has to wait for the move to
+The move is inside its ``change_book`` when the job asks for its own, so the job's change has to wait for the move to
 commit, and then reads the order the move wrote. Neither write is lost, which no revision of a row had to tell.
 """
 
+import asyncio
+import threading
+from functools import partial
 from typing import TYPE_CHECKING
 
 import anyio
@@ -11,95 +14,95 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.clock.system import FixedClock
-from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
-from bookreviver.adapters.storage import LocalAssetStore
-from bookreviver.domain.entities import Actor
-from bookreviver.domain.enums import ContentType, Side
-from bookreviver.domain.values import PageAnchor, SliceRequest
-from tests.helpers.book_gate import hold_book
-from tests.helpers.builders import EPOCH, make_page, make_project
-from tests.helpers.fakes_jobs import RecordingEventBus
-from tests.helpers.page_services import make_page_service
-from tests.helpers.seeding import store_project
+from bookreviver.domain.enums import ContentType
+from bookreviver.domain.values import SliceRequest
+from tests.helpers.book_gate import HOLD_LIMIT_SECONDS
+from tests.helpers.builders import make_page
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.ids import AccountId, PageId
-    from tests.helpers.book_gate import BookGate
+    from bookreviver.domain.entities import Project
+    from bookreviver.domain.ids import PageId
+    from bookreviver.ports.persistence import Repositories
+    from tests.helpers.tracers import AskingTracer
 
 pytestmark = pytest.mark.anyio
 
 ORDER_KEYS: tuple[str, ...] = ('a0', 'a1', 'a2', 'a3', 'a4')
+# The keys the two moved pages get, which sort between the fourth page, 'a3', and the fifth, 'a4'
+MOVED_KEYS: tuple[str, str] = ('a3V', 'a3W')
 MOVED: int = 2
 ANCHOR: int = 3
 
 
 class TestMoveAgainstJobWrite:
-    """Tests for a use case that writes pages while a job writes one of them, on SQLite."""
+    """Tests for a change that moves pages while a job writes one of them, on SQLite."""
 
-    async def test_a_job_write_started_inside_a_group_move_waits_and_both_writes_are_kept(
-        self, fx_database: SqlDatabase, fx_owner_id: AccountId, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    async def test_a_job_write_asked_inside_a_group_move_waits_and_both_writes_are_kept(
+        self, fx_traced_database: SqlDatabase, fx_project: Project, fx_tracer: AskingTracer
     ) -> None:
-        """Verify the job's block waits for the move, reads the new order, and writes the content type over it.
+        """Verify the job's change waits for the move, reads the new order, and writes the content type over it.
 
-        The move holds the book by the gate after its block is entered. The job's session asks for its own block then,
-        and is not allowed to read before the move has committed, which is checked after ``wait_all_tasks_blocked``.
+        The move holds the book by blocking its thread after it has read the window. The job asks for its own change
+        then, which the test knows from the start of its span, and is not allowed to read before the move has
+        committed, which is checked after ``wait_all_tasks_blocked``.
 
-        :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
-        :param fx_owner_id: Committed account owning the project.
-        :type fx_owner_id: AccountId
-        :param tmp_path: Temporary directory of the test.
-        :type tmp_path: Path
-        :param monkeypatch: Fixture that restores the patched method after the test.
-        :type monkeypatch: pytest.MonkeyPatch
+        :param fx_traced_database: Database whose blocks are timed.
+        :type fx_traced_database: SqlDatabase
+        :param fx_project: Committed project of the database, whose book has no page yet.
+        :type fx_project: Project
+        :param fx_tracer: Tracer of the test, which tells when the job has asked for its change.
+        :type fx_tracer: AskingTracer
         """
-        project = make_project(owner_id=fx_owner_id)
-        pages = [make_page(project_id=project.id, order_key=key) for key in ORDER_KEYS]
-        async with fx_database.sessions() as session:
-            await store_project(SqlAlchemyUnitOfWork(session), project, *pages)
+        uow = SqlAlchemyUnitOfWork(fx_traced_database)
+        pages = [make_page(project_id=fx_project.id, order_key=key) for key in ORDER_KEYS]
+        await uow.change_book(fx_project.id, lambda repos, _project: repos.pages.add_many(pages))
         moved = [pages[0].id, pages[1].id]
-        anchor = PageAnchor(page_id=pages[ANCHOR].id, side=Side.AFTER)
+        loop = asyncio.get_running_loop()
+        entered, proceed = anyio.Event(), threading.Event()
         seen_by_job: list[PageId] = []
 
-        async def job_writes_content() -> None:
-            """Write the content type of the second moved page in a block of a session of its own."""
-            async with fx_database.sessions() as session:
-                job = SqlAlchemyUnitOfWork(session)
-                async with job.change_book(project.id):
-                    window = await job.pages.list_for_project(project.id, SliceRequest())
-                    seen_by_job.extend(page.id for page in window.items)
-                    page = await job.pages.get(moved[1])
-                    await job.pages.update(evolve(page, content_type=ContentType.COLOR_PICTURE))
+        def move_the_group(repos: Repositories, project: Project) -> None:
+            """Read the window, hold the book until the test lets the move go, and move the first two pages.
 
-        async def move_the_group() -> None:
-            """Move the first two pages after the fourth in a block of a session of its own, held by the gate."""
-            async with fx_database.sessions() as session:
-                uow = SqlAlchemyUnitOfWork(session)
-                gate_holder.append(hold_book(uow, monkeypatch))
-                runtime = (RecordingEventBus(), FixedClock(EPOCH), RecordingJobQueue())
-                service = make_page_service(uow, LocalAssetStore(root=tmp_path / 'storage'), runtime)
-                await service.move_group(Actor(account_id=fx_owner_id), project.id, moved, anchor)
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param project: Project of the book, whose pages are listed.
+            :type project: Project
+            """
+            window = repos.pages.list_for_project(project.id, SliceRequest())
+            loop.call_soon_threadsafe(entered.set)
+            proceed.wait(HOLD_LIMIT_SECONDS)
+            by_id = {page.id: page for page in window.items}
+            for page_id, key in zip(moved, MOVED_KEYS, strict=True):
+                repos.pages.update(evolve(by_id[page_id], order_key=key))
 
-        gate_holder: list[BookGate] = []
+        def job_writes_content(repos: Repositories, project: Project) -> None:
+            """Write the content type of the second moved page after the order the move left.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param project: Project of the book, whose pages are listed.
+            :type project: Project
+            """
+            window = repos.pages.list_for_project(project.id, SliceRequest())
+            seen_by_job.extend(page.id for page in window.items)
+            page = repos.pages.get(moved[1])
+            repos.pages.update(evolve(page, content_type=ContentType.COLOR_PICTURE))
+
         async with anyio.create_task_group() as group:
-            group.start_soon(move_the_group)
-            while not gate_holder:
-                await anyio.wait_all_tasks_blocked()
-            gate = gate_holder[0]
-            await gate.entered.wait()
-            group.start_soon(job_writes_content)
+            group.start_soon(partial(uow.change_book, fx_project.id, move_the_group))
+            await entered.wait()
+            job_asking = fx_tracer.ask_after(1)
+            group.start_soon(partial(uow.change_book, fx_project.id, job_writes_content))
+            await job_asking.wait()
             await anyio.wait_all_tasks_blocked()
             expect(not seen_by_job)
-            gate.proceed.set()
+            proceed.set()
 
         expected = [pages[MOVED].id, pages[ANCHOR].id, *moved, pages[4].id]
-        async with fx_database.sessions() as session:
-            stored = (await SqlAlchemyUnitOfWork(session).pages.list_for_project(project.id, SliceRequest())).items
+        stored = (await uow.read(lambda repos: repos.pages.list_for_project(fx_project.id, SliceRequest()))).items
         expect([page.id for page in stored] == expected)
         expect(next(page for page in stored if page.id == moved[1]).content_type == ContentType.COLOR_PICTURE)
         expect(seen_by_job == expected)

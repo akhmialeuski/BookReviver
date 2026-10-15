@@ -25,17 +25,15 @@ class ProjectsProvider(Provider):
     scope = Scope.REQUEST
 
     @provide
-    def stage_summaries(self, uow: UnitOfWork, catalogue: ProcessorCatalog) -> StageSummaries:
-        """Build the sums of the stages of books over the request's unit of work.
+    def stage_summaries(self, catalogue: ProcessorCatalog) -> StageSummaries:
+        """Build the sums of the stages of books, which read through the repositories their caller passes.
 
-        :param uow: Unit of work of the current request.
-        :type uow: UnitOfWork
         :param catalogue: The processors of the application, which say which stages are available.
         :type catalogue: ProcessorCatalog
         :returns: The stage summaries of the request.
         :rtype: StageSummaries
         """
-        return StageSummaries(uow=uow, catalogue=catalogue)
+        return StageSummaries(catalogue=catalogue)
 
     @provide
     def projects(

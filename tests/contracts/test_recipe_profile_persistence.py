@@ -18,7 +18,7 @@ from tests.helpers.builders import make_project, make_recipe, make_recipe_profil
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import RecipeProfile
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from tests.contracts.conftest import OwnerFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
@@ -39,19 +39,17 @@ STEPS: tuple[Step, ...] = (
 
 
 async def _store(uow_factory: UnitOfWorkFactory, *profiles: RecipeProfile) -> UnitOfWork:
-    """Store profiles in one block, and open a new unit of work to read them back through.
+    """Store profiles in one change, and open a new unit of work to read them back through.
 
     :param uow_factory: Function opening a new unit of work of the backend under test.
     :type uow_factory: UnitOfWorkFactory
     :param profiles: The profiles to store.
     :type profiles: RecipeProfile
-    :returns: A new unit of work with no block open.
+    :returns: A new unit of work.
     :rtype: UnitOfWork
     """
-    uow = await uow_factory()
-    async with uow.change():
-        await uow.recipe_profiles.add_many(profiles)
-    return await uow_factory()
+    await uow_factory().change(lambda repos: repos.recipe_profiles.add_many(profiles))
+    return uow_factory()
 
 
 class TestRecipeProfileRepository:
@@ -69,7 +67,7 @@ class TestRecipeProfileRepository:
         """
         profile = make_recipe_profile(account_id=await fx_new_owner(), steps=STEPS)
         uow = await _store(fx_uow_factory, profile)
-        assert await uow.recipe_profiles.get(profile.id) == profile
+        assert await uow.read(lambda repos: repos.recipe_profiles.get(profile.id)) == profile
 
     async def test_a_listing_holds_the_profiles_of_one_account_in_the_order_of_the_stages(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -92,7 +90,8 @@ class TestRecipeProfileRepository:
         )
         foreign = make_recipe_profile(account_id=await fx_new_owner())
         uow = await _store(fx_uow_factory, late_geometry, foreign, early_geometry, page_split)
-        assert await uow.recipe_profiles.list_for_account(account_id) == [page_split, early_geometry, late_geometry]
+        listed = await uow.read(lambda repos: repos.recipe_profiles.list_for_account(account_id))
+        assert listed == [page_split, early_geometry, late_geometry]
 
     async def test_a_listing_may_be_limited_to_one_stage(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -108,7 +107,8 @@ class TestRecipeProfileRepository:
         geometry = make_recipe_profile(account_id=account_id)
         cleanup = make_recipe_profile(account_id=account_id, stage=Stage.CLEANUP)
         uow = await _store(fx_uow_factory, geometry, cleanup)
-        assert await uow.recipe_profiles.list_for_account(account_id, Stage.CLEANUP) == [cleanup]
+        listed = await uow.read(lambda repos: repos.recipe_profiles.list_for_account(account_id, Stage.CLEANUP))
+        assert listed == [cleanup]
 
     async def test_an_account_has_one_default_profile_for_each_stage(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -122,9 +122,9 @@ class TestRecipeProfileRepository:
         """
         account_id = await fx_new_owner()
         uow = await _store(fx_uow_factory, make_recipe_profile(account_id=account_id, is_default=True))
+        second_default = make_recipe_profile(account_id=account_id, is_default=True)
         with pytest.raises(ConflictError):
-            async with uow.change():
-                await uow.recipe_profiles.add(make_recipe_profile(account_id=account_id, is_default=True))
+            await uow.change(lambda repos: repos.recipe_profiles.add(second_default))
 
     async def test_defaults_of_other_stages_and_accounts_do_not_clash(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -146,7 +146,8 @@ class TestRecipeProfileRepository:
             make_recipe_profile(account_id=account_id),
             make_recipe_profile(account_id=account_id),
         )
-        assert len(await uow.recipe_profiles.list_for_account(account_id)) == ACCOUNT_PROFILE_COUNT
+        listed = await uow.read(lambda repos: repos.recipe_profiles.list_for_account(account_id))
+        assert len(listed) == ACCOUNT_PROFILE_COUNT
 
     async def test_find_default_returns_the_default_of_the_stage_of_the_account(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -162,9 +163,25 @@ class TestRecipeProfileRepository:
         other_id = await fx_new_owner()
         chosen = make_recipe_profile(account_id=account_id, is_default=True)
         uow = await _store(fx_uow_factory, chosen, make_recipe_profile(account_id=account_id))
-        assert await uow.recipe_profiles.find_default(account_id, Stage.GEOMETRY) == chosen
-        assert await uow.recipe_profiles.find_default(account_id, Stage.CLEANUP) is None
-        assert await uow.recipe_profiles.find_default(other_id, Stage.GEOMETRY) is None
+
+        def find_defaults(
+            repos: Repositories,
+        ) -> tuple[RecipeProfile | None, RecipeProfile | None, RecipeProfile | None]:
+            """Look up the default of the account in its stage, of the account in another stage, and of another account.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The three profiles that were found, or None for each that was not.
+            :rtype: tuple[RecipeProfile | None, RecipeProfile | None, RecipeProfile | None]
+            """
+            profiles = repos.recipe_profiles
+            return (
+                profiles.find_default(account_id, Stage.GEOMETRY),
+                profiles.find_default(account_id, Stage.CLEANUP),
+                profiles.find_default(other_id, Stage.GEOMETRY),
+            )
+
+        assert await uow.read(find_defaults) == (chosen, None, None)
 
     async def test_the_default_moves_when_the_old_one_is_demoted_first(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -180,10 +197,23 @@ class TestRecipeProfileRepository:
         old = make_recipe_profile(account_id=account_id, is_default=True)
         new = make_recipe_profile(account_id=account_id, minutes=FIRST_MINUTE)
         uow = await _store(fx_uow_factory, old, new)
-        async with uow.change():
-            await uow.recipe_profiles.update(evolve(old, is_default=False))
-            promoted = await uow.recipe_profiles.update(evolve(new, is_default=True))
-        assert await (await fx_uow_factory()).recipe_profiles.find_default(account_id, Stage.GEOMETRY) == promoted
+
+        def demote_and_promote(repos: Repositories) -> RecipeProfile:
+            """Demote the old default, then promote the other profile.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The promoted profile as stored.
+            :rtype: RecipeProfile
+            """
+            repos.recipe_profiles.update(evolve(old, is_default=False))
+            return repos.recipe_profiles.update(evolve(new, is_default=True))
+
+        promoted = await uow.change(demote_and_promote)
+        found = await fx_uow_factory().read(
+            lambda repos: repos.recipe_profiles.find_default(account_id, Stage.GEOMETRY)
+        )
+        assert found == promoted
 
     async def test_update_replaces_the_stored_state(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -198,9 +228,8 @@ class TestRecipeProfileRepository:
         profile = make_recipe_profile(account_id=await fx_new_owner())
         uow = await _store(fx_uow_factory, profile)
         renamed = evolve(profile, name=CLEAN_SCAN_NAME)
-        async with uow.change():
-            await uow.recipe_profiles.update(renamed)
-        assert await (await fx_uow_factory()).recipe_profiles.get(profile.id) == renamed
+        await uow.change(lambda repos: repos.recipe_profiles.update(renamed))
+        assert await fx_uow_factory().read(lambda repos: repos.recipe_profiles.get(profile.id)) == renamed
 
     async def test_delete_removes_only_that_profile(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -216,12 +245,11 @@ class TestRecipeProfileRepository:
         gone = make_recipe_profile(account_id=account_id)
         kept = make_recipe_profile(account_id=account_id, minutes=FIRST_MINUTE)
         uow = await _store(fx_uow_factory, gone, kept)
-        async with uow.change():
-            await uow.recipe_profiles.delete(gone.id)
-        reading = await fx_uow_factory()
-        assert await reading.recipe_profiles.list_for_account(account_id) == [kept]
+        await uow.change(lambda repos: repos.recipe_profiles.delete(gone.id))
+        reading = fx_uow_factory()
+        assert await reading.read(lambda repos: repos.recipe_profiles.list_for_account(account_id)) == [kept]
         with pytest.raises(NotFoundError):
-            await reading.recipe_profiles.get(gone.id)
+            await reading.read(lambda repos: repos.recipe_profiles.get(gone.id))
 
     async def test_a_profile_reads_back_in_the_order_it_was_saved_in(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -237,10 +265,18 @@ class TestRecipeProfileRepository:
         free = evolve(make_recipe_profile(account_id=account_id), order=OrderMode.FREE)
         usual = make_recipe_profile(account_id=account_id, minutes=FIRST_MINUTE)
         uow = await _store(fx_uow_factory, free, usual)
-        assert [(await uow.recipe_profiles.get(profile.id)).order for profile in (free, usual)] == [
-            OrderMode.FREE,
-            OrderMode.USUAL,
-        ]
+
+        def orders(repos: Repositories) -> list[OrderMode]:
+            """Read the order of the two profiles.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The order of the free profile and of the usual one.
+            :rtype: list[OrderMode]
+            """
+            return [repos.recipe_profiles.get(profile.id).order for profile in (free, usual)]
+
+        assert await uow.read(orders) == [OrderMode.FREE, OrderMode.USUAL]
 
     async def test_a_recipe_reads_back_with_the_profile_it_was_made_from(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -257,17 +293,30 @@ class TestRecipeProfileRepository:
         project = make_project(owner_id=owner_id)
         linked = evolve(make_recipe(project_id=project.id), profile_id=profile.id)
         unlinked = make_recipe(project_id=project.id, stage=Stage.CLEANUP)
-        uow = await fx_uow_factory()
-        async with uow.change():
-            await uow.recipe_profiles.add(profile)
-            await uow.projects.add(project)
-        async with uow.change_book(project.id):
-            await uow.recipes.add_many([linked, unlinked])
-        reading = await fx_uow_factory()
-        assert [(await reading.recipes.get(recipe.id)).profile_id for recipe in (linked, unlinked)] == [
-            profile.id,
-            None,
-        ]
+
+        def add_profile_and_project(repos: Repositories) -> None:
+            """Add the profile and the project.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            """
+            repos.recipe_profiles.add(profile)
+            repos.projects.add(project)
+
+        def profile_ids(repos: Repositories) -> list[object]:
+            """Read the profile each of the two recipes names.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The profile identifier of the linked recipe and of the unlinked one.
+            :rtype: list[object]
+            """
+            return [repos.recipes.get(recipe.id).profile_id for recipe in (linked, unlinked)]
+
+        uow = fx_uow_factory()
+        await uow.change(add_profile_and_project)
+        await uow.change_book(project.id, lambda repos, _project: repos.recipes.add_many([linked, unlinked]))
+        assert await fx_uow_factory().read(profile_ids) == [profile.id, None]
 
     async def test_a_recipe_cannot_refer_to_a_profile_that_is_not_stored(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -284,12 +333,10 @@ class TestRecipeProfileRepository:
             make_recipe(project_id=project.id),
             profile_id=make_recipe_profile(account_id=project.owner_id).id,
         )
-        uow = await fx_uow_factory()
-        async with uow.change():
-            await uow.projects.add(project)
+        uow = fx_uow_factory()
+        await uow.change(lambda repos: repos.projects.add(project))
         with pytest.raises(NotFoundError):
-            async with uow.change_book(project.id):
-                await uow.recipes.add(stray)
+            await uow.change_book(project.id, lambda repos, _project: repos.recipes.add(stray))
 
     async def test_deleting_a_profile_empties_the_reference_of_its_recipes_and_keeps_them(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -305,16 +352,22 @@ class TestRecipeProfileRepository:
         profile = make_recipe_profile(account_id=owner_id)
         project = make_project(owner_id=owner_id)
         recipe = evolve(make_recipe(project_id=project.id), profile_id=profile.id)
-        uow = await fx_uow_factory()
-        async with uow.change():
-            await uow.recipe_profiles.add(profile)
-            await uow.projects.add(project)
-        async with uow.change_book(project.id):
-            await uow.recipes.add(recipe)
-        deleting = await fx_uow_factory()
-        async with deleting.change():
-            await deleting.recipe_profiles.delete(profile.id)
-        assert (await (await fx_uow_factory()).recipes.get(recipe.id)) == evolve(recipe, profile_id=None)
+
+        def add_profile_and_project(repos: Repositories) -> None:
+            """Add the profile and the project.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            """
+            repos.recipe_profiles.add(profile)
+            repos.projects.add(project)
+
+        uow = fx_uow_factory()
+        await uow.change(add_profile_and_project)
+        await uow.change_book(project.id, lambda repos, _project: repos.recipes.add(recipe))
+        await fx_uow_factory().change(lambda repos: repos.recipe_profiles.delete(profile.id))
+        stored = await fx_uow_factory().read(lambda repos: repos.recipes.get(recipe.id))
+        assert stored == evolve(recipe, profile_id=None)
 
     async def test_the_books_of_a_profile_are_counted_once_each(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -341,15 +394,21 @@ class TestRecipeProfileRepository:
             evolve(make_recipe(project_id=second_book.id, stage=Stage.CLEANUP), profile_id=other.id),
             make_recipe(project_id=second_book.id, stage=Stage.PAGE_SPLIT),
         ]
-        uow = await fx_uow_factory()
-        async with uow.change():
-            await uow.recipe_profiles.add_many([used, unused, other])
-            await uow.projects.add_many([first_book, second_book])
-        async with uow.change_book(first_book.id):
-            await uow.recipes.add_many(first_recipes)
-        async with uow.change_book(second_book.id):
-            await uow.recipes.add_many(second_recipes)
-        counted = await (await fx_uow_factory()).recipe_profiles.count_books([used.id, unused.id])
+
+        def add_profiles_and_books(repos: Repositories) -> None:
+            """Add the three profiles and the two books.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            """
+            repos.recipe_profiles.add_many([used, unused, other])
+            repos.projects.add_many([first_book, second_book])
+
+        uow = fx_uow_factory()
+        await uow.change(add_profiles_and_books)
+        await uow.change_book(first_book.id, lambda repos, _project: repos.recipes.add_many(first_recipes))
+        await uow.change_book(second_book.id, lambda repos, _project: repos.recipes.add_many(second_recipes))
+        counted = await fx_uow_factory().read(lambda repos: repos.recipe_profiles.count_books([used.id, unused.id]))
         assert dict(counted) == {used.id: BOOKS_OF_A_PROFILE}
 
     async def test_counting_the_books_of_no_profile_gives_nothing(self, fx_uow_factory: UnitOfWorkFactory) -> None:
@@ -358,4 +417,5 @@ class TestRecipeProfileRepository:
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
         """
-        assert dict(await (await fx_uow_factory()).recipe_profiles.count_books([])) == {}
+        counted = await fx_uow_factory().read(lambda repos: repos.recipe_profiles.count_books([]))
+        assert dict(counted) == {}

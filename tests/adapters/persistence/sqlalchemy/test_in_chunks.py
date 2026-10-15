@@ -17,15 +17,20 @@ from tests.helpers.builders import make_page, make_page_stage, make_page_version
 from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
+
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Page, PageVersion, Project
     from bookreviver.domain.ids import AccountId
+    from bookreviver.ports.persistence import Repositories
 
 pytestmark = pytest.mark.anyio
 
 CHUNK: int = 3
 COUNT: int = 7
 BEFORE_EXECUTE: str = 'before_cursor_execute'
+# The statement that begins a transaction, which the counts leave out
+TRANSACTION_BEGIN: str = 'BEGIN'
 
 
 class Statements:
@@ -34,13 +39,13 @@ class Statements:
     :ivar bound: The number of parameters of every statement, in the order they ran.
     """
 
-    def __init__(self, database: SqlDatabase) -> None:
-        """Listen to the statements of the database.
+    def __init__(self, engine: Engine) -> None:
+        """Listen to the statements of an engine.
 
-        :param database: The database whose statements are counted.
-        :type database: SqlDatabase
+        :param engine: The engine whose statements are counted.
+        :type engine: Engine
         """
-        self._engine = database.engine.sync_engine
+        self._engine = engine
         self.bound: list[int] = []
 
     def __enter__(self) -> Self:
@@ -61,12 +66,13 @@ class Statements:
         event.remove(self._engine, BEFORE_EXECUTE, self._count)
 
     def _count(self, **arguments: Any) -> None:
-        """Record how many values a statement binds.
+        """Record how many values a statement binds, leaving out the BEGIN a read sends with its first statement.
 
         :param arguments: What SQLAlchemy tells of the statement, by name: its text, its values and its cursor.
         :type arguments: Any
         """
-        self.bound.append(len(arguments['parameters']))
+        if not str(arguments['statement']).startswith(TRANSACTION_BEGIN):
+            self.bound.append(len(arguments['parameters']))
 
 
 async def _seed_book(database: SqlDatabase, owner_id: AccountId) -> tuple[Project, list[Page], list[PageVersion]]:
@@ -82,12 +88,21 @@ async def _seed_book(database: SqlDatabase, owner_id: AccountId) -> tuple[Projec
     project = make_project(owner_id=owner_id)
     pages = [make_page(project_id=project.id, order_key=f'a{number}') for number in range(COUNT)]
     versions = [make_page_version(page_id=page.id, minutes=number) for number, page in enumerate(pages)]
-    async with database.sessions() as session:
-        uow = SqlAlchemyUnitOfWork(session)
-        await store_project(uow, project, *pages, versions=versions)
-        async with uow.change_book(project.id):
-            for page in pages:
-                await uow.page_stages.save(make_page_stage(page_id=page.id))
+    uow = SqlAlchemyUnitOfWork(database)
+    await store_project(uow, project, *pages, versions=versions)
+
+    def save_stages(repos: Repositories, _project: Project) -> None:
+        """Save a record of a stage for every page of the book.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :param _project: Project of the book, which the work does not need.
+        :type _project: Project
+        """
+        for page in pages:
+            repos.page_stages.save(make_page_stage(page_id=page.id))
+
+    await uow.change_book(project.id, save_stages)
     return project, pages, versions
 
 
@@ -118,11 +133,13 @@ class TestListsLongerThanAChunk:
         :type fx_owner_id: AccountId
         """
         project, pages, versions = await _seed_book(fx_database, fx_owner_id)
-        async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            listed_pages = await uow.pages.list_by_ids(project.id, [page.id for page in reversed(pages)])
-            listed_versions = await uow.page_versions.list_by_ids([version.id for version in reversed(versions)])
-            listed_stages = await uow.page_stages.list_for_pages([page.id for page in reversed(pages)])
+        listed_pages, listed_versions, listed_stages = await SqlAlchemyUnitOfWork(fx_database).read(
+            lambda repos: (
+                repos.pages.list_by_ids(project.id, [page.id for page in reversed(pages)]),
+                repos.page_versions.list_by_ids([version.id for version in reversed(versions)]),
+                repos.page_stages.list_for_pages([page.id for page in reversed(pages)]),
+            )
+        )
         expect([page.id for page in listed_pages] == [page.id for page in pages])
         expect([version.id for version in listed_versions] == [version.id for version in versions])
         expect({record.page_id for record in listed_stages} == {page.id for page in pages})
@@ -139,16 +156,46 @@ class TestListsLongerThanAChunk:
         :type fx_owner_id: AccountId
         """
         project, pages, versions = await _seed_book(fx_database, fx_owner_id)
-        async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            with Statements(fx_database) as reading:
-                await uow.page_versions.list_by_ids([version.id for version in versions])
-            async with uow.change_book(project.id):
-                # Only the deletion is counted, not the statement that locks the book
-                with Statements(fx_database) as deleting:
-                    await uow.page_versions.delete_many([version.id for version in versions])
-            remaining = await uow.page_versions.list_for_page(pages[0].id)
-        expect(reading.bound == [CHUNK] * (COUNT // CHUNK) + [COUNT % CHUNK])
-        expect(len(deleting.bound) == ceil(COUNT / CHUNK) and max(deleting.bound) <= CHUNK)
+        uow = SqlAlchemyUnitOfWork(fx_database)
+        version_ids = [version.id for version in versions]
+
+        def list_versions(repos: Repositories) -> Statements:
+            """List the versions by their identifiers, and count the statements that took.
+
+            Only the statements of the read are counted, not the ones that begin and end its transaction.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The counter of the statements the listing sent.
+            :rtype: Statements
+            """
+            with Statements(fx_database.read_engine) as counted:
+                repos.page_versions.list_by_ids(version_ids)
+            return counted
+
+        def delete_versions(repos: Repositories, _project: Project) -> Statements:
+            """Delete the versions by their identifiers, and count the statements that took.
+
+            Only the deletion is counted, not the statements that begin the transaction or read the project.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: Project of the book, which the work does not need.
+            :type _project: Project
+            :returns: The counter of the statements the deletion sent.
+            :rtype: Statements
+            """
+            with Statements(fx_database.engine) as counted:
+                repos.page_versions.delete_many(version_ids)
+            return counted
+
+        reading = await uow.read(list_versions)
+        deleting = await uow.change_book(project.id, delete_versions)
+        remaining = await uow.read(lambda repos: repos.page_versions.list_for_page(pages[0].id))
+        expect(reading.bound == [CHUNK] * (COUNT // CHUNK) + [COUNT % CHUNK], f'read bound {reading.bound}')
+        expect(
+            len(deleting.bound) == ceil(COUNT / CHUNK) and max(deleting.bound) <= CHUNK,
+            f'deletion bound {deleting.bound}',
+        )
         expect(remaining == [])
         assert_expectations()

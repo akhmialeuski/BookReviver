@@ -93,35 +93,30 @@ class TestStartImportOnSqlAlchemy:
         samples = tmp_path / 'samples'
         samples.mkdir()
         project = make_project(owner_id=fx_owner_id)
-        async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            async with uow.change():
-                await uow.projects.add(project)
+        await SqlAlchemyUnitOfWork(fx_database).change(lambda repos: repos.projects.add(project))
         outcomes: list[Job | ConflictError] = []
 
         async def upload(name: str) -> None:
-            """Upload one file to the project in a session of its own, as a request would, and record the outcome.
+            """Upload one file to the project through a unit of work of its own, as a request would, and record it.
 
             :param name: Name of the uploaded file.
             :type name: str
             """
-            async with fx_database.sessions() as session:
-                service = rig.service(uow=SqlAlchemyUnitOfWork(session), sources=sources)
-                try:
-                    outcomes.append(
-                        await service.start_import(
-                            Actor(account_id=fx_owner_id), project.id, [image_upload(samples, name)]
-                        )
-                    )
-                except ConflictError as error:
-                    outcomes.append(error)
+            service = rig.service(uow=SqlAlchemyUnitOfWork(fx_database), sources=sources)
+            try:
+                outcomes.append(
+                    await service.start_import(Actor(account_id=fx_owner_id), project.id, [image_upload(samples, name)])
+                )
+            except ConflictError as error:
+                outcomes.append(error)
 
         async with anyio.create_task_group() as group:
             group.start_soon(upload, 'first.jpg')
             group.start_soon(upload, 'second.jpg')
 
-        async with fx_database.sessions() as session:
-            stored = await SqlAlchemyUnitOfWork(session).jobs.list_for_project(project.id, set(JobState))
+        stored = await SqlAlchemyUnitOfWork(fx_database).read(
+            lambda repos: repos.jobs.list_for_project(project.id, set(JobState))
+        )
         winners = [outcome for outcome in outcomes if isinstance(outcome, Job)]
         losers = [outcome for outcome in outcomes if isinstance(outcome, ConflictError)]
         expect(len(winners) == len(losers) == 1)

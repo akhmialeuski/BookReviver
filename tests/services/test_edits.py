@@ -13,9 +13,10 @@ from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.geometry import BrushStrokes, Line, Point, Rect, Rotation, Stroke
 from bookreviver.domain.ids import StepId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, RecipeDraft, StageRun, Step
+from bookreviver.domain.values import NewPageEdit, PageStepKey, RecipeDraft, StageRun, Step
 from tests.helpers.builders import make_page_stage
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
+from tests.helpers.spreads import stage_of
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
@@ -62,7 +63,7 @@ class TestSave:
         key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
         stored = await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
         listed = await fx_kit.edits().list(actor, project.id, page.id, Stage.GEOMETRY)
-        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        record = await stage_of(fx_kit, page, Stage.GEOMETRY)
         expect(listed == [stored])
         expect(stored.edit_hash == stored.edit_hash.lower() and len(stored.edit_hash) == 16)
         expect(record.state is StageState.STALE)
@@ -95,7 +96,7 @@ class TestSave:
             job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
             await fx_kit.jobs().run_stage(job.id)
             await fx_kit.work_queue()
-            record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+            record = await stage_of(fx_kit, page, Stage.GEOMETRY)
             assert record.head_version_id is not None
             return record.head_version_id
 
@@ -180,7 +181,9 @@ class TestSave:
         key = PageStepKey(page.id, Stage.GEOMETRY, first.step_id)
         saved = await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
         listed = await fx_kit.edits().list(actor, project.id, page.id, Stage.GEOMETRY)
-        found = await fx_kit.uow().page_step_states.find(PageStepKey(page.id, Stage.GEOMETRY, second.step_id))
+        found = await fx_kit.uow().read(
+            lambda repos: repos.page_step_states.find(PageStepKey(page.id, Stage.GEOMETRY, second.step_id))
+        )
         expect(listed == [saved])
         expect(found is None)
         assert_expectations()
@@ -262,11 +265,11 @@ class TestDelete:
         actor, project, page = await prepared(fx_kit)
         key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
         await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
-        uow = fx_kit.uow()
-        async with uow.change_book(project.id):
-            await uow.page_stages.save(make_page_stage(page_id=page.id))
+        await fx_kit.uow().change_book(
+            project.id, lambda repos, _project: repos.page_stages.save(make_page_stage(page_id=page.id))
+        )
         await fx_kit.edits().delete(actor, project.id, key)
-        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        record = await stage_of(fx_kit, page, Stage.GEOMETRY)
         expect(await fx_kit.edits().list(actor, project.id, page.id, Stage.GEOMETRY) == [])
         expect(record.state is StageState.STALE)
         with pytest.raises(NotFoundError):

@@ -3,11 +3,11 @@
 from collections import Counter
 from datetime import timedelta
 from typing import TYPE_CHECKING, Self
-from unittest.mock import AsyncMock
 
 import pytest
 from attrs import evolve
 
+from bookreviver.adapters.persistence.memory.unit_of_work import InMemoryPageVersionRepository
 from bookreviver.domain.enums import Stage, StageState, VersionState
 from bookreviver.domain.values import PageStageKey, ProcessorRef
 from bookreviver.services.outdated_results import OutdatedResults
@@ -15,11 +15,12 @@ from tests.helpers.builders import EPOCH, make_page_stage, make_page_version
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Collection, Sequence
     from datetime import datetime
 
-    from bookreviver.domain.entities import Page, PageStage, PageVersion
-    from bookreviver.domain.ids import PageId, PageVersionId
+    from bookreviver.domain.entities import Page, PageStage, PageVersion, Project
+    from bookreviver.domain.ids import PageVersionId
+    from bookreviver.ports.persistence import Repositories
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -90,9 +91,8 @@ class SeededPage:
         :returns: The version.
         :rtype: PageVersion
         """
-        uow = self.kit.uow()
         if input_id is None:
-            input_id = (await uow.page_versions.list_for_page(self.page.id))[0].id
+            input_id = (await self.base()).id
         version = evolve(
             make_page_version(page_id=self.page.id, minutes=stage.position + 1),
             stage=stage,
@@ -101,10 +101,28 @@ class SeededPage:
             state=VersionState.READY,
         )
         record = make_page_stage(page_id=self.page.id, stage=stage, head_version_id=version.id, state=state)
-        async with uow.change_book(self.page.project_id):
-            await uow.page_versions.add(version)
-            await uow.page_stages.save(record)
+
+        def add_result(repos: Repositories, _project: Project) -> None:
+            """Add the version and the record of the stage that has it as its current version.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: Project of the book, which the work does not need.
+            :type _project: Project
+            """
+            repos.page_versions.add(version)
+            repos.page_stages.save(record)
+
+        await self.kit.uow().change_book(self.page.project_id, add_result)
         return version
+
+    async def base(self) -> PageVersion:
+        """Read the base version of the page, which is the earliest version it has.
+
+        :returns: The base version.
+        :rtype: PageVersion
+        """
+        return (await self.kit.uow().read(lambda repos: repos.page_versions.list_for_page(self.page.id)))[0]
 
     async def stored(self, stage: Stage) -> PageStage:
         """Read the committed record of a stage of the page.
@@ -114,7 +132,7 @@ class SeededPage:
         :returns: The record.
         :rtype: PageStage
         """
-        return await self.kit.uow().page_stages.get(PageStageKey(self.page.id, stage))
+        return await self.kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(self.page.id, stage)))
 
 
 async def mark_stale(kit: ProcessingKit) -> list[PageStage]:
@@ -143,20 +161,20 @@ class TestMarkStale:
             pytest.param(lambda _record, _base_id: None, id='deleted'),
         ],
     )
-    async def test_a_record_changed_between_the_check_and_the_block_is_left_as_the_request_wrote_it(
+    async def test_a_record_changed_between_the_check_and_the_change_is_left_as_the_request_wrote_it(
         self,
         fx_kit: ProcessingKit,
         monkeypatch: pytest.MonkeyPatch,
         meanwhile: Callable[[PageStage, PageVersionId], PageStage | None],
     ) -> None:
-        """Verify the check marks nothing when its block finds the record not fresh, replaced or gone.
+        """Verify the check marks nothing when its change finds the record not fresh, replaced or gone.
 
-        The outdated record is found by reads outside any block, and the request changes it before the block of the
-        book opens, which is what the re-read in the block is for.
+        The outdated record is found by a transaction that only reads, and the request changes it before the change of
+        the book opens, which is what the re-read in that change is for.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param monkeypatch: Fixture that restores the patched repository after the test.
+        :param monkeypatch: Fixture that restores the patched unit of work after the test.
         :type monkeypatch: pytest.MonkeyPatch
         :param meanwhile: The record a request leaves after it was found outdated, or None when it deletes it.
         :type meanwhile: Callable[[PageStage, PageVersionId], PageStage | None]
@@ -164,38 +182,45 @@ class TestMarkStale:
         page = await SeededPage.seed(fx_kit)
         await page.result(Stage.GEOMETRY, OUTDATED_GEOMETRY)
         record = await page.stored(Stage.GEOMETRY)
-        base = (await fx_kit.uow().page_versions.list_for_page(page.page.id))[0]
-        left = meanwhile(record, base.id)
+        left = meanwhile(record, (await page.base()).id)
         uow = fx_kit.uow()
-        read = uow.pages.get
+        read = uow.read
         changed = False
 
-        async def get_then_change(page_id: PageId) -> Page:
-            """Read the page of the record, then let a request change the record in a block of its own, once.
+        def request_changes_record(repos: Repositories, _project: Project) -> None:
+            """Write the record as a request that came after the check found it outdated leaves it.
 
-            :param page_id: Identifier of the page.
-            :type page_id: PageId
-            :returns: The page.
-            :rtype: Page
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: Project of the book, which the work does not need.
+            :type _project: Project
+            """
+            if left is None:
+                repos.page_stages.delete(record.key)
+            else:
+                repos.page_stages.save(left)
+
+        async def read_then_change[T](work: Callable[[Repositories], T]) -> T:
+            """Read as the unit of work does, then let a request change the record in a change of its own, once.
+
+            :param work: Function over the repositories of the transaction.
+            :type work: Callable[[Repositories], T]
+            :returns: What the work returns.
+            :rtype: T
             """
             nonlocal changed
-            found = await read(page_id)
+            found = await read(work)
             if not changed:
                 changed = True
-                other = fx_kit.uow()
-                async with other.change_book(found.project_id):
-                    if left is None:
-                        await other.page_stages.delete(record.key)
-                    else:
-                        await other.page_stages.save(left)
+                await fx_kit.uow().change_book(page.page.project_id, request_changes_record)
             return found
 
-        monkeypatch.setattr(uow.pages, 'get', get_then_change)
+        monkeypatch.setattr(uow, 'read', read_then_change)
         fx_kit.clock.moment = CHECKED_AT
 
         marked = await OutdatedResults(uow=uow, catalogue=fx_kit.catalogue, clock=fx_kit.clock).mark_stale()
 
-        stored = await fx_kit.uow().page_stages.find(record.key)
+        stored = await fx_kit.uow().read(lambda repos: repos.page_stages.find(record.key))
         assert (marked, stored) == ([], left)
 
     async def test_fresh_stage_made_by_an_older_version_of_a_processor_becomes_stale(
@@ -325,13 +350,27 @@ class TestMarkStale:
         page = await SeededPage.seed(fx_kit)
         geometry = await page.result(Stage.GEOMETRY, CURRENT_GEOMETRY)
         cleanup = await page.result(Stage.CLEANUP, CURRENT_CLEANUP, input_id=geometry.id)
-        uow = fx_kit.uow()
-        reading = AsyncMock(wraps=uow.page_versions.list_by_ids)
-        monkeypatch.setattr(uow.page_versions, 'list_by_ids', reading)
+        read = InMemoryPageVersionRepository.list_by_ids
+        asked: Counter[PageVersionId] = Counter()
+
+        def counting_list_by_ids(
+            repository: InMemoryPageVersionRepository, version_ids: Collection[PageVersionId]
+        ) -> Sequence[PageVersion]:
+            """Count every identifier the repository is asked for, then read as it does.
+
+            :param repository: The repository of the transaction that reads.
+            :type repository: InMemoryPageVersionRepository
+            :param version_ids: Identifiers of the versions to read.
+            :type version_ids: Collection[PageVersionId]
+            :returns: The versions found.
+            :rtype: Sequence[PageVersion]
+            """
+            asked.update(version_ids)
+            return read(repository, version_ids)
+
+        monkeypatch.setattr(InMemoryPageVersionRepository, 'list_by_ids', counting_list_by_ids)
         fx_kit.clock.moment = CHECKED_AT
 
-        await OutdatedResults(uow=uow, catalogue=fx_kit.catalogue, clock=fx_kit.clock).mark_stale()
+        await OutdatedResults(uow=fx_kit.uow(), catalogue=fx_kit.catalogue, clock=fx_kit.clock).mark_stale()
 
-        asked = Counter(version_id for call in reading.await_args_list for version_id in call.args[0])
-        base = (await uow.page_versions.list_for_page(page.page.id))[0]
-        assert asked == {base.id: 1, geometry.id: 1, cleanup.id: 1}
+        assert asked == {(await page.base()).id: 1, geometry.id: 1, cleanup.id: 1}

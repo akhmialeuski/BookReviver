@@ -6,7 +6,8 @@ The module declares the ``projects``, ``jobs``, ``sources``, ``scans``, ``pages`
 annotations, ``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from advanced-alchemy's
 :class:`~advanced_alchemy.base.DefaultBase`, which is a ``DeclarativeBase`` carrying the metadata shared with the
 account tables, the portable ``GUID`` and ``DateTimeUTC`` column types for ``UUID`` and ``datetime`` annotations, and
-the naming convention of keys and constraints. JSON columns name ``JSON_B`` themselves.
+the naming convention of keys and constraints. The tables are written for SQLite alone, the one database of the
+application, so no column or index carries a variant for another database.
 
 Rows never leave the adapter. The mappers in :mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turn them into
 frozen domain entities, so nothing outside this package depends on the shape of a table.
@@ -17,8 +18,8 @@ removes them with their owner. An optional reference carries ``ON DELETE SET NUL
 when its scan is deleted, a source when its import job is, a version when its input version is, and a stage record
 when its head version or its recipe is, a recipe when its profile is, because a page of the book holds its own copy of
 its image. The relationships use ``passive_deletes=True`` to leave that deletion to the database, and ``lazy="raise"``
-because an ``AsyncSession`` cannot load a relationship implicitly on attribute access. Unique keys are declared with
-their table, and the shared naming convention names them.
+so that no query runs unseen on attribute access, inside a transaction or after its session has closed. Unique keys are
+declared with their table, and the shared naming convention names them.
 
 The owner of a project refers to the ``user`` table of fastapi-users with ``ON DELETE RESTRICT``. A cascade would
 remove the rows of the owner's projects but not their files, so an account is deleted only after its projects have
@@ -32,7 +33,6 @@ from uuid import UUID
 
 from advanced_alchemy.base import DefaultBase
 from sqlalchemy import JSON, Enum, ForeignKey, Index, String, UniqueConstraint, false, text
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
@@ -83,7 +83,7 @@ RESTRICT: Final = 'RESTRICT'
 METADATA_COLUMN: Final = 'metadata'
 # ORM cascade of a parent to its children; deletion itself is left to the database through CASCADE
 CHILD_CASCADE: Final = 'all, delete'
-# Loading strategy that raises instead of emitting hidden SQL, which an AsyncSession cannot run
+# Loading strategy that raises instead of emitting hidden SQL on attribute access
 NO_IMPLICIT_LOAD: Final = 'raise'
 # Server defaults of the columns the description gained, which existing rows take when the columns are added
 EMPTY_TEXT: Final = ''
@@ -93,16 +93,14 @@ PAGE_VERSIONS_TABLE: Final = 'page_versions'
 PAGINATION_SECTIONS_TABLE: Final = 'pagination_sections'
 RECIPES_TABLE: Final = 'recipes'
 RECIPE_PROFILES_TABLE: Final = 'recipe_profiles'
+# Columns that several keys, indexes and constraints name
+ID_COLUMN: Final = 'id'
+PROJECT_ID_COLUMN: Final = 'project_id'
+PAGE_ID_COLUMN: Final = 'page_id'
+STAGE_COLUMN: Final = 'stage'
+SEQUENCE_COLUMN: Final = 'sequence'
 # Length of a page version identifier, a hash cut to 16 hexadecimal digits
 VERSION_ID_LENGTH: Final = 16
-POSTGRESQL_DIALECT: Final = 'postgresql'
-# Order keys compare byte by byte: SQLite's default BINARY collation does, and PostgreSQL needs the C collation
-ORDER_KEY_TYPE: Final = String().with_variant(String(collation='C'), POSTGRESQL_DIALECT)
-# A JSON column, which PostgreSQL stores as JSONB, in SQLAlchemy's own variant form for the two databases the project
-# runs on, SQLite and PostgreSQL. advanced-alchemy's ``JsonB`` adds an Oracle variant the project never uses, and in
-# advanced-alchemy 1.11.0 that variant fails to build any table on SQLAlchemy 2.1
-# (https://github.com/litestar-org/advanced-alchemy/issues/811)
-JSON_B: Final = JSON().with_variant(JSONB(), POSTGRESQL_DIALECT)
 # Server default of a column that holds a JSON object
 EMPTY_OBJECT: Final = '{}'
 # The rows of the partial unique index of ``recipe_profiles``: the default profile of a stage of an account
@@ -156,8 +154,8 @@ def enum_by_value[EnumT: enum.Enum](enum_type: type[EnumT]) -> Enum:
     """Return a column type storing members of ``enum_type`` by value in a plain string column.
 
     SQLAlchemy stores enum members by name unless told otherwise, and a native enum type exists only on some
-    databases. A non-native column holding the value reads the same on SQLite and PostgreSQL, and a renamed member
-    keeps its stored rows valid as long as its value stays.
+    databases. A plain string column holding the value keeps the rows readable when a member is renamed, as long as
+    its value stays.
 
     :param enum_type: Domain enum whose members the column stores.
     :type enum_type: type[EnumT]
@@ -225,9 +223,9 @@ class ProjectRow(DefaultBase):
     owner_id: Mapped[UUID] = mapped_column(ForeignKey(AccountTable.__table__.c.id, ondelete=RESTRICT), index=True)
     title: Mapped[str]
     subtitle: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
-    parallel_titles: Mapped[list[str]] = mapped_column(JSON_B, server_default=EMPTY_LIST)
+    parallel_titles: Mapped[list[str]] = mapped_column(JSON, server_default=EMPTY_LIST)
     original_title: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
-    contributors: Mapped[list[dict[str, str]]] = mapped_column(JSON_B, server_default=EMPTY_LIST)
+    contributors: Mapped[list[dict[str, str]]] = mapped_column(JSON, server_default=EMPTY_LIST)
     publisher: Mapped[str]
     printer: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     publication_place: Mapped[str]
@@ -237,15 +235,15 @@ class ProjectRow(DefaultBase):
     series: Mapped[str]
     series_number: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     volume: Mapped[str]
-    languages: Mapped[list[str]] = mapped_column(JSON_B, server_default=EMPTY_LIST)
+    languages: Mapped[list[str]] = mapped_column(JSON, server_default=EMPTY_LIST)
     orthography: Mapped[Orthography] = mapped_column(enum_by_value(Orthography))
     script: Mapped[Script] = mapped_column(enum_by_value(Script), server_default=Script.UNKNOWN.value)
     printed_pagination: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     height_cm: Mapped[int | None]
     illustrations: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     binding: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
-    identifiers: Mapped[list[dict[str, str]]] = mapped_column(JSON_B, server_default=EMPTY_LIST)
-    subjects: Mapped[list[str]] = mapped_column(JSON_B, server_default=EMPTY_LIST)
+    identifiers: Mapped[list[dict[str, str]]] = mapped_column(JSON, server_default=EMPTY_LIST)
+    subjects: Mapped[list[str]] = mapped_column(JSON, server_default=EMPTY_LIST)
     rights: Mapped[RightsStatus] = mapped_column(enum_by_value(RightsStatus), server_default=RightsStatus.UNKNOWN.value)
     copy_holder: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     copy_notes: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
@@ -253,7 +251,7 @@ class ProjectRow(DefaultBase):
     image_policy: Mapped[ImagePolicy] = mapped_column(enum_by_value(ImagePolicy))
     # By table name, and added after both tables exist, since the pages table refers back to this one
     cover_page_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey(f'{PAGES_TABLE}.id', ondelete=SET_NULL, use_alter=True)
+        ForeignKey(f'{PAGES_TABLE}.{ID_COLUMN}', ondelete=SET_NULL, use_alter=True)
     )
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime] = mapped_column(index=True)
@@ -305,38 +303,33 @@ class JobRow(DefaultBase):
     __table_args__ = (
         Index(
             'ix_jobs_one_active_import',
-            'project_id',
+            PROJECT_ID_COLUMN,
             unique=True,
             sqlite_where=ACTIVE_IMPORT,
-            postgresql_where=ACTIVE_IMPORT,
         ),
         Index(
             'ix_jobs_one_active_prepare',
-            'project_id',
+            PROJECT_ID_COLUMN,
             unique=True,
             sqlite_where=ACTIVE_PREPARE,
-            postgresql_where=ACTIVE_PREPARE,
         ),
         Index(
             'ix_jobs_one_active_requested',
-            'project_id',
+            PROJECT_ID_COLUMN,
             unique=True,
             sqlite_where=ACTIVE_REQUESTED,
-            postgresql_where=ACTIVE_REQUESTED,
         ),
         Index(
             'ix_jobs_one_active_housekeeping',
-            'project_id',
+            PROJECT_ID_COLUMN,
             unique=True,
             sqlite_where=ACTIVE_HOUSEKEEPING,
-            postgresql_where=ACTIVE_HOUSEKEEPING,
         ),
         Index(
             'ix_jobs_one_running_processing',
-            'project_id',
+            PROJECT_ID_COLUMN,
             unique=True,
             sqlite_where=RUNNING_PROCESSING,
-            postgresql_where=RUNNING_PROCESSING,
         ),
     )
 
@@ -347,9 +340,9 @@ class JobRow(DefaultBase):
     progress_done: Mapped[int]
     progress_total: Mapped[int]
     error: Mapped[str]
-    request: Mapped[dict[str, Any] | None] = mapped_column(JSON_B)
-    params: Mapped[dict[str, Any]] = mapped_column(JSON_B, server_default=EMPTY_OBJECT)
-    result: Mapped[dict[str, Any] | None] = mapped_column(JSON_B)
+    request: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    params: Mapped[dict[str, Any]] = mapped_column(JSON, server_default=EMPTY_OBJECT)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime]
     started_at: Mapped[datetime | None]
     finished_at: Mapped[datetime | None]
@@ -381,19 +374,19 @@ class SourceRow(DefaultBase):
     """
 
     __tablename__ = 'sources'
-    __table_args__ = (UniqueConstraint('project_id', 'sha256'),)
+    __table_args__ = (UniqueConstraint(PROJECT_ID_COLUMN, 'sha256'),)
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), index=True)
     kind: Mapped[SourceKind] = mapped_column(enum_by_value(SourceKind))
     file_type: Mapped[FileType] = mapped_column(enum_by_value(FileType))
     file_name: Mapped[str]
-    files: Mapped[list[dict[str, Any]]] = mapped_column(JSON_B)
+    files: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
     size_bytes: Mapped[int]
     sha256: Mapped[str]
     scan_count: Mapped[int]
-    metadata_: Mapped[dict[str, Any]] = mapped_column(METADATA_COLUMN, JSON_B)
-    suggestion: Mapped[dict[str, Any]] = mapped_column(JSON_B)
+    metadata_: Mapped[dict[str, Any]] = mapped_column(METADATA_COLUMN, JSON)
+    suggestion: Mapped[dict[str, Any]] = mapped_column(JSON)
     import_job_id: Mapped[UUID | None] = mapped_column(ForeignKey(JobRow.id, ondelete=SET_NULL), index=True)
     imported_at: Mapped[datetime]
 
@@ -450,7 +443,7 @@ class ScanRow(DefaultBase):
     width_mm: Mapped[float | None]
     height_mm: Mapped[float | None]
     has_text_layer: Mapped[bool]
-    extra: Mapped[dict[str, Any]] = mapped_column(JSON_B)
+    extra: Mapped[dict[str, Any]] = mapped_column(JSON)
     renditions_ready: Mapped[bool]
     renditions_version: Mapped[int]
     renditions_full: Mapped[Rendition] = mapped_column(enum_by_value(Rendition), server_default=LEGACY_FULL_FORMAT)
@@ -489,11 +482,12 @@ class PageRow(DefaultBase):
     """
 
     __tablename__ = PAGES_TABLE
-    __table_args__ = (UniqueConstraint('project_id', 'order_key'), UniqueConstraint('scan_id', 'slot'))
+    __table_args__ = (UniqueConstraint(PROJECT_ID_COLUMN, 'order_key'), UniqueConstraint('scan_id', 'slot'))
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE))
-    order_key: Mapped[str] = mapped_column(ORDER_KEY_TYPE)
+    # Order keys compare byte by byte, which SQLite's default BINARY collation does
+    order_key: Mapped[str] = mapped_column(String)
     label: Mapped[str]
     label_manual: Mapped[bool] = mapped_column(server_default=false())
     kind: Mapped[PageKind] = mapped_column(enum_by_value(PageKind))
@@ -556,7 +550,7 @@ class PaginationSectionRow(DefaultBase):
     start: Mapped[int]
     prefix: Mapped[str]
     display: Mapped[NumberDisplay] = mapped_column(enum_by_value(NumberDisplay))
-    kinds: Mapped[list[str]] = mapped_column(JSON_B)
+    kinds: Mapped[list[str]] = mapped_column(JSON)
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
 
@@ -591,7 +585,7 @@ class PageVersionRow(DefaultBase):
     """
 
     __tablename__ = PAGE_VERSIONS_TABLE
-    __table_args__ = (Index(None, 'page_id', 'stage'),)
+    __table_args__ = (Index(None, PAGE_ID_COLUMN, STAGE_COLUMN),)
 
     id: Mapped[str] = mapped_column(String(VERSION_ID_LENGTH), primary_key=True)
     page_id: Mapped[UUID] = mapped_column(ForeignKey(PageRow.id, ondelete=CASCADE))
@@ -599,10 +593,10 @@ class PageVersionRow(DefaultBase):
     processor_key: Mapped[str]
     processor_version: Mapped[str]
     # A string, since the table refers to itself before its class exists
-    input_id: Mapped[str | None] = mapped_column(ForeignKey(f'{PAGE_VERSIONS_TABLE}.id', ondelete=SET_NULL))
-    params: Mapped[dict[str, Any]] = mapped_column(JSON_B)
-    transform: Mapped[dict[str, Any]] = mapped_column(JSON_B)
-    data: Mapped[dict[str, Any]] = mapped_column(JSON_B)
+    input_id: Mapped[str | None] = mapped_column(ForeignKey(f'{PAGE_VERSIONS_TABLE}.{ID_COLUMN}', ondelete=SET_NULL))
+    params: Mapped[dict[str, Any]] = mapped_column(JSON)
+    transform: Mapped[dict[str, Any]] = mapped_column(JSON)
+    data: Mapped[dict[str, Any]] = mapped_column(JSON)
     review: Mapped[ReviewReason | None] = mapped_column(enum_by_value(ReviewReason))
     renditions_ready: Mapped[bool | None]
     renditions_full: Mapped[Rendition | None] = mapped_column(enum_by_value(Rendition))
@@ -639,7 +633,9 @@ class PageStageRow(DefaultBase):
     page_id: Mapped[UUID] = mapped_column(ForeignKey(PageRow.id, ondelete=CASCADE), primary_key=True)
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage), primary_key=True)
     # By table name, since the recipe class is declared after this one
-    recipe_id: Mapped[UUID | None] = mapped_column(ForeignKey(f'{RECIPES_TABLE}.id', ondelete=SET_NULL), index=True)
+    recipe_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(f'{RECIPES_TABLE}.{ID_COLUMN}', ondelete=SET_NULL), index=True
+    )
     head_version_id: Mapped[str | None] = mapped_column(ForeignKey(PageVersionRow.id, ondelete=SET_NULL), index=True)
     state: Mapped[StageState] = mapped_column(enum_by_value(StageState))
     through_step: Mapped[int | None]
@@ -674,9 +670,9 @@ class PageStepStateRow(DefaultBase):
     page_id: Mapped[UUID] = mapped_column(ForeignKey(PageRow.id, ondelete=CASCADE), primary_key=True)
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage), primary_key=True)
     step_id: Mapped[UUID] = mapped_column(primary_key=True)
-    params: Mapped[dict[str, Any]] = mapped_column(JSON_B, server_default=EMPTY_OBJECT)
+    params: Mapped[dict[str, Any]] = mapped_column(JSON, server_default=EMPTY_OBJECT)
     kind: Mapped[EditorKind | None] = mapped_column(enum_by_value(EditorKind))
-    geometry: Mapped[dict[str, Any] | None] = mapped_column(JSON_B)
+    geometry: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     mask_key: Mapped[str | None]
     edit_hash: Mapped[str | None]
     edit_saved_at: Mapped[datetime | None]
@@ -702,14 +698,14 @@ class StepValuesRow(DefaultBase):
     """
 
     __tablename__ = 'step_values'
-    __table_args__ = (Index(None, 'project_id', 'stage'),)
+    __table_args__ = (Index(None, PROJECT_ID_COLUMN, STAGE_COLUMN),)
 
     project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), primary_key=True)
     step_id: Mapped[UUID] = mapped_column(primary_key=True)
     scope: Mapped[ValueScope] = mapped_column(enum_by_value(ValueScope), primary_key=True)
     group_label: Mapped[str] = mapped_column(primary_key=True, server_default=EMPTY_TEXT)
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
-    params: Mapped[dict[str, Any]] = mapped_column(JSON_B, server_default=EMPTY_OBJECT)
+    params: Mapped[dict[str, Any]] = mapped_column(JSON, server_default=EMPTY_OBJECT)
     updated_at: Mapped[datetime]
 
 
@@ -738,10 +734,10 @@ class PageStepChangeRow(DefaultBase):
 
     __tablename__ = 'page_step_changes'
     __table_args__ = (
-        Index(None, 'page_id', 'stage'),
+        Index(None, PAGE_ID_COLUMN, STAGE_COLUMN),
         Index(None, 'batch_id'),
         Index(None, 'undoes_id'),
-        UniqueConstraint('page_id', 'sequence'),
+        UniqueConstraint(PAGE_ID_COLUMN, SEQUENCE_COLUMN),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
@@ -751,8 +747,8 @@ class PageStepChangeRow(DefaultBase):
     layer: Mapped[StepLayer] = mapped_column(enum_by_value(StepLayer))
     scope: Mapped[ValueScope] = mapped_column(enum_by_value(ValueScope), server_default=ValueScope.PAGES.value)
     group_label: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
-    before: Mapped[dict[str, Any] | None] = mapped_column(JSON_B)
-    after: Mapped[dict[str, Any] | None] = mapped_column(JSON_B)
+    before: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    after: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     source: Mapped[ChangeSource] = mapped_column(enum_by_value(ChangeSource))
     batch_id: Mapped[UUID | None]
     undoes_id: Mapped[UUID | None]
@@ -776,7 +772,7 @@ class ResultMarkChangeRow(DefaultBase):
     """
 
     __tablename__ = 'result_mark_changes'
-    __table_args__ = (UniqueConstraint('version_id', 'sequence'),)
+    __table_args__ = (UniqueConstraint('version_id', SEQUENCE_COLUMN),)
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     version_id: Mapped[str] = mapped_column(ForeignKey(PageVersionRow.id, ondelete=CASCADE))
@@ -851,15 +847,15 @@ class RecipeRow(DefaultBase):
 
     __tablename__ = RECIPES_TABLE
     # The database keeps two requests that both make the recipes of a stage from both succeeding
-    __table_args__ = (UniqueConstraint('project_id', 'stage', 'kind'),)
+    __table_args__ = (UniqueConstraint(PROJECT_ID_COLUMN, STAGE_COLUMN, 'kind'),)
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE))
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
     kind: Mapped[RecipeKind] = mapped_column(enum_by_value(RecipeKind))
-    steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON_B)
+    steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
     profile_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey(f'{RECIPE_PROFILES_TABLE}.id', ondelete=SET_NULL), index=True
+        ForeignKey(f'{RECIPE_PROFILES_TABLE}.{ID_COLUMN}', ondelete=SET_NULL), index=True
     )
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
@@ -892,10 +888,9 @@ class RecipeProfileRow(DefaultBase):
         Index(
             'ix_recipe_profiles_one_default',
             'account_id',
-            'stage',
+            STAGE_COLUMN,
             unique=True,
             sqlite_where=DEFAULT_PROFILE,
-            postgresql_where=DEFAULT_PROFILE,
         ),
     )
 
@@ -903,7 +898,7 @@ class RecipeProfileRow(DefaultBase):
     account_id: Mapped[UUID] = mapped_column(ForeignKey(AccountTable.__table__.c.id, ondelete=CASCADE), index=True)
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
     name: Mapped[str]
-    steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON_B)
+    steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
     order: Mapped[OrderMode] = mapped_column(enum_by_value(OrderMode), server_default=OrderMode.USUAL.value)
     is_default: Mapped[bool]
     created_at: Mapped[datetime]

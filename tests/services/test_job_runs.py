@@ -1,4 +1,4 @@
-"""Tests for the life of a job on a worker: start, advance and finish, each in a block of the unit of work."""
+"""Tests for the life of a job on a worker: start, advance and finish, each in a change of the unit of work."""
 
 from typing import TYPE_CHECKING
 
@@ -11,6 +11,7 @@ from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.events import JobChanged
 from bookreviver.services.job_runs import JobTracker
+from tests.helpers.book_gate import hold_book
 from tests.helpers.builders import make_job, make_project, new_account_id
 from tests.helpers.fakes_jobs import JobFakes
 
@@ -93,11 +94,12 @@ class TestTrackerWaitsForACancellation:
         fx_project: Project,
         action: Callable[[JobTracker, Job], Awaitable[object]],
     ) -> None:
-        """Verify a step or the end of a job waits for a cancellation in its block, then finds the job cancelled.
+        """Verify a step or the end of a job waits behind a cancellation that asked first, then finds the job cancelled.
 
-        The cancellation holds its block open, so the worker cannot read the job running and write over the
-        cancellation. When the block commits, the write of the worker finds the job cancelled, changes nothing and
-        announces nothing.
+        The lock of the changes is held while the cancellation and then the worker ask for it, so both wait, and the
+        worker cannot read the job running and write over the cancellation. When the lock is let go the changes enter
+        in the order they asked: the cancellation commits, and the write of the worker finds the job cancelled,
+        changes nothing and announces nothing.
 
         :param fx_fakes: Adapters of the tracker.
         :type fx_fakes: JobFakes
@@ -109,33 +111,29 @@ class TestTrackerWaitsForACancellation:
         job = make_job(project_id=fx_project.id, state=JobState.RUNNING, kind=JobKind.RUN_STAGE)
         await fx_fakes.store(fx_project, job)
         canceller = InMemoryUnitOfWork(fx_fakes.database)
-        cancelling = anyio.Event()
-        resume = anyio.Event()
         done = anyio.Event()
 
-        async def cancel_and_hold() -> None:
-            """Cancel the job in a block that stays open until the test lets it commit."""
-            async with canceller.change():
-                await canceller.jobs.update_if_state(
+        async def cancel() -> None:
+            """Cancel the job in a change of its own, as the account holder does."""
+            await canceller.change(
+                lambda repos: repos.jobs.update_if_state(
                     evolve(job, state=JobState.CANCELLED, finished_at=fx_fakes.clock.now()),
                     expected=(JobState.RUNNING,),
                 )
-                cancelling.set()
-                await resume.wait()
+            )
 
         async def work() -> None:
             """Do the action of the worker and say so."""
             await action(tracker_of(fx_fakes), job)
             done.set()
 
-        async with anyio.create_task_group() as group:
-            group.start_soon(cancel_and_hold)
-            await cancelling.wait()
+        async with anyio.create_task_group() as group, hold_book(fx_fakes.database):
+            group.start_soon(cancel)
+            await anyio.wait_all_tasks_blocked()
             group.start_soon(work)
             await anyio.wait_all_tasks_blocked()
             expect(not done.is_set())
             expect((await fx_fakes.stored_job(job)).state is JobState.RUNNING)
-            resume.set()
 
         expect((await fx_fakes.stored_job(job)).state is JobState.CANCELLED)
         expect(not fx_fakes.events.published)
@@ -143,7 +141,7 @@ class TestTrackerWaitsForACancellation:
 
 
 class TestFinish:
-    """Tests for ``JobTracker.finish``, which stores the final state and the follow-up in one block."""
+    """Tests for ``JobTracker.finish``, which stores the final state and the follow-up in one change."""
 
     @pytest.mark.parametrize(
         ('active', 'expected'),
@@ -173,9 +171,9 @@ class TestFinish:
 
         await tracker_of(fx_fakes).finish(run, JobState.SUCCEEDED, total=PROGRESS_STEPS, follow_up=follow_up)
 
-        reader = InMemoryUnitOfWork(fx_fakes.database)
-        ended = await reader.jobs.get(run.id)
-        queued = await reader.jobs.list_for_project(fx_project.id, JobState.active())
+        ended, queued = await InMemoryUnitOfWork(fx_fakes.database).read(
+            lambda repos: (repos.jobs.get(run.id), repos.jobs.list_for_project(fx_project.id, JobState.active()))
+        )
         expect(ended.state is JobState.SUCCEEDED)
         expect([job.kind for job in queued] == [expected])
         expect(JobChanged(project_id=fx_project.id, job=ended) in fx_fakes.events.published)

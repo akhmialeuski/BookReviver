@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Scan, Source
     from bookreviver.domain.ids import ProjectId, SourceId
     from bookreviver.domain.values import SliceRequest
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.ports.storage import AssetStore, SourceStore
 
 SOURCE_IMPORTING: str = 'This project is importing files. Delete the source when the import has finished.'
@@ -54,7 +54,7 @@ class SourceService:
     def __init__(self, *, uow: UnitOfWork, sources: SourceStore, assets: AssetStore) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose block ends the deletion of a source.
+        :param uow: Unit of work of the request, whose ``change_book`` ends the deletion of a source.
         :type uow: UnitOfWork
         :param sources: Store of the uploaded sources, emptied of a source when it is deleted.
         :type sources: SourceStore
@@ -78,8 +78,20 @@ class SourceService:
         :rtype: Slice[Source]
         :raises NotFoundError: If the actor has no such project.
         """
-        await owned_project(self._uow.projects, actor, project_id)
-        return _window(await self._uow.sources.list_for_project(project_id), request)
+
+        def work(repos: Repositories) -> Slice[Source]:
+            """Read the sources of the actor's project and cut the window.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The sources of the window and the number of all the project's sources.
+            :rtype: Slice[Source]
+            :raises NotFoundError: If the actor has no such project.
+            """
+            owned_project(repos.projects, actor, project_id)
+            return _window(repos.sources.list_for_project(project_id), request)
+
+        return await self._uow.read(work)
 
     async def get(self, actor: Actor, project_id: ProjectId, source_id: SourceId) -> Source:
         """Return one source of the project.
@@ -94,7 +106,7 @@ class SourceService:
         :rtype: Source
         :raises NotFoundError: If the actor has no such project, or the project has no such source.
         """
-        return await self._owned_source(actor, project_id, source_id)
+        return await self._uow.read(lambda repos: self._owned_source(repos, actor, project_id, source_id))
 
     async def scans(
         self, actor: Actor, project_id: ProjectId, request: SliceRequest, *, source_id: SourceId | None = None
@@ -115,20 +127,32 @@ class SourceService:
         :rtype: Slice[Scan]
         :raises NotFoundError: If the actor has no such project, or the project has no such source.
         """
-        if source_id is None:
-            await owned_project(self._uow.projects, actor, project_id)
-            return await self._uow.scans.list_for_project(project_id, request)
-        await self._owned_source(actor, project_id, source_id)
-        return _window(await self._uow.scans.list_for_source(source_id), request)
+
+        def work(repos: Repositories) -> Slice[Scan]:
+            """Read the window of the scans of the project, or of one of its sources.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The scans of the window and the number of all the scans listed.
+            :rtype: Slice[Scan]
+            :raises NotFoundError: If the actor has no such project, or the project has no such source.
+            """
+            if source_id is None:
+                owned_project(repos.projects, actor, project_id)
+                return repos.scans.list_for_project(project_id, request)
+            self._owned_source(repos, actor, project_id, source_id)
+            return _window(repos.scans.list_for_source(source_id), request)
+
+        return await self._uow.read(work)
 
     async def delete(self, actor: Actor, project_id: ProjectId, source_id: SourceId) -> None:
         """Delete a source's files and the renditions of its scans, then the source with its scans.
 
         The pages of the book made from the scans keep their images, versions, numbers and order, and lose only the
         reference to their scan. The owner and the source are checked before any file goes, and the files go outside
-        any block, so a slow store holds no lock of the book. Only the rows go in a block, which this use case opens,
-        so it is called outside a block. A failure at any step leaves the source in place, and calling this again
-        finishes the deletion.
+        any transaction, so a slow store holds no lock of the book. Only the rows go in a ``change_book``, which this
+        use case opens. A failure at any step leaves the source in place, and calling this again finishes the
+        deletion.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -139,19 +163,32 @@ class SourceService:
         :raises NotFoundError: If the actor has no such project, or the project has no such source.
         :raises ConflictError: If the project has an import queued or running.
         """
-        await self._owned_source(actor, project_id, source_id)
-        active = await self._uow.jobs.list_for_project(project_id, JobState.active())
-        if any(job.kind in IMPORT_JOBS for job in active):
-            raise ConflictError(SOURCE_IMPORTING)
+
+        def check(repos: Repositories) -> None:
+            """Require the source to be the actor's and the project not to import.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :raises NotFoundError: If the actor has no such project, or the project has no such source.
+            :raises ConflictError: If the project has an import queued or running.
+            """
+            self._owned_source(repos, actor, project_id, source_id)
+            active = repos.jobs.list_for_project(project_id, JobState.active())
+            if any(job.kind in IMPORT_JOBS for job in active):
+                raise ConflictError(SOURCE_IMPORTING)
+
+        await self._uow.read(check)
         # The row goes last: only an existing row lets a repeated call reach files a failed call left behind
         await self._sources.delete_source(project_id, source_id)
         await self._assets.delete_prefix(ProjectKeys(project_id).source_scans(source_id))
-        async with self._uow.change_book(project_id):
-            await self._uow.sources.delete(source_id)
+        await self._uow.change_book(project_id, lambda repos, _project: repos.sources.delete(source_id))
 
-    async def _owned_source(self, actor: Actor, project_id: ProjectId, source_id: SourceId) -> Source:
+    @staticmethod
+    def _owned_source(repos: Repositories, actor: Actor, project_id: ProjectId, source_id: SourceId) -> Source:
         """Return a source of the actor's project.
 
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
         :param actor: Account acting in the current request.
         :type actor: Actor
         :param project_id: Identifier of the project.
@@ -163,8 +200,8 @@ class SourceService:
         :raises NotFoundError: If the actor has no such project, or the project has no such source; a source of
                                another project is reported like a missing one.
         """
-        await owned_project(self._uow.projects, actor, project_id)
-        source = await self._uow.sources.get(source_id)
+        owned_project(repos.projects, actor, project_id)
+        source = repos.sources.get(source_id)
         if source.project_id != project_id:
             raise NotFoundError(source_id)
         return source

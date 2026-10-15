@@ -1,6 +1,6 @@
-"""Tests for the blocks in which processing jobs store what they computed, which read the book again first.
+"""Tests for the changes in which processing jobs store what they computed, which read the book again first.
 
-A job computes outside any block, so the book may change before it stores its answer. Each test makes such a change
+A job computes with no change open, so the book may change before it stores its answer. Each test makes such a change
 at the moment the job has computed and not stored, and proves the job writes nothing over it.
 """
 
@@ -19,6 +19,7 @@ from bookreviver.domain.values import StageRun
 from bookreviver.services.processing_jobs import NO_PAGE_PROCESSED
 from bookreviver.services.stage_runs import RecipeRun
 from bookreviver.services.steps import StepRunner
+from tests.helpers.processing import change_versions
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -47,54 +48,46 @@ async def untiled_version(kit: ProcessingKit) -> tuple[Actor, Project, PageVersi
     page, _ = await kit.seed_scan_page(project)
     base = await kit.seed_base_version(page)
     untiled = evolve(base, id=UNTILED_VERSION_ID, tiles_ready=False)
-    uow = kit.uow()
-    async with uow.change_book(project.id):
-        await uow.page_versions.add(untiled)
+    await kit.uow().change_book(project.id, lambda repos, _project: repos.page_versions.add(untiled))
     await kit.store_files(untiled)
     return actor, project, untiled
 
 
 async def delete_the_version(kit: ProcessingKit, version: PageVersion) -> None:
-    """Delete the version in a block of its own, as the removal of a page would.
+    """Delete the version in a change of its own, as the removal of a page would.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param version: The version to delete.
     :type version: PageVersion
     """
-    uow = kit.uow()
-    async with uow.change_book((await uow.pages.get(version.page_id)).project_id):
-        await uow.page_versions.delete(version.id)
+    await change_versions(kit, version, lambda versions: versions.delete(version.id))
 
 
 async def fail_the_version(kit: ProcessingKit, version: PageVersion) -> None:
-    """Mark the version failed in a block of its own, as the collection of old versions would.
+    """Mark the version failed in a change of its own, as the collection of old versions would.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param version: The version to mark.
     :type version: PageVersion
     """
-    uow = kit.uow()
-    async with uow.change_book((await uow.pages.get(version.page_id)).project_id):
-        await uow.page_versions.update(evolve(version, state=VersionState.FAILED))
+    await change_versions(kit, version, lambda versions: versions.update(evolve(version, state=VersionState.FAILED)))
 
 
 async def cut_the_tiles_elsewhere(kit: ProcessingKit, version: PageVersion) -> None:
-    """Mark the pyramid of the version cut in a block of its own, as the end of a run would.
+    """Mark the pyramid of the version cut in a change of its own, as the end of a run would.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param version: The version to mark.
     :type version: PageVersion
     """
-    uow = kit.uow()
-    async with uow.change_book((await uow.pages.get(version.page_id)).project_id):
-        await uow.page_versions.update(evolve(version, tiles_ready=True))
+    await change_versions(kit, version, lambda versions: versions.update(evolve(version, tiles_ready=True)))
 
 
 class TestCutTiles:
-    """Tests for the ``cut-tiles`` job, which marks a version in a short block after it cut the pyramid."""
+    """Tests for the ``cut-tiles`` job, which marks a version in a short change after it cut the pyramid."""
 
     @pytest.mark.parametrize(
         (CHANGE_ARGUMENT, KEPT_ARGUMENT),
@@ -115,7 +108,7 @@ class TestCutTiles:
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param monkeypatch: Fixture putting the change between the cut and the block that marks the version.
+        :param monkeypatch: Fixture putting the change between the cut and the change that marks the version.
         :type monkeypatch: pytest.MonkeyPatch
         :param change: What another request does to the version while its pyramid is cut.
         :type change: Callable[[ProcessingKit, PageVersion], Awaitable[None]]
@@ -148,8 +141,8 @@ class TestCutTiles:
 
         await fx_kit.jobs().cut_tiles(job.id)
 
-        stored = await fx_kit.uow().page_versions.find(untiled.id)
-        expect((await fx_kit.uow().jobs.get(job.id)).state is JobState.SUCCEEDED)
+        stored = await fx_kit.uow().read(lambda repos: repos.page_versions.find(untiled.id))
+        expect((await fx_kit.uow().read(lambda repos: repos.jobs.get(job.id))).state is JobState.SUCCEEDED)
         expect((stored and (stored.state, stored.tiles_ready)) == kept)
         expect(not any(isinstance(event, PageVersionReady) for event in fx_kit.events.published))
         if stored is None:
@@ -168,7 +161,7 @@ class TestRunPage:
     ) -> None:
         """Verify the record of a failed stage is not written for a page that is gone, and the job ends for its reason.
 
-        The step fails right after the page was deleted, so the block that records the failure finds no page. The page
+        The step fails right after the page was deleted, so the change that records the failure finds no page. The page
         counts as failed, the job fails with the reason of a run that processed no page, and no stage is announced.
 
         :param fx_kit: What the processing services of the test share.
@@ -181,7 +174,7 @@ class TestRunPage:
         async def delete_the_page_and_fail(
             _run: RecipeRun, page: Page, *_rest: object, **_options: object
         ) -> RunOutcome:
-            """Delete the page in a block of its own, then fail as a step would.
+            """Delete the page in a change of its own, then fail as a step would.
 
             :param _run: The runner of the recipe, which the patched step replaces.
             :type _run: RecipeRun
@@ -195,9 +188,7 @@ class TestRunPage:
             :rtype: RunOutcome
             :raises ConflictError: Always.
             """
-            uow = fx_kit.uow()
-            async with uow.change_book(page.project_id):
-                await uow.pages.delete(page.id)
+            await fx_kit.uow().change_book(page.project_id, lambda repos, _project: repos.pages.delete(page.id))
             raise ConflictError(STEP_FAILURE)
 
         monkeypatch.setattr(RecipeRun, 'run', delete_the_page_and_fail)
@@ -205,7 +196,7 @@ class TestRunPage:
 
         await fx_kit.jobs().run_stage(job.id)
 
-        stored = await fx_kit.uow().jobs.get(job.id)
+        stored = await fx_kit.uow().read(lambda repos: repos.jobs.get(job.id))
         expect((stored.state, stored.error) == (JobState.FAILED, NO_PAGE_PROCESSED))
         expect(not any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
         assert_expectations()

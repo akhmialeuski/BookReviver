@@ -59,6 +59,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.domain.entities import Actor, Page, Project, Scan
+    from bookreviver.ports.persistence import Repositories
     from bookreviver.ports.storage import AssetStore
 
 pytestmark = pytest.mark.anyio
@@ -414,14 +415,7 @@ class TestStageSummaries:
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         """
-        source = make_source(project_id=fx_book.project.id, name='plate.pdf')
-        scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
-        plate = make_page(project_id=fx_book.project.id, order_key='a1', scan=scan, kind=PageKind.PLATE)
-        uow = InMemoryUnitOfWork(fx_database)
-        async with uow.change_book(fx_book.project.id):
-            await uow.sources.add(source)
-            await uow.scans.add(scan)
-            await uow.pages.add(plate)
+        _, scan = await add_page(fx_database, fx_book, 'a1', PageKind.PLATE)
         await store_scan_images(fx_asset_store, fx_book.project, scan)
         await run_stage(fx_client, fx_broker, fx_book, 'geometry')
         recipes = await recipes_of(fx_client, fx_book, 'geometry')
@@ -695,20 +689,20 @@ class TestRunAndVersions:
         """
         await run_stage(fx_client, fx_broker, fx_book, 'page-split')
         uow = InMemoryUnitOfWork(fx_database)
-        record = await uow.page_stages.get(PageStageKey(fx_book.page.id, Stage.PAGE_SPLIT))
+        record = await uow.read(lambda repos: repos.page_stages.get(PageStageKey(fx_book.page.id, Stage.PAGE_SPLIT)))
         assert record.head_version_id is not None
+        head_id = record.head_version_id
         # A version made from the current one and left behind: it reads the head, and no current chain reads it
         old = evolve(
-            await uow.page_versions.get(record.head_version_id),
+            await uow.read(lambda repos: repos.page_versions.get(head_id)),
             id=PageVersionId(OLD_VERSION_ID),
-            input_id=record.head_version_id,
+            input_id=head_id,
         )
         async with fx_asset_store.writable(
             ProjectKeys(fx_book.project.id).version_rendition(old, Rendition.FULL_JPEG)
         ) as path:
             path.write_bytes(OLD_VERSION_CONTENT)
-        async with uow.change_book(fx_book.project.id):
-            await uow.page_versions.add(old)
+        await uow.change_book(fx_book.project.id, lambda repos, _project: repos.page_versions.add(old))
 
         first = await fx_client.get(f'{fx_book.path}{COLLECTABLE_PATH}')
         second = await fx_client.get(f'{fx_book.path}{COLLECTABLE_PATH}')
@@ -717,7 +711,7 @@ class TestRunAndVersions:
         expect(
             first.json() == {'versions': 1, 'size_bytes': len(OLD_VERSION_CONTENT)} and second.json() == first.json()
         )
-        expect(await InMemoryUnitOfWork(fx_database).page_versions.find(old.id) is not None)
+        expect(await uow.read(lambda repos: repos.page_versions.find(old.id)) is not None)
         assert_expectations()
 
     async def test_collectable_versions_of_another_account_are_a_404(self, fx_client: httpx.AsyncClient) -> None:
@@ -1103,7 +1097,9 @@ class TestPageHistory:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
-async def add_page(database: InMemoryDatabase, book: Book, order_key: str) -> Page:
+async def add_page(
+    database: InMemoryDatabase, book: Book, order_key: str, kind: PageKind = PageKind.TEXT
+) -> tuple[Page, Scan]:
     """Commit another page cut from a scan of the book, after the pages it has.
 
     :param database: In-memory database of the application.
@@ -1112,18 +1108,29 @@ async def add_page(database: InMemoryDatabase, book: Book, order_key: str) -> Pa
     :type book: Book
     :param order_key: Order key of the page, which places it in the book.
     :type order_key: str
-    :returns: The page.
-    :rtype: Page
+    :param kind: The role of the page in the book, a text page unless given.
+    :type kind: PageKind
+    :returns: The page and the scan it shows.
+    :rtype: tuple[Page, Scan]
     """
     source = make_source(project_id=book.project.id, name=f'{order_key}.pdf')
     scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
-    page = make_page(project_id=book.project.id, order_key=order_key, scan=scan)
-    uow = InMemoryUnitOfWork(database)
-    async with uow.change_book(book.project.id):
-        await uow.sources.add(source)
-        await uow.scans.add(scan)
-        await uow.pages.add(page)
-    return page
+    page = make_page(project_id=book.project.id, order_key=order_key, scan=scan, kind=kind)
+
+    def add_scan_page(repos: Repositories, _project: Project) -> None:
+        """Add the source, its scan and the page that shows the scan.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :param _project: Project of the book, which the work does not need.
+        :type _project: Project
+        """
+        repos.sources.add(source)
+        repos.scans.add(scan)
+        repos.pages.add(page)
+
+    await InMemoryUnitOfWork(database).change_book(book.project.id, add_scan_page)
+    return page, scan
 
 
 class TestCarryOverOfAShape:
@@ -1142,7 +1149,7 @@ class TestCarryOverOfAShape:
         :type fx_database: InMemoryDatabase
         """
         step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
-        pages = [await add_page(fx_database, fx_book, order_key) for order_key in ('a1', 'a2')]
+        pages = [(await add_page(fx_database, fx_book, order_key))[0] for order_key in ('a1', 'a2')]
         await fx_client.put(
             f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
         )
@@ -1178,7 +1185,7 @@ class TestCarryOverOfAShape:
         :type fx_database: InMemoryDatabase
         """
         step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
-        page = await add_page(fx_database, fx_book, 'a1')
+        page, _ = await add_page(fx_database, fx_book, 'a1')
         own = f'{fx_book.path}/pages/{page.id}/edits/geometry'
         await fx_client.put(
             f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}

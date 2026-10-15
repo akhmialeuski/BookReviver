@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.ids import PageVersionId, ProjectId
     from bookreviver.domain.values import MetadataMap
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
     from bookreviver.ports.tracing import Tracer
@@ -162,20 +162,30 @@ class JobStarter:
         :rtype: Job | None
         """
         group = JobKind.requested() if kind in JobKind.requested() else JobKind.housekeeping()
-        async with self._uow.change():
+
+        def work(repos: Repositories) -> tuple[Job | None, list[Job], list[Job]]:
+            """Check the project, cancel its previews when the kind takes their place, and store the job.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The job as stored, or None when a job of its group is active, the jobs of the project that are
+                      still active, and the previews that were cancelled.
+            :rtype: tuple[Job | None, list[Job], list[Job]]
+            """
+            cancelled: list[Job] = []
             if kind in JobKind.preemptive():
-                active, cancelled = await self._clear_previews(project_id)
+                active, cancelled = self._clear_previews(repos, project_id)
             else:
-                active, cancelled = await self._active(project_id), []
+                active = self._active(repos, project_id)
             if any(other.kind in group for other in active):
-                job = None
-            else:
-                # Made after the cancellations, so it is stored after the end of every preview it cancelled, and the
-                # hand-off at the end of such a preview does not take it for a job that waited and queue it again
-                job = Job(
-                    id=JobId(uuid4()), project_id=project_id, kind=kind, params=params, created_at=self._clock.now()
-                )
-                await self._uow.jobs.add(job)
+                return None, active, cancelled
+            # Made after the cancellations, so it is stored after the end of every preview it cancelled, and the
+            # hand-off at the end of such a preview does not take it for a job that waited and queue it again
+            job = Job(id=JobId(uuid4()), project_id=project_id, kind=kind, params=params, created_at=self._clock.now())
+            repos.jobs.add(job)
+            return job, active, cancelled
+
+        job, active, cancelled = await self._uow.change(work)
         await self._announce(cancelled)
         if job is None:
             return None
@@ -197,26 +207,27 @@ class JobStarter:
                   are none when the project was free of them.
         :rtype: list[Job]
         """
-        async with self._uow.change():
-            active, cancelled = await self._clear_previews(project_id)
+        active, cancelled = await self._uow.change(lambda repos: self._clear_previews(repos, project_id))
         await self._announce(cancelled)
         return active
 
-    async def _clear_previews(self, project_id: ProjectId) -> tuple[list[Job], list[Job]]:
+    def _clear_previews(self, repos: Repositories, project_id: ProjectId) -> tuple[list[Job], list[Job]]:
         """Cancel the previews of the project that are queued or running, and announce nothing.
 
-        Writes inside the block of its caller and never opens one, so the caller announces the cancelled previews after
-        its block committed.
+        Writes in the transaction of its caller and never opens one, so the caller announces the cancelled previews
+        after its transaction committed.
 
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
         :param project_id: Project whose previews are cancelled.
         :type project_id: ProjectId
         :returns: The jobs of the project that are still active, and the previews that were cancelled, which leave out a
                   preview that had ended since it was read.
         :rtype: tuple[list[Job], list[Job]]
         """
-        active = await self._active(project_id)
+        active = self._active(repos, project_id)
         previews = [other for other in active if other.kind is JobKind.PREVIEW_STEP]
-        cancelled = [done for preview in previews if (done := await self._cancellation.mark_cancelled(preview))]
+        cancelled = [done for preview in previews if (done := self._cancellation.mark_cancelled(repos, preview))]
         return [other for other in active if other not in previews], cancelled
 
     async def _announce(self, jobs: Sequence[Job]) -> None:
@@ -246,23 +257,36 @@ class JobStarter:
         if collection is not None:
             await self.dispatch(collection)
             return
-        stored = await self._uow.jobs.get(ended.id)
+
+        def work(repos: Repositories) -> tuple[Job, list[Job]]:
+            """Read the ended job as stored and the jobs of its project that are active, from one snapshot.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The ended job as stored, and the active jobs of its project, newest first.
+            :rtype: tuple[Job, list[Job]]
+            """
+            return repos.jobs.get(ended.id), self._active(repos, ended.project_id)
+
+        stored, active = await self._uow.read(work)
         cutoff = stored.finished_at or self._clock.now()
-        active = await self._active(ended.project_id)
         if any(job.state is JobState.RUNNING for job in active):
             return
         if waiting := [job for job in active if job.state is JobState.QUEUED and job.created_at <= cutoff]:
             await self.dispatch(min(waiting, key=lambda job: job.created_at))
 
-    async def _active(self, project_id: ProjectId) -> list[Job]:
+    @staticmethod
+    def _active(repos: Repositories, project_id: ProjectId) -> list[Job]:
         """Read the jobs of the project that process its versions and are queued or running.
 
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
         :param project_id: Project whose jobs are read.
         :type project_id: ProjectId
         :returns: The jobs, newest first.
         :rtype: list[Job]
         """
-        active = await self._uow.jobs.list_for_project(project_id, JobState.active())
+        active = repos.jobs.list_for_project(project_id, JobState.active())
         return [job for job in active if job.kind in JobKind.processing()]
 
     async def dispatch(self, job: Job) -> Job:
@@ -282,8 +306,9 @@ class JobStarter:
         except Exception:
             logger.exception('The %s job %s could not be queued', job.kind, job.id)
             failed = evolve(job, state=JobState.FAILED, error=NOT_QUEUED, finished_at=self._clock.now())
-            async with self._uow.change():
-                stored = await self._uow.jobs.update_if_state(failed, expected=(JobState.QUEUED,))
+            stored = await self._uow.change(
+                lambda repos: repos.jobs.update_if_state(failed, expected=(JobState.QUEUED,))
+            )
             if stored is not None:
                 await self._publisher.publish(JobChanged(project_id=job.project_id, job=stored))
                 return stored
@@ -328,10 +353,21 @@ class JobStarter:
         :rtype: Job | None
         """
         collection = self.new_collection(project_id)
-        async with self._uow.change():
-            active, cancelled = await self._clear_previews(project_id)
+
+        def work(repos: Repositories) -> tuple[list[Job], list[Job]]:
+            """Cancel the previews of the project, and store the collection when no other job is active.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The jobs of the project that are still active, and the previews that were cancelled.
+            :rtype: tuple[list[Job], list[Job]]
+            """
+            active, cancelled = self._clear_previews(repos, project_id)
             if not active:
-                await self._uow.jobs.add(collection)
+                repos.jobs.add(collection)
+            return active, cancelled
+
+        active, cancelled = await self._uow.change(work)
         await self._announce(cancelled)
         if active:
             return active[0] if active[0].kind is JobKind.COLLECT_VERSIONS else None
@@ -404,7 +440,7 @@ class ProcessingParts:
             recipes=RecipeBook(
                 uow=uow, catalogue=catalogue, defaults=defaults, clock=runtime.clock, order=RecipeOrder(catalogue)
             ),
-            records=StageRecords(uow=uow, publisher=runtime.publisher, clock=runtime.clock),
+            records=StageRecords(publisher=runtime.publisher, clock=runtime.clock),
             tracker=JobTracker(uow=uow, publisher=runtime.publisher, clock=runtime.clock, hand_off=starter.hand_off),
             starter=starter,
             clock=runtime.clock,

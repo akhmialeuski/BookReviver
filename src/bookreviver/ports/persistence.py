@@ -1,13 +1,17 @@
-"""Persistence ports: repositories per aggregate and the unit of work that commits them together.
+"""Persistence ports: repositories per aggregate and the unit of work that runs a use case's work on them.
 
-Services never see a database. They open a ``UnitOfWork``, read entities through its repositories, and change them
-inside one of its blocks, so every change of one use case lands in one transaction. The in-memory and SQLAlchemy
-adapters both run the contract suite in ``tests/contracts``, which is what makes them interchangeable.
+Services never see a database. They hand the ``UnitOfWork`` a function over ``Repositories``, and the unit of work
+runs that function whole on one transaction: ``read`` on a transaction that only reads, ``change`` and ``change_book``
+on one that writes and commits when the function returns. The repositories are synchronous, because the function runs
+from its first statement to its commit without returning to the event loop, which is what keeps a write short: the
+adapter of a database runs it in a thread of its own. The in-memory and SQLAlchemy adapters both run the contract suite
+in ``tests/contracts``, which is what makes them interchangeable.
 
-The book is the aggregate. Every change of a book runs in one block of the unit of work, ``change_book``, which waits
-for any other change of that book, holds it until the block commits, and so reads only what the previous change
-committed. A change outside the content of a book runs in ``change``. A repository write outside both blocks is a
-programming error, reported as ``NoChangeOpenError``.
+The book is the aggregate. Every change of a book runs in ``change_book``, which waits for any other change of that
+book and reads the project first, so it sees only what the previous change committed. A change outside the content of
+a book runs in ``change``. A repository write inside ``read`` is a programming error, reported as
+``NoChangeOpenError``. The function cannot open another transaction, because it holds repositories and not the unit
+of work, so changes never nest.
 """
 
 from abc import ABC, abstractmethod
@@ -46,8 +50,7 @@ from bookreviver.domain.step_values import StepValues, StepValuesKey
 from bookreviver.domain.values import BookPlaceKey, PageStageKey, PageStepKey
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Mapping, Sequence
-    from contextlib import AbstractAsyncContextManager
+    from collections.abc import Callable, Collection, Mapping, Sequence
     from datetime import datetime
 
     from bookreviver.domain.entities import ProjectOverview
@@ -58,14 +61,14 @@ if TYPE_CHECKING:
 
 # How long, in seconds, a change waits for another change of the same book before it gives up with ``BookBusyError``
 DEFAULT_CHANGE_WAIT_SECONDS: float = 30.0
-# The dependency key of the limit, in seconds, that one unit of work waits for a block with before it gives up with
+# The dependency key of the limit, in seconds, that one unit of work waits for a change with before it gives up with
 # ``BookBusyError``. The container chooses it per scope, a shorter one for a unit of work that serves an HTTP request
 # than for one of a job, and hands it to the adapter that builds the unit of work
 ChangeWaitSeconds = NewType('ChangeWaitSeconds', float)
 
 
 class NoChangeOpenError(RuntimeError):
-    """A repository wrote while no ``change_book`` or ``change`` block was open.
+    """A repository wrote inside the work of ``UnitOfWork.read``.
 
     It is a programming error and not a ``DomainError``, so it reaches the caller as a failure and no request can
     cause it.
@@ -73,27 +76,14 @@ class NoChangeOpenError(RuntimeError):
 
     def __init__(self) -> None:
         """Report the write with its fixed sentence."""
-        super().__init__('A repository write needs an open change_book or change block.')
-
-
-class NestedChangeError(RuntimeError):
-    """A ``change_book`` or ``change`` block was opened inside another one of the same unit of work.
-
-    It is a programming error and not a ``DomainError``. A second block inside the first would wait for a lock the
-    first one holds, so it is refused at once instead. ``UnitOfWork.release_reads`` is refused the same way, because
-    it would end the transaction of the block that is open.
-    """
-
-    def __init__(self) -> None:
-        """Report the nesting with its fixed sentence."""
-        super().__init__('A change_book or change block is already open on this unit of work.')
+        super().__init__('A repository write needs change_book or change, and read only reads.')
 
 
 class Repository[EntityT, IdT](ABC):
     """Storage of one kind of entity addressed by its identifier."""
 
     @abstractmethod
-    async def get(self, entity_id: IdT) -> EntityT:
+    def get(self, entity_id: IdT) -> EntityT:
         """Return the entity.
 
         :param entity_id: Identifier of the entity.
@@ -104,7 +94,7 @@ class Repository[EntityT, IdT](ABC):
         """
 
     @abstractmethod
-    async def add(self, entity: EntityT) -> EntityT:
+    def add(self, entity: EntityT) -> EntityT:
         """Store a new entity and return it as stored.
 
         :param entity: Entity to store, with its identifier already assigned.
@@ -117,10 +107,10 @@ class Repository[EntityT, IdT](ABC):
         """
 
     @abstractmethod
-    async def add_many(self, entities: Sequence[EntityT]) -> Sequence[EntityT]:
+    def add_many(self, entities: Sequence[EntityT]) -> Sequence[EntityT]:
         """Store several new entities at once, all of them or, on an error, none.
 
-        After an error the block that holds the write rolls back when it is left by the exception, as a database
+        After an error the change that holds the write rolls back when its work raises the exception, as a database
         requires.
 
         :param entities: Entities to store, with their identifiers already assigned.
@@ -132,7 +122,7 @@ class Repository[EntityT, IdT](ABC):
         """
 
     @abstractmethod
-    async def update(self, entity: EntityT) -> EntityT:
+    def update(self, entity: EntityT) -> EntityT:
         """Replace the stored state of an existing entity and return it as stored.
 
         :param entity: Entity with its new state.
@@ -144,7 +134,7 @@ class Repository[EntityT, IdT](ABC):
         """
 
     @abstractmethod
-    async def delete(self, entity_id: IdT) -> None:
+    def delete(self, entity_id: IdT) -> None:
         """Remove the entity, together with everything that belongs to it.
 
         :param entity_id: Identifier of the entity.
@@ -161,7 +151,7 @@ class ProjectRepository(Repository[Project, ProjectId]):
     """
 
     @abstractmethod
-    async def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:
+    def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:
         """Return the owner's projects with their counts, most recently updated first, ties by identifier.
 
         :param owner_id: Account owning the projects.
@@ -174,7 +164,7 @@ class ProjectRepository(Repository[Project, ProjectId]):
         """
 
     @abstractmethod
-    async def overview(self, project: Project) -> ProjectOverview:
+    def overview(self, project: Project) -> ProjectOverview:
         """Return a project read earlier together with the counts of its book.
 
         :param project: Project whose book is counted.
@@ -191,7 +181,7 @@ class SourceRepository(Repository[Source, SourceId]):
     """
 
     @abstractmethod
-    async def list_for_project(self, project_id: ProjectId) -> Sequence[Source]:
+    def list_for_project(self, project_id: ProjectId) -> Sequence[Source]:
         """Return the project's sources in the order they were imported, ties by identifier.
 
         :param project_id: Project owning the sources.
@@ -201,7 +191,7 @@ class SourceRepository(Repository[Source, SourceId]):
         """
 
     @abstractmethod
-    async def find_by_sha256(self, project_id: ProjectId, sha256: str) -> Source | None:
+    def find_by_sha256(self, project_id: ProjectId, sha256: str) -> Source | None:
         """Return the project's source whose main file has this digest, which refuses a second upload of the file.
 
         :param project_id: Project owning the sources.
@@ -217,7 +207,7 @@ class ScanRepository(Repository[Scan, ScanId]):
     """Scans of the sources; the pair of a source and the number of a scan in it is unique."""
 
     @abstractmethod
-    async def list_for_source(self, source_id: SourceId) -> Sequence[Scan]:
+    def list_for_source(self, source_id: SourceId) -> Sequence[Scan]:
         """Return the scans of one source in their order in the source.
 
         :param source_id: Source holding the scans.
@@ -227,7 +217,7 @@ class ScanRepository(Repository[Scan, ScanId]):
         """
 
     @abstractmethod
-    async def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Scan]:
+    def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Scan]:
         """Return the scans of a project, source by source in import order and by number within a source.
 
         :param project_id: Project owning the scans.
@@ -239,7 +229,7 @@ class ScanRepository(Repository[Scan, ScanId]):
         """
 
     @abstractmethod
-    async def list_by_ids(self, scan_ids: Collection[ScanId]) -> Sequence[Scan]:
+    def list_by_ids(self, scan_ids: Collection[ScanId]) -> Sequence[Scan]:
         """Return several scans in one read, so a window of the book costs one query to learn its sources.
 
         :param scan_ids: Scans to read; one that is not stored is left out of the result.
@@ -249,7 +239,7 @@ class ScanRepository(Repository[Scan, ScanId]):
         """
 
     @abstractmethod
-    async def list_unready(self, project_id: ProjectId) -> Sequence[Scan]:
+    def list_unready(self, project_id: ProjectId) -> Sequence[Scan]:
         """Return the scans of a project whose renditions are not ready, which an import cut again.
 
         :param project_id: Project owning the scans.
@@ -268,7 +258,7 @@ class PageRepository(Repository[Page, PageId]):
     """
 
     @abstractmethod
-    async def list_for_project(
+    def list_for_project(
         self, project_id: ProjectId, request: SliceRequest, *, included_only: bool = False
     ) -> Slice[Page]:
         """Return the pages of a project in book order, the byte order of their order keys.
@@ -288,7 +278,7 @@ class PageRepository(Repository[Page, PageId]):
         """
 
     @abstractmethod
-    async def list_by_ids(self, project_id: ProjectId, page_ids: Collection[PageId]) -> Sequence[Page]:
+    def list_by_ids(self, project_id: ProjectId, page_ids: Collection[PageId]) -> Sequence[Page]:
         """Return the given pages of a project in book order.
 
         :param project_id: Project owning the pages.
@@ -302,7 +292,7 @@ class PageRepository(Repository[Page, PageId]):
         """
 
     @abstractmethod
-    async def list_range(self, project_id: ProjectId, first_key: str, last_key: str) -> Sequence[Page]:
+    def list_range(self, project_id: ProjectId, first_key: str, last_key: str) -> Sequence[Page]:
         """Return the pages of a project whose order keys lie between two keys, both included, in book order.
 
         :param project_id: Project owning the pages.
@@ -316,7 +306,7 @@ class PageRepository(Repository[Page, PageId]):
         """
 
     @abstractmethod
-    async def list_for_source(self, project_id: ProjectId, source_id: SourceId) -> Sequence[Page]:
+    def list_for_source(self, project_id: ProjectId, source_id: SourceId) -> Sequence[Page]:
         """Return the pages whose scans belong to a source, in book order.
 
         Pages without a scan, such as placeholders and blank leaves, belong to no source and are never listed.
@@ -330,7 +320,7 @@ class PageRepository(Repository[Page, PageId]):
         """
 
     @abstractmethod
-    async def neighbour_key(
+    def neighbour_key(
         self, project_id: ProjectId, key: str, side: Side, *, excluding: Collection[PageId] = ()
     ) -> str | None:
         """Return the order key of the page next to ``key`` on one side, leaving some pages out of the count.
@@ -352,10 +342,10 @@ class PageRepository(Repository[Page, PageId]):
         """
 
     @abstractmethod
-    async def update_many(self, pages: Sequence[Page]) -> None:
+    def update_many(self, pages: Sequence[Page]) -> None:
         """Replace the stored state of several pages in the one transaction, all of them or, on an error, none.
 
-        After an error the block that holds the write rolls back when it is left by the exception, as a database
+        After an error the change that holds the write rolls back when its work raises the exception, as a database
         requires.
 
         :param pages: Pages with their new state.
@@ -366,7 +356,7 @@ class PageRepository(Repository[Page, PageId]):
         """
 
     @abstractmethod
-    async def list_for_scan(self, scan_id: ScanId) -> Sequence[Page]:
+    def list_for_scan(self, scan_id: ScanId) -> Sequence[Page]:
         """Return the pages cut from one scan, by their slot.
 
         :param scan_id: Scan the pages were cut from.
@@ -376,7 +366,7 @@ class PageRepository(Repository[Page, PageId]):
         """
 
     @abstractmethod
-    async def count_before(self, page: Page) -> int:
+    def count_before(self, page: Page) -> int:
         """Return how many pages of the page's project come before it in book order, which is its position.
 
         Every page counts, whether it is included in the book or not, as in the windows ``list_for_project`` returns.
@@ -388,7 +378,7 @@ class PageRepository(Repository[Page, PageId]):
         """
 
     @abstractmethod
-    async def last_order_key(self, project_id: ProjectId) -> str | None:
+    def last_order_key(self, project_id: ProjectId) -> str | None:
         """Return the order key of the last page of a project, after which new pages are appended.
 
         :param project_id: Project owning the pages.
@@ -398,7 +388,7 @@ class PageRepository(Repository[Page, PageId]):
         """
 
     @abstractmethod
-    async def kind_tally(self, project_id: ProjectId) -> Mapping[RecipeKind, int]:
+    def kind_tally(self, project_id: ProjectId) -> Mapping[RecipeKind, int]:
         """Count the pages with an image of each kind of a project, in one grouped query.
 
         The kind of a page is ``Page.recipe_kind``. A placeholder has no image and is never counted.
@@ -418,7 +408,7 @@ class PaginationSectionRepository(Repository[PaginationSection, PaginationSectio
     """
 
     @abstractmethod
-    async def list_for_project(self, project_id: ProjectId) -> Sequence[PaginationSection]:
+    def list_for_project(self, project_id: ProjectId) -> Sequence[PaginationSection]:
         """Return the sections of a project in the order they were made, ties by identifier.
 
         The sections are not in book order, since the order of the book is the order of the pages they start at.
@@ -434,7 +424,7 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
     """Versions of the pages of the book; a version whose input version is deleted keeps its row without the input."""
 
     @abstractmethod
-    async def list_for_page(self, page_id: PageId) -> Sequence[PageVersion]:
+    def list_for_page(self, page_id: PageId) -> Sequence[PageVersion]:
         """Return the versions of one page in the order they were created, ties by identifier.
 
         :param page_id: Page owning the versions.
@@ -444,7 +434,7 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         """
 
     @abstractmethod
-    async def list_to_prepare(self, project_id: ProjectId, processor_keys: Collection[str]) -> Sequence[PageVersion]:
+    def list_to_prepare(self, project_id: ProjectId, processor_keys: Collection[str]) -> Sequence[PageVersion]:
         """Return the versions of a project whose files still have to be written: the pending and the failed ones.
 
         A failed version is returned with the pending ones, so the next job of the project tries it again and no route
@@ -459,7 +449,7 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         """
 
     @abstractmethod
-    async def base_sizes(self, project_id: ProjectId) -> Sequence[PageSize]:
+    def base_sizes(self, project_id: ProjectId) -> Sequence[PageSize]:
         """Return the sizes of the page split's base versions of the included pages that show a scan.
 
         The median of these is the size of a generated blank leaf. A leaf drawn in place of a scan is a version of the
@@ -472,7 +462,7 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         """
 
     @abstractmethod
-    async def list_base_versions(self, page_ids: Collection[PageId]) -> Sequence[PageVersion]:
+    def list_base_versions(self, page_ids: Collection[PageId]) -> Sequence[PageVersion]:
         """Return the base versions of several pages in one read, so a window of a book costs one query.
 
         A base version is a version without an input version, the one a scan or nothing feeds. A page cut from a scan
@@ -485,7 +475,7 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         """
 
     @abstractmethod
-    async def list_by_ids(self, version_ids: Collection[PageVersionId]) -> Sequence[PageVersion]:
+    def list_by_ids(self, version_ids: Collection[PageVersionId]) -> Sequence[PageVersion]:
         """Return the stored versions among the given identifiers, in one read.
 
         :param version_ids: Identifiers of the versions to read, of which those that are not stored are left out.
@@ -495,7 +485,7 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         """
 
     @abstractmethod
-    async def find(self, version_id: PageVersionId) -> PageVersion | None:
+    def find(self, version_id: PageVersionId) -> PageVersion | None:
         """Return the version with this identifier, which a repeated run reuses instead of computing it again.
 
         :param version_id: Identifier of the version, the hash of what produces it.
@@ -505,7 +495,7 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         """
 
     @abstractmethod
-    async def list_for_stage(
+    def list_for_stage(
         self,
         page_id: PageId,
         stage: Stage | None,
@@ -530,7 +520,7 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         """
 
     @abstractmethod
-    async def collectable(self, project_id: ProjectId, previews_older_than: datetime) -> Sequence[PageVersion]:
+    def collectable(self, project_id: ProjectId, previews_older_than: datetime) -> Sequence[PageVersion]:
         """Return the versions a collection may delete: not base, and read by no version that stays.
 
         A version stays when a stage record names it as its head, when it is a base version, which has no input, when
@@ -549,7 +539,7 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         """
 
     @abstractmethod
-    async def delete_many(self, version_ids: Collection[PageVersionId]) -> None:
+    def delete_many(self, version_ids: Collection[PageVersionId]) -> None:
         """Remove the rows of several versions in the one transaction; a version that is not stored is left alone.
 
         The log of the marks of each version goes with it.
@@ -566,7 +556,7 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
     """
 
     @abstractmethod
-    async def save(self, stage: PageStage) -> PageStage:
+    def save(self, stage: PageStage) -> PageStage:
         """Store the record of a stage of a page, replacing the one stored.
 
         :param stage: Record to store.
@@ -577,7 +567,7 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
-    async def find(self, key: PageStageKey) -> PageStage | None:
+    def find(self, key: PageStageKey) -> PageStage | None:
         """Return the record of a stage of a page.
 
         :param key: Page and stage.
@@ -587,7 +577,7 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
-    async def list_for_page(self, page_id: PageId) -> Sequence[PageStage]:
+    def list_for_page(self, page_id: PageId) -> Sequence[PageStage]:
         """Return the records of one page in the order of the stages.
 
         :param page_id: Page owning the records.
@@ -597,7 +587,7 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
-    async def list_for_pages(self, page_ids: Collection[PageId]) -> Sequence[PageStage]:
+    def list_for_pages(self, page_ids: Collection[PageId]) -> Sequence[PageStage]:
         """Return the records of several pages in one read, by page and then in the order of the stages.
 
         :param page_ids: Pages whose records are read.
@@ -607,7 +597,7 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
-    async def list_for_recipe(self, recipe_id: RecipeId) -> Sequence[PageStage]:
+    def list_for_recipe(self, recipe_id: RecipeId) -> Sequence[PageStage]:
         """Return the records of the pages a recipe processed, by page identifier.
 
         :param recipe_id: Recipe whose pages are listed.
@@ -617,7 +607,7 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
-    async def list_fresh(self) -> Sequence[PageStage]:
+    def list_fresh(self) -> Sequence[PageStage]:
         """Return the records of the pages of every book whose current version is up to date, by page and stage.
 
         :returns: Every record in the fresh state, by page identifier and then in the order of the stages.
@@ -625,7 +615,7 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
-    async def list_replaced(self, stage: Stage, processor: ProcessorRef) -> Sequence[PageStage]:
+    def list_replaced(self, stage: Stage, processor: ProcessorRef) -> Sequence[PageStage]:
         """Return the records of a stage of every book whose current version a replaced version of a processor made.
 
         :param stage: The stage whose records are read.
@@ -638,7 +628,7 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
-    async def list_for_project_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[PageStage]:
+    def list_for_project_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[PageStage]:
         """Return the records of one stage over the pages of a project, by page identifier.
 
         :param project_id: Project owning the pages.
@@ -650,7 +640,7 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
-    async def step_tally(self, project_id: ProjectId) -> Sequence[StepTally]:
+    def step_tally(self, project_id: ProjectId) -> Sequence[StepTally]:
         """Count the pages of every stage of a project that a run stopped at each step, in one grouped query.
 
         Only pages with an image are counted, and a record that failed is left out, since its step belongs to a run that
@@ -663,7 +653,7 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
-    async def head_ids(self, project_id: ProjectId) -> Collection[PageVersionId]:
+    def head_ids(self, project_id: ProjectId) -> Collection[PageVersionId]:
         """Return the identifiers of the versions that are the current version of a stage of a page of the project.
 
         :param project_id: Project owning the pages.
@@ -673,7 +663,7 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
-    async def tally(self, project_ids: Collection[ProjectId]) -> Sequence[StageTally]:
+    def tally(self, project_ids: Collection[ProjectId]) -> Sequence[StageTally]:
         """Count the records of every stage of the given projects by state, in one grouped query for all of them.
 
         Only pages with an image are counted, so a placeholder never is. A page counts as marked for review when the
@@ -692,7 +682,7 @@ class PageStepStateRepository(Repository[PageStepState, PageStepKey]):
     """The settings and the manual edit of each step on each page; deleting a page removes its states."""
 
     @abstractmethod
-    async def save(self, state: PageStepState) -> PageStepState:
+    def save(self, state: PageStepState) -> PageStepState:
         """Store a state, replacing the one the same step has on the same page and stage.
 
         :param state: State to store.
@@ -703,7 +693,7 @@ class PageStepStateRepository(Repository[PageStepState, PageStepKey]):
         """
 
     @abstractmethod
-    async def find(self, key: PageStepKey) -> PageStepState | None:
+    def find(self, key: PageStepKey) -> PageStepState | None:
         """Return the state of one step on one page.
 
         :param key: Page, stage and step.
@@ -713,7 +703,7 @@ class PageStepStateRepository(Repository[PageStepState, PageStepKey]):
         """
 
     @abstractmethod
-    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepState]:
+    def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepState]:
         """Return the states of one page, those of one stage or of all, by stage and step.
 
         :param page_id: Page owning the states.
@@ -725,9 +715,7 @@ class PageStepStateRepository(Repository[PageStepState, PageStepKey]):
         """
 
     @abstractmethod
-    async def list_for_step(
-        self, page_ids: Collection[PageId], stage: Stage, step_id: StepId
-    ) -> Sequence[PageStepState]:
+    def list_for_step(self, page_ids: Collection[PageId], stage: Stage, step_id: StepId) -> Sequence[PageStepState]:
         """Return the states one step of a stage has on several pages, in one read, by page identifier.
 
         :param page_ids: Pages whose states are read.
@@ -745,7 +733,7 @@ class StepValuesRepository(Repository[StepValues, StepValuesKey]):
     """The values of the steps for the odd pages, the even pages and the groups; deleting a project removes them."""
 
     @abstractmethod
-    async def save(self, values: StepValues) -> StepValues:
+    def save(self, values: StepValues) -> StepValues:
         """Store values, replacing the ones the same part of the pages has for the same step.
 
         :param values: Values to store.
@@ -756,7 +744,7 @@ class StepValuesRepository(Repository[StepValues, StepValuesKey]):
         """
 
     @abstractmethod
-    async def find(self, key: StepValuesKey) -> StepValues | None:
+    def find(self, key: StepValuesKey) -> StepValues | None:
         """Return the values one part of the pages has for one step.
 
         :param key: The project, the step and the part of the pages.
@@ -766,7 +754,7 @@ class StepValuesRepository(Repository[StepValues, StepValuesKey]):
         """
 
     @abstractmethod
-    async def list_for_step(self, project_id: ProjectId, step_id: StepId) -> Sequence[StepValues]:
+    def list_for_step(self, project_id: ProjectId, step_id: StepId) -> Sequence[StepValues]:
         """Return the values every part of the pages of a project has for one step, by scope and group.
 
         Books built from one profile share the identifiers of the steps, so the values are those of one project.
@@ -780,7 +768,7 @@ class StepValuesRepository(Repository[StepValues, StepValuesKey]):
         """
 
     @abstractmethod
-    async def list_for_project(self, project_id: ProjectId) -> Sequence[StepValues]:
+    def list_for_project(self, project_id: ProjectId) -> Sequence[StepValues]:
         """Return the values of every step of a project, by step, scope and group, which is one read for all stages.
 
         :param project_id: Project owning the steps.
@@ -798,7 +786,7 @@ class PageStepChangeRepository(Repository[PageStepChange, PageStepChangeId]):
     """
 
     @abstractmethod
-    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepChange]:
+    def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepChange]:
         """Return the changes of one page, those of one stage or of all, in the order they were written (by sequence).
 
         :param page_id: Page the changes were made on.
@@ -810,7 +798,7 @@ class PageStepChangeRepository(Repository[PageStepChange, PageStepChangeId]):
         """
 
     @abstractmethod
-    async def list_for_batch(self, batch_id: ChangeBatchId) -> Sequence[PageStepChange]:
+    def list_for_batch(self, batch_id: ChangeBatchId) -> Sequence[PageStepChange]:
         """Return the changes of one batch, which may span several pages, by page and then by sequence.
 
         :param batch_id: Identifier the changes of the batch share.
@@ -820,7 +808,7 @@ class PageStepChangeRepository(Repository[PageStepChange, PageStepChangeId]):
         """
 
     @abstractmethod
-    async def list_undoing(self, change_ids: Collection[PageStepChangeId]) -> Sequence[PageStepChange]:
+    def list_undoing(self, change_ids: Collection[PageStepChangeId]) -> Sequence[PageStepChange]:
         """Return the changes that take back any of the given changes.
 
         :param change_ids: Identifiers of the changes that may have been undone.
@@ -830,7 +818,7 @@ class PageStepChangeRepository(Repository[PageStepChange, PageStepChangeId]):
         """
 
     @abstractmethod
-    async def delete_for_step(self, key: PageStepKey) -> int:
+    def delete_for_step(self, key: PageStepKey) -> int:
         """Delete every change of one step on one page, whatever its layer, source or batch.
 
         Other steps and other pages keep their changes, and the next change added to the page is numbered after the
@@ -851,7 +839,7 @@ class ResultMarkChangeRepository(Repository[ResultMarkChange, ResultMarkChangeId
     """
 
     @abstractmethod
-    async def list_for_version(self, version_id: PageVersionId) -> Sequence[ResultMarkChange]:
+    def list_for_version(self, version_id: PageVersionId) -> Sequence[ResultMarkChange]:
         """Return the changes of the mark and the comment of one version, in the order they were written.
 
         :param version_id: Version the changes were made on.
@@ -868,7 +856,7 @@ class RecipeRepository(Repository[Recipe, RecipeId]):
     """
 
     @abstractmethod
-    async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[Recipe]:
+    def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[Recipe]:
         """Return the recipes of one stage of a project, by creation, ties by identifier.
 
         :param project_id: Project owning the recipes.
@@ -880,7 +868,7 @@ class RecipeRepository(Repository[Recipe, RecipeId]):
         """
 
     @abstractmethod
-    async def list_for_project(self, project_id: ProjectId) -> Sequence[Recipe]:
+    def list_for_project(self, project_id: ProjectId) -> Sequence[Recipe]:
         """Return the recipes of every stage of a project, in the order of the stages and then as ``list_for_stage``.
 
         :param project_id: Project owning the recipes.
@@ -898,7 +886,7 @@ class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
     """
 
     @abstractmethod
-    async def list_for_account(self, account_id: AccountId, stage: Stage | None = None) -> Sequence[RecipeProfile]:
+    def list_for_account(self, account_id: AccountId, stage: Stage | None = None) -> Sequence[RecipeProfile]:
         """Return the account's profiles in the order of the stages, then by creation, ties by identifier.
 
         :param account_id: Account owning the profiles.
@@ -910,7 +898,7 @@ class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
         """
 
     @abstractmethod
-    async def find_default(self, account_id: AccountId, stage: Stage) -> RecipeProfile | None:
+    def find_default(self, account_id: AccountId, stage: Stage) -> RecipeProfile | None:
         """Return the profile a new book of the account starts a stage with.
 
         :param account_id: Account owning the profile.
@@ -922,7 +910,7 @@ class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
         """
 
     @abstractmethod
-    async def count_books(self, profile_ids: Collection[RecipeProfileId]) -> Mapping[RecipeProfileId, int]:
+    def count_books(self, profile_ids: Collection[RecipeProfileId]) -> Mapping[RecipeProfileId, int]:
         """Count the books that have a recipe made from each of the given profiles, in one read for all of them.
 
         A book counts once for a profile however many of its recipes were made from it.
@@ -939,7 +927,7 @@ class JobRepository(Repository[Job, JobId]):
 
     @abstractmethod
     @override
-    async def add(self, entity: Job) -> Job:
+    def add(self, entity: Job) -> Job:
         """Store a new job of a stored project and return it as stored.
 
         :param entity: Job to store, with its identifier already assigned.
@@ -954,7 +942,7 @@ class JobRepository(Repository[Job, JobId]):
         """
 
     @abstractmethod
-    async def list_for_project(self, project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
+    def list_for_project(self, project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
         """Return the project's jobs in one of the given states, newest first.
 
         :param project_id: Project owning the jobs.
@@ -966,9 +954,7 @@ class JobRepository(Repository[Job, JobId]):
         """
 
     @abstractmethod
-    async def list_for_projects(
-        self, project_ids: Collection[ProjectId], states: Collection[JobState]
-    ) -> Sequence[Job]:
+    def list_for_projects(self, project_ids: Collection[ProjectId], states: Collection[JobState]) -> Sequence[Job]:
         """Return the jobs of several projects in one of the given states, in one query for all of them.
 
         :param project_ids: Projects owning the jobs.
@@ -980,7 +966,7 @@ class JobRepository(Repository[Job, JobId]):
         """
 
     @abstractmethod
-    async def update_if_state(self, entity: Job, *, expected: Collection[JobState]) -> Job | None:
+    def update_if_state(self, entity: Job, *, expected: Collection[JobState]) -> Job | None:
         """Replace the stored job only while its state is one of ``expected``, checking and writing as one step.
 
         A job changes state from two places at once, a worker finishing it and an account holder cancelling it, so
@@ -1002,7 +988,7 @@ class BookPlaceRepository(Repository[BookPlace, BookPlaceKey]):
     """The place each account left each book at; deleting a book or an account removes its places."""
 
     @abstractmethod
-    async def save(self, place: BookPlace) -> BookPlace:
+    def save(self, place: BookPlace) -> BookPlace:
         """Store the place of an account in a book, replacing the one stored whole, unless that one is newer.
 
         The write is atomic: of two transactions saving at once, the one with the later ``updated_at`` leaves its place
@@ -1018,7 +1004,7 @@ class BookPlaceRepository(Repository[BookPlace, BookPlaceKey]):
         """
 
     @abstractmethod
-    async def find(self, key: BookPlaceKey) -> BookPlace | None:
+    def find(self, key: BookPlaceKey) -> BookPlace | None:
         """Return the place of an account in a book.
 
         :param key: Account and book.
@@ -1028,19 +1014,8 @@ class BookPlaceRepository(Repository[BookPlace, BookPlaceKey]):
         """
 
 
-class UnitOfWork(ABC):
-    """One transaction over every repository; nothing is visible to others before its block ends.
-
-    Every write goes through a ``change_book`` or a ``change`` block. A block commits when it ends normally and rolls
-    back when an exception leaves it, so nothing outside a block can commit or discard a change. The reads outside a
-    block may hold a transaction of the database until the unit of work ends, and ``release_reads`` ends it earlier.
-
-    One unit of work serves one coroutine at a time, since its blocks run one after another on one transaction and a
-    second block opened while another is open is refused as nested. Coroutines that share a unit of work must queue in
-    front of its blocks, for instance behind an ``anyio.Lock`` held around each block, and coroutines that must write
-    at once take a unit of work each, which the port then orders by the lock of the book. Blocks of one process that
-    wait for one lock enter in the order they asked for it, so a block that came early is never overtaken by one that
-    came later.
+class Repositories(ABC):
+    """Every repository of one transaction, which the work handed to the unit of work receives.
 
     :ivar projects: Project repository of this transaction.
     :ivar sources: Source repository of this transaction.
@@ -1076,54 +1051,65 @@ class UnitOfWork(ABC):
     jobs: JobRepository
     book_places: BookPlaceRepository
 
-    @abstractmethod
-    def change_book(self, project_id: ProjectId) -> AbstractAsyncContextManager[Project]:
-        """Open a block that changes the book of a project, alone among the changes of that book.
 
-        Entering waits for any other ``change_book`` of the same project to exit, then reads and locks the project, so
-        a change that began earlier has committed or rolled back by then. Reads inside the block see everything
-        committed before entry plus the block's own writes. Leaving the block normally commits it, and leaving it by
-        an exception rolls it back and lets the exception through. Reads outside any block take no lock and wait for
-        nothing. The port promises no ordering between the changes of different books, nor between a ``change_book``
-        and a ``change`` block, though a database with one write lock, such as SQLite, makes every block wait for any
-        other that writes.
+class UnitOfWork(ABC):
+    """Runs the work of a use case on the repositories, one transaction for each call.
+
+    The work is a synchronous function over ``Repositories``, and the unit of work runs it whole: the transaction
+    begins before its first statement and ends when it returns or raises, and nothing of it is visible to others
+    before it commits. A change commits when the work returns and rolls back when it raises, and the exception goes on
+    to the caller. Nothing holds a connection between two calls, so a caller may wait as long as it needs between them.
+
+    A unit of work keeps no state between calls, so coroutines may share one and call it at once. Changes of one
+    process that wait for the same write enter in the order they asked for it, so one that came early is never
+    overtaken by one that came later, and each waits at most the wait limit of the unit of work before it gives up with
+    ``BookBusyError``.
+    """
+
+    @abstractmethod
+    async def read[T](self, work: Callable[[Repositories], T]) -> T:
+        """Run ``work`` on a transaction that only reads, and return what it returns.
+
+        Every read of the work sees the same committed state of the database. A write is refused with
+        ``NoChangeOpenError``.
+
+        :param work: Function over the repositories of the transaction.
+        :type work: Callable[[Repositories], T]
+        :returns: What the work returns.
+        :rtype: T
+        :raises NoChangeOpenError: If the work writes.
+        """
+
+    @abstractmethod
+    async def change[T](self, work: Callable[[Repositories], T]) -> T:
+        """Run ``work`` on a transaction that writes, commit it when the work returns, and return what it returns.
+
+        The change is for the rows that belong to no book or to many: jobs, the places accounts left books at, a new
+        project, and the recipe profiles of an account. Reads of the work see everything committed before it began
+        plus its own writes. When the work raises, the transaction rolls back and the exception goes on.
+
+        :param work: Function over the repositories of the transaction.
+        :type work: Callable[[Repositories], T]
+        :returns: What the work returns.
+        :rtype: T
+        :raises BookBusyError: If the write did not begin within the wait limit of the unit of work.
+        """
+
+    @abstractmethod
+    async def change_book[T](self, project_id: ProjectId, work: Callable[[Repositories, Project], T]) -> T:
+        """Run ``work`` as ``change`` does, alone among the changes of the book, with the project as it stands.
+
+        The change waits for any other change of the same book to end, then reads the project, so it sees what the
+        previous change committed. The port promises no ordering between the changes of different books, nor between a
+        ``change_book`` and a ``change``, though a database with one writer, such as SQLite, makes every change wait for
+        any other.
 
         :param project_id: Project whose book is changed.
         :type project_id: ProjectId
-        :returns: Context manager yielding the project as it stands at entry.
-        :rtype: AbstractAsyncContextManager[Project]
-        :raises NotFoundError: On entry, if the project is not stored.
-        :raises BookBusyError: On entry, if another change of the book did not end within the wait limit of the unit
-            of work.
-        :raises NestedChangeError: On entry, if a block of this unit of work is open already.
-        """
-
-    @abstractmethod
-    def change(self) -> AbstractAsyncContextManager[None]:
-        """Open a block that writes outside the content of a book, alone among the blocks of its kind.
-
-        The block is for the rows that belong to no book or to many: jobs, the places accounts left books at, a new
-        project, and the recipe profiles of an account. Entering waits for any other ``change`` block to exit.
-        Leaving the block normally commits it, and leaving it by an exception rolls it back and lets the exception
-        through. Reads inside the block see everything committed before entry plus the block's own writes.
-
-        :returns: Context manager yielding nothing.
-        :rtype: AbstractAsyncContextManager[None]
-        :raises BookBusyError: On entry, if another block did not end within the wait limit of the unit of work.
-        :raises NestedChangeError: On entry, if a block of this unit of work is open already.
-        """
-
-    @abstractmethod
-    async def release_reads(self) -> None:
-        """End what the reads outside any block hold, so that a long wait afterwards holds no database resource.
-
-        A database adapter begins a transaction at the first read outside a block, and that transaction keeps the
-        connection it took from the pool until it ends. The unit of work of a request ends with the request, which for
-        a response that streams is the end of the stream, so a caller that has read what it needs and is about to wait
-        for hours calls this first. It writes nothing and discards nothing: what earlier reads returned stays usable,
-        and the next read or block begins a transaction of its own. The port promises nothing about whether a row read
-        before is read again from the database afterwards. Calling it with nothing read is harmless.
-
-        :raises NestedChangeError: If a block of this unit of work is open, whose transaction this would end.
-        :raises NoChangeOpenError: If a repository wrote outside a block and that write was left pending.
+        :param work: Function over the repositories of the transaction and the project read at its start.
+        :type work: Callable[[Repositories, Project], T]
+        :returns: What the work returns.
+        :rtype: T
+        :raises NotFoundError: If the project is not stored.
+        :raises BookBusyError: If the write did not begin within the wait limit of the unit of work.
         """

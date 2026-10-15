@@ -345,12 +345,14 @@ class TestDelete:
         remaining = await fx_service().list(fx_actor, fx_book.project.id, SliceRequest())
         scans = await fx_service().scans(fx_actor, fx_book.project.id, SliceRequest())
         image = ProjectKeys(fx_book.project.id).version_rendition(fx_book.version, Rendition.FULL_JPEG)
+        page = await uow.read(lambda repos: repos.pages.get(fx_book.page.id))
+        versions = await uow.read(lambda repos: repos.page_versions.list_for_page(fx_book.page.id))
         expect(remaining.items == [fx_book.second])
         expect(scans.items == fx_book.scans[SCANS_PER_SOURCE:])
         expect(on_disk(fx_storage_root, fx_book, fx_book.first) == (False, False))
         expect(on_disk(fx_storage_root, fx_book, fx_book.second) == (True, True))
-        expect(await uow.pages.get(fx_book.page.id) == evolve(fx_book.page, scan_id=None))
-        expect(await uow.page_versions.list_for_page(fx_book.page.id) == [fx_book.version])
+        expect(page == evolve(fx_book.page, scan_id=None))
+        expect(versions == [fx_book.version])
         expect((fx_storage_root / image).is_file())
         assert_expectations()
 
@@ -375,9 +377,9 @@ class TestDelete:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        uow = InMemoryUnitOfWork(fx_database)
-        async with uow.change():
-            await uow.jobs.add(make_job(project_id=fx_book.project.id, state=JobState.RUNNING))
+        await InMemoryUnitOfWork(fx_database).change(
+            lambda repos: repos.jobs.add(make_job(project_id=fx_book.project.id, state=JobState.RUNNING))
+        )
 
         with pytest.raises(ConflictError):
             await fx_service().delete(fx_actor, fx_book.project.id, fx_book.first.id)
@@ -400,9 +402,9 @@ class TestDelete:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        uow = InMemoryUnitOfWork(fx_database)
-        async with uow.change():
-            await uow.jobs.add(make_job(project_id=fx_book.project.id, state=JobState.FAILED))
+        await InMemoryUnitOfWork(fx_database).change(
+            lambda repos: repos.jobs.add(make_job(project_id=fx_book.project.id, state=JobState.FAILED))
+        )
 
         await fx_service().delete(fx_actor, fx_book.project.id, fx_book.first.id)
 

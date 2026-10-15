@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from anyio import to_thread
 
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.tables import ProjectRow
@@ -43,8 +44,12 @@ async def create_schema(settings: Settings) -> None:
         ProjectRow.metadata.create_all(connection)
         MigrationContext.configure(connection, opts=options).stamp(script, 'head')
 
+    def create_in_transaction() -> None:
+        """Create the schema and stamp it in one transaction of the writer's engine."""
+        with database.engine.begin() as connection:
+            create_and_stamp(connection)
+
     try:
-        async with database.engine.begin() as connection:
-            await connection.run_sync(create_and_stamp)
+        await to_thread.run_sync(create_in_transaction)
     finally:
         await database.dispose()

@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.domain.entities import Actor, Page, PaginationSection, Project
     from bookreviver.domain.ids import PageId
+    from bookreviver.ports.persistence import Repositories
     from bookreviver.services.pages import PageService
     from bookreviver.services.pagination import PaginationService
     from tests.helpers.fakes_jobs import RecordingEventBus
@@ -290,9 +291,10 @@ class TestSections:
         :type fx_actor: Actor
         """
         project, pages = await _commit_book(fx_database, fx_actor, *_text_book(3))
-        uow = InMemoryUnitOfWork(fx_database)
-        async with uow.change_book(project.id):
-            await uow.pages.update(evolve(pages[1], label=HAND_WRITTEN, label_manual=True))
+        await InMemoryUnitOfWork(fx_database).change_book(
+            project.id,
+            lambda repos, _project: repos.pages.update(evolve(pages[1], label=HAND_WRITTEN, label_manual=True)),
+        )
         before = dict(fx_database.tables.pages)
 
         await fx_pagination().add(fx_actor, project.id, _draft(pages[0]))
@@ -466,9 +468,10 @@ class TestSections:
         :type fx_actor: Actor
         """
         project, pages = await _commit_book(fx_database, fx_actor, *_text_book(3), label=STALE_LABEL)
-        uow = InMemoryUnitOfWork(fx_database)
-        async with uow.change_book(project.id):
-            await uow.pages.update_many([evolve(page, label_manual=False) for page in pages])
+        await InMemoryUnitOfWork(fx_database).change_book(
+            project.id,
+            lambda repos, _project: repos.pages.update_many([evolve(page, label_manual=False) for page in pages]),
+        )
 
         with pytest.raises(ConflictError, match=str(ROMAN_LIMIT + 1)):
             await fx_pagination().add(
@@ -621,9 +624,12 @@ class TestNumberPages:
         project, pages = await _commit_book(fx_database, fx_actor, *_text_book(4))
         first = PageNumbering(first_page_id=pages[0].id, last_page_id=pages[-1].id, style=LabelStyle.ROMAN_LOWER)
         await fx_pagination().number(fx_actor, project.id, first)
-        uow = InMemoryUnitOfWork(fx_database)
-        async with uow.change_book(project.id):
-            await uow.pages.update(evolve(await uow.pages.get(pages[1].id), label=HAND_WRITTEN, label_manual=True))
+        await InMemoryUnitOfWork(fx_database).change_book(
+            project.id,
+            lambda repos, _project: repos.pages.update(
+                evolve(repos.pages.get(pages[1].id), label=HAND_WRITTEN, label_manual=True)
+            ),
+        )
 
         await fx_pagination().number(fx_actor, project.id, evolve(first, style=LabelStyle.ARABIC, start=FIRST_NUMBER))
 
@@ -808,17 +814,17 @@ class TestNumberPages:
         expect([item.label for item in previewed] == ['x', 'xi', 'xii', 'xiii'])
         assert_expectations()
 
-    async def test_a_numbering_started_while_a_page_is_being_labelled_waits_and_numbers_the_result(
+    async def test_a_numbering_asked_after_a_page_is_labelled_waits_and_numbers_the_result(
         self,
         fx_database: InMemoryDatabase,
         fx_pagination: Callable[[], PaginationService],
         fx_actor: Actor,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Verify a numbering that starts inside another block of the book waits, and then reads the label written.
+        """Verify a numbering asked behind the change of a page label waits for it, and then reads the label written.
 
-        The label of the third page is written by a block that is open when the numbering starts. The numbering is
-        held at the lock of the book, so it cannot read the old label, and it numbers the page it finds afterwards.
+        The book is held, the change of the label of the fifth page asks for it first and the numbering second. The
+        numbering waits at the lock of the book, so it cannot read the old label, and it numbers the page it finds
+        afterwards.
 
         :param fx_database: In-memory database of the test.
         :type fx_database: InMemoryDatabase
@@ -826,29 +832,27 @@ class TestNumberPages:
         :type fx_pagination: Callable[[], PaginationService]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param monkeypatch: Fixture that restores the patched method after the test.
-        :type monkeypatch: pytest.MonkeyPatch
         """
         project, pages = await _commit_book(fx_database, fx_actor, *LAYOUT, label=STALE_LABEL)
-        writer = InMemoryUnitOfWork(fx_database)
-        gate = hold_book(writer, monkeypatch)
         numbering = PageNumbering(first_page_id=pages[2].id, last_page_id=pages[4].id, style=LabelStyle.ARABIC)
         before = dict(fx_database.tables.pages)
 
-        async def label_a_page() -> None:
-            """Write a hand label of the fifth page in a block that stays open until the test lets it go."""
-            async with writer.change_book(project.id):
-                await writer.pages.update(
-                    evolve(await writer.pages.get(pages[4].id), label=HAND_WRITTEN, label_manual=True)
-                )
+        def label_a_page(repos: Repositories, _project: Project) -> None:
+            """Write a hand label of the fifth page.
 
-        async with anyio.create_task_group() as group:
-            group.start_soon(label_a_page)
-            await gate.entered.wait()
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: The project as the change finds it, which the work does not need.
+            :type _project: Project
+            """
+            repos.pages.update(evolve(repos.pages.get(pages[4].id), label=HAND_WRITTEN, label_manual=True))
+
+        async with anyio.create_task_group() as group, hold_book(fx_database, project.id):
+            group.start_soon(InMemoryUnitOfWork(fx_database).change_book, project.id, label_a_page)
+            await anyio.wait_all_tasks_blocked()
             group.start_soon(fx_pagination().number, fx_actor, project.id, numbering)
             await anyio.wait_all_tasks_blocked()
             expect(_written(fx_database, before) == set())
-            gate.proceed.set()
 
         # The numbering drops the hand label of the pages it counts, so it ran after the label was written
         stored = fx_database.tables.pages[pages[4].id]
@@ -1113,9 +1117,10 @@ class TestRecomputeInPageUseCases:
         :type fx_events: RecordingEventBus
         """
         project, pages = await _commit_book(fx_database, fx_actor, *_text_book(5))
-        uow = InMemoryUnitOfWork(fx_database)
-        async with uow.change_book(project.id):
-            await uow.pages.update(evolve(pages[1], label=HAND_WRITTEN, label_manual=True))
+        await InMemoryUnitOfWork(fx_database).change_book(
+            project.id,
+            lambda repos, _project: repos.pages.update(evolve(pages[1], label=HAND_WRITTEN, label_manual=True)),
+        )
         await fx_pagination().add(fx_actor, project.id, _draft(pages[0]))
         fx_events.published.clear()
 

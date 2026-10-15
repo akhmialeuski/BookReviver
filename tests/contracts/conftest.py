@@ -1,21 +1,19 @@
-"""Fixtures giving the port contract tests every adapter of the port, built by the application's own providers."""
+"""Fixtures giving the port contract tests every adapter of the port, built the way the application builds it."""
 
-from contextlib import AsyncExitStack
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import pytest
 from dishka import make_async_container
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
+from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-from bookreviver.app.providers.core import CoreProvider
-from bookreviver.app.providers.database import DatabaseProvider
-from bookreviver.app.providers.persistence import PERSISTENCE_PROVIDERS, ChangeWaitProvider
+from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
+from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
-from bookreviver.app.providers.tracing import TracingProvider
 from bookreviver.app.settings import PersistenceBackend, Settings
-from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.storage import AssetStore, SourceStore
+from tests.helpers.book_gate import hold_book, hold_book_in_thread
 from tests.helpers.builders import new_account_id
 from tests.helpers.job_queues import QueueAdapter
 from tests.helpers.schema import create_schema
@@ -25,34 +23,53 @@ from tests.helpers.tracers import TracerAdapter
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
+    from contextlib import AbstractAsyncContextManager
 
     from dishka import AsyncContainer
 
-    from bookreviver.domain.ids import AccountId
+    from bookreviver.domain.ids import AccountId, ProjectId
     from bookreviver.ports.ordering import OrderKeys
+    from bookreviver.ports.persistence import UnitOfWork
+
+type Database = InMemoryDatabase | SqlDatabase
+type OwnerFactory = Callable[[], Awaitable[AccountId]]
 
 
 class UnitOfWorkFactory(Protocol):
-    """A function opening a new unit of work of the backend under test, in a scope of the container of its own."""
+    """A function opening a new unit of work of the backend under test, over the database of the test."""
 
-    def __call__(self, context: dict[Any, Any] | None = None) -> Awaitable[UnitOfWork]:
-        """Open a request scope of the container and return the unit of work it provides.
+    def __call__(self, *, wait_seconds: float | None = None) -> UnitOfWork:
+        """Open a unit of work over the database of the test.
 
-        :param context: Objects the scope has in its context, such as the ``Request`` of an HTTP request, which makes
-                        the container choose the limit of a request for the unit of work. None for a bare scope.
-        :type context: dict[Any, Any] | None
-        :returns: Unit of work of the new scope, closed with the fixture.
-        :rtype: Awaitable[UnitOfWork]
+        :param wait_seconds: How long a change of the unit of work waits for its turn before it gives up with
+                             ``BookBusyError``, which a request gets shorter than a job. None for the limit of a job
+                             in the settings of the test.
+        :type wait_seconds: float | None
+        :returns: A new unit of work.
+        :rtype: UnitOfWork
         """
 
 
-type OwnerFactory = Callable[[], Awaitable[AccountId]]
+class BookHolder(Protocol):
+    """A function holding the lock of a book of the backend under test, which every change of that book waits for."""
+
+    def __call__(self, uow: UnitOfWork, project_id: ProjectId | None = None) -> AbstractAsyncContextManager[None]:
+        """Hold the lock for the length of an ``async with`` block.
+
+        :param uow: Unit of work of the test, which an adapter that runs the work in a thread holds through a change.
+        :type uow: UnitOfWork
+        :param project_id: Project whose book is held, or None for the changes outside the content of a book.
+        :type project_id: ProjectId | None
+        :returns: Context manager that returns once the lock is held and releases it when the block ends.
+        :rtype: AbstractAsyncContextManager[None]
+        """
+
 
 # Every adapter of the OrderKeys port by name; each computes keys in memory, so none needs a provider
 ORDER_KEYS_ADAPTERS: dict[str, type[OrderKeys]] = {'fractional-indexing': FractionalOrderKeys}
 
 
-@pytest.fixture(params=list(PERSISTENCE_PROVIDERS), ids=str)
+@pytest.fixture(params=list(PersistenceBackend), ids=str)
 def fx_persistence_backend(request: pytest.FixtureRequest) -> PersistenceBackend:
     """Return each persistence backend in turn.
 
@@ -65,71 +82,100 @@ def fx_persistence_backend(request: pytest.FixtureRequest) -> PersistenceBackend
 
 
 @pytest.fixture
-async def fx_persistence(
-    fx_persistence_backend: PersistenceBackend, fx_settings: Settings
-) -> AsyncIterator[AsyncContainer]:
-    """Yield a container holding the application's own provider of the backend under test.
+async def fx_persistence(fx_persistence_backend: PersistenceBackend, fx_settings: Settings) -> AsyncIterator[Database]:
+    """Yield the database of the backend under test, shared by every unit of work of the test.
 
     The SQL backend gets its schema from the models, recorded at the head revision, rather than from the migrations,
-    which would make the suite several times slower; ``test_migrations.py`` proves the two schemas equal.
+    which would make the suite several times slower; ``test_migrations.py`` proves the two schemas equal. Its
+    connections open with the job limit of the settings as their busy timeout, as the application's do.
 
     :param fx_persistence_backend: Persistence backend under test.
     :type fx_persistence_backend: PersistenceBackend
     :param fx_settings: Settings with a fresh data directory of the test.
     :type fx_settings: Settings
-    :returns: Iterator yielding the container and closing it afterwards.
-    :rtype: AsyncIterator[AsyncContainer]
+    :returns: Iterator yielding the database and disposing of it afterwards.
+    :rtype: AsyncIterator[Database]
     """
-    if fx_persistence_backend is PersistenceBackend.SQLALCHEMY:
-        await create_schema(fx_settings)
-    container = make_async_container(
-        CoreProvider(),
-        TracingProvider(),
-        ChangeWaitProvider(),
-        DatabaseProvider(),
-        PERSISTENCE_PROVIDERS[fx_persistence_backend](),
-        context={Settings: fx_settings},
+    if fx_persistence_backend is PersistenceBackend.MEMORY:
+        yield InMemoryDatabase()
+        return
+    await create_schema(fx_settings)
+    database = SqlDatabase(
+        fx_settings.resolved_database_url, tracer=NullTracer(), wait_seconds=fx_settings.change_wait.job_seconds
     )
-    yield container
-    await container.close()
+    try:
+        yield database
+    finally:
+        await database.dispose()
 
 
 @pytest.fixture
-async def fx_uow_factory(fx_persistence: AsyncContainer) -> AsyncIterator[UnitOfWorkFactory]:
-    """Yield a function opening a new unit of work of the backend under test.
+def fx_uow_factory(fx_persistence: Database, fx_settings: Settings) -> UnitOfWorkFactory:
+    """Return a function opening a new unit of work of the backend under test.
 
-    :param fx_persistence: Container holding the provider of the backend under test.
-    :type fx_persistence: AsyncContainer
-    :returns: Iterator yielding the opening function and closing every scope it opened afterwards.
-    :rtype: AsyncIterator[UnitOfWorkFactory]
+    :param fx_persistence: Database of the backend under test.
+    :type fx_persistence: Database
+    :param fx_settings: Settings of the test, whose job limit is the wait of a unit of work opened with none.
+    :type fx_settings: Settings
+    :returns: Function opening a unit of work over ``fx_persistence``.
+    :rtype: UnitOfWorkFactory
     """
-    async with AsyncExitStack() as scopes:
 
-        async def open_unit_of_work(context: dict[Any, Any] | None = None) -> UnitOfWork:
-            """Open a request scope of the container and return the unit of work it provides.
+    def open_unit_of_work(*, wait_seconds: float | None = None) -> UnitOfWork:
+        """Open a unit of work over the database of the test.
 
-            :param context: Objects the scope has in its context, or None for a bare scope.
-            :type context: dict[Any, Any] | None
-            :returns: Unit of work of a new request scope, closed with the fixture.
-            :rtype: UnitOfWork
-            """
-            scope = await scopes.enter_async_context(fx_persistence(context=context))
-            return await scope.get(UnitOfWork)
+        :param wait_seconds: How long a change waits for its turn, or None for the job limit of the settings.
+        :type wait_seconds: float | None
+        :returns: A new unit of work.
+        :rtype: UnitOfWork
+        """
+        seconds = fx_settings.change_wait.job_seconds if wait_seconds is None else wait_seconds
+        if isinstance(fx_persistence, SqlDatabase):
+            return SqlAlchemyUnitOfWork(fx_persistence, wait_seconds=seconds)
+        return InMemoryUnitOfWork(fx_persistence, wait_seconds=seconds)
 
-        yield open_unit_of_work
+    return open_unit_of_work
 
 
 @pytest.fixture
-def fx_new_owner(fx_persistence_backend: PersistenceBackend, fx_persistence: AsyncContainer) -> OwnerFactory:
+def fx_hold_book(fx_persistence: Database) -> BookHolder:
+    """Return a function holding the lock of a book, in the way the backend under test allows.
+
+    The in-memory backend runs the work of a change in the event loop, so the test takes the lock of its database. The
+    SQL backend runs the work in a thread, so a change whose work blocks that thread holds the book.
+
+    :param fx_persistence: Database of the backend under test.
+    :type fx_persistence: Database
+    :returns: Function returning a context manager that holds the book while its block runs.
+    :rtype: BookHolder
+    """
+
+    def hold(uow: UnitOfWork, project_id: ProjectId | None = None) -> AbstractAsyncContextManager[None]:
+        """Hold the lock of a book, or of the changes outside books, until the block ends.
+
+        :param uow: Unit of work whose change holds the book, for a backend that holds it through a change.
+        :type uow: UnitOfWork
+        :param project_id: Project whose book is held, or None for the changes outside the content of a book.
+        :type project_id: ProjectId | None
+        :returns: Context manager holding the lock.
+        :rtype: AbstractAsyncContextManager[None]
+        """
+        if isinstance(fx_persistence, InMemoryDatabase):
+            return hold_book(fx_persistence, project_id)
+        return hold_book_in_thread(uow, project_id)
+
+    return hold
+
+
+@pytest.fixture
+def fx_new_owner(fx_persistence: Database) -> OwnerFactory:
     """Return a function creating an account that may own projects in the backend under test.
 
     Only the SQL backend checks the owner of a project, against the account table of fastapi-users, so an account is
     a committed row there. The in-memory backend has no accounts, since no port stores them, and takes any identifier.
 
-    :param fx_persistence_backend: Persistence backend under test.
-    :type fx_persistence_backend: PersistenceBackend
-    :param fx_persistence: Container holding the provider of the backend under test, and the SQL database.
-    :type fx_persistence: AsyncContainer
+    :param fx_persistence: Database of the backend under test.
+    :type fx_persistence: Database
     :returns: Function returning the identifier of a new account.
     :rtype: OwnerFactory
     """
@@ -140,11 +186,9 @@ def fx_new_owner(fx_persistence_backend: PersistenceBackend, fx_persistence: Asy
         :returns: Identifier of the new account.
         :rtype: AccountId
         """
-        match fx_persistence_backend:
-            case PersistenceBackend.SQLALCHEMY:
-                return await commit_account(await fx_persistence.get(SqlDatabase))
-            case PersistenceBackend.MEMORY:
-                return new_account_id()
+        if isinstance(fx_persistence, SqlDatabase):
+            return await commit_account(fx_persistence)
+        return new_account_id()
 
     return new_owner
 

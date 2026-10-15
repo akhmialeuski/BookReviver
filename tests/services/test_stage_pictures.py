@@ -10,10 +10,12 @@ from bookreviver.domain.values import RecipeDraft, SliceRequest, StageRun, Step
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 from tests.helpers.spreads import head_of, run_stage
 from tests.helpers.stage_heads import seed_head
+from tests.helpers.stage_reads import stage_rows
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, PageVersion, Project
     from bookreviver.domain.ids import PageId, PageVersionId, StepId
+    from bookreviver.ports.persistence import Repositories
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -90,15 +92,26 @@ async def chain_of(kit: ProcessingKit, page: Page, stage: Stage) -> list[PageVer
     :returns: The versions of the stage that made its current version, the first step first.
     :rtype: list[PageVersion]
     """
-    uow = kit.uow()
-    version = await head_of(kit, page, stage)
-    chain = [version]
-    while version.input_id is not None:
-        version = await uow.page_versions.get(version.input_id)
-        if version.stage is not stage:
-            break
-        chain.insert(0, version)
-    return chain
+    head = await head_of(kit, page, stage)
+
+    def walk(repos: Repositories) -> list[PageVersion]:
+        """Walk back from the current version of the stage while the versions belong to it.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :returns: The versions of the stage, the first step first.
+        :rtype: list[PageVersion]
+        """
+        version = head
+        chain = [version]
+        while version.input_id is not None:
+            version = repos.page_versions.get(version.input_id)
+            if version.stage is not stage:
+                break
+            chain.insert(0, version)
+        return chain
+
+    return await kit.uow().read(walk)
 
 
 async def seed_staged_book(kit: ProcessingKit, case: StageCase) -> StagedBook:
@@ -118,10 +131,8 @@ async def seed_staged_book(kit: ProcessingKit, case: StageCase) -> StagedBook:
         await kit.seed_base_version(page)
         pages.append(page)
     full, partial, idle, other = pages
-    uow = kit.uow()
     other = evolve(other, kind=PageKind.PLATE)
-    async with uow.change_book(project.id):
-        await uow.pages.update(other)
+    await kit.uow().change_book(project.id, lambda repos, _project: repos.pages.update(other))
     if case.stage is Stage.CLEANUP:
         await run_stage(kit, actor, project, StageRun(stage=Stage.GEOMETRY))
     steps = [Step(processor_key=case.processor_key) for _ in range(STEP_COUNT)]
@@ -163,7 +174,7 @@ async def pictures_of(
     :rtype: dict[PageId, PageVersionId | None]
     """
     step_id = None if step_index is None else book.step_ids[step_index]
-    rows = await kit.stages().rows(book.project, case.stage, SliceRequest(), step_id)
+    rows = await stage_rows(kit, book.project, case.stage, SliceRequest(), step_id)
     return {row.page_id: None if row.picture is None else row.picture.id for row in rows.items}
 
 
@@ -294,7 +305,7 @@ class TestPicture:
         book = await seed_staged_book(fx_kit, case)
         later = [await seed_head(fx_kit, page, case.later, after=book.reads[page.id]) for page in book.pages]
         step_id = None if step_index is None else book.step_ids[step_index]
-        rows = await fx_kit.stages().rows(book.project, case.stage, SliceRequest(), step_id)
+        rows = await stage_rows(fx_kit, book.project, case.stage, SliceRequest(), step_id)
         later_ids = {version.id for version in later}
         assert all(
             row.picture is not None
@@ -314,6 +325,6 @@ class TestPicture:
         one_step = RecipeDraft(steps=[Step(processor_key=FakeProcessor.spec.key)])
         recipe = await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, one_step)
         step_id = recipe.steps[0].step_id
-        alone = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
-        at_step = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), step_id)
+        alone = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest())
+        at_step = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), step_id)
         assert [row.picture for row in (*alone.items, *at_step.items)] == [None, None]

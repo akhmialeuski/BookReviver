@@ -44,9 +44,7 @@ async def store_profile(kit: ProcessingKit, profile: RecipeProfile) -> RecipePro
     :returns: The profile as stored.
     :rtype: RecipeProfile
     """
-    uow = kit.uow()
-    async with uow.change():
-        return await uow.recipe_profiles.add(profile)
+    return await kit.uow().change(lambda repos: repos.recipe_profiles.add(profile))
 
 
 async def second_project(kit: ProcessingKit, actor: Actor) -> Project:
@@ -59,9 +57,8 @@ async def second_project(kit: ProcessingKit, actor: Actor) -> Project:
     :returns: The project.
     :rtype: Project
     """
-    uow = kit.uow()
-    async with uow.change():
-        return await uow.projects.add(make_project(owner_id=actor.account_id, title='Another book'))
+    project = make_project(owner_id=actor.account_id, title='Another book')
+    return await kit.uow().change(lambda repos: repos.projects.add(project))
 
 
 async def saved(kit: ProcessingKit, actor: Actor, name: str = PROFILE_NAME) -> RecipeProfile:
@@ -150,7 +147,7 @@ class TestChangeProfile:
         profile = await saved(fx_kit, actor)
         renamed = await fx_kit.profiles().rename(actor, profile.id, OTHER_NAME)
         assert (renamed.name, renamed.steps) == (OTHER_NAME, profile.steps)
-        assert await fx_kit.uow().recipe_profiles.get(profile.id) == renamed
+        assert await fx_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id)) == renamed
 
     async def test_choosing_a_default_demotes_the_previous_one(self, fx_kit: ProcessingKit) -> None:
         """Verify a stage never has two defaults, and the second choice takes the place of the first.
@@ -176,7 +173,10 @@ class TestChangeProfile:
         profile = await saved(fx_kit, actor)
         await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
         await fx_kit.profiles().set_default(actor, profile.id, is_default=False)
-        assert await fx_kit.uow().recipe_profiles.find_default(actor.account_id, Stage.GEOMETRY) is None
+        default = await fx_kit.uow().read(
+            lambda repos: repos.recipe_profiles.find_default(actor.account_id, Stage.GEOMETRY)
+        )
+        assert default is None
 
     async def test_delete_removes_the_profile_and_no_recipe(self, fx_kit: ProcessingKit) -> None:
         """Verify a recipe made from a profile outlives it.
@@ -188,7 +188,8 @@ class TestChangeProfile:
         profile = await saved(fx_kit, actor)
         applied = await fx_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
         await fx_kit.profiles().remove(actor, profile.id)
-        assert (await fx_kit.uow().recipes.get(applied.recipe.id)).steps == profile.steps
+        kept = await fx_kit.uow().read(lambda repos: repos.recipes.get(applied.recipe.id))
+        assert kept.steps == profile.steps
         assert (await fx_kit.profiles().profiles(actor, None, EVERYTHING)).total == 0
 
     async def test_a_profile_of_another_account_is_not_found(self, fx_kit: ProcessingKit) -> None:
@@ -209,7 +210,7 @@ class TestChangeProfile:
             await service.remove(stranger, profile.id)
         with pytest.raises(NotFoundError):
             await service.apply(stranger, stranger_project.id, profile.id, kind=RecipeKind.TEXT)
-        assert (await fx_kit.uow().recipe_profiles.get(profile.id)) == profile
+        assert await fx_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id)) == profile
 
 
 class TestApplyProfile:
@@ -246,12 +247,11 @@ class TestApplyProfile:
         actor, project = await fx_kit.seed_project()
         page, _ = await fx_kit.seed_scan_page(project)
         recipe = await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)
-        uow = fx_kit.uow()
-        async with uow.change_book(project.id):
-            await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id))
+        seeded = make_page_stage(page_id=page.id, recipe_id=recipe.id)
+        await fx_kit.uow().change_book(project.id, lambda repos, _project: repos.page_stages.save(seeded))
         profile = await saved(fx_kit, actor)
         await fx_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
-        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        record = await fx_kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)))
         assert record.state is StageState.STALE
 
     async def test_a_step_of_a_missing_processor_is_left_out_and_named(self, fx_kit: ProcessingKit) -> None:

@@ -4,7 +4,8 @@ The versions that made the current version of each page are found by walking bac
 pages together, until a version of an earlier stage is reached, which is what the first step read. A step that finds a
 number on each page, such as the angle of the deskew, is compared with the whole book, so its median is taken over every
 page of the stage and not over the window alone, and the rule that tells a page that departs is the one of
-``bookreviver.domain.step_measures``.
+``bookreviver.domain.step_measures``. The placing only reads, synchronously, through the repositories of the transaction
+its caller runs in.
 """
 
 from typing import TYPE_CHECKING
@@ -19,18 +20,16 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, PageStage, PageVersion, Recipe
     from bookreviver.domain.enums import Stage, StepMeasure
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StepId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories
     from bookreviver.ports.processing import ProcessorCatalog
 
 
 class StepRows:
     """Places one step of one stage on pages."""
 
-    def __init__(self, *, uow: UnitOfWork, catalogue: ProcessorCatalog, stage: Stage, step_id: StepId) -> None:
+    def __init__(self, *, catalogue: ProcessorCatalog, stage: Stage, step_id: StepId) -> None:
         """Place the step over the ports of one request.
 
-        :param uow: Unit of work of the request, which is only read.
-        :type uow: UnitOfWork
         :param catalogue: The processors the application can run, which say what a step measures.
         :type catalogue: ProcessorCatalog
         :param stage: The stage.
@@ -38,19 +37,21 @@ class StepRows:
         :param step_id: The step, which a recipe of the stage must have.
         :type step_id: StepId
         """
-        self._uow = uow
         self._catalogue = catalogue
         self._stage = stage
         self._step_id = step_id
 
-    async def of(
+    def of(
         self,
+        repos: Repositories,
         pages: Sequence[Page],
         records: Mapping[PageId, PageStage],
         heads: Mapping[PageVersionId, PageVersion],
     ) -> dict[PageId, StepRow]:
         """Place the step on each page of a window.
 
+        :param repos: Repositories of the transaction the caller runs in, which are only read.
+        :type repos: Repositories
         :param pages: The pages of the window.
         :type pages: Sequence[Page]
         :param records: The records of the stage of those of the pages that have one, by page.
@@ -64,7 +65,7 @@ class StepRows:
         if not pages:
             return {}
         project_id = pages[0].project_id
-        recipes = {recipe.id: recipe for recipe in await self._uow.recipes.list_for_stage(project_id, self._stage)}
+        recipes = {recipe.id: recipe for recipe in repos.recipes.list_for_stage(project_id, self._stage)}
         key = next(
             (
                 step.processor_key
@@ -78,25 +79,23 @@ class StepRows:
             raise NotFoundError(self._step_id)
         measure = next((spec.measure for spec in self._catalogue.specs() if spec.key == key), None)
         if measure is None:
-            placed = await self._place([page.id for page in pages], recipes, records, heads)
+            placed = self._place(repos, [page.id for page in pages], recipes, records, heads)
             return {page.id: placed[page.id] for page in pages}
         # What a step found is compared with the whole book, so the step is placed on every page of the stage
-        book = {
-            record.page_id: record
-            for record in await self._uow.page_stages.list_for_project_stage(project_id, self._stage)
-        }
+        book = {record.page_id: record for record in repos.page_stages.list_for_project_stage(project_id, self._stage)}
         book_heads = {
             version.id: version
-            for version in await self._uow.page_versions.list_by_ids(
+            for version in repos.page_versions.list_by_ids(
                 {record.head_version_id for record in book.values() if record.head_version_id is not None}
             )
         }
-        placed = await self._place([*{page.id for page in pages} | set(book)], recipes, book, book_heads)
+        placed = self._place(repos, [*{page.id for page in pages} | set(book)], recipes, book, book_heads)
         median = self._median(measure, placed.values())
         return {page.id: placed[page.id].compared_with(measure, median) for page in pages}
 
-    async def _place(
+    def _place(
         self,
+        repos: Repositories,
         page_ids: Sequence[PageId],
         recipes: Mapping[RecipeId, Recipe],
         records: Mapping[PageId, PageStage],
@@ -104,6 +103,8 @@ class StepRows:
     ) -> dict[PageId, StepRow]:
         """Place the step on pages, with the mark of those that have settings or an edit of their own for it.
 
+        :param repos: Repositories of the transaction the caller runs in, which are only read.
+        :type repos: Repositories
         :param page_ids: The pages.
         :type page_ids: Sequence[PageId]
         :param recipes: The recipes of the stage, by identifier.
@@ -115,10 +116,10 @@ class StepRows:
         :returns: The row of the step for each page.
         :rtype: dict[PageId, StepRow]
         """
-        found = await self._uow.page_step_states.list_for_step(page_ids, self._stage, self._step_id)
+        found = repos.page_step_states.list_for_step(page_ids, self._stage, self._step_id)
         edited = {state.page_id for state in found if state.edit is not None}
         adjusted = {state.page_id for state in found if state.params}
-        chains, before = await self._chains(heads.values())
+        chains, before = self._chains(repos, heads.values())
         placed: dict[PageId, StepRow] = {}
         for page_id in page_ids:
             record = records.get(page_id)
@@ -153,13 +154,16 @@ class StepRows:
             ]
         )
 
-    async def _chains(
-        self, heads: Collection[PageVersion]
+    @staticmethod
+    def _chains(
+        repos: Repositories, heads: Collection[PageVersion]
     ) -> tuple[dict[PageVersionId, list[PageVersion]], dict[PageVersionId, PageVersion]]:
         """Find the versions that made each current version of a stage, and the version the first of them read.
 
         The versions are walked back a level at a time for all the pages together, as the marks of the review are.
 
+        :param repos: Repositories of the transaction the caller runs in, which are only read.
+        :type repos: Repositories
         :param heads: The current versions of the stage over a window of pages.
         :type heads: Collection[PageVersion]
         :returns: For each current version, by its identifier, the versions of the stage that made it with the first
@@ -173,7 +177,7 @@ class StepRows:
         while walking:
             inputs = {
                 version.id: version
-                for version in await self._uow.page_versions.list_by_ids(
+                for version in repos.page_versions.list_by_ids(
                     {first.input_id for first in walking.values() if first.input_id is not None}
                 )
             }

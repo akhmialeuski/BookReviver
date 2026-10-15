@@ -11,6 +11,12 @@ parameters, which are stored in the form ``validate_params`` returns, defaults f
 spelling alone are equal and give the same page versions. The order of the steps is checked too, by ``RecipeOrder``: a
 step that stands where its processor cannot work is refused unless the draft asks for the free order, and one that
 stands off its usual place is saved, and the routes report it through ``RecipeOrder.issues``.
+
+The work of a transaction is synchronous and cannot await, so what a work needs from the book of recipes is synchronous
+and takes the ``Repositories`` of its transaction: ``recipes_in``, ``get``, ``rewrite``, ``default_draft`` and
+``find_step``, with ``check`` and ``installed``, which read no repository. The asynchronous ``recipes``, ``of_kind`` and
+``for_pages`` run on the unit of work themselves, ``recipes`` opening a ``change_book`` of its own to store the
+defaults, so they are called outside any work, and inside a work the synchronous ``recipes_in`` is used.
 """
 
 from datetime import timedelta
@@ -36,10 +42,10 @@ from bookreviver.domain.values import RecipeDraft, Step
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bookreviver.domain.entities import Page, RecipeProfile
+    from bookreviver.domain.entities import Page, Project, RecipeProfile
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.domain.values import MetadataMap, PageStepKey
-    from bookreviver.ports.persistence import RecipeRepository, UnitOfWork
+    from bookreviver.ports.persistence import RecipeRepository, Repositories, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
     from bookreviver.services.recipe_order import RecipeOrder
@@ -59,10 +65,12 @@ GEOMETRY_STEPS: tuple[str, ...] = (
 )
 
 
-async def find_step(recipes: RecipeRepository, project_id: ProjectId, key: PageStepKey) -> Step:
+def find_step(recipes: RecipeRepository, project_id: ProjectId, key: PageStepKey) -> Step:
     """Find a step by its identifier in the recipes of its stage, where a copy of a step keeps the identifier.
 
-    :param recipes: Repository to read the recipes from.
+    It is called from the work of a transaction.
+
+    :param recipes: Repository of the transaction to read the recipes from.
     :type recipes: RecipeRepository
     :param project_id: Project owning the recipes.
     :type project_id: ProjectId
@@ -72,7 +80,7 @@ async def find_step(recipes: RecipeRepository, project_id: ProjectId, key: PageS
     :rtype: Step
     :raises NotFoundError: If no recipe of the stage has the step.
     """
-    for recipe in await recipes.list_for_stage(project_id, key.stage):
+    for recipe in recipes.list_for_stage(project_id, key.stage):
         for step in recipe.steps:
             if step.step_id == key.step_id:
                 return step
@@ -189,8 +197,8 @@ class RecipeBook:
     ) -> None:
         """Work over the ports of one request or job.
 
-        :param uow: Unit of work, in which ``recipes`` opens a block of its own to store the defaults and ``rewrite``
-                    writes inside the block of its caller.
+        :param uow: Unit of work, on which ``recipes`` reads and opens a ``change_book`` of its own to store the
+                    defaults. The synchronous methods use the repositories their caller passes and never this.
         :type uow: UnitOfWork
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
@@ -210,9 +218,10 @@ class RecipeBook:
     async def recipes(self, project_id: ProjectId, stage: Stage) -> list[Recipe]:
         """Return the recipes of a stage, one for each kind of page, creating them when the stage is first asked for.
 
-        Called outside any block. It reads without one, and opens its own ``change_book`` only when the stage has no
-        recipes yet, where it reads again, since a task that ran at the same time may have stored them first, and
-        adds the defaults only if they are still missing.
+        Called outside any work, since it runs on the unit of work itself. It reads in a transaction that only reads,
+        and opens a ``change_book`` of its own only when the stage has no recipes yet, where ``recipes_in`` reads again,
+        since a task that ran at the same time may have stored them first, and adds the defaults only if they are still
+        missing. The work of a transaction cannot call this, and calls ``recipes_in`` instead.
 
         :param project_id: Project owning the recipes.
         :type project_id: ProjectId
@@ -223,31 +232,63 @@ class RecipeBook:
         :raises NotFoundError: If the project does not exist, the stage has no recipe by default, or none of its
                                processors is installed.
         """
-        if found := await self._uow.recipes.list_for_stage(project_id, stage):
-            return [await self._current(recipe) for recipe in found]
-        async with self._uow.change_book(project_id):
-            if found := await self._uow.recipes.list_for_stage(project_id, stage):
-                return [await self._current(recipe) for recipe in found]
-            moment = self._clock.now()
-            steps, profile = await self._starting_steps(project_id, stage)
-            built = [
-                Recipe(
-                    id=RecipeId(uuid4()),
-                    project_id=project_id,
-                    stage=stage,
-                    kind=kind,
-                    steps=steps[kind],
-                    profile_id=profile.id if profile is not None and kind is RecipeKind.TEXT else None,
-                    # A microsecond apart, so the recipes are listed in the order of the kinds
-                    created_at=moment + timedelta(microseconds=index),
-                    updated_at=moment,
-                )
-                for index, kind in enumerate(RecipeKind)
-            ]
-            await self._uow.recipes.add_many(built)
+        if found := await self._uow.read(lambda repos: self._stored(repos, project_id, stage)):
+            return found
+        return await self._uow.change_book(project_id, lambda repos, project: self.recipes_in(repos, project, stage))
+
+    def recipes_in(self, repos: Repositories, project: Project, stage: Stage) -> list[Recipe]:
+        """Return the recipes of a stage, creating them when the stage is first asked for, in the transaction of a work.
+
+        This is the form to use inside the work of ``change_book`` or ``change``, where ``recipes`` cannot be awaited.
+        It reads the recipes and, when the stage has none, stores the defaults through the same repositories, so the
+        defaults are committed with the rest of the work.
+
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
+        :param project: Project owning the recipes, whose owner's default profile the first recipes may be made from.
+        :type project: Project
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The recipes in the order of the kinds.
+        :rtype: list[Recipe]
+        :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
+        """
+        if found := self._stored(repos, project.id, stage):
+            return found
+        moment = self._clock.now()
+        steps, profile = self._starting_steps(repos, project, stage)
+        built = [
+            Recipe(
+                id=RecipeId(uuid4()),
+                project_id=project.id,
+                stage=stage,
+                kind=kind,
+                steps=steps[kind],
+                profile_id=profile.id if profile is not None and kind is RecipeKind.TEXT else None,
+                # A microsecond apart, so the recipes are listed in the order of the kinds
+                created_at=moment + timedelta(microseconds=index),
+                updated_at=moment,
+            )
+            for index, kind in enumerate(RecipeKind)
+        ]
+        repos.recipes.add_many(built)
         return built
 
-    async def _current(self, recipe: Recipe) -> Recipe:
+    def _stored(self, repos: Repositories, project_id: ProjectId, stage: Stage) -> list[Recipe]:
+        """Read the stored recipes of a stage, each with the parameters of its steps as their processors write them now.
+
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
+        :param project_id: Project owning the recipes.
+        :type project_id: ProjectId
+        :param stage: The stage.
+        :type stage: Stage
+        :returns: The recipes in the order they were created, which are none before the stage has been used.
+        :rtype: list[Recipe]
+        """
+        return [self._current(recipe) for recipe in repos.recipes.list_for_stage(project_id, stage)]
+
+    def _current(self, recipe: Recipe) -> Recipe:
         """Give a stored recipe with the parameters of every step as their processors write them now.
 
         A processor that gains a parameter after a recipe was saved leaves the stored step without it, while a form
@@ -262,13 +303,13 @@ class RecipeBook:
         steps: list[Step] = []
         for step in recipe.steps:
             try:
-                steps.append(await self._check_step(recipe.stage, step))
+                steps.append(self._check_step(recipe.stage, step))
             except InvalidParametersError:
                 steps.append(step)
         return evolve(recipe, steps=tuple(steps))
 
     async def of_kind(self, project_id: ProjectId, stage: Stage, kind: RecipeKind) -> Recipe:
-        """Return the recipe of a stage for one kind of page, called outside any block as ``recipes`` is.
+        """Return the recipe of a stage for one kind of page, called outside any work as ``recipes`` is.
 
         :param project_id: Project owning the recipe.
         :type project_id: ProjectId
@@ -285,7 +326,7 @@ class RecipeBook:
     async def for_pages(self, project_id: ProjectId, stage: Stage, pages: Sequence[Page]) -> dict[PageId, Recipe]:
         """Choose the recipe of each page of a stage, which is the recipe of the kind of the page.
 
-        Called outside any block, as ``recipes`` is.
+        Called outside any work, as ``recipes`` is.
 
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
@@ -300,15 +341,17 @@ class RecipeBook:
         by_kind = {recipe.kind: recipe for recipe in await self.recipes(project_id, stage)}
         return {page.id: by_kind[page.recipe_kind] for page in pages}
 
-    async def default_draft(self, project_id: ProjectId, stage: Stage, kind: RecipeKind) -> RecipeDraft:
+    def default_draft(self, repos: Repositories, project: Project, stage: Stage, kind: RecipeKind) -> RecipeDraft:
         """Return the draft of the steps the recipe of a kind starts with, which a reset puts back into the recipe.
 
         The recipe of text pages takes the default profile of the book's owner first, when there is a usable one, and
         the draft names it, so the recipe can be linked to it. Without one, and for any other kind, the steps are those
         of the built-in template of the kind, or of the recipe of text pages when the template cannot be built here.
 
-        :param project_id: Project the steps are for.
-        :type project_id: ProjectId
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
+        :param project: Project the steps are for.
+        :type project: Project
         :param stage: The stage.
         :type stage: Stage
         :param kind: The kind of page the recipe is for.
@@ -317,13 +360,17 @@ class RecipeBook:
         :rtype: RecipeDraft
         :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
         """
-        steps, profile = await self._starting_steps(project_id, stage)
+        steps, profile = self._starting_steps(repos, project, stage)
         profile_id = profile.id if profile is not None and kind is RecipeKind.TEXT else None
         return RecipeDraft(steps=steps[kind], order=OrderMode.FREE, profile_id=profile_id)
 
-    async def get(self, project_id: ProjectId, recipe_id: RecipeId, *, stage: Stage | None = None) -> Recipe:
+    def get(
+        self, repos: Repositories, project_id: ProjectId, recipe_id: RecipeId, *, stage: Stage | None = None
+    ) -> Recipe:
         """Return a recipe of the project, of the given stage when one is named.
 
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param recipe_id: Identifier of the recipe.
@@ -334,34 +381,34 @@ class RecipeBook:
         :rtype: Recipe
         :raises NotFoundError: If the recipe does not exist, belongs to another project, or processes another stage.
         """
-        recipe = await self._uow.recipes.get(recipe_id)
+        recipe = repos.recipes.get(recipe_id)
         if recipe.project_id != project_id or (stage is not None and recipe.stage is not stage):
             raise NotFoundError(recipe_id)
         return recipe
 
-    async def rewrite(self, recipe: Recipe, draft: RecipeDraft) -> Recipe:
-        """Store new steps of a recipe, inside the ``change_book`` block of the caller, which this never opens.
+    def rewrite(self, repos: Repositories, recipe: Recipe, draft: RecipeDraft) -> Recipe:
+        """Store new steps of a recipe, in the transaction of the caller, which this never opens.
 
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
         :param recipe: The recipe to change.
         :type recipe: Recipe
         :param draft: New steps, which are checked against their processors and their order.
         :type draft: RecipeDraft
-        :returns: The recipe as stored, which the block of the caller commits.
+        :returns: The recipe as stored, which the transaction of the caller commits.
         :rtype: Recipe
         :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
                                         usual order.
         """
         changed = evolve(
             recipe,
-            steps=await self.check(recipe.stage, draft.steps, order=draft.order),
+            steps=self.check(recipe.stage, draft.steps, order=draft.order),
             updated_at=self._clock.now(),
         )
-        await self._uow.recipes.update(changed)
+        repos.recipes.update(changed)
         return changed
 
-    async def check(
-        self, stage: Stage, steps: Sequence[Step], *, order: OrderMode = OrderMode.USUAL
-    ) -> tuple[Step, ...]:
+    def check(self, stage: Stage, steps: Sequence[Step], *, order: OrderMode = OrderMode.USUAL) -> tuple[Step, ...]:
         """Check the steps of a recipe of a stage and return them with their parameters in checked form.
 
         :param stage: Stage the recipe processes.
@@ -381,11 +428,11 @@ class RecipeBook:
             raise InvalidParametersError(NO_STEPS)
         if not any(step.enabled for step in steps):
             raise InvalidParametersError(ALL_STEPS_OFF)
-        checked = tuple([await self._check_step(stage, step) for step in steps])
+        checked = tuple(self._check_step(stage, step) for step in steps)
         self._order.enforce(checked, order)
         return checked
 
-    async def _check_step(self, stage: Stage, step: Step) -> Step:
+    def _check_step(self, stage: Stage, step: Step) -> Step:
         """Check one step.
 
         :param stage: Stage the recipe processes.
@@ -451,8 +498,8 @@ class RecipeBook:
             for key in template.processor_keys
         )
 
-    async def _starting_steps(
-        self, project_id: ProjectId, stage: Stage
+    def _starting_steps(
+        self, repos: Repositories, project: Project, stage: Stage
     ) -> tuple[dict[RecipeKind, tuple[Step, ...]], RecipeProfile | None]:
         """Give the steps the recipe of each kind of a stage starts with, each step with an identifier of its own.
 
@@ -460,8 +507,10 @@ class RecipeBook:
         one, and otherwise with the steps of its template. A kind whose template the catalogue cannot build starts with
         the steps of text pages, which a copy of a step keeps the identifier of.
 
-        :param project_id: Project the steps are for.
-        :type project_id: ProjectId
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
+        :param project: Project the steps are for.
+        :type project: Project
         :param stage: The stage.
         :type stage: Stage
         :returns: The steps of each kind, and the profile the steps of text pages come from, or None.
@@ -469,7 +518,7 @@ class RecipeBook:
         :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
         """
         templates = self._buildable(stage)
-        preferred = await self._default_profile(project_id, stage)
+        preferred = self._default_profile(repos, project, stage)
         if preferred is None and RecipeKind.TEXT not in templates:
             raise NotFoundError(NO_RECIPE.format(stage=stage.label))
         profile, text_steps = (
@@ -482,8 +531,8 @@ class RecipeBook:
         )
         return steps, profile
 
-    async def _default_profile(
-        self, project_id: ProjectId, stage: Stage
+    def _default_profile(
+        self, repos: Repositories, project: Project, stage: Stage
     ) -> tuple[RecipeProfile, tuple[Step, ...]] | None:
         """Take the default profile of the project's owner with its checked steps, if there is a usable one.
 
@@ -491,18 +540,19 @@ class RecipeBook:
         longer fit their processors, is passed over, so the stage starts with the built-in recipes as it does for an
         account without a default profile.
 
-        :param project_id: Project the steps are for.
-        :type project_id: ProjectId
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
+        :param project: Project the steps are for.
+        :type project: Project
         :param stage: The stage.
         :type stage: Stage
         :returns: The profile and its steps as a recipe runs them, or None.
         :rtype: tuple[RecipeProfile, tuple[Step, ...]] | None
         """
-        owner_id = (await self._uow.projects.get(project_id)).owner_id
-        if (profile := await self._uow.recipe_profiles.find_default(owner_id, stage)) is None:
+        if (profile := repos.recipe_profiles.find_default(project.owner_id, stage)) is None:
             return None
         try:
-            steps = await self.check(stage, self.installed(profile.steps)[0], order=OrderMode.FREE)
+            steps = self.check(stage, self.installed(profile.steps)[0], order=OrderMode.FREE)
         except InvalidParametersError:
             return None
         return profile, steps

@@ -1,63 +1,77 @@
-"""A gate that holds a ``change_book`` block open, so a test can race another block of the same book against it."""
+"""Holding the lock of a book, so a test can race another change of the same book against one that has not committed.
 
+A change of the port is a synchronous function that returns to the event loop only when it has committed, so a test
+cannot suspend it halfway and start a second change beside it. The test holds the lock the changes of a book take
+instead, in the way each adapter allows: the in-memory adapter keeps the lock in its database, where the test takes it,
+and the SQL adapter runs the work in a thread that the test blocks.
+"""
+
+import asyncio
+import threading
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import anyio
-from attrs import define, field
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    import pytest
-
-    from bookreviver.domain.entities import Project
+    from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.domain.ids import ProjectId
     from bookreviver.ports.persistence import UnitOfWork
 
+# The longest a blocked change holds its thread when a test fails before it lets the change go
+HOLD_LIMIT_SECONDS: float = 30.0
 
-@define
-class BookGate:
-    """The two events of one gated unit of work, which order a test with no sleep.
 
-    :ivar entered: Set when the block of the unit of work holds the lock of its book.
-    :ivar proceed: Set by the test to let the block carry on.
+@asynccontextmanager
+async def hold_book(database: InMemoryDatabase, project_id: ProjectId | None = None) -> AsyncIterator[None]:
+    """Hold the lock of a book of the in-memory database, which every change of that book waits for.
+
+    :param database: In-memory database whose lock is taken.
+    :type database: InMemoryDatabase
+    :param project_id: Project whose book is held, or None for the lock of the changes outside the content of a book.
+    :type project_id: ProjectId | None
+    :returns: Iterator yielding once the lock is held, and releasing it when the block ends.
+    :rtype: AsyncIterator[None]
     """
+    lock = database.change_lock if project_id is None else database.book_lock(project_id)
+    async with lock:
+        yield
 
-    entered: anyio.Event = field(factory=anyio.Event)
-    proceed: anyio.Event = field(factory=anyio.Event)
 
+@asynccontextmanager
+async def hold_book_in_thread(uow: UnitOfWork, project_id: ProjectId | None = None) -> AsyncIterator[None]:
+    """Hold a book by a change whose work blocks the thread it runs in until the block ends.
 
-def hold_book(uow: UnitOfWork, monkeypatch: pytest.MonkeyPatch) -> BookGate:
-    """Make the ``change_book`` blocks of a unit of work stop right after they are entered, until the test lets go.
+    It suits an adapter that runs the work of a change in a thread of its own, which the event loop can leave blocked.
 
-    The block holds the lock of the book while it waits, so a second block of the same book started meanwhile has to
-    wait for it. The test learns that the first block is inside through ``entered`` and lets it carry on with
-    ``proceed``, with no sleep between the two. It works on any adapter, since it wraps the method of the instance.
-
-    :param uow: Unit of work whose blocks are held.
+    :param uow: Unit of work whose change holds the book.
     :type uow: UnitOfWork
-    :param monkeypatch: Fixture that restores the method after the test.
-    :type monkeypatch: pytest.MonkeyPatch
-    :returns: The gate of the unit of work.
-    :rtype: BookGate
+    :param project_id: Project whose book is held, or None for the changes outside the content of a book.
+    :type project_id: ProjectId | None
+    :returns: Iterator yielding once the work of the change has started, and letting it commit when the block ends.
+    :rtype: AsyncIterator[None]
     """
-    gate = BookGate()
-    real = uow.change_book
+    loop = asyncio.get_running_loop()
+    inside, release = anyio.Event(), threading.Event()
 
-    @asynccontextmanager
-    async def held(project_id: ProjectId) -> AsyncIterator[Project]:
-        """Enter the block, tell the test, and wait for it before the body of the block runs.
+    def block(*_arguments: object) -> None:
+        """Tell the test that the change has begun, then wait in this thread until the test lets it go.
 
-        :param project_id: Project whose book is changed.
-        :type project_id: ProjectId
-        :returns: Iterator yielding the project once the test has let the block go.
-        :rtype: AsyncIterator[Project]
+        :param _arguments: What the unit of work hands its work, which this work does not need.
+        :type _arguments: object
         """
-        async with real(project_id) as project:
-            gate.entered.set()
-            await gate.proceed.wait()
-            yield project
+        loop.call_soon_threadsafe(inside.set)
+        release.wait(timeout=HOLD_LIMIT_SECONDS)
 
-    monkeypatch.setattr(uow, 'change_book', held)
-    return gate
+    async with anyio.create_task_group() as tasks:
+        if project_id is None:
+            tasks.start_soon(uow.change, block)
+        else:
+            tasks.start_soon(uow.change_book, project_id, block)
+        await inside.wait()
+        try:
+            yield
+        finally:
+            release.set()

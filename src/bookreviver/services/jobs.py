@@ -18,19 +18,20 @@ from typing import TYPE_CHECKING
 from attrs import evolve
 
 from bookreviver.domain.enums import JobState
-from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.events import JobChanged
 from bookreviver.domain.values import Slice
+from bookreviver.services.projects import owned_project
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Sequence
     from contextlib import AbstractAsyncContextManager
 
     from bookreviver.domain.entities import Actor, Job
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import JobId, ProjectId
     from bookreviver.domain.values import SliceRequest
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher, EventStream
 
 JOB_FINISHED: str = 'The job has already finished.'
@@ -42,7 +43,7 @@ class JobCancellation:
     def __init__(self, *, uow: UnitOfWork, publisher: EventPublisher, clock: Clock) -> None:
         """Cancel jobs through the unit of work.
 
-        :param uow: Unit of work, whose ``change`` block holds the cancellation.
+        :param uow: Unit of work, whose ``change`` holds the cancellation.
         :type uow: UnitOfWork
         :param publisher: Publisher announcing a cancelled job to the project's subscribers.
         :type publisher: EventPublisher
@@ -54,9 +55,9 @@ class JobCancellation:
         self._clock = clock
 
     async def cancel(self, job: Job) -> Job | None:
-        """Cancel a job that is queued or running in a ``change`` block of its own, and announce it once it committed.
+        """Cancel a job that is queued or running in a ``change`` of its own, and announce it once it committed.
 
-        Opens its own block, so it is called outside any block.
+        Opens its own transaction, so it is called outside the work of any.
 
         :param job: The job as read.
         :type job: Job
@@ -64,25 +65,26 @@ class JobCancellation:
                   which case nothing is changed or announced.
         :rtype: Job | None
         """
-        async with self._uow.change():
-            cancelled = await self.mark_cancelled(job)
+        cancelled = await self._uow.change(lambda repos: self.mark_cancelled(repos, job))
         if cancelled is not None:
             await self._publisher.publish(JobChanged(project_id=cancelled.project_id, job=cancelled))
         return cancelled
 
-    async def mark_cancelled(self, job: Job) -> Job | None:
+    def mark_cancelled(self, repos: Repositories, job: Job) -> Job | None:
         """Write the cancelled state of a job that is queued or running, and announce nothing.
 
-        Writes inside the block of its caller and never opens one, so the caller announces the job after its block
-        committed.
+        Writes through the repositories of its caller and opens no transaction, so it is called from the work of a
+        ``change`` or ``change_book``, and the caller announces the job after the work committed.
 
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
         :param job: The job as read.
         :type job: Job
         :returns: The job in the cancelled state, with the time it finished, or None when it had finished meanwhile, in
                   which case nothing is changed.
         :rtype: Job | None
         """
-        return await self._uow.jobs.update_if_state(
+        return repos.jobs.update_if_state(
             evolve(job, state=JobState.CANCELLED, finished_at=self._clock.now()), expected=JobState.active()
         )
 
@@ -118,9 +120,21 @@ class JobService:
         :rtype: Job
         :raises NotFoundError: If the job does not exist or belongs to another account's project.
         """
-        job = await self._uow.jobs.get(job_id)
-        await self._check_owner(actor, job.project_id)
-        return job
+
+        def work(repos: Repositories) -> Job:
+            """Read the job and check that its project is the actor's.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The job as stored.
+            :rtype: Job
+            :raises NotFoundError: If the job does not exist or belongs to another account's project.
+            """
+            job = repos.jobs.get(job_id)
+            owned_project(repos.projects, actor, job.project_id)
+            return job
+
+        return await self._uow.read(work)
 
     async def list_for_project(
         self, actor: Actor, project_id: ProjectId, request: SliceRequest, *, active: bool
@@ -139,8 +153,20 @@ class JobService:
         :rtype: Slice[Job]
         :raises NotFoundError: If the project does not exist or belongs to another account.
         """
-        await self._check_owner(actor, project_id)
-        jobs = await self._uow.jobs.list_for_project(project_id, JobState.active() if active else set(JobState))
+
+        def work(repos: Repositories) -> Sequence[Job]:
+            """Check that the project is the actor's and read its jobs.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The jobs of the project in the wanted states, the newest first.
+            :rtype: Sequence[Job]
+            :raises NotFoundError: If the project does not exist or belongs to another account.
+            """
+            owned_project(repos.projects, actor, project_id)
+            return repos.jobs.list_for_project(project_id, JobState.active() if active else set(JobState))
+
+        jobs = await self._uow.read(work)
         return Slice(items=jobs[request.offset : request.offset + request.limit], total=len(jobs))
 
     async def cancel(self, actor: Actor, job_id: JobId) -> Job:
@@ -167,9 +193,8 @@ class JobService:
         """Return a subscription to the project's events, for the owner only.
 
         The ownership check runs here, before the subscription exists, so a caller learns of a refusal before it
-        subscribes or starts streaming. The check is the last read the service makes for the stream, which then stays
-        open for as long as the browser tab does, so what the reads left open is released before the subscription is
-        returned.
+        subscribes or starts streaming. The check is a read of its own, which holds no connection once it has returned,
+        so the stream that stays open for as long as the browser tab does holds nothing of the database.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -180,19 +205,5 @@ class JobService:
         :rtype: AbstractAsyncContextManager[AsyncIterator[DomainEvent]]
         :raises NotFoundError: If the project does not exist or belongs to another account.
         """
-        await self._check_owner(actor, project_id)
-        await self._uow.release_reads()
+        await self._uow.read(lambda repos: owned_project(repos.projects, actor, project_id))
         return self._stream.subscribe(project_id)
-
-    async def _check_owner(self, actor: Actor, project_id: ProjectId) -> None:
-        """Refuse a project the actor does not own as if it did not exist.
-
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :raises NotFoundError: If the project does not exist or belongs to another account.
-        """
-        project = await self._uow.projects.get(project_id)
-        if not project.is_owned_by(actor):
-            raise NotFoundError(project_id)

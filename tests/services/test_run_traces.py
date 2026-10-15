@@ -104,9 +104,9 @@ class TestRunSpans:
         actor, project, _ = await seeded_pages(fx_kit)
         recipe = await fx_kit.recipe_of(actor, project, Stage.GEOMETRY, RecipeKind.TEXT)
         refused = evolve(recipe.steps[0], params=fx_kit.params(**{UNKNOWN_PARAMETER: 1}))
-        uow = fx_kit.uow()
-        async with uow.change_book(project.id):
-            await uow.recipes.update(evolve(recipe, steps=(refused,)))
+        await fx_kit.uow().change_book(
+            project.id, lambda repos, _project: repos.recipes.update(evolve(recipe, steps=(refused,)))
+        )
         await run_geometry(fx_kit, actor, project)
         outcomes = [span.attributes.get(SpanAttribute.STEP_OUTCOME) for span in fx_kit.tracer.named(SpanName.STEP)]
         expect(outcomes == [StepOutcome.FAILED] * len(ORDER_KEYS))

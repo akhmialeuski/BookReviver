@@ -97,9 +97,9 @@ async def _add_job(database: InMemoryDatabase, book: Book, state: JobState) -> N
     :param state: State of the job.
     :type state: JobState
     """
-    uow = InMemoryUnitOfWork(database)
-    async with uow.change():
-        await uow.jobs.add(make_job(project_id=book.project.id, state=state))
+    await InMemoryUnitOfWork(database).change(
+        lambda repos: repos.jobs.add(make_job(project_id=book.project.id, state=state))
+    )
 
 
 class TestListSources:

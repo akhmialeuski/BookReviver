@@ -63,9 +63,8 @@ async def another_book(kit: ProcessingKit, actor: Actor) -> Project:
     :returns: The project.
     :rtype: Project
     """
-    uow = kit.uow()
-    async with uow.change():
-        return await uow.projects.add(make_project(owner_id=actor.account_id, title='Another book'))
+    project = make_project(owner_id=actor.account_id, title='Another book')
+    return await kit.uow().change(lambda repos: repos.projects.add(project))
 
 
 async def stored_recipe(kit: ProcessingKit, recipe: Recipe) -> Recipe:
@@ -78,7 +77,7 @@ async def stored_recipe(kit: ProcessingKit, recipe: Recipe) -> Recipe:
     :returns: The recipe as committed.
     :rtype: Recipe
     """
-    return await kit.uow().recipes.get(recipe.id)
+    return await kit.uow().read(lambda repos: repos.recipes.get(recipe.id))
 
 
 class TestProfileOrder:
@@ -94,10 +93,8 @@ class TestProfileOrder:
         """
         actor, _ = await fx_ordered_kit.seed_project()
         profile = await save_profile(fx_ordered_kit, actor)
-        assert (profile.order, (await fx_ordered_kit.uow().recipe_profiles.get(profile.id)).order) == (
-            OrderMode.USUAL,
-            OrderMode.USUAL,
-        )
+        stored = await fx_ordered_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id))
+        assert (profile.order, stored.order) == (OrderMode.USUAL, OrderMode.USUAL)
 
     async def test_a_profile_saved_in_the_free_order_keeps_a_step_off_a_required_place(
         self, fx_ordered_kit: ProcessingKit
@@ -109,7 +106,7 @@ class TestProfileOrder:
         """
         actor, _ = await fx_ordered_kit.seed_project()
         profile = await save_profile(fx_ordered_kit, actor, BROKEN_ORDER, order=OrderMode.FREE)
-        stored = await fx_ordered_kit.uow().recipe_profiles.get(profile.id)
+        stored = await fx_ordered_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id))
         assert ([step.processor_key for step in stored.steps], stored.order) == (
             [THIRD_KEY, SECOND_KEY],
             OrderMode.FREE,
@@ -144,7 +141,7 @@ class TestReplaceProfile:
         await fx_ordered_kit.profiles().set_default(actor, profile.id, is_default=True)
         draft = ProfileDraft(name=RENAMED, steps=BROKEN_ORDER, order=OrderMode.FREE)
         replaced = await fx_ordered_kit.profiles().replace(actor, profile.id, draft)
-        stored = await fx_ordered_kit.uow().recipe_profiles.get(profile.id)
+        stored = await fx_ordered_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id))
         assert stored == replaced
         assert (stored.name, stored.order, stored.stage, stored.is_default) == (
             RENAMED,
@@ -168,7 +165,8 @@ class TestReplaceProfile:
             await fx_ordered_kit.profiles().replace(
                 actor, profile.id, ProfileDraft(name=PROFILE_NAME, steps=BROKEN_ORDER)
             )
-        assert await fx_ordered_kit.uow().recipe_profiles.get(profile.id) == profile
+        stored = await fx_ordered_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id))
+        assert stored == profile
 
     async def test_a_step_of_another_stage_is_refused(self, fx_ordered_kit: ProcessingKit) -> None:
         """Reject a replacement whose steps belong to another stage than the profile's.

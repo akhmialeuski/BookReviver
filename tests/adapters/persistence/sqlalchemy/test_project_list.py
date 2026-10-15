@@ -21,7 +21,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from bookreviver.domain.entities import Project
     from bookreviver.domain.ids import AccountId
+    from bookreviver.ports.persistence import Repositories
 
 pytestmark = pytest.mark.anyio
 
@@ -39,18 +41,36 @@ async def _commit_books(database: SqlDatabase, owner_id: AccountId, count: int) 
     :param count: Number of books to commit.
     :type count: int
     """
-    async with database.sessions() as session:
-        uow = SqlAlchemyUnitOfWork(session)
+
+    def add_books(repos: Repositories) -> list[Project]:
+        """Store the projects, each with a running job.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :returns: The stored projects.
+        :rtype: list[Project]
+        """
         projects = []
-        async with uow.change():
-            for minutes in range(count):
-                project = await uow.projects.add(make_project(owner_id=owner_id, minutes=minutes))
-                await uow.jobs.add(make_job(project_id=project.id, state=JobState.RUNNING, minutes=minutes))
-                projects.append(project)
-        for project in projects:
-            async with uow.change_book(project.id):
-                page = await uow.pages.add(make_page(project_id=project.id))
-                await uow.page_stages.add(make_page_stage(page_id=page.id))
+        for minutes in range(count):
+            project = repos.projects.add(make_project(owner_id=owner_id, minutes=minutes))
+            repos.jobs.add(make_job(project_id=project.id, state=JobState.RUNNING, minutes=minutes))
+            projects.append(project)
+        return projects
+
+    def add_page(repos: Repositories, project: Project) -> None:
+        """Store a page of the book of the project, with a record of a stage.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :param project: Project whose book gets the page.
+        :type project: Project
+        """
+        page = repos.pages.add(make_page(project_id=project.id))
+        repos.page_stages.add(make_page_stage(page_id=page.id))
+
+    uow = SqlAlchemyUnitOfWork(database)
+    for project in await uow.change(add_books):
+        await uow.change_book(project.id, add_page)
 
 
 async def _statements_of_list(database: SqlDatabase, owner_id: AccountId, root: Path) -> int:
@@ -66,20 +86,19 @@ async def _statements_of_list(database: SqlDatabase, owner_id: AccountId, root: 
     :rtype: int
     """
     counter = StatementCounter()
-    event.listen(database.engine.sync_engine, STATEMENT_EVENT, counter)
+    event.listen(database.read_engine, STATEMENT_EVENT, counter)
     try:
-        async with database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            service = ProjectService(
-                uow=uow,
-                clock=FixedClock(EPOCH),
-                sources=LocalSourceStore(root=root),
-                assets=LocalAssetStore(root=root),
-                stages=StageSummaries(uow=uow, catalogue=FakeCatalogue([])),
-            )
-            books = await service.list(Actor(account_id=owner_id), SliceRequest(limit=WINDOW))
+        uow = SqlAlchemyUnitOfWork(database)
+        service = ProjectService(
+            uow=uow,
+            clock=FixedClock(EPOCH),
+            sources=LocalSourceStore(root=root),
+            assets=LocalAssetStore(root=root),
+            stages=StageSummaries(catalogue=FakeCatalogue([])),
+        )
+        books = await service.list(Actor(account_id=owner_id), SliceRequest(limit=WINDOW))
     finally:
-        event.remove(database.engine.sync_engine, STATEMENT_EVENT, counter)
+        event.remove(database.read_engine, STATEMENT_EVENT, counter)
     assert all(book.progress is not None for book in books.items)
     return counter.count
 

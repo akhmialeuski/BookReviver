@@ -11,11 +11,11 @@ earlier one.
 
 An edit computes nothing. It marks the stage of its page stale, and a run of the stage picks it up like any other.
 Saving and deleting an edit write the manual layer of the step to the history of the page, with the edit before and
-after as snapshots, so an undo can put either back. The rows of an edit are written in one ``change_book`` block, and
-the stale marks are announced after it.
+after as snapshots, so an undo can put either back. The rows of an edit are written by the work of one
+``change_book``, and the stale marks are announced after it.
 
 A mask arrives as an upload. It is written to a scratch key while its digest is worked out, since its final key holds
-the hash of the whole edit, and then copied to that key and the scratch removed, all before the block opens.
+the hash of the whole edit, and then copied to that key and the scratch removed, all before the transaction opens.
 """
 
 import hashlib
@@ -37,11 +37,11 @@ from bookreviver.services.recipes import find_step
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Actor, Page
+    from bookreviver.domain.entities import Actor, Page, PageStage, Project
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.domain.values import NewPageEdit, PageStepKey, ProcessorSpec
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore, IncomingFile
@@ -73,7 +73,7 @@ class EditService:
     ) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose blocks end every changing use case.
+        :param uow: Unit of work of the request, whose ``change_book`` ends every changing use case.
         :type uow: UnitOfWork
         :param assets: Store of the derived files, where masks are kept.
         :type assets: AssetStore
@@ -112,11 +112,24 @@ class EditService:
         :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its shape
                                         or its mask or has one it should not.
         """
+
+        def check(repos: Repositories) -> None:
+            """Require the project, the page and the edit to be as the request says.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the
+                                   stage has such a step.
+            :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its
+                                            shape or its mask or has one it should not.
+            """
+            owned_project(repos.projects, actor, project_id)
+            self._page(repos, project_id, key.page_id)
+            self._check(repos, project_id, key, edit, has_mask=mask is not None)
+
         # The edit is checked before its mask is written, so a refused request leaves no file, and checked again in the
-        # block, since the page or the recipe may have changed while the mask streamed in
-        await owned_project(self._uow.projects, actor, project_id)
-        await self._page(project_id, key.page_id)
-        await self._check(project_id, key, edit, has_mask=mask is not None)
+        # change, since the page or the recipe may have changed while the mask streamed in
+        await self._uow.read(check)
         keys = ProjectKeys(project_id)
         mask_digest, scratch = (None, None) if mask is None else await self._receive(keys, key, mask)
         edit_hash = PageEdit.hash_of(edit.geometry, mask_digest)
@@ -135,16 +148,32 @@ class EditService:
             edit_hash=edit_hash,
             updated_at=self._clock.now(),
         )
-        # A mask stays when the block fails, since its key holds the hash of the edit and an equal edit finds it there
-        async with self._uow.change_book(project_id) as project:
+
+        def work(repos: Repositories, project: Project) -> list[PageStage]:
+            """Check the request again, write the edit, and mark the stage stale.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param project: The project as the change finds it.
+            :type project: Project
+            :returns: The stage records that became stale.
+            :rtype: list[PageStage]
+            :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the
+                                   stage has such a step.
+            :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its
+                                            shape or its mask or has one it should not.
+            """
             require_owner(project, actor)
-            await self._page(project_id, key.page_id)
-            await self._check(project_id, key, edit, has_mask=mask is not None)
-            state = await self._uow.page_step_states.find(key) or PageStepState(
+            self._page(repos, project_id, key.page_id)
+            self._check(repos, project_id, key, edit, has_mask=mask is not None)
+            state = repos.page_step_states.find(key) or PageStepState(
                 page_id=key.page_id, stage=key.stage, step_id=key.step_id, updated_at=stored.updated_at
             )
-            await self._store(state, evolve(state, edit=stored, updated_at=stored.updated_at))
-            stale = await self._records.mark_stale(key.page_id, key.stage)
+            self._store(repos, state, evolve(state, edit=stored, updated_at=stored.updated_at))
+            return self._records.mark_stale(repos, key.page_id, key.stage)
+
+        # A mask stays when the change fails, since its key holds the hash of the edit and an equal edit finds it there
+        stale = await self._uow.change_book(project_id, work)
         await self._records.announce(project_id, stale)
         return stored
 
@@ -163,10 +192,22 @@ class EditService:
         :rtype: Sequence[PageEdit]
         :raises NotFoundError: If the actor has no such project, or the project has no such page.
         """
-        await owned_project(self._uow.projects, actor, project_id)
-        await self._page(project_id, page_id)
-        states = await self._uow.page_step_states.list_for_page(page_id, stage)
-        return [state.edit for state in states if state.edit is not None]
+
+        def work(repos: Repositories) -> list[PageEdit]:
+            """Read the edits of the stage of the page.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The edits of the stage.
+            :rtype: list[PageEdit]
+            :raises NotFoundError: If the actor has no such project, or the project has no such page.
+            """
+            owned_project(repos.projects, actor, project_id)
+            self._page(repos, project_id, page_id)
+            states = repos.page_step_states.list_for_page(page_id, stage)
+            return [state.edit for state in states if state.edit is not None]
+
+        return await self._uow.read(work)
 
     async def delete(self, actor: Actor, project_id: ProjectId, key: PageStepKey) -> None:
         """Delete the edit a step reads, and mark the stage stale.
@@ -182,38 +223,57 @@ class EditService:
         :raises NotFoundError: If the actor has no such project, the project has no such page, or the step has no edit
                                there.
         """
-        async with self._uow.change_book(project_id) as project:
+
+        def work(repos: Repositories, project: Project) -> list[PageStage]:
+            """Delete the edit from the state of the step, and mark the stage stale.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param project: The project as the change finds it.
+            :type project: Project
+            :returns: The stage records that became stale.
+            :rtype: list[PageStage]
+            :raises NotFoundError: If the actor has no such project, the project has no such page, or the step has no
+                                   edit there.
+            """
             require_owner(project, actor)
-            await self._page(project_id, key.page_id)
-            state = await self._uow.page_step_states.find(key)
+            self._page(repos, project_id, key.page_id)
+            state = repos.page_step_states.find(key)
             if state is None or state.edit is None:
                 raise NotFoundError(key)
-            await self._store(state, evolve(state, edit=None, updated_at=self._clock.now()))
-            stale = await self._records.mark_stale(key.page_id, key.stage)
+            self._store(repos, state, evolve(state, edit=None, updated_at=self._clock.now()))
+            return self._records.mark_stale(repos, key.page_id, key.stage)
+
+        stale = await self._uow.change_book(project_id, work)
         await self._records.announce(project_id, stale)
 
-    async def _store(self, state: PageStepState, changed: PageStepState) -> None:
+    @staticmethod
+    def _store(repos: Repositories, state: PageStepState, changed: PageStepState) -> None:
         """Write the state with the edit saved or deleted, and the change of the manual layer to the history.
 
-        It writes in the block of its caller and opens none. A state with neither a setting nor an edit left is
-        deleted. An edit equal to the stored one writes no change.
+        It writes through the repositories of the work of its caller. A state with neither a setting nor an edit left
+        is deleted. An edit equal to the stored one writes no change.
 
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
         :param state: The state as it is stored, or an empty one.
         :type state: PageStepState
         :param changed: The state after the edit was saved or deleted.
         :type changed: PageStepState
         """
         if changed.is_empty:
-            await self._uow.page_step_states.delete(state.key)
+            repos.page_step_states.delete(state.key)
         else:
-            await self._uow.page_step_states.save(changed)
+            repos.page_step_states.save(changed)
         change = PageStepChange.between(state, changed, StepLayer.HAND, ChangeSource.USER)
         if change.before != change.after:
-            await self._uow.page_step_changes.add(change)
+            repos.page_step_changes.add(change)
 
-    async def _spec(self, project_id: ProjectId, key: PageStepKey) -> ProcessorSpec:
+    def _spec(self, repos: Repositories, project_id: ProjectId, key: PageStepKey) -> ProcessorSpec:
         """Find the spec of the processor of a step, by the step in the recipes of the stage.
 
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param key: The page, the stage and the step that reads the edit.
@@ -222,12 +282,15 @@ class EditService:
         :rtype: ProcessorSpec
         :raises NotFoundError: If no recipe of the stage has the step, or its processor is not installed.
         """
-        step = await find_step(self._uow.recipes, project_id, key)
+        step = find_step(repos.recipes, project_id, key)
         return self._catalogue.get(step.processor_key).spec
 
-    async def _page(self, project_id: ProjectId, page_id: PageId) -> Page:
+    @staticmethod
+    def _page(repos: Repositories, project_id: ProjectId, page_id: PageId) -> Page:
         """Return a page of the project.
 
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param page_id: Identifier of the page.
@@ -236,14 +299,18 @@ class EditService:
         :rtype: Page
         :raises NotFoundError: If the page does not exist or belongs to another project.
         """
-        page = await self._uow.pages.get(page_id)
+        page = repos.pages.get(page_id)
         if page.project_id != project_id:
             raise NotFoundError(page_id)
         return page
 
-    async def _check(self, project_id: ProjectId, key: PageStepKey, edit: NewPageEdit, *, has_mask: bool) -> None:
+    def _check(
+        self, repos: Repositories, project_id: ProjectId, key: PageStepKey, edit: NewPageEdit, *, has_mask: bool
+    ) -> None:
         """Check that the edit is the one the processor of the step reads.
 
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param key: The page, the stage and the step that reads the edit.
@@ -256,7 +323,7 @@ class EditService:
         :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its shape
                                         or its mask or has one it should not.
         """
-        spec = await self._spec(project_id, key)
+        spec = self._spec(repos, project_id, key)
         if spec.editor is not edit.kind:
             err_msg = WRONG_EDITOR.format(key=spec.key, expected=spec.editor.label, actual=edit.kind.label)
             raise InvalidParametersError(err_msg)

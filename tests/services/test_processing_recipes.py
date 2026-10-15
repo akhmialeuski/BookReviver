@@ -8,6 +8,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
+from bookreviver.adapters.persistence.memory.unit_of_work import InMemoryRecipeRepository
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobKind, JobState, PageKind, RecipeKind, Stage, StageState
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
@@ -25,25 +26,26 @@ from bookreviver.domain.values import (
 from tests.helpers.builders import make_page_stage
 from tests.helpers.fake_processing import RefusingJobQueue
 from tests.helpers.processing import ProcessingKit
-from tests.helpers.processors import FakeProcessor
+from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from bookreviver.adapters.storage import LocalAssetStore
-    from bookreviver.domain.entities import Project, Recipe
-    from bookreviver.domain.ids import ProjectId
-    from bookreviver.ports.persistence import RecipeRepository
+    from bookreviver.domain.entities import Page, PageStage, Project, Recipe
+    from bookreviver.ports.persistence import Repositories
 
 pytestmark = pytest.mark.anyio
 
 FAKE_KEY: str = FakeProcessor.spec.key
+DESKEW_KEY: str = 'geometry.deskew'
+DEWARP_KEY: str = 'geometry.dewarp'
 # Tasks that ask for the recipes of one stage at the same time
 TASKS: int = 2
 GEOMETRY_STEPS: tuple[str, ...] = (
     'geometry.perspective',
-    'geometry.deskew',
-    'geometry.dewarp',
+    DESKEW_KEY,
+    DEWARP_KEY,
     'geometry.crop',
     'geometry.normalize',
 )
@@ -58,6 +60,15 @@ TEXT_CLEANUP_STEPS: tuple[str, ...] = (
 )
 TEXT_STRENGTH: int = 2
 EVERYTHING: SliceRequest = SliceRequest(limit=100)
+BUSY_REASON: str = 'project is busy'
+METHOD_PARAMETER: str = 'method'
+MODE_PARAMETER: str = 'mode'
+REMOVED_PARAMETER: str = 'removed'
+# The methods of the default recipes
+PROJECTION: str = 'projection'
+TEXT_LINES: str = 'text-lines'
+HOUGH: str = 'hough'
+PAGE_EDGES: str = 'page-edges'
 
 
 async def recipes_of(kit: ProcessingKit, actor: Actor, project: Project, stage: Stage) -> dict[RecipeKind, Recipe]:
@@ -78,6 +89,45 @@ async def recipes_of(kit: ProcessingKit, actor: Actor, project: Project, stage: 
     return {recipe.kind: recipe for recipe in listed.items}
 
 
+async def save_stage_records(kit: ProcessingKit, project: Project, *records: PageStage) -> None:
+    """Store records of the Geometry stage, as earlier runs of the pages would have.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param project: Project owning the pages of the records.
+    :type project: Project
+    :param records: The records to store.
+    :type records: PageStage
+    """
+
+    def save(repos: Repositories, _project: Project) -> None:
+        """Save the records.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :param _project: Project of the book, which the work does not need.
+        :type _project: Project
+        """
+        for record in records:
+            repos.page_stages.save(record)
+
+    await kit.uow().change_book(project.id, save)
+
+
+async def geometry_state(kit: ProcessingKit, page: Page) -> StageState:
+    """Read the state of the record of the Geometry stage of a page as committed.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param page: The page.
+    :type page: Page
+    :returns: The state of the record.
+    :rtype: StageState
+    """
+    record = await kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)))
+    return record.state
+
+
 class TestRecipes:
     """Tests for ProcessingService.recipes."""
 
@@ -93,7 +143,7 @@ class TestRecipes:
         expect(
             all(
                 [(step.processor_key, dict(step.params)) for step in recipe.steps]
-                == [(FAKE_KEY, {'strength': 1, 'fail': False})]
+                == [(FAKE_KEY, {STRENGTH_PARAMETER: 1, FAILING_PARAMETER: False})]
                 for recipe in recipes.values()
             )
         )
@@ -112,11 +162,11 @@ class TestRecipes:
         """
         actor, project = await fx_cv_kit.seed_project()
         recipe = (await recipes_of(fx_cv_kit, actor, project, Stage.GEOMETRY))[RecipeKind.TEXT]
-        methods = {step.processor_key: step.params.get('method') for step in recipe.steps}
+        methods = {step.processor_key: step.params.get(METHOD_PARAMETER) for step in recipe.steps}
         expect([step.processor_key for step in recipe.steps] == list(GEOMETRY_STEPS))
         expect(all(step.enabled for step in recipe.steps))
-        expect(methods['geometry.deskew'] == 'projection')
-        expect(methods['geometry.dewarp'] == 'text-lines')
+        expect(methods[DESKEW_KEY] == PROJECTION)
+        expect(methods[DEWARP_KEY] == TEXT_LINES)
         assert_expectations()
 
     async def test_default_geometry_recipes_follow_lines_of_text_or_the_edges_of_the_sheet(
@@ -131,16 +181,16 @@ class TestRecipes:
         recipes = await recipes_of(fx_cv_kit, actor, project, Stage.GEOMETRY)
         methods = {
             kind: (
-                {step.processor_key: step.params.get('method') for step in recipe.steps}['geometry.deskew'],
-                {step.processor_key: step.params.get('method') for step in recipe.steps}['geometry.dewarp'],
+                {step.processor_key: step.params.get(METHOD_PARAMETER) for step in recipe.steps}[DESKEW_KEY],
+                {step.processor_key: step.params.get(METHOD_PARAMETER) for step in recipe.steps}[DEWARP_KEY],
             )
             for kind, recipe in recipes.items()
         }
         assert methods == {
-            RecipeKind.TEXT: ('projection', 'text-lines'),
-            RecipeKind.COLOR_PICTURE: ('hough', 'page-edges'),
-            RecipeKind.BW_PICTURE: ('hough', 'page-edges'),
-            RecipeKind.BLANK: ('projection', 'text-lines'),
+            RecipeKind.TEXT: (PROJECTION, TEXT_LINES),
+            RecipeKind.COLOR_PICTURE: (HOUGH, PAGE_EDGES),
+            RecipeKind.BW_PICTURE: (HOUGH, PAGE_EDGES),
+            RecipeKind.BLANK: (PROJECTION, TEXT_LINES),
         }
 
     async def test_default_cleanup_recipes_keep_pictures_in_tones_and_make_text_black_and_white(
@@ -158,10 +208,13 @@ class TestRecipes:
         recipes = await recipes_of(fx_cv_kit, actor, project, Stage.CLEANUP)
         text, picture = recipes[RecipeKind.TEXT], recipes[RecipeKind.BW_PICTURE]
         expect([step.processor_key for step in text.steps] == list(TEXT_CLEANUP_STEPS))
-        expect([(step.params.get('mode'), step.params.get('method')) for step in text.steps[:1]] == [('bw', 'sauvola')])
-        expect(text.steps[1].params['strength'] == TEXT_STRENGTH)
+        expect(
+            [(step.params.get(MODE_PARAMETER), step.params.get(METHOD_PARAMETER)) for step in text.steps[:1]]
+            == [('bw', 'sauvola')]
+        )
+        expect(text.steps[1].params[STRENGTH_PARAMETER] == TEXT_STRENGTH)
         expect([step.processor_key for step in picture.steps] == [CLEANUP_STEPS[0], CLEANUP_STEPS[2]])
-        expect(picture.steps[0].params['mode'] == 'gray')
+        expect(picture.steps[0].params[MODE_PARAMETER] == 'gray')
         expect([step.processor_key for step in recipes[RecipeKind.BLANK].steps] == list(TEXT_CLEANUP_STEPS))
         assert_expectations()
 
@@ -176,15 +229,11 @@ class TestRecipes:
         _actor, project = await fx_cv_kit.seed_project()
         pages = []
         for index, kind in enumerate((PageKind.TEXT, PageKind.PLATE, PageKind.FRONTISPIECE)):
-            page, _ = await fx_cv_kit.seed_scan_page(project, order_key=f'a{index}')
-            uow = fx_cv_kit.uow()
-            async with uow.change_book(project.id):
-                await uow.pages.update(evolve(page, kind=kind))
+            page, _ = await fx_cv_kit.seed_scan_page(project, order_key=f'a{index}', kind=kind)
             pages.append(page)
         reader = fx_cv_kit.uow()
-        picked = await fx_cv_kit.parts(reader).recipes.for_pages(
-            project.id, Stage.CLEANUP, [await reader.pages.get(page.id) for page in pages]
-        )
+        stored_pages = await reader.read(lambda repos: repos.pages.list_by_ids(project.id, [page.id for page in pages]))
+        picked = await fx_cv_kit.parts(reader).recipes.for_pages(project.id, Stage.CLEANUP, stored_pages)
         assert [picked[page.id].kind for page in pages] == [
             RecipeKind.TEXT,
             RecipeKind.COLOR_PICTURE,
@@ -205,8 +254,16 @@ class TestRecipes:
     @pytest.mark.parametrize(
         ('stored', 'listed'),
         [
-            pytest.param({'strength': 1}, {'strength': 1, 'fail': False}, id='a-parameter-the-processor-gained'),
-            pytest.param({'strength': 1, 'removed': 5}, {'strength': 1, 'removed': 5}, id='a-parameter-it-refuses'),
+            pytest.param(
+                {STRENGTH_PARAMETER: 1},
+                {STRENGTH_PARAMETER: 1, FAILING_PARAMETER: False},
+                id='a-parameter-the-processor-gained',
+            ),
+            pytest.param(
+                {STRENGTH_PARAMETER: 1, REMOVED_PARAMETER: 5},
+                {STRENGTH_PARAMETER: 1, REMOVED_PARAMETER: 5},
+                id='a-parameter-it-refuses',
+            ),
         ],
     )
     async def test_steps_are_listed_in_the_form_their_processor_writes_today(
@@ -226,9 +283,10 @@ class TestRecipes:
         """
         actor, project = await fx_kit.seed_project()
         text = (await recipes_of(fx_kit, actor, project, Stage.GEOMETRY))[RecipeKind.TEXT]
-        uow = fx_kit.uow()
-        async with uow.change_book(project.id):
-            await uow.recipes.update(evolve(text, steps=(evolve(text.steps[0], params=stored),)))
+        await fx_kit.uow().change_book(
+            project.id,
+            lambda repos, _project: repos.recipes.update(evolve(text, steps=(evolve(text.steps[0], params=stored),))),
+        )
         again = (await recipes_of(fx_kit, actor, project, Stage.GEOMETRY))[RecipeKind.TEXT]
         assert [dict(step.params) for step in again.steps] == [listed]
 
@@ -265,10 +323,10 @@ class TestSaveRecipe:
         """
         actor, project = await fx_kit.seed_project()
         text = (await recipes_of(fx_kit, actor, project, Stage.GEOMETRY))[RecipeKind.TEXT]
-        draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'strength': 5})])
+        draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 5})])
         saved = await fx_kit.service().save_recipe(actor, project.id, RecipeKey(Stage.GEOMETRY, text.id), draft)
         expect((saved.id, saved.kind) == (text.id, RecipeKind.TEXT))
-        expect(dict(saved.steps[0].params) == {'strength': 5, 'fail': False})
+        expect(dict(saved.steps[0].params) == {STRENGTH_PARAMETER: 5, FAILING_PARAMETER: False})
         assert_expectations()
 
     @pytest.mark.parametrize(
@@ -311,13 +369,10 @@ class TestSaveRecipe:
         page, _ = await fx_kit.seed_scan_page(project)
         await fx_kit.seed_base_version(page)
         recipe = (await recipes_of(fx_kit, actor, project, Stage.GEOMETRY))[RecipeKind.TEXT]
-        uow = fx_kit.uow()
-        async with uow.change_book(project.id):
-            await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id))
-        draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'strength': 2})])
+        await save_stage_records(fx_kit, project, make_page_stage(page_id=page.id, recipe_id=recipe.id))
+        draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})])
         await fx_kit.service().save_recipe(actor, project.id, RecipeKey(Stage.GEOMETRY, recipe.id), draft)
-        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
-        expect(record.state is StageState.STALE)
+        expect(await geometry_state(fx_kit, page) is StageState.STALE)
         expect(any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
         expect(fx_kit.recording.enqueued == [])
         assert_expectations()
@@ -332,18 +387,17 @@ class TestSaveRecipe:
         first, _ = await fx_kit.seed_scan_page(project, order_key='a0')
         second, _ = await fx_kit.seed_scan_page(project, order_key='a1')
         recipes = await recipes_of(fx_kit, actor, project, Stage.GEOMETRY)
-        uow = fx_kit.uow()
-        async with uow.change_book(project.id):
-            await uow.page_stages.save(make_page_stage(page_id=first.id, recipe_id=recipes[RecipeKind.TEXT].id))
-            await uow.page_stages.save(make_page_stage(page_id=second.id, recipe_id=recipes[RecipeKind.BW_PICTURE].id))
-        draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'strength': 9})])
+        await save_stage_records(
+            fx_kit,
+            project,
+            make_page_stage(page_id=first.id, recipe_id=recipes[RecipeKind.TEXT].id),
+            make_page_stage(page_id=second.id, recipe_id=recipes[RecipeKind.BW_PICTURE].id),
+        )
+        draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 9})])
         await fx_kit.service().save_recipe(
             actor, project.id, RecipeKey(Stage.GEOMETRY, recipes[RecipeKind.TEXT].id), draft
         )
-        reader = fx_kit.uow()
-        states = [
-            (await reader.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))).state for page in (first, second)
-        ]
+        states = [await geometry_state(fx_kit, page) for page in (first, second)]
         assert states == [StageState.STALE, StageState.FRESH]
 
     async def test_switching_a_step_off_keeps_its_parameters_and_marks_the_pages_stale(
@@ -358,17 +412,17 @@ class TestSaveRecipe:
         page, _ = await fx_kit.seed_scan_page(project)
         await fx_kit.seed_base_version(page)
         recipe = (await recipes_of(fx_kit, actor, project, Stage.GEOMETRY))[RecipeKind.TEXT]
-        uow = fx_kit.uow()
-        async with uow.change_book(project.id):
-            await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id))
-        steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={'strength': 9}, enabled=False)]
+        await save_stage_records(fx_kit, project, make_page_stage(page_id=page.id, recipe_id=recipe.id))
+        steps = [
+            Step(processor_key=FAKE_KEY),
+            Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 9}, enabled=False),
+        ]
         await fx_kit.service().save_recipe(
             actor, project.id, RecipeKey(Stage.GEOMETRY, recipe.id), RecipeDraft(steps=steps)
         )
         stored = (await recipes_of(fx_kit, actor, project, Stage.GEOMETRY))[RecipeKind.TEXT]
-        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
-        expect([(step.enabled, step.params['strength']) for step in stored.steps] == [(True, 1), (False, 9)])
-        expect(record.state is StageState.STALE)
+        expect([(step.enabled, step.params[STRENGTH_PARAMETER]) for step in stored.steps] == [(True, 1), (False, 9)])
+        expect(await geometry_state(fx_kit, page) is StageState.STALE)
         assert_expectations()
 
     async def test_recipe_of_another_stage_is_not_found_and_stays_as_it_was(self, fx_kit: ProcessingKit) -> None:
@@ -379,10 +433,10 @@ class TestSaveRecipe:
         """
         actor, project = await fx_kit.seed_project()
         recipe = (await recipes_of(fx_kit, actor, project, Stage.GEOMETRY))[RecipeKind.TEXT]
-        hijacked = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'strength': 9})])
+        hijacked = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 9})])
         with pytest.raises(NotFoundError):
             await fx_kit.service().save_recipe(actor, project.id, RecipeKey(Stage.CLEANUP, recipe.id), hijacked)
-        assert (await fx_kit.uow().recipes.get(recipe.id)).steps == recipe.steps
+        assert (await fx_kit.uow().read(lambda repos: repos.recipes.get(recipe.id))).steps == recipe.steps
 
 
 class TestStartRun:
@@ -398,7 +452,7 @@ class TestStartRun:
         page, _ = await fx_kit.seed_scan_page(project)
         run = StageRun(stage=Stage.GEOMETRY, page_ids=(page.id,))
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, run)
-        stored = await fx_kit.uow().jobs.get(job.id)
+        stored = await fx_kit.uow().read(lambda repos: repos.jobs.get(job.id))
         expect((stored.kind, stored.state) == (JobKind.RUN_STAGE, JobState.QUEUED))
         expect(StageRun.from_map(stored.params) == run)
         expect(fx_kit.recording.enqueued == [job])
@@ -412,7 +466,7 @@ class TestStartRun:
         """
         actor, project = await fx_kit.seed_project()
         await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        with pytest.raises(ConflictError, match='project is busy'):
+        with pytest.raises(ConflictError, match=BUSY_REASON):
             await fx_kit.service().start_run(actor, project.id, Stage.CLEANUP, StageRun(stage=Stage.CLEANUP))
 
     async def test_preview_and_collection_are_refused_while_a_run_is_active(self, fx_kit: ProcessingKit) -> None:
@@ -427,9 +481,9 @@ class TestStartRun:
         preview = StepPreview(
             page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=FAKE_KEY),), step_index=0
         )
-        with pytest.raises(ConflictError, match='project is busy'):
+        with pytest.raises(ConflictError, match=BUSY_REASON):
             await fx_kit.service().start_preview(actor, project.id, preview)
-        with pytest.raises(ConflictError, match='project is busy'):
+        with pytest.raises(ConflictError, match=BUSY_REASON):
             await fx_kit.service().start_collection(actor, project.id)
 
     async def test_run_waits_while_a_collection_is_active(self, fx_kit: ProcessingKit) -> None:
@@ -480,14 +534,15 @@ class TestStartRun:
         kit = ProcessingKit(fx_asset_store, queue=RefusingJobQueue())
         actor, project = await kit.seed_project()
         job = await kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        assert (await kit.uow().jobs.get(job.id)).state is JobState.FAILED
+        assert (await kit.uow().read(lambda repos: repos.jobs.get(job.id))).state is JobState.FAILED
 
 
 class ReadGate:
     """Holds the first read of the recipes of each unit of work until every one of them has made it.
 
-    A request that finds no recipes stores the defaults in a block of its own, so two requests that both read none
-    meet in that block. The gate makes them both read before either of them stores, which is the order that matters.
+    A request that finds no recipes stores the defaults in a ``change_book`` of its own, so two requests that both read
+    none meet in that change. The gate makes them both read before either of them stores, which is the order that
+    matters.
 
     :ivar reads: How many units of work have made their first read.
     """
@@ -505,26 +560,27 @@ class ReadGate:
     def watch(self, uow: InMemoryUnitOfWork, monkeypatch: pytest.MonkeyPatch) -> None:
         """Hold the first read of the recipes of a stage that the unit of work makes.
 
+        The recipe book reads in a transaction that only reads before it opens a change, and a unit of work makes no
+        other read while it asks for the recipes of a stage, so the first read of the unit of work is the one held.
+
         :param uow: Unit of work of one of the tasks.
         :type uow: InMemoryUnitOfWork
-        :param monkeypatch: Fixture that restores the repository when the test ends.
+        :param monkeypatch: Fixture that restores the unit of work when the test ends.
         :type monkeypatch: pytest.MonkeyPatch
         """
-        read = uow.recipes.list_for_stage
+        read = uow.read
         waited = False
 
-        async def gated(project_id: ProjectId, stage: Stage) -> Sequence[Recipe]:
-            """Read the recipes, and wait on the first call until every unit of work has read.
+        async def gated[T](work: Callable[[Repositories], T]) -> T:
+            """Read as the unit of work does, and wait on the first call until every unit of work has read.
 
-            :param project_id: Project owning the recipes.
-            :type project_id: ProjectId
-            :param stage: The stage.
-            :type stage: Stage
-            :returns: The recipes the wrapped read found.
-            :rtype: Sequence[Recipe]
+            :param work: Function over the repositories of the transaction.
+            :type work: Callable[[Repositories], T]
+            :returns: What the work returns.
+            :rtype: T
             """
             nonlocal waited
-            found = await read(project_id, stage)
+            found = await read(work)
             if not waited:
                 waited = True
                 self.reads += 1
@@ -533,23 +589,23 @@ class ReadGate:
                 await self._all_read.wait()
             return found
 
-        monkeypatch.setattr(uow.recipes, 'list_for_stage', gated)
+        monkeypatch.setattr(uow, 'read', gated)
 
 
-class TestDefaultRecipesInBlocks:
+class TestDefaultRecipesInChanges:
     """Tests for the creation of the default recipes by tasks that ask for the stage at the same time."""
 
     async def test_two_tasks_that_both_found_no_recipes_store_one_set(
         self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Verify the task that enters the block second reads again, finds the recipes, and adds none.
+        """Verify the task that enters the change second reads again, finds the recipes, and adds none.
 
-        Both tasks have read an empty stage before either enters its block, which the gate proves, so the second one
-        reaches the block with nothing in hand but a stale read. It must come out with the recipes of the first.
+        Both tasks have read an empty stage before either enters its change, which the gate proves, so the second one
+        reaches the change with nothing in hand but a stale read. It must come out with the recipes of the first.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param monkeypatch: Fixture that restores the repositories.
+        :param monkeypatch: Fixture that restores the units of work and the repository.
         :type monkeypatch: pytest.MonkeyPatch
         """
         _, project = await fx_kit.seed_project()
@@ -558,23 +614,22 @@ class TestDefaultRecipesInBlocks:
         for unit in units:
             gate.watch(unit, monkeypatch)
         stored_sets: list[int] = []
-        repository = type(units[0].recipes)
-        add_many = repository.add_many
+        add_many = InMemoryRecipeRepository.add_many
 
-        async def counting(recipes: RecipeRepository, entities: Sequence[Recipe]) -> Sequence[Recipe]:
+        def counting(recipes: InMemoryRecipeRepository, entities: Sequence[Recipe]) -> Sequence[Recipe]:
             """Count the recipes each call of ``add_many`` stores, then store them.
 
             :param recipes: The repository the call was made on.
-            :type recipes: RecipeRepository
+            :type recipes: InMemoryRecipeRepository
             :param entities: The recipes to store.
             :type entities: Sequence[Recipe]
             :returns: The recipes as stored.
             :rtype: Sequence[Recipe]
             """
             stored_sets.append(len(entities))
-            return await add_many(recipes, entities)
+            return add_many(recipes, entities)
 
-        monkeypatch.setattr(repository, 'add_many', counting)
+        monkeypatch.setattr(InMemoryRecipeRepository, 'add_many', counting)
         answers: list[list[Recipe]] = []
 
         async def ask(unit: InMemoryUnitOfWork) -> None:
@@ -588,7 +643,7 @@ class TestDefaultRecipesInBlocks:
         async with anyio.create_task_group() as tasks:
             for unit in units:
                 tasks.start_soon(ask, unit)
-        stored = await fx_kit.uow().recipes.list_for_stage(project.id, Stage.GEOMETRY)
+        stored = await fx_kit.uow().read(lambda repos: repos.recipes.list_for_stage(project.id, Stage.GEOMETRY))
         expect(gate.reads == TASKS)
         expect(stored_sets == [len(RecipeKind)])
         expect(len(stored) == len(RecipeKind))

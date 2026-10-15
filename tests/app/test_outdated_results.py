@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from dishka import Provider
 
     from bookreviver.domain.entities import Page, PageStage, PageVersion, Project, Scan, Source
+    from bookreviver.ports.persistence import Repositories
 
 pytestmark = pytest.mark.anyio
 
@@ -115,10 +116,19 @@ async def fx_extra_providers(fx_fakes: JobFakes, fx_book: Book) -> Sequence[Prov
         scans=[fx_book.scan],
         versions=fx_book.versions,
     )
-    uow = InMemoryUnitOfWork(fx_fakes.database)
-    async with uow.change_book(fx_book.project.id):
+
+    def save_records(repos: Repositories, _project: Project) -> None:
+        """Save the fresh records of the book.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :param _project: Project of the book, which the work does not need.
+        :type _project: Project
+        """
         for record in fx_book.records:
-            await uow.page_stages.save(record)
+            repos.page_stages.save(record)
+
+    await InMemoryUnitOfWork(fx_fakes.database).change_book(fx_book.project.id, save_records)
     return (JobFakesProvider(fx_fakes), ProcessingFakesProvider())
 
 
@@ -139,11 +149,11 @@ class TestStart:
         :param fx_book: The stored book.
         :type fx_book: Book
         """
-        uow = InMemoryUnitOfWork(fx_fakes.database)
-
-        states = [
-            (await uow.page_stages.get(PageStageKey(fx_book.page.id, stage))).state
-            for stage in (Stage.PAGE_SPLIT, Stage.GEOMETRY)
-        ]
+        states = await InMemoryUnitOfWork(fx_fakes.database).read(
+            lambda repos: [
+                repos.page_stages.get(PageStageKey(fx_book.page.id, stage)).state
+                for stage in (Stage.PAGE_SPLIT, Stage.GEOMETRY)
+            ]
+        )
 
         assert (states, fx_fakes.events.published) == ([StageState.FRESH, StageState.STALE], [])

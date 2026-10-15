@@ -9,6 +9,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.enums import (
     JobKind,
     JobState,
@@ -26,15 +27,15 @@ from bookreviver.domain.geometry import Rect
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.margins import MM_PER_INCH
 from bookreviver.domain.values import PageStageKey, ProcessorRef, RecipeDraft, StageRun, Step
-from bookreviver.services.book_measure import MEASURE_OUTDATED, BookBlocks
+from bookreviver.services.book_measure import MEASURE_OUTDATED
 from tests.helpers.builders import EPOCH, make_page_stage, make_page_version
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Callable
 
-    from bookreviver.domain.entities import Actor, Job, Page, Project, Recipe
-    from bookreviver.domain.ids import PageId, ProjectId
-    from bookreviver.services.book_measure import BlockMeasure
+    from bookreviver.domain.entities import Actor, Job, Page, PageStage, Project, Recipe
+    from bookreviver.domain.ids import ProjectId
+    from bookreviver.ports.persistence import Repositories
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -117,10 +118,19 @@ async def placed_page(
         state=VersionState.READY,
         data=data,
     )
-    uow = kit.uow()
-    async with uow.change_book(project.id):
-        await uow.page_versions.add(normalize)
-        await uow.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id, head_version_id=normalize.id))
+
+    def add_normalize(repos: Repositories, _project: Project) -> None:
+        """Add the normalize version and the record of the Geometry stage that has it as its current version.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :param _project: Project of the book, which the work does not need.
+        :type _project: Project
+        """
+        repos.page_versions.add(normalize)
+        repos.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id, head_version_id=normalize.id))
+
+    await kit.uow().change_book(project.id, add_normalize)
     return page
 
 
@@ -166,7 +176,20 @@ async def measure(kit: ProcessingKit, actor: Actor, project: Project) -> Job:
     """
     job = await kit.service().start_measure(actor, project.id)
     await kit.jobs().measure_book(job.id)
-    return await kit.uow().jobs.get(job.id)
+    return await kit.uow().read(lambda repos: repos.jobs.get(job.id))
+
+
+async def geometry_record(kit: ProcessingKit, page: Page) -> PageStage:
+    """Read the committed record of the Geometry stage of a page.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param page: The page.
+    :type page: Page
+    :returns: The record.
+    :rtype: PageStage
+    """
+    return await kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)))
 
 
 async def normalize_params(
@@ -384,7 +407,7 @@ class TestMeasureBook:
             for index, (width, height, line_height) in enumerate(BLOCKS)
         ]
         await measure(fx_cv_kit, actor, project)
-        records = [await fx_cv_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)) for page in pages]
+        records = [await geometry_record(fx_cv_kit, page) for page in pages]
         announced = [event for event in fx_cv_kit.events.published if isinstance(event, PageStageChanged)]
         expect(all(record.state is StageState.STALE for record in records))
         expect({event.stage.page_id for event in announced} == {page.id for page in pages})
@@ -400,15 +423,24 @@ class TestMeasureBook:
         recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         page = await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(300, 600, 30))
         await measure(fx_cv_kit, actor, project)
-        written = await fx_cv_kit.uow().recipes.get(recipe.id)
-        uow = fx_cv_kit.uow()
-        async with uow.change_book(project.id):
-            await uow.page_stages.save(
-                evolve(await uow.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)), state=StageState.FRESH)
+        written = await fx_cv_kit.uow().read(lambda repos: repos.recipes.get(recipe.id))
+
+        def make_fresh(repos: Repositories, _project: Project) -> None:
+            """Make the record of the Geometry stage of the page fresh again.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: Project of the book, which the work does not need.
+            :type _project: Project
+            """
+            repos.page_stages.save(
+                evolve(repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)), state=StageState.FRESH)
             )
+
+        await fx_cv_kit.uow().change_book(project.id, make_fresh)
         job = await measure(fx_cv_kit, actor, project)
-        again = await fx_cv_kit.uow().recipes.get(recipe.id)
-        record = await fx_cv_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        again = await fx_cv_kit.uow().read(lambda repos: repos.recipes.get(recipe.id))
+        record = await geometry_record(fx_cv_kit, page)
         expect(job.state is JobState.SUCCEEDED)
         expect(again.steps == written.steps)
         expect(again.updated_at == written.updated_at)
@@ -468,7 +500,7 @@ class TestMeasureBook:
         ]
         page = await placed_page(fx_cv_kit, project, recipes[0], FIRST_KEY, block_data(300, 600, 30))
         job = await measure(fx_cv_kit, actor, project)
-        record = await fx_cv_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        record = await geometry_record(fx_cv_kit, page)
         expect(job.state is JobState.FAILED)
         expect(NORMALIZE_KEY in job.error)
         expect(record.state is StageState.FRESH)
@@ -615,7 +647,7 @@ class TestMeasureIsProcessing:
 
 
 class TestMeasureApplyStep:
-    """Tests for the block that writes the measures, which reads the recipes again."""
+    """Tests for the change that writes the measures, which reads the recipes again."""
 
     @pytest.mark.parametrize(
         'kind',
@@ -629,13 +661,15 @@ class TestMeasureApplyStep:
     ) -> None:
         """Verify the measure does not write over a recipe a user saved after the measure read it, in any recipe.
 
-        The recipe is saved after the boxes of the pages are read and before the block that writes the page size, so
-        the measure was made from steps that are not the ones stored any more. The recipe of the kind that comes first
-        is written first inside the block, and the block is rolled back as a whole when a later one is found changed.
+        The boxes of the pages are read by a transaction that only reads, and the measure writes in the first
+        ``change_book`` that follows it, which no other change of the job precedes. The recipe is saved just before that
+        ``change_book`` begins, so the measure was made from steps that are not the ones stored any more. The recipe of
+        the kind that comes first is written first inside the change, and the change is rolled back as a whole when a
+        later one is found changed.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
-        :param monkeypatch: Fixture that restores the reader of the boxes.
+        :param monkeypatch: Fixture that restores the unit of work.
         :type monkeypatch: pytest.MonkeyPatch
         :param kind: The kind of page whose recipe the user saves meanwhile.
         :type kind: RecipeKind
@@ -644,30 +678,33 @@ class TestMeasureApplyStep:
         recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(300, 600, 30))
         before = {each: await normalize_params(fx_cv_kit, actor, project, each) for each in RecipeKind}
-        read = BookBlocks.read
+        change_book = InMemoryUnitOfWork.change_book
+        saved = False
 
-        async def read_then_save(
-            blocks: BookBlocks, project_id: ProjectId, stage: Stage, *, leaving_out: Collection[PageId] = ()
-        ) -> dict[PageId, BlockMeasure]:
-            """Read the boxes as the measure does, then save the recipe of a kind through the form's use case.
+        async def save_then_change_book[T](
+            uow: InMemoryUnitOfWork, project_id: ProjectId, work: Callable[[Repositories, Project], T]
+        ) -> T:
+            """Save the recipe of a kind through the form's use case before the first change of a book, then change.
 
-            :param blocks: The reader of the boxes.
-            :type blocks: BookBlocks
-            :param project_id: Project whose pages are read.
+            :param uow: The unit of work that changes the book.
+            :type uow: InMemoryUnitOfWork
+            :param project_id: Project whose book is changed.
             :type project_id: ProjectId
-            :param stage: The stage of the normalize step.
-            :type stage: Stage
-            :param leaving_out: Pages whose measure is not wanted.
-            :type leaving_out: Collection[PageId]
-            :returns: The boxes the wrapped reader found.
-            :rtype: dict[PageId, BlockMeasure]
+            :param work: Function over the repositories of the transaction and the project.
+            :type work: Callable[[Repositories, Project], T]
+            :returns: What the work returns.
+            :rtype: T
             """
-            found = await read(blocks, project_id, stage, leaving_out=leaving_out)
-            fx_cv_kit.clock.moment = EPOCH + timedelta(hours=1)
-            await set_normalize_params(fx_cv_kit, actor, project, {NormalizeParam.LINE_HEIGHT: HAND_LINE_HEIGHT}, kind)
-            return found
+            nonlocal saved
+            if not saved:
+                saved = True
+                fx_cv_kit.clock.moment = EPOCH + timedelta(hours=1)
+                await set_normalize_params(
+                    fx_cv_kit, actor, project, {NormalizeParam.LINE_HEIGHT: HAND_LINE_HEIGHT}, kind
+                )
+            return await change_book(uow, project_id, work)
 
-        monkeypatch.setattr(BookBlocks, 'read', read_then_save)
+        monkeypatch.setattr(InMemoryUnitOfWork, 'change_book', save_then_change_book)
         job = await measure(fx_cv_kit, actor, project)
         after = {each: await normalize_params(fx_cv_kit, actor, project, each) for each in RecipeKind}
         written_by_hand = {**before[kind], NormalizeParam.LINE_HEIGHT: HAND_LINE_HEIGHT}

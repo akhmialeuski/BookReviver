@@ -14,10 +14,9 @@ from bookreviver.api.auth import current_actor
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import EventName
 from bookreviver.domain.enums import JobKind, JobState, RejectionReason
-from bookreviver.domain.values import SliceRequest
 from tests.adapters.imaging.samples import DjvuPage, requires_djvulibre, write_djvu_indirect
 from tests.helpers.builders import make_job, make_project, new_account_id
-from tests.helpers.fakes_imports import djvu_uploads, image_upload, pdf_upload
+from tests.helpers.fakes_imports import djvu_uploads, image_upload, pdf_upload, stored_book
 from tests.helpers.sse import EventStreamReader
 
 if TYPE_CHECKING:
@@ -37,7 +36,6 @@ JOB_PATH: str = '/api/v1/jobs/{job_id}'
 FILES_FIELD: str = 'files'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
-EVERY_SLICE: SliceRequest = SliceRequest(limit=1000)
 FIRST_PART_PAGES: int = 2
 SECOND_PART_PAGES: int = 3
 SCAN_COUNT: int = FIRST_PART_PAGES + SECOND_PART_PAGES + 1
@@ -112,10 +110,9 @@ class TestUploadSources:
         await fx_broker.wait_all()
 
         finished = (await fx_client.get(JOB_PATH.format(job_id=queued['id']))).json()
-        uow = InMemoryUnitOfWork(fx_fakes.database)
-        sources = await uow.sources.list_for_project(fx_project.id)
-        scans = {scan.id: scan for scan in (await uow.scans.list_for_project(fx_project.id, EVERY_SLICE)).items}
-        pages = (await uow.pages.list_for_project(fx_project.id, EVERY_SLICE)).items
+        book = await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)
+        sources, pages = book.sources, book.pages
+        scans = {scan.id: scan for scan in book.scans}
         expect(response.status_code == HTTPStatus.ACCEPTED)
         expect((queued['state'], queued['kind'], queued['result']) == (JobState.QUEUED, JobKind.IMPORT_SOURCE, None))
         expect(finished['state'] == JobState.SUCCEEDED)
@@ -164,9 +161,8 @@ class TestUploadSources:
                 SOURCES_PATH.format(project_id=fx_project.id), files=_multipart([image_upload(tmp_path, 'cover.jpg')])
             )
 
-        uow = InMemoryUnitOfWork(fx_fakes.database)
-        [source] = await uow.sources.list_for_project(fx_project.id)
-        [scan] = (await uow.scans.list_for_project(fx_project.id, EVERY_SLICE)).items
+        book = await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)
+        [source], [scan] = book.sources, book.scans
         final = reader.events[-1].data
         expect([event.name for event in reader.events] == ONE_IMAGE_EVENTS)
         expect(reader.events[3].data == {'project_id': str(fx_project.id), 'source_id': str(source.id)})
@@ -239,7 +235,7 @@ class TestUploadSources:
         await fx_broker.wait_all()
 
         finished = (await fx_client.get(JOB_PATH.format(job_id=queued['id']))).json()
-        [source] = await InMemoryUnitOfWork(fx_fakes.database).sources.list_for_project(fx_project.id)
+        [source] = (await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)).sources
         [rejected] = finished['result']['rejected']
         expect(finished['state'] == JobState.SUCCEEDED)
         expect((source.file_name, source.scan_count) == ('a-index.djvu', len(DJVU_PAGES)))
@@ -263,9 +259,8 @@ class TestUploadSources:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        uow = InMemoryUnitOfWork(fx_fakes.database)
-        async with uow.change():
-            await uow.jobs.add(make_job(project_id=fx_project.id, state=JobState.RUNNING))
+        running = make_job(project_id=fx_project.id, state=JobState.RUNNING)
+        await InMemoryUnitOfWork(fx_fakes.database).change(lambda repos: repos.jobs.add(running))
 
         response = await fx_client.post(
             SOURCES_PATH.format(project_id=fx_project.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])
@@ -405,9 +400,8 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        uow = InMemoryUnitOfWork(fx_fakes.database)
-        async with uow.change():
-            await uow.jobs.add(make_job(project_id=fx_project.id, state=JobState.QUEUED))
+        queued = make_job(project_id=fx_project.id, state=JobState.QUEUED)
+        await InMemoryUnitOfWork(fx_fakes.database).change(lambda repos: repos.jobs.add(queued))
 
         response = await fx_client.post(
             SOURCES_PATH.format(project_id=fx_project.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])

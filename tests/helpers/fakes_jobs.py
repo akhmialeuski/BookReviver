@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Job, Project
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import ProjectId
+    from bookreviver.ports.persistence import Repositories
 
 EVENT_QUEUE_SIZE: int = 16
 
@@ -117,12 +118,18 @@ class JobFakes:
         :param jobs: Jobs of the project to store.
         :type jobs: Job
         """
-        uow = InMemoryUnitOfWork(self.database)
-        # The project and the rows of its jobs are writes outside the content of a book
-        async with uow.change():
-            await uow.projects.add(project)
+
+        def add_rows(repos: Repositories) -> None:
+            """Add the project and its jobs, which are writes outside the content of a book.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            """
+            repos.projects.add(project)
             for job in jobs:
-                await uow.jobs.add(job)
+                repos.jobs.add(job)
+
+        await InMemoryUnitOfWork(self.database).change(add_rows)
 
     async def stored_job(self, job: Job) -> Job:
         """Read a job back as committed.
@@ -132,7 +139,7 @@ class JobFakes:
         :returns: The job as the database holds it now.
         :rtype: Job
         """
-        return await InMemoryUnitOfWork(self.database).jobs.get(job.id)
+        return await InMemoryUnitOfWork(self.database).read(lambda repos: repos.jobs.get(job.id))
 
 
 class JobFakesProvider(Provider):

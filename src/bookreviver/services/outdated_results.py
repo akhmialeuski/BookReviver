@@ -26,9 +26,9 @@ from bookreviver.domain.enums import StageState
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import PageStage, PageVersion
+    from bookreviver.domain.entities import PageStage, PageVersion, Project
     from bookreviver.domain.ids import PageVersionId, ProjectId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
 
@@ -41,7 +41,7 @@ class OutdatedResults:
     def __init__(self, *, uow: UnitOfWork, catalogue: ProcessorCatalog, clock: Clock) -> None:
         """Work over the ports of one unit of work.
 
-        :param uow: Unit of work whose blocks end the use case.
+        :param uow: Unit of work whose transactions read the records and mark them.
         :type uow: UnitOfWork
         :param catalogue: The processors the application can run, with the versions that are installed.
         :type catalogue: ProcessorCatalog
@@ -58,51 +58,62 @@ class OutdatedResults:
         The versions of all the chains are read a level at a time, each distinct version once however many records,
         pages and stages lead to it, so the number of queries follows the depth of the chains, and the number of rows
         read the number of distinct versions. A version is judged once, and a chain that meets a version judged already
-        takes its verdict. The reading takes no lock. The records are then written by one ``change_book`` block for each
-        book, which reads each record again and marks it only if it is still fresh and still stands on the same
-        version, so it is called outside a block.
+        takes its verdict. The reading is one transaction that only reads, so it takes no lock of a book. The records
+        are then written by one ``change_book`` for each book, which reads each record again and marks it only if it
+        is still fresh and still stands on the same version.
 
         :returns: The records that became stale.
         :rtype: list[PageStage]
         """
         installed = {spec.key: spec.version for spec in self._catalogue.specs()}
-        records = await self._uow.page_stages.list_fresh()
-        versions: dict[PageVersionId, PageVersion] = {}
-        replaced: set[PageVersionId] = set()
-        asked: set[PageVersionId] = set()
-        pending = {record.head_version_id for record in records if record.head_version_id is not None}
-        while pending:
-            asked |= pending
-            for read in await self._uow.page_versions.list_by_ids(pending):
-                versions[read.id] = read
-                if installed.get(read.processor.key, read.processor.version) != read.processor.version:
-                    replaced.add(read.id)
-            # The chain of a replaced version is not followed, since its stage is outdated whatever it read
-            following: set[PageVersionId] = set()
-            for version_id in pending - replaced:
-                if (version := versions.get(version_id)) is not None and version.input_id is not None:
-                    following.add(version.input_id)
-            pending = following - asked
-        verdicts: dict[PageVersionId, bool] = {}
-        for head in {record.head_version_id for record in records if record.head_version_id is not None}:
-            chain: list[PageVersionId] = []
-            current: PageVersionId | None = head
-            outdated = False
-            while current is not None and current in versions:
-                if current in verdicts:
-                    outdated = verdicts[current]
-                    break
-                chain.append(current)
-                if current in replaced:
-                    outdated = True
-                    break
-                current = versions[current].input_id
-            verdicts.update(dict.fromkeys(chain, outdated))
-        by_project: dict[ProjectId, list[PageStage]] = {}
-        for record in records:
-            if record.head_version_id is not None and verdicts.get(record.head_version_id):
-                page = await self._uow.pages.get(record.page_id)
-                by_project.setdefault(page.project_id, []).append(record)
+
+        def find(repos: Repositories) -> dict[ProjectId, list[PageStage]]:
+            """Find the fresh records that stand on a replaced version, grouped by the book of their page.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The outdated records of each book that has any.
+            :rtype: dict[ProjectId, list[PageStage]]
+            """
+            records = repos.page_stages.list_fresh()
+            versions: dict[PageVersionId, PageVersion] = {}
+            replaced: set[PageVersionId] = set()
+            asked: set[PageVersionId] = set()
+            pending = {record.head_version_id for record in records if record.head_version_id is not None}
+            while pending:
+                asked |= pending
+                for read in repos.page_versions.list_by_ids(pending):
+                    versions[read.id] = read
+                    if installed.get(read.processor.key, read.processor.version) != read.processor.version:
+                        replaced.add(read.id)
+                # The chain of a replaced version is not followed, since its stage is outdated whatever it read
+                following: set[PageVersionId] = set()
+                for version_id in pending - replaced:
+                    if (version := versions.get(version_id)) is not None and version.input_id is not None:
+                        following.add(version.input_id)
+                pending = following - asked
+            verdicts: dict[PageVersionId, bool] = {}
+            for head in {record.head_version_id for record in records if record.head_version_id is not None}:
+                chain: list[PageVersionId] = []
+                current: PageVersionId | None = head
+                outdated = False
+                while current is not None and current in versions:
+                    if current in verdicts:
+                        outdated = verdicts[current]
+                        break
+                    chain.append(current)
+                    if current in replaced:
+                        outdated = True
+                        break
+                    current = versions[current].input_id
+                verdicts.update(dict.fromkeys(chain, outdated))
+            by_project: dict[ProjectId, list[PageStage]] = {}
+            for record in records:
+                if record.head_version_id is not None and verdicts.get(record.head_version_id):
+                    by_project.setdefault(repos.pages.get(record.page_id).project_id, []).append(record)
+            return by_project
+
+        by_project = await self._uow.read(find)
         stale: list[PageStage] = []
         for project_id, of_book in by_project.items():
             stale.extend(await self._mark_book(project_id, of_book))
@@ -110,11 +121,11 @@ class OutdatedResults:
         return stale
 
     async def _mark_book(self, project_id: ProjectId, outdated: Sequence[PageStage]) -> list[PageStage]:
-        """Mark the outdated records of one book stale, in a ``change_book`` block of its own.
+        """Mark the outdated records of one book stale, in a ``change_book`` of its own.
 
-        Each record is read again in the block, since a request may have marked it, run it or deleted it since the
+        Each record is read again in the transaction, since a request may have marked it, run it or deleted it since the
         outdated ones were found. A record that is not fresh any longer, or stands on another version, is left as it is.
-        The method opens its block, so it is called only outside a block.
+        The method opens its transaction, so it is called only outside one.
 
         :param project_id: Project owning the records.
         :type project_id: ProjectId
@@ -124,15 +135,27 @@ class OutdatedResults:
         :rtype: list[PageStage]
         """
         moment = self._clock.now()
-        stale: list[PageStage] = []
-        async with self._uow.change_book(project_id):
+
+        def work(repos: Repositories, _project: Project) -> list[PageStage]:
+            """Mark the records that are still fresh on the same version.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: The project as the change finds it, which the marking does not read.
+            :type _project: Project
+            :returns: The records that became stale.
+            :rtype: list[PageStage]
+            """
+            stale: list[PageStage] = []
             for record in outdated:
-                current = await self._uow.page_stages.find(record.key)
+                current = repos.page_stages.find(record.key)
                 if (
                     current is not None
                     and current.state is StageState.FRESH
                     and current.head_version_id == record.head_version_id
                 ):
                     marked = evolve(current, state=StageState.STALE, updated_at=moment)
-                    stale.append(await self._uow.page_stages.save(marked))
-        return stale
+                    stale.append(repos.page_stages.save(marked))
+            return stale
+
+        return await self._uow.change_book(project_id, work)

@@ -41,7 +41,9 @@ from tests.helpers.spreads import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from bookreviver.domain.entities import Actor, PageVersion, Project
+    from bookreviver.domain.entities import Actor, Job, PageStage, PageVersion, Project
+    from bookreviver.domain.values import Slice
+    from bookreviver.ports.persistence import Repositories
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -71,6 +73,19 @@ async def width_of(kit: ProcessingKit, project: Project, version: PageVersion) -
             return image.width
 
 
+async def versions_of(kit: ProcessingKit, page: Page) -> list[PageVersion]:
+    """Read the versions of a page, the earliest first, as committed.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param page: The page.
+    :type page: Page
+    :returns: Every version of the page.
+    :rtype: list[PageVersion]
+    """
+    return list(await kit.uow().read(lambda repos: repos.page_versions.list_for_page(page.id)))
+
+
 async def give_odd_pages_a_value(kit: ProcessingKit, project: Project, page: Page) -> None:
     """Give the odd pages a value for a step of the geometry stage, and the page a fresh record of that stage.
 
@@ -81,10 +96,19 @@ async def give_odd_pages_a_value(kit: ProcessingKit, project: Project, page: Pag
     :param page: The page that has been through the geometry stage.
     :type page: Page
     """
-    uow = kit.uow()
-    async with uow.change_book(project.id):
-        await uow.step_values.save(make_step_values(project_id=project.id, scope=ValueScope.ODD))
-        await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.GEOMETRY))
+
+    def save_value_and_record(repos: Repositories, _project: Project) -> None:
+        """Save the value of the odd pages and the fresh record of the geometry stage.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :param _project: The project as the change finds it, which the work does not need.
+        :type _project: Project
+        """
+        repos.step_values.save(make_step_values(project_id=project.id, scope=ValueScope.ODD))
+        repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.GEOMETRY))
+
+    await kit.uow().change_book(project.id, save_value_and_record)
 
 
 class TestSplit:
@@ -210,7 +234,7 @@ class TestSplit:
         await fx_cv_kit.edits().save(actor, project.id, key, NewPageEdit(kind=CUT_LINE.editor, geometry=CUT_LINE), None)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         after = [await head_of(fx_cv_kit, page, Stage.PAGE_SPLIT) for page in (left, right)]
-        every = [await fx_cv_kit.uow().page_versions.list_for_page(page.id) for page in (left, right)]
+        every = [await versions_of(fx_cv_kit, page) for page in (left, right)]
         expect(all(new.id != old.id for new, old in zip(after, before, strict=True)))
         expect([len(versions) for versions in every] == [2, 2])
         expect(len(await book_of(fx_cv_kit, project)) == 2)
@@ -227,7 +251,7 @@ class TestSplit:
         await use_recipe(fx_cv_kit, actor, project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         [stored] = await book_of(fx_cv_kit, project)
-        versions = await fx_cv_kit.uow().page_versions.list_for_page(page.id)
+        versions = await versions_of(fx_cv_kit, page)
         added = [event for event in fx_cv_kit.events.published if isinstance(event, PagesChanged)]
         expect((stored.id, stored.slot) == (page.id, Page.WHOLE_SCAN))
         expect(
@@ -250,14 +274,15 @@ class TestSplit:
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         keys = ProjectKeys(project.id)
         assert broken.scan_id is not None
-        scan = await fx_cv_kit.uow().scans.get(broken.scan_id)
+        scan_id = broken.scan_id
+        scan = await fx_cv_kit.uow().read(lambda repos: repos.scans.get(scan_id))
         full = keys.scan_rendition(scan, scan.renditions.full)
         await fx_cv_kit.assets.delete_prefix(full)
         async with fx_cv_kit.assets.writable(full) as target:
             target.write_bytes(png_bytes(spread(PAGE_WIDTH_PX, HEIGHT_PX)))
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         left, right = await book_of(fx_cv_kit, project)
-        versions = await fx_cv_kit.uow().page_versions.list_for_page(left.id)
+        versions = await versions_of(fx_cv_kit, left)
         expect((left.id, left.slot, right.slot) == (broken.id, Page.LEFT_HALF, Page.RIGHT_HALF))
         expect([version.state for version in versions] == [VersionState.READY])
         assert_expectations()
@@ -275,7 +300,7 @@ class TestSplit:
         )
         job = await fx_cv_kit.service().start_preview(actor, project.id, preview)
         await fx_cv_kit.jobs().preview_step(job.id)
-        stored = await fx_cv_kit.uow().jobs.get(job.id)
+        stored = await fx_cv_kit.uow().read(lambda repos: repos.jobs.get(job.id))
         expect(stored.state is JobState.FAILED)
         expect('cannot be previewed' in (stored.error or ''))
         expect(len(await book_of(fx_cv_kit, project)) == 1)
@@ -402,9 +427,7 @@ async def delete_the_spread(kit: ProcessingKit, book: SplitBook) -> None:
     :param book: The project and the page.
     :type book: SplitBook
     """
-    uow = kit.uow()
-    async with uow.change_book(book.project.id):
-        await uow.pages.delete(book.page.id)
+    await kit.uow().change_book(book.project.id, lambda repos, _project: repos.pages.delete(book.page.id))
 
 
 async def split_the_scan_elsewhere(kit: ProcessingKit, book: SplitBook) -> None:
@@ -416,9 +439,7 @@ async def split_the_scan_elsewhere(kit: ProcessingKit, book: SplitBook) -> None:
     :type book: SplitBook
     """
     right = evolve(book.page, id=PageId(uuid4()), order_key=RIGHT_HALF_ORDER_KEY, slot=Page.RIGHT_HALF)
-    uow = kit.uow()
-    async with uow.change_book(book.project.id):
-        await uow.pages.add(right)
+    await kit.uow().change_book(book.project.id, lambda repos, _project: repos.pages.add(right))
 
 
 async def draw_the_cut_line(kit: ProcessingKit, book: SplitBook) -> None:
@@ -446,7 +467,7 @@ async def save_the_split_recipe(kit: ProcessingKit, book: SplitBook) -> None:
 
 
 class TestSplitApplyStep:
-    """Tests for the block that stores a split, which reads again what the split went by."""
+    """Tests for the change that stores a split, which reads again what the split went by."""
 
     @pytest.mark.parametrize(
         ('change', 'pages_left'),
@@ -466,7 +487,7 @@ class TestSplitApplyStep:
     ) -> None:
         """Verify a change that lands while the scan is cut stores no page, no version and no head, and no file.
 
-        The change lands after the step ran and before the block that stores the halves. The job ends as succeeded
+        The change lands after the step ran and before the change that stores the halves. The job ends as succeeded
         with no page made, and the browser is told of no page and no version.
 
         :param fx_cv_kit: The processing kit with the OpenCV plugins.
@@ -484,9 +505,22 @@ class TestSplitApplyStep:
         job = await fx_cv_kit.service().start_run(actor, project.id, Stage.PAGE_SPLIT, StageRun(stage=Stage.PAGE_SPLIT))
         change_while_writing(fx_cv_kit, monkeypatch, partial(change, fx_cv_kit, book))
         made = await fx_cv_kit.jobs().run_stage(job.id)
-        reader = fx_cv_kit.uow()
-        stored = await reader.jobs.get(job.id)
-        versions = await reader.page_versions.list_for_stage(page.id, Stage.PAGE_SPLIT, None, EVERYTHING)
+
+        def read_what_is_stored(repos: Repositories) -> tuple[Job, Slice[PageVersion], PageStage | None]:
+            """Read the job, the versions of the page split and its record, in one snapshot.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The job, the window of the versions of the stage, and the record of the stage or None.
+            :rtype: tuple[Job, Slice[PageVersion], PageStage | None]
+            """
+            return (
+                repos.jobs.get(job.id),
+                repos.page_versions.list_for_stage(page.id, Stage.PAGE_SPLIT, None, EVERYTHING),
+                repos.page_stages.find(PageStageKey(page.id, Stage.PAGE_SPLIT)),
+            )
+
+        stored, versions, record = await fx_cv_kit.uow().read(read_what_is_stored)
         told = [
             event
             for event in fx_cv_kit.events.published
@@ -496,7 +530,7 @@ class TestSplitApplyStep:
         expect(made is None)
         expect((stored.state, stored.progress.total) == (JobState.SUCCEEDED, 1))
         expect(len(await book_of(fx_cv_kit, project)) == pages_left)
-        expect(await reader.page_stages.find(PageStageKey(page.id, Stage.PAGE_SPLIT)) is None)
+        expect(record is None)
         expect(versions.total == 0)
         expect(await fx_cv_kit.assets.size_of(ProjectKeys(project.id).page(page.id)) == 0)
         expect(told == [])

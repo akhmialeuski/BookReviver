@@ -1,24 +1,32 @@
-"""Tests for SqlDatabase: the engine, the sessions and the SQLite transactions the listeners of the engine own."""
+"""Tests for SqlDatabase: the engines, their connections and the SQLite transactions the engines own.
+
+The statements a transaction sends are read from SQLite itself. A trace callback on the driver connection of each
+engine records the text of every statement SQLite runs, ``BEGIN``, ``COMMIT`` and ``ROLLBACK`` included, which the
+statement events of SQLAlchemy do not show for the ones the driver sends by itself.
+"""
 
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
-from sqlalchemy import inspect, text
+from sqlalchemy import text
 
-from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
-from bookreviver.adapters.persistence.sqlalchemy.database import BUSY_TIMEOUT_STATEMENT, MILLISECONDS_PER_SECOND
+from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
+from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ChangeWaitSettings
 from tests.helpers.builders import make_project
 from tests.helpers.seeding import store_project
-from tests.helpers.statements import StatementLog
 
 if TYPE_CHECKING:
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from collections.abc import Iterator
+    from pathlib import Path
+
+    from sqlalchemy.engine import Engine
+
     from bookreviver.app.settings import Settings
     from bookreviver.domain.ids import AccountId
 
@@ -27,20 +35,16 @@ pytestmark = pytest.mark.anyio
 # A wait limit of a job that is not the default of the settings, so a test cannot pass on the default by chance
 WAIT_SECONDS: float = 2.5
 BUSY_TIMEOUT_MS: int = 2_500
-# The limits of three units of work of requests, all shorter than that of a job and different from each other
+# The limit of a unit of work of a request, which the settings give
 SHORT_WAIT_SECONDS: float = 0.5
-MIDDLE_WAIT_SECONDS: float = 1.5
-LONG_WAIT_SECONDS: float = 2.0
-# How far below its limit the busy timeout of a block may be, for the time the block spent before it began
-BUSY_TIMEOUT_TOLERANCE_MS: int = 250
-# The statement that reads the busy timeout of a connection, and the start of the statement that sets it
 BUSY_TIMEOUT_PRAGMA: str = 'PRAGMA busy_timeout'
-BUSY_TIMEOUT_SETTER: str = BUSY_TIMEOUT_STATEMENT.format(milliseconds='')
-BEGIN_STATEMENT: str = 'BEGIN IMMEDIATE'
+FOREIGN_KEYS_PRAGMA: str = 'PRAGMA foreign_keys'
+BEGIN_WRITE: str = 'BEGIN IMMEDIATE'
+BEGIN_READ: str = 'BEGIN'
 COMMIT_STATEMENT: str = 'COMMIT'
 ROLLBACK_STATEMENT: str = 'ROLLBACK'
 # What a statement of SQLite that starts or ends a transaction begins with
-TRANSACTION_WORDS: tuple[str, ...] = ('BEGIN', COMMIT_STATEMENT, ROLLBACK_STATEMENT)
+TRANSACTION_WORDS: tuple[str, ...] = (BEGIN_READ, COMMIT_STATEMENT, ROLLBACK_STATEMENT)
 # The title a test gives a stored project
 NEW_TITLE: str = 'Renamed'
 # The pragma reading the journal mode, its answer for a database in the write-ahead log, and that of synchronous=NORMAL
@@ -49,6 +53,10 @@ WAL_MODE: str = 'wal'
 SYNCHRONOUS_NORMAL: int = 1
 # Any statement that reads, which makes a connection hold its snapshot for as long as its transaction is open
 SELECT_SCHEMA: str = 'SELECT count(*) FROM sqlite_master'
+# The driver the settings name and the one the engines run on, and the URL of a database this adapter does not run on
+ASYNC_DRIVER_URL: str = 'sqlite+aiosqlite:///{path}'
+SYNC_DRIVER: str = 'sqlite'
+POSTGRESQL_URL: str = 'postgresql+asyncpg://user@localhost/books'
 
 
 @pytest.fixture
@@ -64,8 +72,52 @@ def fx_settings(fx_settings: Settings) -> Settings:
     return fx_settings.model_copy(update={'change_wait': change_wait})
 
 
+def set_trace(engine: Engine, callback: Any) -> None:
+    """Hand a trace callback to the driver connection of an engine, or take the one it has away.
+
+    The connection is taken from the pool and given back, so the callback stays on the connection the pool keeps. The
+    engine of the writer keeps exactly one, and the engine of the readers is not used by a test that traces it.
+
+    :param engine: Engine whose pooled connection is traced.
+    :type engine: Engine
+    :param callback: Function that receives the text of each statement SQLite runs, or None to stop the tracing.
+    :type callback: Any
+    """
+    with closing(engine.raw_connection()) as raw:
+        assert raw.driver_connection is not None
+        raw.driver_connection.set_trace_callback(callback)
+
+
+@contextmanager
+def traced_sql(engine: Engine) -> Iterator[list[str]]:
+    """Record the text of every statement SQLite runs on the pooled connection of an engine.
+
+    :param engine: Engine whose connection is traced.
+    :type engine: Engine
+    :returns: Iterator yielding the list the statements are appended to, in the order SQLite ran them.
+    :rtype: Iterator[list[str]]
+    """
+    statements: list[str] = []
+    set_trace(engine, statements.append)
+    try:
+        yield statements
+    finally:
+        set_trace(engine, None)
+
+
+def transaction_statements(statements: list[str]) -> list[str]:
+    """Keep the statements that begin or end a transaction.
+
+    :param statements: Every statement SQLite ran.
+    :type statements: list[str]
+    :returns: Those that begin with ``BEGIN``, ``COMMIT`` or ``ROLLBACK``, in the order they ran.
+    :rtype: list[str]
+    """
+    return [statement for statement in statements if statement.startswith(TRANSACTION_WORDS)]
+
+
 class TestSqlDatabase:
-    """Tests for the sessions SqlDatabase opens."""
+    """Tests for the engines SqlDatabase opens."""
 
     async def test_update_stores_the_updated_at_of_the_domain(
         self, fx_database: SqlDatabase, fx_owner_id: AccountId
@@ -82,26 +134,42 @@ class TestSqlDatabase:
         """
         project = make_project(owner_id=fx_owner_id)
         renamed = evolve(project, details=evolve(project.details, title=NEW_TITLE))
-        async with fx_database.sessions() as session:
-            await store_project(SqlAlchemyUnitOfWork(session), project)
-        async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            async with uow.change():
-                await uow.projects.update(renamed)
-        async with fx_database.sessions() as session:
-            stored = await SqlAlchemyUnitOfWork(session).projects.get(project.id)
+        uow = SqlAlchemyUnitOfWork(fx_database)
+        await store_project(uow, project)
+        await uow.change(lambda repos: repos.projects.update(renamed))
+        stored = await uow.read(lambda repos: repos.projects.get(project.id))
         assert stored.updated_at == renamed.updated_at
 
-    async def test_connections_are_in_autocommit_mode(self, fx_database: SqlDatabase) -> None:
-        """Verify the driver connection is in the ``autocommit`` mode, so the driver begins no transaction by itself.
+    async def test_url_of_the_async_driver_gets_the_driver_of_the_standard_library(self, tmp_path: Path) -> None:
+        """Verify the engines of the writer and of the readers run on the ``sqlite3`` driver, whatever the URL says.
+
+        A database URL written for the asynchronous driver is still valid configuration, and neither engine may use
+        that driver.
+
+        :param tmp_path: Temporary directory of the test, holding the file the URL names.
+        :type tmp_path: Path
+        """
+        database = SqlDatabase(ASYNC_DRIVER_URL.format(path=tmp_path / 'driver.db'), tracer=NullTracer())
+        expect(database.engine.url.drivername == SYNC_DRIVER, 'the writer')
+        expect(database.read_engine.url.drivername == SYNC_DRIVER, 'the readers')
+        assert_expectations()
+
+    async def test_database_other_than_sqlite_is_refused(self) -> None:
+        """Verify a URL that names PostgreSQL is refused with an error that says the data lives in SQLite."""
+        with pytest.raises(ValueError, match='SQLite'):
+            SqlDatabase(POSTGRESQL_URL, tracer=NullTracer())
+
+    async def test_connections_leave_transactions_to_the_engine(self, fx_database: SqlDatabase) -> None:
+        """Verify the driver connection of each engine begins no transaction by itself.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
         """
-        async with fx_database.engine.connect() as connection:
-            driver_connection = (await connection.get_raw_connection()).driver_connection
-            assert driver_connection is not None
-            assert driver_connection._conn.autocommit is True
+        for engine in (fx_database.engine, fx_database.read_engine):
+            with closing(engine.raw_connection()) as raw:
+                assert raw.driver_connection is not None
+                expect(raw.driver_connection.isolation_level is None, f'a connection of {engine}')
+        assert_expectations()
 
     async def test_connections_wait_for_a_lock_and_enforce_foreign_keys(self, fx_database: SqlDatabase) -> None:
         """Verify every SQLite connection waits the limit of a job for a lock when it opens, and enforces foreign keys.
@@ -109,26 +177,27 @@ class TestSqlDatabase:
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
         """
-        async with fx_database.engine.connect() as connection:
-            timeout: Any = (await connection.execute(text(BUSY_TIMEOUT_PRAGMA))).scalar_one()
-            foreign_keys: Any = (await connection.execute(text('PRAGMA foreign_keys'))).scalar_one()
-
-        assert (timeout, foreign_keys) == (BUSY_TIMEOUT_MS, 1)
+        for engine in (fx_database.engine, fx_database.read_engine):
+            with engine.connect() as connection:
+                timeout: Any = connection.execute(text(BUSY_TIMEOUT_PRAGMA)).scalar_one()
+                foreign_keys: Any = connection.execute(text(FOREIGN_KEYS_PRAGMA)).scalar_one()
+            expect((timeout, foreign_keys) == (BUSY_TIMEOUT_MS, 1), f'settings of {engine}')
+        assert_expectations()
 
     async def test_connections_write_ahead_with_normal_sync_and_the_file_keeps_the_mode(
         self, fx_database: SqlDatabase
     ) -> None:
         """Verify a connection of the engine runs in the WAL with ``synchronous=NORMAL``, and the file keeps the WAL.
 
-        A plain ``sqlite3`` connection opened after the engine is disposed sets no pragma of its own, so it reads the
+        A plain ``sqlite3`` connection opened after the engines are disposed sets no pragma of its own, so it reads the
         mode the file stores, which a restarted application finds.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
         """
-        async with fx_database.engine.connect() as connection:
-            mode: Any = (await connection.execute(text(JOURNAL_MODE_PRAGMA))).scalar_one()
-            synchronous: Any = (await connection.execute(text('PRAGMA synchronous'))).scalar_one()
+        with fx_database.engine.connect() as connection:
+            mode: Any = connection.execute(text(JOURNAL_MODE_PRAGMA)).scalar_one()
+            synchronous: Any = connection.execute(text('PRAGMA synchronous')).scalar_one()
         await fx_database.dispose()
         path = fx_database.engine.url.database
         assert path is not None
@@ -139,109 +208,64 @@ class TestSqlDatabase:
 
 
 class TestSqliteTransactions:
-    """Tests for the transactions the listeners of the engine put around a block of the port."""
+    """Tests for the transactions the engines put around the work of a unit of work."""
 
-    async def test_block_begins_immediate_and_ends_with_commit(self, fx_database: SqlDatabase) -> None:
-        """Verify a block of a job takes the write lock of SQLite when it begins and commits when it ends, and no more.
-
-        The limit of the block is the busy timeout every connection opens with, so the block sends no statement that
-        sets it.
+    async def test_change_begins_immediate_and_ends_with_commit(self, fx_database: SqlDatabase) -> None:
+        """Verify a change takes the write lock of SQLite when it begins and commits when it ends, and no more.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
         """
-        async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session, wait_seconds=WAIT_SECONDS)
-            with StatementLog(fx_database.engine.sync_engine) as log:
-                async with uow.change():
-                    pass
-        assert log.statements == [BEGIN_STATEMENT, COMMIT_STATEMENT]
+        uow = SqlAlchemyUnitOfWork(fx_database, wait_seconds=WAIT_SECONDS)
+        with traced_sql(fx_database.engine) as statements:
+            await uow.change(lambda _repos: None)
+        assert statements == [BEGIN_WRITE, COMMIT_STATEMENT]
 
-    async def test_only_a_block_shorter_than_the_connection_sets_its_busy_timeout(
-        self, fx_database: SqlDatabase
-    ) -> None:
-        """Verify only a block shorter than the connection's own limit sets the busy timeout, and a job restores it.
-
-        The blocks run one after another over the one connection of the pool, which opened with the limit of a job,
-        and each reads the busy timeout it finds inside the block. A job's block reads exactly the value the connection
-        opened with, and sends nothing while the connection has it. A block of a request reads at most its limit, and
-        above it by no more than the time a block spends before it begins, and sends one statement. The first job's
-        block after the requests sends one statement that restores the value, and the next job's block sends none.
-        The limits of the requests differ from each other, so that what is left of two limits never rounds to the same
-        millisecond, which would let a block skip the statement by chance.
-
-        :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
-        """
-        limits = [WAIT_SECONDS, SHORT_WAIT_SECONDS, MIDDLE_WAIT_SECONDS, LONG_WAIT_SECONDS, WAIT_SECONDS, WAIT_SECONDS]
-        timeouts: list[int] = []
-        setters: list[list[str]] = []
-        for limit in limits:
-            async with fx_database.sessions() as session:
-                with StatementLog(fx_database.engine.sync_engine) as log:
-                    async with SqlAlchemyUnitOfWork(session, wait_seconds=limit).change():
-                        timeouts.append((await session.execute(text(BUSY_TIMEOUT_PRAGMA))).scalar_one())
-            setters.append([statement for statement in log.statements if statement.startswith(BUSY_TIMEOUT_SETTER)])
-            expect(log.statements[: len(setters[-1]) + 1] == [*setters[-1], BEGIN_STATEMENT], f'order of {limit}')
-        for limit, timeout in zip(limits, timeouts, strict=True):
-            limit_ms = round(limit * MILLISECONDS_PER_SECOND)
-            in_range = limit_ms - BUSY_TIMEOUT_TOLERANCE_MS < timeout <= limit_ms
-            expect(timeout == BUSY_TIMEOUT_MS if limit == WAIT_SECONDS else in_range, f'{timeout} read of {limit}')
-        restore = BUSY_TIMEOUT_STATEMENT.format(milliseconds=BUSY_TIMEOUT_MS)
-        expect([len(sent) for sent in setters] == [0, 1, 1, 1, 1, 0], f'{setters} sent')
-        expect(setters[4] == [restore], f'{setters[4]} restoring')
-        assert_expectations()
-
-    async def test_block_left_by_an_exception_ends_with_rollback(self, fx_database: SqlDatabase) -> None:
-        """Verify a block that an exception leaves rolls the transaction back, so it holds the lock no longer.
+    async def test_change_left_by_an_exception_ends_with_rollback(self, fx_database: SqlDatabase) -> None:
+        """Verify a change whose work raises rolls the transaction back, so it holds the lock no longer.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
         """
 
-        async def leave_by_exception(uow: SqlAlchemyUnitOfWork) -> None:
-            """Open a block and leave it by an exception.
+        def leave_by_exception(_repos: object) -> None:
+            """Leave the work by an exception.
 
-            :param uow: Unit of work to open the block on.
-            :type uow: SqlAlchemyUnitOfWork
-            :raises ValueError: Always, to leave the block.
+            :param _repos: Repositories of the transaction, which this work does not use.
+            :type _repos: object
+            :raises ValueError: Always, to leave the work.
             """
-            async with uow.change():
-                raise ValueError
+            raise ValueError
 
-        async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session, wait_seconds=WAIT_SECONDS)
-            with StatementLog(fx_database.engine.sync_engine) as log, pytest.raises(ValueError, match=r'^$'):
-                await leave_by_exception(uow)
-        assert log.statements == [BEGIN_STATEMENT, ROLLBACK_STATEMENT]
+        uow = SqlAlchemyUnitOfWork(fx_database, wait_seconds=WAIT_SECONDS)
+        with traced_sql(fx_database.engine) as statements, pytest.raises(ValueError, match=r'^$'):
+            await uow.change(leave_by_exception)
+        assert statements == [BEGIN_WRITE, ROLLBACK_STATEMENT]
 
-    async def test_read_outside_a_block_begins_no_transaction_and_holds_no_lock(
+    async def test_read_begins_deferred_and_ends_with_rollback_on_a_connection_of_the_readers(
         self, fx_database: SqlDatabase, fx_owner_id: AccountId
     ) -> None:
-        """Verify a read outside a block sends no transaction statement, and a second connection can write meanwhile.
+        """Verify a read begins a deferred transaction on the engine of the readers and ends it with a rollback.
 
-        The reading session stays open while the second session writes a project and commits it. A reader that held a
-        lock would make that commit wait for the wait limit of the settings and fail.
+        The read takes no write lock, since its transaction is not ``BEGIN IMMEDIATE``, and commits nothing, and the
+        engine of the writer sees no statement of it.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
-        :param fx_owner_id: Committed account owning the projects.
+        :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        stored, written = make_project(owner_id=fx_owner_id), make_project(owner_id=fx_owner_id)
-        async with fx_database.sessions() as session:
-            await store_project(SqlAlchemyUnitOfWork(session), stored)
-        async with fx_database.sessions() as reading, fx_database.sessions() as writing:
-            with StatementLog(fx_database.engine.sync_engine) as log:
-                await SqlAlchemyUnitOfWork(reading).projects.get(stored.id)
-            await store_project(SqlAlchemyUnitOfWork(writing), written)
-            assert await SqlAlchemyUnitOfWork(reading).projects.get(written.id) == written
-        assert [statement for statement in log.statements if statement.startswith(TRANSACTION_WORDS)] == []
+        project = make_project(owner_id=fx_owner_id)
+        uow = SqlAlchemyUnitOfWork(fx_database)
+        await store_project(uow, project)
+        with traced_sql(fx_database.read_engine) as reading, traced_sql(fx_database.engine) as writing:
+            await uow.read(lambda repos: repos.projects.get(project.id))
+        assert (transaction_statements(reading), writing) == ([BEGIN_READ, ROLLBACK_STATEMENT], [])
 
-    async def test_block_commits_while_a_reader_sits_in_a_read_transaction(
+    async def test_change_commits_while_a_reader_sits_in_a_read_transaction(
         self, fx_database: SqlDatabase, fx_owner_id: AccountId
     ) -> None:
-        """Verify a block commits at once while another connection holds a read transaction open.
+        """Verify a change commits at once while another connection holds a read transaction open.
 
         In the rollback journal a commit waits for every reader to leave the file, so this one would wait for the wait
         limit and fail. In the write-ahead log the reader keeps its snapshot and the commit appends to the log.
@@ -252,20 +276,19 @@ class TestSqliteTransactions:
         :type fx_owner_id: AccountId
         """
         project = make_project(owner_id=fx_owner_id)
+        uow = SqlAlchemyUnitOfWork(fx_database)
         path = fx_database.engine.url.database
         assert path is not None
         with closing(sqlite3.connect(path, autocommit=True)) as reader:
-            reader.execute('BEGIN')
+            reader.execute(BEGIN_READ)
             reader.execute(SELECT_SCHEMA).fetchall()
-            async with fx_database.sessions() as session:
-                await store_project(SqlAlchemyUnitOfWork(session), project)
-        async with fx_database.sessions() as session:
-            assert await SqlAlchemyUnitOfWork(session).projects.get(project.id) == project
+            await store_project(uow, project)
+        assert await uow.read(lambda repos: repos.projects.get(project.id)) == project
 
-    async def test_block_reads_a_row_another_session_changed_after_the_session_loaded_it(
+    async def test_change_book_hands_the_work_the_project_as_the_last_change_committed_it(
         self, fx_database: SqlDatabase, fx_owner_id: AccountId
     ) -> None:
-        """Verify a block reads the committed row, not the copy an earlier read left in the session.
+        """Verify a ``change_book`` reads the project row at its start, so it sees the title another change stored.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
@@ -274,38 +297,8 @@ class TestSqliteTransactions:
         """
         project = make_project(owner_id=fx_owner_id)
         renamed = evolve(project, details=evolve(project.details, title=NEW_TITLE))
-        async with fx_database.sessions() as session:
-            await store_project(SqlAlchemyUnitOfWork(session), project)
-        async with fx_database.sessions() as reading, fx_database.sessions() as writing:
-            uow = SqlAlchemyUnitOfWork(reading)
-            await uow.projects.get(project.id)
-            other = SqlAlchemyUnitOfWork(writing)
-            async with other.change():
-                await other.projects.update(renamed)
-            async with uow.change_book(project.id) as held:
-                pass
-        assert held.details.title == renamed.details.title
-
-    async def test_block_keeps_the_account_row_the_session_loaded(
-        self, fx_database: SqlDatabase, fx_owner_id: AccountId
-    ) -> None:
-        """Verify a block leaves the account row of the request loaded, so reading it after the block needs no query.
-
-        fastapi-users loads the account of the request into the same session before the route runs, and reads it
-        again after the route, for example to delete it after its books. An expired row would need a lazy load there,
-        which an async session refuses.
-
-        :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
-        :param fx_owner_id: Committed account owning the project.
-        :type fx_owner_id: AccountId
-        """
-        project = make_project(owner_id=fx_owner_id)
-        async with fx_database.sessions() as session:
-            await store_project(SqlAlchemyUnitOfWork(session), project)
-        async with fx_database.sessions() as session:
-            account = await session.get_one(AccountTable, fx_owner_id)
-            uow = SqlAlchemyUnitOfWork(session)
-            async with uow.change_book(project.id):
-                pass
-            assert inspect(account).expired_attributes == set()
+        uow = SqlAlchemyUnitOfWork(fx_database)
+        await store_project(uow, project)
+        await uow.change(lambda repos: repos.projects.update(renamed))
+        held = await uow.change_book(project.id, lambda _repos, current: current)
+        assert held.details.title == NEW_TITLE

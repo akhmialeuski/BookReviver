@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.domain.entities import Actor, Project
     from bookreviver.domain.entities import Page as BookPage
+    from bookreviver.ports.persistence import Repositories
     from bookreviver.ports.storage import AssetStore
 
 pytestmark = pytest.mark.anyio
@@ -142,13 +143,19 @@ async def fx_book(fx_database: InMemoryDatabase, fx_asset_store: AssetStore, fx_
         for page, scan in zip(pages, scans, strict=True)
     ]
     await commit_project(fx_database, project, *pages, sources=[source], scans=scans, versions=versions)
-    # The import makes the base version of each page the current version of the page split
-    uow = InMemoryUnitOfWork(fx_database)
-    async with uow.change_book(project.id):
+
+    def save_heads(repos: Repositories, _project: Project) -> None:
+        """Make the base version of each page the current version of the page split, as the import does.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :param _project: The project as the change finds it, which the work does not need.
+        :type _project: Project
+        """
         for page, version in zip(pages, versions, strict=True):
-            await uow.page_stages.save(
-                make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=version.id)
-            )
+            repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=version.id))
+
+    await InMemoryUnitOfWork(fx_database).change_book(project.id, save_heads)
     keys = ProjectKeys(project.id)
     for scan in scans:
         async with fx_asset_store.writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:

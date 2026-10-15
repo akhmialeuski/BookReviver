@@ -1,7 +1,7 @@
 """Tests for ``bookreviver.app.trace_report``, run on a small file of spans written to the temporary directory.
 
 The file holds the spans of a run of ten seconds with seven write blocks and five steps of two types. Four of the
-blocks belong to no step: two overlap and one never took the lock. Three blocks sit inside the two deskew steps that
+blocks belong to no step: two overlap and one was refused the writer. Three blocks sit inside the two deskew steps that
 ran. The names in it are the ones the application records, taken from the enumerations, so a span or an attribute that
 is renamed there fails these tests instead of emptying the report.
 
@@ -9,27 +9,21 @@ The expected values are worked out by hand:
 
 - The wall time is 10 s, from the start of the ``job`` span to its end.
 - A block holds the lock from the end of its wait, through its holding and its commit. A, 0 to 2 s, waited nothing,
-  held 1900 ms and committed in 100 ms, so it holds 0 to 2 s. B, 0.5 to 3 s, waited 500 ms (turn 400, connection 80,
-  ``BEGIN`` 20), held 1900 ms and committed in 100 ms, so it holds 1 to 3 s. A and B overlap, so they hold the lock for
-  3 s together. C, 4 to 6 s, waited 1000 ms (turn 900, connection 60, ``BEGIN`` 40), held 800 ms, rolled back and
-  released its turn in 200 ms, so it holds 5 to 5.8 s. D asked at 7 s, waited 50 ms and was refused by the queue, so it
-  had no turn and held nothing.
-- Inside the first deskew step that ran, 8.00 to 8.10 s, block E asked at 8.02 s, waited 30 ms (turn 20, connection 5,
-  ``BEGIN`` 5) and held 30 ms, to 8.08 s. Inside the second one, 8.20 to 8.50 s, block F asked at 8.21 s, waited 60 ms
-  (turn 40, connection 10, ``BEGIN`` 10), held 70 ms and committed in 10 ms, to 8.35 s, and block G asked at 8.40 s,
-  waited 20 ms (turn 10, connection 5, ``BEGIN`` 5) and held 30 ms, to 8.45 s. Together the holding is 3 + 0.8 + 0.03 +
-  0.08 + 0.03 = 3.94 s, which is 39.4 % of the 10 s.
-- A block has its turn from the end of its turn wait to its end: A 0 to 2 s and B 0.9 to 3 s, 3 s together, C 4.9 to
-  6 s, E 8.04 to 8.08 s, F 8.25 to 8.35 s and G 8.41 to 8.45 s, so 3 + 1.1 + 0.04 + 0.1 + 0.04 = 4.28 s, 42.8 %. The
-  start of a block runs from its turn to the lock: B 0.9 to 1 s, C 4.9 to 5 s, E 8.04 to 8.05 s, F 8.25 to 8.27 s and
-  G 8.41 to 8.42 s, so 0.24 s, 2.4 %. Only C released for long, 5.8 to 6 s, 2.0 %.
+  held 1900 ms and committed in 100 ms, so it holds 0 to 2 s. B, 0.5 to 3 s, waited 500 ms, held 1900 ms and committed
+  in 100 ms, so it holds 1 to 3 s. A and B overlap, so they hold the lock for 3 s together. C, 4 to 5.8 s, waited
+  1000 ms, held 800 ms and rolled back, so it holds 5 to 5.8 s. D asked at 7 s, waited 50 ms and was refused the
+  writer, so it began nothing and held nothing.
+- Inside the first deskew step that ran, 8.00 to 8.10 s, block E asked at 8.02 s, waited 30 ms and held 30 ms, to
+  8.08 s. Inside the second one, 8.20 to 8.50 s, block F asked at 8.21 s, waited 60 ms, held 70 ms and committed in
+  10 ms, to 8.35 s, and block G asked at 8.40 s, waited 20 ms and held 30 ms, to 8.45 s. Together the holding is 3 + 0.8
+  + 0.03 + 0.08 + 0.03 = 3.94 s, which is 39.4 % of the 10 s.
 - There are 7 write blocks, and their waits are 0, 500, 1000, 50, 30, 60 and 20 ms, in order 0, 20, 30, 50, 60, 500 and
   1000 ms. By nearest rank over seven values the 50th percentile is the ceiling of 3.5, the 4th, 50 ms; the 90th is the
   ceiling of 6.3 and the 99th the ceiling of 6.93, both the 7th, 1000 ms; the maximum is 1000 ms.
-- The six blocks that had a turn give six values of each part. The turns in order are 0, 10, 20, 40, 400 and 900 ms, so
-  the 50th percentile is the 3rd, 20 ms, and the 90th and the 99th are the 6th, 900 ms. The connections are 0, 5, 5,
-  10, 60 and 80 ms, the ``BEGIN`` statements 0, 5, 5, 10, 20 and 40 ms, and the releases five of 0 ms and one of
-  200 ms, read the same way.
+- The six blocks that began give six holdings, in order 30, 30, 70, 800, 1900 and 1900 ms, so the 50th percentile is
+  the 3rd, 70 ms, and the 90th and the 99th are the 6th, 1900 ms, which is also the maximum. The five blocks that
+  committed give five commits, in order 0, 0, 10, 100 and 100 ms, so the 50th percentile is the ceiling of 2.5, the 3rd,
+  10 ms, and the 90th and the 99th are the ceilings of 4.5 and 4.95, the 5th, 100 ms, which is also the maximum.
 - ``geometry.deskew`` has four steps: two cached, and two that ran in 100 and 300 ms, so the median run is 200 ms.
   The wait for the lock inside the step of 100 ms is that of E, 30 ms, and inside the step of 300 ms the sum of F and G,
   60 + 20 = 80 ms, so the median wait is (30 + 80) / 2 = 55 ms. ``split.none`` has one step that ran in 40 ms, with no
@@ -80,14 +74,9 @@ EXPECTED_REPORT: str = f"""Trace report: {FILE_NAME}
 Wall time of the run, s: 10.000
 Write blocks: 7
 Share of the run with the write lock held, %: 39.4
-Share of the run with the write queue taken, %: 42.8
-Share of the run in the start of a block, %: 2.4
-Share of the run in the release of a block, %: 2.0
 Wait for the write lock, ms: p50 50.00, p90 1000.00, p99 1000.00, max 1000.00
-Turn in the write queue, ms: p50 20.00, p90 900.00, p99 900.00, max 900.00
-Connection of a block, ms: p50 5.00, p90 80.00, p99 80.00, max 80.00
-BEGIN IMMEDIATE of a block, ms: p50 5.00, p90 40.00, p99 40.00, max 40.00
-Release of a block, ms: p50 0.00, p90 200.00, p99 200.00, max 200.00
+Hold of a block, ms: p50 70.00, p90 1900.00, p99 1900.00, max 1900.00
+Commit of a block, ms: p50 10.00, p90 100.00, p99 100.00, max 100.00
 
 | Step type       | Count | Found cached, % | Median run, ms | Median wait for the lock, ms |
 |-----------------|-------|-----------------|----------------|------------------------------|
@@ -126,39 +115,23 @@ class Placement(NamedTuple):
 
 
 class BlockTimes(NamedTuple):
-    """The wait of a write block and its parts in milliseconds, each part written only when it is given.
+    """The wait of a write block and the parts of its work in milliseconds, each part written only when it is given.
 
-    :ivar wait_ms: Wait for the lock, which every block records.
-    :ivar turn_ms: Wait for the turn in the write queue.
-    :ivar connect_ms: From the turn until the connection began the transaction.
-    :ivar begin_ms: ``BEGIN IMMEDIATE`` and the statements before it.
-    :ivar hold_ms: From taking the lock until the commit or the rollback began.
+    :ivar wait_ms: Wait for the writer, which every block records.
+    :ivar hold_ms: From the beginning of the transaction until the commit or the rollback began.
     :ivar commit_ms: The ``COMMIT`` statement.
-    :ivar release_ms: From the end of the transaction until the turn was given up.
     """
 
     wait_ms: int
-    turn_ms: int | None = None
-    connect_ms: int | None = None
-    begin_ms: int | None = None
     hold_ms: int | None = None
     commit_ms: int | None = None
-    release_ms: int | None = None
 
 
 # A span of the next identifier of the counter that has no parent, and a step that starts one second into the run
 NEXT_LINEAGE: Lineage = Lineage()
 ONE_SECOND_IN: Placement = Placement()
 # The attribute of each field of BlockTimes, in the order of the fields
-TIME_KEYS: tuple[SpanAttribute, ...] = (
-    SpanAttribute.WAIT_MS,
-    SpanAttribute.TURN_MS,
-    SpanAttribute.CONNECT_MS,
-    SpanAttribute.BEGIN_MS,
-    SpanAttribute.HOLD_MS,
-    SpanAttribute.COMMIT_MS,
-    SpanAttribute.RELEASE_MS,
-)
+TIME_KEYS: tuple[SpanAttribute, ...] = (SpanAttribute.WAIT_MS, SpanAttribute.HOLD_MS, SpanAttribute.COMMIT_MS)
 
 
 def span_line(
@@ -314,18 +287,18 @@ def fx_span_file(fx_write_spans: Callable[[Sequence[str]], Path]) -> Path:
     return fx_write_spans(
         [
             span_line(SpanName.JOB, 0.0, 10.0, {SpanAttribute.JOB_ID: JOB_NAME}, lineage=Lineage(span_id=JOB_ID)),
-            block(0.0, 2.0, BlockOutcome.COMMITTED, BlockTimes(0, 0, 0, 0, 1900, 100, 0), parent_id=JOB_ID),
-            block(0.5, 3.0, BlockOutcome.COMMITTED, BlockTimes(500, 400, 80, 20, 1900, 100, 0), parent_id=JOB_ID),
-            block(4.0, 6.0, BlockOutcome.ROLLED_BACK, BlockTimes(1000, 900, 60, 40, 800, None, 200), parent_id=JOB_ID),
-            block(7.0, 7.5, BlockOutcome.NOT_BEGUN, BlockTimes(50), parent_id=JOB_ID),
+            block(0.0, 2.0, BlockOutcome.COMMITTED, BlockTimes(0, 1900, 100), parent_id=JOB_ID),
+            block(0.5, 3.0, BlockOutcome.COMMITTED, BlockTimes(500, 1900, 100), parent_id=JOB_ID),
+            block(4.0, 5.8, BlockOutcome.ROLLED_BACK, BlockTimes(1000, 800), parent_id=JOB_ID),
+            block(7.0, 7.05, BlockOutcome.NOT_BEGUN, BlockTimes(50), parent_id=JOB_ID),
             step(DESKEW, StepOutcome.CACHED, 5, placement=Placement(9.0)),
             step(DESKEW, StepOutcome.RAN, 100, placement=Placement(8.0, FIRST_STEP_ID)),
             step(DESKEW, StepOutcome.RAN, 300, placement=Placement(8.2, SECOND_STEP_ID)),
             step(DESKEW, StepOutcome.CACHED, 8, placement=Placement(9.1)),
             step(SPLIT, StepOutcome.RAN, 40, placement=Placement(9.5)),
-            block(8.02, 8.08, BlockOutcome.COMMITTED, BlockTimes(30, 20, 5, 5, 30, 0, 0), parent_id=FIRST_STEP_ID),
-            block(8.21, 8.35, BlockOutcome.COMMITTED, BlockTimes(60, 40, 10, 10, 70, 10, 0), parent_id=SECOND_STEP_ID),
-            block(8.4, 8.45, BlockOutcome.COMMITTED, BlockTimes(20, 10, 5, 5, 30, 0, 0), parent_id=SECOND_STEP_ID),
+            block(8.02, 8.08, BlockOutcome.COMMITTED, BlockTimes(30, 30, 0), parent_id=FIRST_STEP_ID),
+            block(8.21, 8.35, BlockOutcome.COMMITTED, BlockTimes(60, 70, 10), parent_id=SECOND_STEP_ID),
+            block(8.4, 8.45, BlockOutcome.COMMITTED, BlockTimes(20, 30, 0), parent_id=SECOND_STEP_ID),
         ]
     )
 
@@ -504,7 +477,7 @@ class TestReport:
         ]
         path = fx_write_spans([block(0.0, 1.0, BlockOutcome.COMMITTED, BlockTimes(20)), *ticks])
         lines = trace_report.report(trace_report.load_spans(path), path.name).splitlines()
-        assert lines[7:9] == [WAIT_LINE, LAG_LINE]
+        assert lines[4:6] == [WAIT_LINE, LAG_LINE]
 
     def test_report_reads_the_file_the_exporter_writes(self, tmp_path: Path) -> None:
         """Verify the report of a file the real tracer wrote has the step type and the wait of the block inside it.

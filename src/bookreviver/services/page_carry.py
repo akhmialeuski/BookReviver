@@ -29,10 +29,10 @@ from bookreviver.services.recipes import find_step
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Actor, Page, PageStage
+    from bookreviver.domain.entities import Actor, Page, PageStage, Project
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.domain.values import CarryRequest
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.services.stage_records import StageRecords
 
@@ -46,7 +46,7 @@ class CarryOverService:
     def __init__(self, *, uow: UnitOfWork, records: StageRecords, clock: Clock) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose block ends the carry-over.
+        :param uow: Unit of work of the request, whose ``change_book`` ends the carry-over.
         :type uow: UnitOfWork
         :param records: Writer of the stage records, which a changed edit marks stale.
         :type records: StageRecords
@@ -73,21 +73,32 @@ class CarryOverService:
         :raises InvalidParametersError: If the scope is the selected pages and none is named, or the edit is a mask.
         """
         key = request.key
-        async with self._uow.change_book(project_id):
-            source = await owned_page(self._uow, actor, project_id, key.page_id)
-            await find_step(self._uow.recipes, project_id, key)
-            stored_source = await self._uow.page_step_states.find(key)
+
+        def work(repos: Repositories, _project: Project) -> tuple[CarryOver, list[PageStage]]:
+            """Write the shape to every target page as one batch, and mark their stages stale.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: The project as the change finds it, which the work does not need.
+            :type _project: Project
+            :returns: The batch, the changes written and the pages skipped, and the stage records that became stale.
+            :rtype: tuple[CarryOver, list[PageStage]]
+            :raises NotFoundError: If the actor has no such project, the project has no such page, no recipe of the
+                                   stage has the step, or the source page has no shape set by hand.
+            :raises InvalidParametersError: If the scope is the selected pages and none is named, or the edit is a mask.
+            """
+            source = owned_page(repos, actor, project_id, key.page_id)
+            find_step(repos.recipes, project_id, key)
+            stored_source = repos.page_step_states.find(key)
             if stored_source is None or stored_source.edit is None:
                 raise NotFoundError(key)
             if stored_source.edit.mask_key is not None:
                 raise InvalidParametersError(MASK_NOT_CARRIED)
             shape = stored_source.layer(StepLayer.HAND)
-            targets = await self._targets(project_id, request, source)
+            targets = self._targets(repos, project_id, request, source)
             stored = {
                 state.page_id: state
-                for state in await self._uow.page_step_states.list_for_step(
-                    [page.id for page in targets], key.stage, key.step_id
-                )
+                for state in repos.page_step_states.list_for_step([page.id for page in targets], key.stage, key.step_id)
             }
             moment = self._clock.now()
             carried: list[PageStepState] = []
@@ -102,19 +113,25 @@ class CarryOverService:
                     skipped.append(page.id)
                     continue
                 carried.append(state)
-            batch = PageBatch(uow=self._uow, source=ChangeSource.CARRY_OVER, moment=moment)
+            batch = PageBatch(repos=repos, source=ChangeSource.CARRY_OVER, moment=moment)
             for state in carried:
-                await batch.write(state, StepLayer.HAND, shape)
-            changes = await batch.flush()
+                batch.write(state, StepLayer.HAND, shape)
+            changes = batch.flush()
             stale: list[PageStage] = []
             for change in changes:
-                stale.extend(await self._records.mark_stale(change.page_id, change.stage))
-        await self._records.announce(project_id, stale)
-        return CarryOver(batch_id=batch.batch_id, changes=tuple(changes), skipped=tuple(skipped))
+                stale.extend(self._records.mark_stale(repos, change.page_id, change.stage))
+            return CarryOver(batch_id=batch.batch_id, changes=tuple(changes), skipped=tuple(skipped)), stale
 
-    async def _targets(self, project_id: ProjectId, request: CarryRequest, source: Page) -> Sequence[Page]:
+        carry_over, stale = await self._uow.change_book(project_id, work)
+        await self._records.announce(project_id, stale)
+        return carry_over
+
+    @staticmethod
+    def _targets(repos: Repositories, project_id: ProjectId, request: CarryRequest, source: Page) -> Sequence[Page]:
         """Choose the pages a carry-over goes to, which are never the source page and never a placeholder.
 
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param request: The carry-over, whose source page is left out and whose scope says which pages are chosen.
@@ -131,9 +148,9 @@ class CarryOverService:
         if request.scope is CarryScope.SELECTED:
             if not request.page_ids:
                 raise InvalidParametersError(SELECTED_NEEDS_PAGES)
-            candidates = await self._uow.pages.list_by_ids(project_id, request.page_ids)
+            candidates = repos.pages.list_by_ids(project_id, request.page_ids)
         else:
-            book = await book_pages(self._uow.pages, project_id)
+            book = book_pages(repos.pages, project_id)
             if request.scope is CarryScope.FOLLOWING:
                 book = book[next((index for index, page in enumerate(book) if page.id == key.page_id), -1) + 1 :]
             candidates = [page for page in book if not page.is_leaf and page.recipe_kind is source.recipe_kind]

@@ -20,7 +20,7 @@ from bookreviver.ports.storage import AssetStore, SourceStore
 from tests.helpers.builders import make_page, make_project
 from tests.helpers.fakes_accounts import PASSWORD
 from tests.helpers.schema import create_schema
-from tests.helpers.seeding import commit_account
+from tests.helpers.seeding import commit_account, store_project
 from tests.helpers.storage import BookFiles
 
 if TYPE_CHECKING:
@@ -64,7 +64,7 @@ async def _stored(container: AsyncContainer, project: Project) -> bool:
     """
     async with container() as scope:
         try:
-            await (await scope.get(UnitOfWork)).projects.get(project.id)
+            await (await scope.get(UnitOfWork)).read(lambda repos: repos.projects.get(project.id))
         except NotFoundError:
             return False
     return True
@@ -92,12 +92,8 @@ class TestDelete:
         pages = {project.id: make_page(project_id=project.id) for project in (*owned, kept)}
         async with fx_container() as scope:
             uow = await scope.get(UnitOfWork)
-            async with uow.change():
-                for project in (*owned, kept):
-                    await uow.projects.add(project)
             for project in (*owned, kept):
-                async with uow.change_book(project.id):
-                    await uow.pages.add(pages[project.id])
+                await store_project(uow, project, pages[project.id])
         files = BookFiles(
             sources=await fx_container.get(SourceStore),
             assets=await fx_container.get(AssetStore),
