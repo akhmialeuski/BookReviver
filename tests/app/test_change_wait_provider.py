@@ -3,7 +3,6 @@
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from starlette.requests import Request
 from taskiq import TaskiqMessage
 
 from bookreviver.app.container import build_container
@@ -22,7 +21,6 @@ pytestmark = pytest.mark.anyio
 # Two limits that differ from each other and from the defaults, so a test cannot pass on a default by chance
 REQUEST_SECONDS: float = 1.25
 JOB_SECONDS: float = 17.0
-HTTP_SCOPE: dict[str, Any] = {'type': 'http'}
 TASK_ID: str = 'task-1'
 TASK_NAME: str = 'bookreviver.tests.task'
 
@@ -46,13 +44,17 @@ class TestChangeWaitProvider:
         finally:
             await container.close()
 
-    async def test_scope_with_a_request_gets_the_limit_of_a_request(self, fx_container: AsyncContainer) -> None:
+    async def test_scope_with_a_request_gets_the_limit_of_a_request(
+        self, fx_container: AsyncContainer, fx_request_context: dict[Any, Any]
+    ) -> None:
         """Verify a scope that has a ``Request`` in its context, as every HTTP request has, gets ``request_seconds``.
 
         :param fx_container: Container of the test.
         :type fx_container: AsyncContainer
+        :param fx_request_context: Context of the scope of an HTTP request.
+        :type fx_request_context: dict[Any, Any]
         """
-        async with fx_container(context={Request: Request(HTTP_SCOPE)}) as scope:
+        async with fx_container(context=fx_request_context) as scope:
             assert await scope.get(ChangeWaitSeconds) == REQUEST_SECONDS
 
     async def test_scope_with_a_task_message_gets_the_limit_of_a_job(self, fx_container: AsyncContainer) -> None:

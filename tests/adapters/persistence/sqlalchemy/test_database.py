@@ -10,7 +10,7 @@ from delayed_assert import assert_expectations, expect
 from sqlalchemy import inspect, text
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
-from bookreviver.adapters.persistence.sqlalchemy.database import BUSY_TIMEOUT_STATEMENT
+from bookreviver.adapters.persistence.sqlalchemy.database import BUSY_TIMEOUT_STATEMENT, MILLISECONDS_PER_SECOND
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.app.settings import ChangeWaitSettings
 from tests.helpers.builders import make_project
@@ -33,7 +33,6 @@ MIDDLE_WAIT_SECONDS: float = 1.5
 LONG_WAIT_SECONDS: float = 2.0
 # How far below its limit the busy timeout of a block may be, for the time the block spent before it began
 BUSY_TIMEOUT_TOLERANCE_MS: int = 250
-MILLISECONDS_PER_SECOND: int = 1_000
 # The statement that reads the busy timeout of a connection, and the start of the statement that sets it
 BUSY_TIMEOUT_PRAGMA: str = 'PRAGMA busy_timeout'
 BUSY_TIMEOUT_SETTER: str = BUSY_TIMEOUT_STATEMENT.format(milliseconds='')

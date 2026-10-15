@@ -16,6 +16,7 @@ from tests.helpers.builders import make_project
 from tests.helpers.schema import create_schema
 from tests.helpers.seeding import commit_account, store_project
 from tests.helpers.tracers import AskingTracer
+from tests.helpers.wait_limits import IMPATIENT_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -26,8 +27,6 @@ if TYPE_CHECKING:
 
 # Long enough that a block which wrongly waits for a lock that is never given fails the test, and does not hang it
 TRACED_WAIT_SECONDS: float = 10.0
-# Short enough that a block refused the lock gives up at once
-IMPATIENT_SECONDS: float = 0.05
 
 
 @pytest.fixture

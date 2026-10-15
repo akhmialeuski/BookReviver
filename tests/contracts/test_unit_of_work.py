@@ -14,7 +14,6 @@ import anyio
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
-from starlette.requests import Request
 
 from bookreviver.app.settings import ChangeWaitSettings
 from bookreviver.domain.enums import JobState, Stage, ValueScope
@@ -149,16 +148,6 @@ def fx_settings(fx_settings: Settings) -> Settings:
     """
     limits = ChangeWaitSettings(request_seconds=REQUEST_WAIT_SECONDS, job_seconds=JOB_WAIT_SECONDS)
     return fx_settings.model_copy(update={'change_wait': limits})
-
-
-@pytest.fixture
-def fx_request_context() -> dict[Any, Any]:
-    """Build the context dishka's FastAPI integration puts into the scope of every HTTP request.
-
-    :returns: The context holding a ``Request``, which a scope opened with it takes the limit of a request from.
-    :rtype: dict[Any, Any]
-    """
-    return {Request: Request({'type': 'http'})}
 
 
 @pytest.fixture
