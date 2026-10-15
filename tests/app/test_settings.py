@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from bookreviver.app.settings import (
-    REQUEST_WAIT_EXCEEDS_JOB_WAIT,
+    REQUEST_WAIT_NOT_SHORTER_THAN_JOB_WAIT,
     STEP_PROCESSES_NEED_PREVIEW_SHARE,
     TRACING_NEEDS_PATH,
     TRACING_PATH_WITHOUT_TRACING,
@@ -38,6 +38,8 @@ REQUEST_SECONDS_FIELD: str = 'request_seconds'
 JOB_SECONDS_FIELD: str = 'job_seconds'
 SHORTER_SECONDS: float = 5.0
 LONGER_SECONDS: float = 10.0
+# The id of a case whose two values are equal
+EQUAL_ID: str = 'equal'
 # Where the default number of processes reads the cores, which a test replaces
 CPU_COUNT_TARGET: str = 'bookreviver.app.settings.os.process_cpu_count'
 
@@ -129,7 +131,7 @@ class TestProcessingSettings:
         """Verify previews have a process of their own unless the settings say more."""
         assert ProcessingSettings().preview_step_processes == 1
 
-    @pytest.mark.parametrize(('steps', 'previews'), [(2, 2), (2, 3), (4, 4)], ids=['equal', 'more', 'all'])
+    @pytest.mark.parametrize(('steps', 'previews'), [(2, 2), (2, 3), (4, 4)], ids=[EQUAL_ID, 'more', 'all'])
     def test_previews_may_not_take_every_process(self, steps: int, previews: int) -> None:
         """Verify the settings are refused when no process is left for the full runs.
 
@@ -207,13 +209,19 @@ class TestChangeWaitSettings:
             ChangeWaitSettings.model_validate({field: seconds})
         assert [error['loc'] for error in refused.value.errors()] == [(field,)]
 
-    def test_a_request_limit_longer_than_the_job_limit_is_refused(self) -> None:
-        """Verify a request limit above the job limit is refused, since every connection opens with the job limit."""
-        message = REQUEST_WAIT_EXCEEDS_JOB_WAIT.format(request_seconds=LONGER_SECONDS, job_seconds=SHORTER_SECONDS)
-        with pytest.raises(ValidationError, match=re.escape(message)):
-            ChangeWaitSettings(request_seconds=LONGER_SECONDS, job_seconds=SHORTER_SECONDS)
+    @pytest.mark.parametrize('request_seconds', [SHORTER_SECONDS, LONGER_SECONDS], ids=[EQUAL_ID, 'longer'])
+    def test_a_request_limit_not_shorter_than_the_job_limit_is_refused(self, request_seconds: float) -> None:
+        """Verify a request limit equal to the job limit or longer is refused.
 
-    def test_equal_limits_are_accepted(self) -> None:
-        """Verify a request limit equal to the job limit is accepted, which is the longest a request may wait."""
-        change_wait = ChangeWaitSettings(request_seconds=SHORTER_SECONDS, job_seconds=SHORTER_SECONDS)
-        assert (change_wait.request_seconds, change_wait.job_seconds) == (SHORTER_SECONDS, SHORTER_SECONDS)
+        Every connection opens with the job limit as its busy timeout, and the adapter caps the lock wait of a block only
+        when its limit is shorter than that. A request whose limit equals the job limit would wait for the queue and then
+        for the whole busy timeout, which is up to twice its limit.
+
+        :param request_seconds: The request limit, against a job limit of ``SHORTER_SECONDS``.
+        :type request_seconds: float
+        """
+        message = REQUEST_WAIT_NOT_SHORTER_THAN_JOB_WAIT.format(
+            request_seconds=request_seconds, job_seconds=SHORTER_SECONDS
+        )
+        with pytest.raises(ValidationError, match=re.escape(message)):
+            ChangeWaitSettings(request_seconds=request_seconds, job_seconds=SHORTER_SECONDS)

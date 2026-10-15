@@ -20,9 +20,10 @@ STEP_PROCESSES_NEED_PREVIEW_SHARE: str = (
     'processing.preview_step_processes must be smaller than processing.step_processes, '
     'so that full runs keep at least one process.'
 )
-REQUEST_WAIT_EXCEEDS_JOB_WAIT: str = (
-    'change_wait.request_seconds ({request_seconds}) must not exceed change_wait.job_seconds ({job_seconds}), '
-    'because every connection opens with the job limit as its busy timeout.'
+REQUEST_WAIT_NOT_SHORTER_THAN_JOB_WAIT: str = (
+    'change_wait.request_seconds ({request_seconds}) must be shorter than change_wait.job_seconds ({job_seconds}), '
+    'because every connection opens with the job limit as its busy timeout, and a block whose limit is not shorter '
+    'than that waits for the queue and then for the whole busy timeout.'
 )
 
 # The share of the cores the processes of the steps take by default, two thirds, and the fewest they are
@@ -213,23 +214,26 @@ class ChangeWaitSettings(BaseModel):
                            never hangs for the long wait of a job and is told at once to try again.
     :ivar job_seconds: Limit of every other unit of work, the background jobs and the work of the startup, 30 seconds by
                        default, so a job does not lose its work to a short wait. It is the longest limit, since every
-                       connection opens with it as its busy timeout, so the request limit may not exceed it.
+                       connection opens with it as its busy timeout, so the request limit must be shorter: the adapter
+                       caps the lock wait of a block only when its limit is shorter than that busy timeout.
     """
 
     request_seconds: PositiveFloat = 3.0
     job_seconds: PositiveFloat = DEFAULT_CHANGE_WAIT_SECONDS
 
     @model_validator(mode='after')
-    def _require_request_limit_within_job_limit(self) -> Self:
-        """Check that the limit of a request is no longer than the limit of a job.
+    def _require_request_limit_shorter_than_job_limit(self) -> Self:
+        """Check that the limit of a request is shorter than the limit of a job.
 
         :returns: The settings, once checked.
         :rtype: Self
-        :raises ValueError: If the request limit is longer than the job limit.
+        :raises ValueError: If the request limit is equal to the job limit or longer.
         """
-        if self.request_seconds > self.job_seconds:
+        if self.request_seconds >= self.job_seconds:
             raise ValueError(
-                REQUEST_WAIT_EXCEEDS_JOB_WAIT.format(request_seconds=self.request_seconds, job_seconds=self.job_seconds)
+                REQUEST_WAIT_NOT_SHORTER_THAN_JOB_WAIT.format(
+                    request_seconds=self.request_seconds, job_seconds=self.job_seconds
+                )
             )
         return self
 
