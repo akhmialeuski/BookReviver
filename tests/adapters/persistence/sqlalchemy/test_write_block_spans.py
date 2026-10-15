@@ -43,6 +43,15 @@ REQUEST_DATABASE_SECONDS: float = 5.0
 # How far below the sum of the queue hold and the limit the wait of a job's block may fall
 JOB_WAIT_TOLERANCE_SECONDS: float = 0.1
 FAILED_BLOCK: str = 'The block failed after it wrote a page.'
+# The parts the wait of a block that took the lock is split into, and every timing such a block records
+WAIT_PARTS: tuple[SpanAttribute, ...] = (SpanAttribute.TURN_MS, SpanAttribute.CONNECT_MS, SpanAttribute.BEGIN_MS)
+TIMINGS: tuple[SpanAttribute, ...] = (
+    SpanAttribute.WAIT_MS,
+    *WAIT_PARTS,
+    SpanAttribute.HOLD_MS,
+    SpanAttribute.COMMIT_MS,
+    SpanAttribute.RELEASE_MS,
+)
 REFUSER_ARG: str = 'refuser'
 
 
@@ -125,7 +134,10 @@ class TestWriteBlockSpan:
     async def test_change_book_block_makes_one_span_of_its_book_with_its_timings(
         self, fx_traced_database: SqlDatabase, fx_project: Project, fx_tracer: AskingTracer
     ) -> None:
-        """Verify a committed ``change_book`` block gives one span with its kind, its book, three timings and its end.
+        """Verify a committed ``change_book`` block gives one span with its kind, its book, its timings and its end.
+
+        The wait is split into the turn, the connection and ``BEGIN IMMEDIATE``, read at four points of one clock, so
+        the three parts add up to the wait up to the rounding of a float. The pool counts the block's own connection.
 
         :param fx_traced_database: Database whose blocks are timed.
         :type fx_traced_database: SqlDatabase
@@ -142,8 +154,11 @@ class TestWriteBlockSpan:
         expect(span.attributes[SpanAttribute.BLOCK_KIND] is BlockKind.BOOK)
         expect(span.attributes[SpanAttribute.BOOK] == str(fx_project.id))
         expect(span.attributes[SpanAttribute.BLOCK_OUTCOME] is BlockOutcome.COMMITTED)
-        for key in (SpanAttribute.WAIT_MS, SpanAttribute.HOLD_MS, SpanAttribute.COMMIT_MS):
+        for key in TIMINGS:
             expect(milliseconds(span, key) >= 0, f'{key} is negative')
+        parts = sum(milliseconds(span, key) for key in WAIT_PARTS)
+        expect(parts == pytest.approx(milliseconds(span, SpanAttribute.WAIT_MS)))
+        expect(span.attributes[SpanAttribute.POOL_CHECKED_OUT] == 1)
         assert_expectations()
 
     async def test_block_is_a_child_of_the_span_current_at_its_caller(

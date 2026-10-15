@@ -57,11 +57,14 @@ commits and rolls back nothing by itself. Three listeners on the engine put that
 - ``commit`` and ``rollback`` emit ``COMMIT`` and ``ROLLBACK`` while the driver connection is in a transaction, because
   the commit and rollback of the driver do nothing in this mode.
 
-The ``write.block`` span of the :class:`~bookreviver.ports.tracing.Tracer` starts when the block joins the queue, so its
-wait is the time in the queue and in ``BEGIN IMMEDIATE`` together, and goes on while the block holds the lock. The
-queue hands it to the block with the execution option, and ``begin`` keeps it in ``connection.info`` until the commit or
-the rollback begins, which ends the holding and, for a commit, times the ``COMMIT`` statement. A block that never took
-the lock has its span ended by the queue.
+The ``write.block`` span of the :class:`~bookreviver.ports.tracing.Tracer` starts when the block joins the queue and
+ends when the block gives up its turn, so the span covers the whole time the block occupied the queue. Its wait is the
+time in the queue and in ``BEGIN IMMEDIATE`` together, split into the turn, the start of the block up to the ``begin``
+listener, which is the resumption after the turn and the connection taken from the pool, and the statements of that
+listener. The queue hands the span to the block with the execution option, and ``begin`` keeps the block in
+``connection.info`` until the commit or the rollback begins, which ends the holding and, for a commit, times the
+``COMMIT`` statement. The time from the end of that statement until the turn is given up, in which the session hands its
+connection back to the pool, is the release. A block that never took the lock is ended as not begun.
 
 These durations are measured on the event loop, not inside SQLite. aiosqlite runs a statement in a thread of its own and
 wakes the coroutine through the loop, so the clock is read only when the loop reaches that wake-up. A loop that is busy
@@ -73,7 +76,7 @@ The schema is created and changed only by the revisions in ``migrations/``, appl
 costs one read of the version table and needs no event loop of Alembic's own.
 """
 
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING
@@ -87,6 +90,7 @@ from anyio import to_thread
 from attrs import define, frozen
 from sqlalchemy import event
 from sqlalchemy.engine import make_url
+from sqlalchemy.pool import QueuePool
 
 from bookreviver.adapters.persistence.turns import hold_in_turn
 from bookreviver.domain.enums import BlockOutcome, SpanAttribute, SpanName
@@ -147,21 +151,27 @@ class SchemaRevisions:
 
 @define
 class WriteBlock:
-    """A block of the port, from the moment it joined the write queue until its commit or rollback.
+    """A block of the port, from the moment it got its turn in the write queue until it gives the turn up.
 
     :ivar span: The ``write.block`` span, started when the block joined the queue.
     :ivar asked_at: Reading of the performance counter when the block joined the queue, which the wait is counted from.
+    :ivar granted_at: Reading of the performance counter when the block got its turn, which the start of the block is
+                      counted from.
     :ivar wait_seconds: The limit of the unit of work that opened the block, counted from ``asked_at``; the module
                         docstring says what it covers.
     :ivar locked_at: Reading of the performance counter when the block resumed after ``BEGIN IMMEDIATE``, which is
                      when the holding is counted from and which lags the lock actually taken by the delay of the event
                      loop, or None while the block has not taken the lock.
+    :ivar ended_at: Reading of the performance counter when the statement that ended the transaction returned, which
+                    the release of the turn is counted from, or None while the transaction of the block is open.
     """
 
     span: StartedSpan
     asked_at: float
+    granted_at: float
     wait_seconds: float
     locked_at: float | None = None
+    ended_at: float | None = None
 
 
 class WriteQueue:
@@ -184,9 +194,10 @@ class WriteQueue:
     async def turn(self, kind: BlockKind, book: ProjectId | None, *, wait_seconds: float) -> AsyncIterator[WriteBlock]:
         """Wait for the turn of a block and hold it until the block ends.
 
-        The span of the block starts here, before the wait. When the block ends without ``BEGIN IMMEDIATE`` having
-        taken the lock, because its turn did not come in time, SQLite refused the lock or the connection failed, the
-        span ends here as not begun, with the whole time it waited.
+        The span of the block starts here, before the wait, and ends here once the turn is given up, with the time
+        since the transaction ended as the release. When the block ends without ``BEGIN IMMEDIATE`` having taken the
+        lock, because its turn did not come in time, SQLite refused the lock or the connection failed, the span ends as
+        not begun, with the whole time it waited.
 
         :param kind: Kind of the block.
         :type kind: BlockKind
@@ -203,21 +214,40 @@ class WriteQueue:
         attributes: dict[SpanAttribute, str] = {SpanAttribute.BLOCK_KIND: kind}
         if book is not None:
             attributes[SpanAttribute.BOOK] = str(book)
-        block = WriteBlock(
-            span=self._tracer.start(SpanName.WRITE_BLOCK, attributes),
-            asked_at=perf_counter(),
-            wait_seconds=wait_seconds,
-        )
-        try:
-            async with hold_in_turn(self._turn, wait_seconds=wait_seconds):
+        span = self._tracer.start(SpanName.WRITE_BLOCK, attributes)
+        asked_at = perf_counter()
+        async with AsyncExitStack() as held:
+            try:
+                await held.enter_async_context(hold_in_turn(self._turn, wait_seconds=wait_seconds))
+            except BaseException:
+                self._end_not_begun(span, asked_at)
+                raise
+            block = WriteBlock(span=span, asked_at=asked_at, granted_at=perf_counter(), wait_seconds=wait_seconds)
+            span.set_attribute(SpanAttribute.TURN_MS, (block.granted_at - asked_at) * MILLISECONDS_PER_SECOND)
+            try:
                 yield block
-        finally:
-            if block.locked_at is None:
-                block.span.set_attribute(
-                    SpanAttribute.WAIT_MS, (perf_counter() - block.asked_at) * MILLISECONDS_PER_SECOND
-                )
-                block.span.set_attribute(SpanAttribute.BLOCK_OUTCOME, BlockOutcome.NOT_BEGUN)
-                block.span.end()
+            finally:
+                # The turn is given up right after this, by the exit of the stack, which awaits nothing more
+                if block.locked_at is None:
+                    self._end_not_begun(span, asked_at)
+                else:
+                    if block.ended_at is not None:
+                        released_ms = (perf_counter() - block.ended_at) * MILLISECONDS_PER_SECOND
+                        span.set_attribute(SpanAttribute.RELEASE_MS, released_ms)
+                    span.end()
+
+    @staticmethod
+    def _end_not_begun(span: StartedSpan, asked_at: float) -> None:
+        """End the span of a block that never took the lock, with the whole time it waited.
+
+        :param span: The ``write.block`` span of the block.
+        :type span: StartedSpan
+        :param asked_at: Reading of the performance counter when the block joined the queue.
+        :type asked_at: float
+        """
+        span.set_attribute(SpanAttribute.WAIT_MS, (perf_counter() - asked_at) * MILLISECONDS_PER_SECOND)
+        span.set_attribute(SpanAttribute.BLOCK_OUTCOME, BlockOutcome.NOT_BEGUN)
+        span.end()
 
 
 class SqlDatabase:
@@ -298,11 +328,18 @@ class SqlDatabase:
         module docstring describes: what is left of a request's limit, never below zero, so that ``BEGIN IMMEDIATE``
         fails with SQLITE_BUSY at once when nothing is left, or the value the connection opened with for a job.
 
+        The span records the start of the block in two parts: from its turn until this listener runs, which is the
+        resumption after the turn and the connection taken from the pool, and the statements here. It records how many
+        connections of the pool were checked out at this moment, this one included, when the pool counts them.
+
         :param connection: Connection that begins a transaction.
         :type connection: Connection
         """
         if not isinstance(block := connection.get_execution_options().get(CHANGE_BLOCK_OPTION), WriteBlock):
             return
+        begun_at = perf_counter()
+        if isinstance(pool := connection.engine.pool, QueuePool):
+            block.span.set_attribute(SpanAttribute.POOL_CHECKED_OUT, pool.checkedout())
         if round(block.wait_seconds * MILLISECONDS_PER_SECOND) < self._busy_timeout_ms:
             remaining_seconds = block.wait_seconds - (perf_counter() - block.asked_at)
             busy_timeout_ms = max(round(remaining_seconds * MILLISECONDS_PER_SECOND), 0)
@@ -314,6 +351,8 @@ class SqlDatabase:
         connection.exec_driver_sql('BEGIN IMMEDIATE')
         block.locked_at = perf_counter()
         block.span.set_attribute(SpanAttribute.WAIT_MS, (block.locked_at - block.asked_at) * MILLISECONDS_PER_SECOND)
+        block.span.set_attribute(SpanAttribute.CONNECT_MS, (begun_at - block.granted_at) * MILLISECONDS_PER_SECOND)
+        block.span.set_attribute(SpanAttribute.BEGIN_MS, (block.locked_at - begun_at) * MILLISECONDS_PER_SECOND)
         connection.info[WRITE_BLOCK_INFO] = block
 
     def _commit_sqlite(self, connection: Connection) -> None:
@@ -334,13 +373,14 @@ class SqlDatabase:
 
     @staticmethod
     def _end_transaction(connection: Connection, statement: str, outcome: BlockOutcome) -> None:
-        """Run the statement that ends the transaction, and end the span of the block that held the connection.
+        """Run the statement that ends the transaction, and record on the span of the block how the block ended.
 
         The holding lasts until the statement begins. The statement of a commit is timed too, as the cost of making the
         writes of the block durable, which a rollback has none of. Both durations are read on the event loop, so they
         include its delay, as the wait of ``_begin_sqlite`` does. A block whose statement did not run, because the
         connection was invalidated, is recorded as rolled back. A commit that failed keeps the time it took and is
-        recorded as rolled back, since the unit of work rolls it back next.
+        recorded as rolled back, since the unit of work rolls it back next. The span is ended by the queue, once the
+        block gives up its turn, so the end of the statement is kept on the block for the release.
 
         :param connection: Connection that commits or rolls back.
         :type connection: Connection
@@ -362,13 +402,13 @@ class SqlDatabase:
         finally:
             # Only a block that took the lock is kept in connection.info, so its locked_at is always read
             if isinstance(block, WriteBlock) and block.locked_at is not None:
+                block.ended_at = perf_counter()
                 span = block.span
                 span.set_attribute(SpanAttribute.HOLD_MS, (ending_at - block.locked_at) * MILLISECONDS_PER_SECOND)
                 # A commit that raised, on a full disk for instance, is timed as well
                 if attempted and outcome is BlockOutcome.COMMITTED:
-                    span.set_attribute(SpanAttribute.COMMIT_MS, (perf_counter() - ending_at) * MILLISECONDS_PER_SECOND)
+                    span.set_attribute(SpanAttribute.COMMIT_MS, (block.ended_at - ending_at) * MILLISECONDS_PER_SECOND)
                 span.set_attribute(SpanAttribute.BLOCK_OUTCOME, ended_as)
-                span.end()
 
     async def schema_revisions(self) -> SchemaRevisions:
         """Read the revisions the database records and the head revisions of the migrations directory.

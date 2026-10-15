@@ -1271,8 +1271,22 @@ class SpanAttribute(LabeledStrEnum):
         'wait.ms',
         'Milliseconds from asking for the write lock until the block resumed, event-loop delay included',
     )
+    TURN_MS = 'turn.ms', 'Milliseconds from asking for the write queue until the block got its turn'
+    CONNECT_MS = (
+        'connect.ms',
+        'Milliseconds from the turn of the block until its connection began the transaction, event-loop delay included',
+    )
+    BEGIN_MS = (
+        'begin.ms',
+        'Milliseconds from the transaction beginning until BEGIN IMMEDIATE resumed the block, loop delay included',
+    )
+    POOL_CHECKED_OUT = 'pool.checked-out', 'Connections of the pool checked out when the block began its transaction'
     HOLD_MS = 'hold.ms', 'Milliseconds from the block resuming until its commit began, event-loop delay included'
     COMMIT_MS = 'commit.ms', 'Milliseconds the commit of the block took, event-loop delay included'
+    RELEASE_MS = (
+        'release.ms',
+        'Milliseconds from the end of the transaction until the block gave up its turn, event-loop delay included',
+    )
     LAG_MS = 'lag.ms', 'Milliseconds a sleep of the probe overran its interval'
 
 

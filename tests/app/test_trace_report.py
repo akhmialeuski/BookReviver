@@ -8,17 +8,28 @@ is renamed there fails these tests instead of emptying the report.
 The expected values are worked out by hand:
 
 - The wall time is 10 s, from the start of the ``job`` span to its end.
-- The blocks hold the lock from the end of their wait to their end: A over 0 to 2 s, B over 1 to 3 s (it asked at 0.5 s
-  and waited 500 ms), C over 5 to 6 s (it asked at 4 s and waited 1000 ms). A and B overlap, so they hold the lock for
-  3 s together, and with C for 4 s. The fourth block asked at 7 s, waited 50 ms and was refused, so it held nothing.
-- Inside the first deskew step that ran, 8.00 to 8.10 s, block E asked at 8.02 s, waited 30 ms and ended at 8.08 s, so it
-  held the lock for 0.03 s. Inside the second one, 8.20 to 8.50 s, block F asked at 8.21 s, waited 60 ms and ended at
-  8.35 s, so it held the lock for 0.08 s, and block G asked at 8.40 s, waited 20 ms and ended at 8.45 s, so it held it
-  for 0.03 s. None of the three overlaps another block. Together the holding is 4 + 0.03 + 0.08 + 0.03 = 4.14 s, which
-  is 41.4 % of the 10 s.
+- A block holds the lock from the end of its wait, through its holding and its commit. A, 0 to 2 s, waited nothing,
+  held 1900 ms and committed in 100 ms, so it holds 0 to 2 s. B, 0.5 to 3 s, waited 500 ms (turn 400, connection 80,
+  ``BEGIN`` 20), held 1900 ms and committed in 100 ms, so it holds 1 to 3 s. A and B overlap, so they hold the lock for
+  3 s together. C, 4 to 6 s, waited 1000 ms (turn 900, connection 60, ``BEGIN`` 40), held 800 ms, rolled back and
+  released its turn in 200 ms, so it holds 5 to 5.8 s. D asked at 7 s, waited 50 ms and was refused by the queue, so it
+  had no turn and held nothing.
+- Inside the first deskew step that ran, 8.00 to 8.10 s, block E asked at 8.02 s, waited 30 ms (turn 20, connection 5,
+  ``BEGIN`` 5) and held 30 ms, to 8.08 s. Inside the second one, 8.20 to 8.50 s, block F asked at 8.21 s, waited 60 ms
+  (turn 40, connection 10, ``BEGIN`` 10), held 70 ms and committed in 10 ms, to 8.35 s, and block G asked at 8.40 s,
+  waited 20 ms (turn 10, connection 5, ``BEGIN`` 5) and held 30 ms, to 8.45 s. Together the holding is 3 + 0.8 + 0.03 +
+  0.08 + 0.03 = 3.94 s, which is 39.4 % of the 10 s.
+- A block has its turn from the end of its turn wait to its end: A 0 to 2 s and B 0.9 to 3 s, 3 s together, C 4.9 to
+  6 s, E 8.04 to 8.08 s, F 8.25 to 8.35 s and G 8.41 to 8.45 s, so 3 + 1.1 + 0.04 + 0.1 + 0.04 = 4.28 s, 42.8 %. The
+  start of a block runs from its turn to the lock: B 0.9 to 1 s, C 4.9 to 5 s, E 8.04 to 8.05 s, F 8.25 to 8.27 s and
+  G 8.41 to 8.42 s, so 0.24 s, 2.4 %. Only C released for long, 5.8 to 6 s, 2.0 %.
 - There are 7 write blocks, and their waits are 0, 500, 1000, 50, 30, 60 and 20 ms, in order 0, 20, 30, 50, 60, 500 and
   1000 ms. By nearest rank over seven values the 50th percentile is the ceiling of 3.5, the 4th, 50 ms; the 90th is the
   ceiling of 6.3 and the 99th the ceiling of 6.93, both the 7th, 1000 ms; the maximum is 1000 ms.
+- The six blocks that had a turn give six values of each part. The turns in order are 0, 10, 20, 40, 400 and 900 ms, so
+  the 50th percentile is the 3rd, 20 ms, and the 90th and the 99th are the 6th, 900 ms. The connections are 0, 5, 5,
+  10, 60 and 80 ms, the ``BEGIN`` statements 0, 5, 5, 10, 20 and 40 ms, and the releases five of 0 ms and one of
+  200 ms, read the same way.
 - ``geometry.deskew`` has four steps: two cached, and two that ran in 100 and 300 ms, so the median run is 200 ms.
   The wait for the lock inside the step of 100 ms is that of E, 30 ms, and inside the step of 300 ms the sum of F and G,
   60 + 20 = 80 ms, so the median wait is (30 + 80) / 2 = 55 ms. ``split.none`` has one step that ran in 40 ms, with no
@@ -68,8 +79,15 @@ SECOND_STEP_ID: str = '0x00000000000000a2'
 EXPECTED_REPORT: str = f"""Trace report: {FILE_NAME}
 Wall time of the run, s: 10.000
 Write blocks: 7
-Share of the run with the write lock held, %: 41.4
+Share of the run with the write lock held, %: 39.4
+Share of the run with the write queue taken, %: 42.8
+Share of the run in the start of a block, %: 2.4
+Share of the run in the release of a block, %: 2.0
 Wait for the write lock, ms: p50 50.00, p90 1000.00, p99 1000.00, max 1000.00
+Turn in the write queue, ms: p50 20.00, p90 900.00, p99 900.00, max 900.00
+Connection of a block, ms: p50 5.00, p90 80.00, p99 80.00, max 80.00
+BEGIN IMMEDIATE of a block, ms: p50 5.00, p90 40.00, p99 40.00, max 40.00
+Release of a block, ms: p50 0.00, p90 200.00, p99 200.00, max 200.00
 
 | Step type       | Count | Found cached, % | Median run, ms | Median wait for the lock, ms |
 |-----------------|-------|-----------------|----------------|------------------------------|
@@ -107,9 +125,40 @@ class Placement(NamedTuple):
     parent_id: str | None = None
 
 
+class BlockTimes(NamedTuple):
+    """The wait of a write block and its parts in milliseconds, each part written only when it is given.
+
+    :ivar wait_ms: Wait for the lock, which every block records.
+    :ivar turn_ms: Wait for the turn in the write queue.
+    :ivar connect_ms: From the turn until the connection began the transaction.
+    :ivar begin_ms: ``BEGIN IMMEDIATE`` and the statements before it.
+    :ivar hold_ms: From taking the lock until the commit or the rollback began.
+    :ivar commit_ms: The ``COMMIT`` statement.
+    :ivar release_ms: From the end of the transaction until the turn was given up.
+    """
+
+    wait_ms: int
+    turn_ms: int | None = None
+    connect_ms: int | None = None
+    begin_ms: int | None = None
+    hold_ms: int | None = None
+    commit_ms: int | None = None
+    release_ms: int | None = None
+
+
 # A span of the next identifier of the counter that has no parent, and a step that starts one second into the run
 NEXT_LINEAGE: Lineage = Lineage()
 ONE_SECOND_IN: Placement = Placement()
+# The attribute of each field of BlockTimes, in the order of the fields
+TIME_KEYS: tuple[SpanAttribute, ...] = (
+    SpanAttribute.WAIT_MS,
+    SpanAttribute.TURN_MS,
+    SpanAttribute.CONNECT_MS,
+    SpanAttribute.BEGIN_MS,
+    SpanAttribute.HOLD_MS,
+    SpanAttribute.COMMIT_MS,
+    SpanAttribute.RELEASE_MS,
+)
 
 
 def span_line(
@@ -151,23 +200,31 @@ def span_line(
     return json.dumps(record)
 
 
-def block(start_s: float, end_s: float, wait_ms: int, outcome: BlockOutcome, *, parent_id: str | None = None) -> str:
+def block(
+    start_s: float,
+    end_s: float,
+    outcome: BlockOutcome,
+    times: BlockTimes,
+    *,
+    parent_id: str | None = None,
+) -> str:
     """Write a ``write.block`` span.
 
     :param start_s: Seconds after the start of the run at which the block asked for the lock.
     :type start_s: float
-    :param end_s: Seconds after the start of the run at which the block ended.
+    :param end_s: Seconds after the start of the run at which the block gave up its turn.
     :type end_s: float
-    :param wait_ms: Milliseconds the block waited for the lock.
-    :type wait_ms: int
     :param outcome: How the block ended.
     :type outcome: BlockOutcome
+    :param times: The wait of the block and the parts of it the span records.
+    :type times: BlockTimes
     :param parent_id: Identifier of the span the block was started inside, or None for a root.
     :type parent_id: str | None
     :returns: The line of the span.
     :rtype: str
     """
-    attributes = {SpanAttribute.WAIT_MS: float(wait_ms), SpanAttribute.BLOCK_OUTCOME: outcome.value}
+    attributes: dict[SpanAttribute, object] = {SpanAttribute.BLOCK_OUTCOME: outcome.value}
+    attributes.update((key, float(value)) for key, value in zip(TIME_KEYS, times, strict=True) if value is not None)
     return span_line(SpanName.WRITE_BLOCK, start_s, end_s, attributes, lineage=Lineage(parent_id=parent_id))
 
 
@@ -257,18 +314,18 @@ def fx_span_file(fx_write_spans: Callable[[Sequence[str]], Path]) -> Path:
     return fx_write_spans(
         [
             span_line(SpanName.JOB, 0.0, 10.0, {SpanAttribute.JOB_ID: JOB_NAME}, lineage=Lineage(span_id=JOB_ID)),
-            block(0.0, 2.0, 0, BlockOutcome.COMMITTED, parent_id=JOB_ID),
-            block(0.5, 3.0, 500, BlockOutcome.COMMITTED, parent_id=JOB_ID),
-            block(4.0, 6.0, 1000, BlockOutcome.ROLLED_BACK, parent_id=JOB_ID),
-            block(7.0, 7.5, 50, BlockOutcome.NOT_BEGUN, parent_id=JOB_ID),
+            block(0.0, 2.0, BlockOutcome.COMMITTED, BlockTimes(0, 0, 0, 0, 1900, 100, 0), parent_id=JOB_ID),
+            block(0.5, 3.0, BlockOutcome.COMMITTED, BlockTimes(500, 400, 80, 20, 1900, 100, 0), parent_id=JOB_ID),
+            block(4.0, 6.0, BlockOutcome.ROLLED_BACK, BlockTimes(1000, 900, 60, 40, 800, None, 200), parent_id=JOB_ID),
+            block(7.0, 7.5, BlockOutcome.NOT_BEGUN, BlockTimes(50), parent_id=JOB_ID),
             step(DESKEW, StepOutcome.CACHED, 5, placement=Placement(9.0)),
             step(DESKEW, StepOutcome.RAN, 100, placement=Placement(8.0, FIRST_STEP_ID)),
             step(DESKEW, StepOutcome.RAN, 300, placement=Placement(8.2, SECOND_STEP_ID)),
             step(DESKEW, StepOutcome.CACHED, 8, placement=Placement(9.1)),
             step(SPLIT, StepOutcome.RAN, 40, placement=Placement(9.5)),
-            block(8.02, 8.08, 30, BlockOutcome.COMMITTED, parent_id=FIRST_STEP_ID),
-            block(8.21, 8.35, 60, BlockOutcome.COMMITTED, parent_id=SECOND_STEP_ID),
-            block(8.4, 8.45, 20, BlockOutcome.COMMITTED, parent_id=SECOND_STEP_ID),
+            block(8.02, 8.08, BlockOutcome.COMMITTED, BlockTimes(30, 20, 5, 5, 30, 0, 0), parent_id=FIRST_STEP_ID),
+            block(8.21, 8.35, BlockOutcome.COMMITTED, BlockTimes(60, 40, 10, 10, 70, 10, 0), parent_id=SECOND_STEP_ID),
+            block(8.4, 8.45, BlockOutcome.COMMITTED, BlockTimes(20, 10, 5, 5, 30, 0, 0), parent_id=SECOND_STEP_ID),
         ]
     )
 
@@ -296,9 +353,9 @@ CHECK_CASES: dict[str, CheckCase] = {
         lines=(
             job(JobKind.PREVIEW_STEP, 250),
             job(JobKind.PREVIEW_STEP, 400),
-            block(0.0, 1.0, 0, BlockOutcome.COMMITTED),
-            block(1.0, 2.0, 20, BlockOutcome.COMMITTED),
-            block(2.0, 3.0, 90, BlockOutcome.COMMITTED),
+            block(0.0, 1.0, BlockOutcome.COMMITTED, BlockTimes(0)),
+            block(1.0, 2.0, BlockOutcome.COMMITTED, BlockTimes(20)),
+            block(2.0, 3.0, BlockOutcome.COMMITTED, BlockTimes(90)),
         ),
         status=0,
         preview='measured 400.00, met',
@@ -307,15 +364,15 @@ CHECK_CASES: dict[str, CheckCase] = {
     'lock-wait-exceeded': CheckCase(
         lines=(
             job(JobKind.PREVIEW_STEP, 400),
-            block(0.0, 1.0, 10, BlockOutcome.COMMITTED),
-            block(1.0, 2.0, 250, BlockOutcome.COMMITTED),
+            block(0.0, 1.0, BlockOutcome.COMMITTED, BlockTimes(10)),
+            block(1.0, 2.0, BlockOutcome.COMMITTED, BlockTimes(250)),
         ),
         status=1,
         preview='measured 400.00, met',
         lock_wait='measured 250.00, exceeded',
     ),
     'preview-exceeded': CheckCase(
-        lines=(job(JobKind.PREVIEW_STEP, 1_500), block(0.0, 1.0, 10, BlockOutcome.COMMITTED)),
+        lines=(job(JobKind.PREVIEW_STEP, 1_500), block(0.0, 1.0, BlockOutcome.COMMITTED, BlockTimes(10))),
         status=1,
         preview='measured 1500.00, exceeded',
         lock_wait='measured 10.00, met',
@@ -327,7 +384,7 @@ CHECK_CASES: dict[str, CheckCase] = {
             job(JobKind.PREVIEW_STEP, 1_200, lineage=Lineage(span_id=JOB_ID)),
             step(DESKEW, StepOutcome.RAN, 600, VersionScale.PREVIEW, placement=Placement(0.0, parent_id=JOB_ID)),
             step(DESKEW, StepOutcome.RAN, 600, VersionScale.PREVIEW, placement=Placement(0.6, parent_id=JOB_ID)),
-            block(0.0, 1.0, 10, BlockOutcome.COMMITTED),
+            block(0.0, 1.0, BlockOutcome.COMMITTED, BlockTimes(10)),
         ),
         status=1,
         preview='measured 1200.00, exceeded',
@@ -340,7 +397,7 @@ CHECK_CASES: dict[str, CheckCase] = {
             job(JobKind.RUN_STAGE, 6_000),
             job(JobKind.PREVIEW_STEP, 300),
             step(DESKEW, StepOutcome.RAN, 5_000, VersionScale.PREVIEW),
-            block(0.0, 1.0, 10, BlockOutcome.COMMITTED),
+            block(0.0, 1.0, BlockOutcome.COMMITTED, BlockTimes(10)),
         ),
         status=0,
         preview='measured 300.00, met',
@@ -356,7 +413,7 @@ CHECK_CASES: dict[str, CheckCase] = {
         lines=(
             job(JobKind.RUN_STAGE, 6_000),
             step(DESKEW, StepOutcome.RAN, 400, VersionScale.PREVIEW),
-            block(0.0, 1.0, 10, BlockOutcome.COMMITTED),
+            block(0.0, 1.0, BlockOutcome.COMMITTED, BlockTimes(10)),
         ),
         status=0,
         preview='measured -, no data',
@@ -422,8 +479,8 @@ class TestReport:
                 span_line(SpanName.JOB, 0.0, 10.0, {SpanAttribute.JOB_ID: JOB_NAME}, lineage=Lineage(span_id=JOB_ID)),
                 step(DESKEW, StepOutcome.RAN, 100, placement=Placement(1.0)),
                 step(DESKEW, StepOutcome.CACHED, 5, placement=Placement(2.0, FIRST_STEP_ID)),
-                block(2.0, 2.4, 400, BlockOutcome.COMMITTED, parent_id=FIRST_STEP_ID),
-                block(5.0, 6.0, 700, BlockOutcome.COMMITTED, parent_id=JOB_ID),
+                block(2.0, 2.4, BlockOutcome.COMMITTED, BlockTimes(400), parent_id=FIRST_STEP_ID),
+                block(5.0, 6.0, BlockOutcome.COMMITTED, BlockTimes(700), parent_id=JOB_ID),
             ]
         )
         spans = trace_report.load_spans(path)
@@ -445,9 +502,9 @@ class TestReport:
             span_line(SpanName.LOOP_LAG, start_s, start_s + 0.1, {SpanAttribute.LAG_MS: lag_ms})
             for start_s, lag_ms in enumerate(LAG_VALUES_MS)
         ]
-        path = fx_write_spans([block(0.0, 1.0, 20, BlockOutcome.COMMITTED), *ticks])
+        path = fx_write_spans([block(0.0, 1.0, BlockOutcome.COMMITTED, BlockTimes(20)), *ticks])
         lines = trace_report.report(trace_report.load_spans(path), path.name).splitlines()
-        assert lines[4:6] == [WAIT_LINE, LAG_LINE]
+        assert lines[7:9] == [WAIT_LINE, LAG_LINE]
 
     def test_report_reads_the_file_the_exporter_writes(self, tmp_path: Path) -> None:
         """Verify the report of a file the real tracer wrote has the step type and the wait of the block inside it.

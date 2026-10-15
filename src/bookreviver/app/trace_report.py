@@ -6,9 +6,12 @@ The file is the one ``BOOKREVIVER_TRACING__EXPORT_PATH`` names. It holds one Ope
 report is meant to be pasted into a note:
 
 - the wall time of the run, from the start of the first span to the end of the last;
-- how much of that time some write block held the write lock of the database, where blocks that overlap are counted
-  once;
-- the number of write blocks and the wait for the lock, as the 50th, 90th and 99th percentile and the maximum;
+- how much of that time some write block held the write lock of the database, from the end of its wait to the end of
+  its commit, where blocks that overlap are counted once;
+- how much of that time some write block had its turn in the write queue, and the parts of it that blocks spent
+  starting, from the turn to the lock, and releasing, from the end of the transaction to the end of the turn;
+- the number of write blocks, and the wait for the lock with its parts, the turn, the connection and ``BEGIN
+  IMMEDIATE``, and the release, each as the 50th, 90th and 99th percentile and the maximum;
 - the lag of the event loop in the same percentiles, when the run has ``loop.lag`` spans;
 - for every type of step, how many steps there were, how many of them were found made by an earlier run, and, over those
   that ran, the median milliseconds and the median of the wait for the write lock inside the step, which is the sum of
@@ -195,6 +198,57 @@ def attribute_values(spans: list[Span], name: SpanName, key: SpanAttribute) -> l
     return [float(span.attributes[key]) for span in spans if span.name == name and key in span.attributes]
 
 
+def seconds(span: Span, *keys: SpanAttribute) -> float:
+    """Add up duration attributes of a span, a missing one counted as zero.
+
+    :param span: A span whose attributes hold milliseconds, such as a ``write.block`` span.
+    :type span: Span
+    :param keys: The attributes.
+    :type keys: SpanAttribute
+    :returns: Their sum in seconds.
+    :rtype: float
+    """
+    return sum(float(span.attributes.get(key, 0)) for key in keys) / MILLISECONDS_PER_SECOND
+
+
+def block_intervals(blocks: list[Span]) -> list[tuple[str, list[tuple[float, float]]]]:
+    """Give, for each part of a write block the report shares out, its label and the intervals the blocks spent in it.
+
+    A block holds the lock from the end of its wait to the end of its commit, and its turn from the end of the turn
+    wait to the end of its span. One that never took the lock held nothing and started nothing, and one the queue
+    refused never had a turn.
+
+    :param blocks: The ``write.block`` spans of the run.
+    :type blocks: list[Span]
+    :returns: The label of each share and the start and end of every interval that counts towards it, in seconds.
+    :rtype: list[tuple[str, list[tuple[float, float]]]]
+    """
+    begun = [span for span in blocks if span.attributes.get(SpanAttribute.BLOCK_OUTCOME) != BlockOutcome.NOT_BEGUN]
+    locked = [(span, span.start + seconds(span, SpanAttribute.WAIT_MS)) for span in begun]
+    return [
+        (
+            'Share of the run with the write lock held, %',
+            [(lock, lock + seconds(span, SpanAttribute.HOLD_MS, SpanAttribute.COMMIT_MS)) for span, lock in locked],
+        ),
+        (
+            'Share of the run with the write queue taken, %',
+            [
+                (span.start + seconds(span, SpanAttribute.TURN_MS), span.end)
+                for span in blocks
+                if SpanAttribute.TURN_MS in span.attributes
+            ],
+        ),
+        (
+            'Share of the run in the start of a block, %',
+            [(span.start + seconds(span, SpanAttribute.TURN_MS), lock) for span, lock in locked],
+        ),
+        (
+            'Share of the run in the release of a block, %',
+            [(span.end - seconds(span, SpanAttribute.RELEASE_MS), span.end) for span in begun],
+        ),
+    ]
+
+
 def report(spans: list[Span], title: str) -> str:
     """Build the text of the report of a run.
 
@@ -207,21 +261,21 @@ def report(spans: list[Span], title: str) -> str:
     """
     wall = max(span.end for span in spans) - min(span.start for span in spans)
     blocks = [span for span in spans if span.name == SpanName.WRITE_BLOCK]
-    # A block holds the lock from the end of its wait to its end; one that never took the lock held nothing
-    holding = [
-        (span.start + float(span.attributes.get(SpanAttribute.WAIT_MS, 0)) / MILLISECONDS_PER_SECOND, span.end)
-        for span in blocks
-        if span.attributes.get(SpanAttribute.BLOCK_OUTCOME) != BlockOutcome.NOT_BEGUN
-    ]
-    held = merged_length(holding)
-    lines = [
-        f'Trace report: {title}',
-        f'Wall time of the run, s: {wall:.3f}',
-        f'Write blocks: {len(blocks)}',
-        f'Share of the run with the write lock held, %: {held / wall * PERCENT if wall else 0.0:{ONE_DECIMAL}}',
-    ]
+    lines = [f'Trace report: {title}', f'Wall time of the run, s: {wall:.3f}', f'Write blocks: {len(blocks)}']
+    lines.extend(
+        f'{label}{LABEL_SEPARATOR}{merged_length(intervals) / wall * PERCENT if wall else 0.0:{ONE_DECIMAL}}'
+        for label, intervals in block_intervals(blocks)
+    )
     for label, values in (
         ('Wait for the write lock, ms', attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.WAIT_MS)),
+        ('Turn in the write queue, ms', attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.TURN_MS)),
+        ('Connection of a block, ms', attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.CONNECT_MS)),
+        ('BEGIN IMMEDIATE of a block, ms', attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.BEGIN_MS)),
+        ('Release of a block, ms', attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.RELEASE_MS)),
+        (
+            'Pool connections checked out at begin',
+            attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.POOL_CHECKED_OUT),
+        ),
         ('Event-loop lag, ms', attribute_values(spans, SpanName.LOOP_LAG, SpanAttribute.LAG_MS)),
     ):
         if values:
