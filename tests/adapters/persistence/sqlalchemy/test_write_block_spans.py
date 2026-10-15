@@ -23,6 +23,8 @@ from tests.adapters.persistence.sqlalchemy.conftest import IMPATIENT_SECONDS
 from tests.helpers.builders import make_page
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.tracing.recording import RecordingSpan
     from bookreviver.domain.entities import Project
@@ -36,6 +38,11 @@ MILLISECONDS_PER_SECOND: int = 1_000
 ASKER_LIMIT_SECONDS: float = 1.0
 QUEUE_HOLD_SECONDS: float = 0.7
 WAIT_BOUND_SECONDS: float = 1.5
+# The busy timeout the database of a request's asker opens with, longer than the asker's limit but short enough that a
+# block which wrongly waits all of it fails the test soon
+REQUEST_DATABASE_SECONDS: float = 5.0
+# How far below the sum of the queue hold and the limit the wait of a job's block may fall
+JOB_WAIT_TOLERANCE_SECONDS: float = 0.1
 FAILED_BLOCK: str = 'The block failed after it wrote a page.'
 REFUSER_ARG: str = 'refuser'
 
@@ -60,6 +67,57 @@ def milliseconds(span: RecordingSpan, key: SpanAttribute) -> float:
     value = span.attributes[key]
     assert isinstance(value, float)
     return value
+
+
+async def measure_asker_wait(holder: SqlDatabase, asker_database: SqlDatabase, project: Project) -> float:
+    """Measure how long a block of the limit ``ASKER_LIMIT_SECONDS`` waits for a held queue and a held lock.
+
+    The lock of SQLite is held by a block of ``holder``, as a writer in another process would hold it, and the queue of
+    ``asker_database`` is held by a turn taken directly for most of the asker's limit.
+
+    :param holder: Database over the file, whose block holds the write lock of SQLite.
+    :type holder: SqlDatabase
+    :param asker_database: Database over the same file, with a queue of its own, that the asker opens its unit of work
+                           on.
+    :type asker_database: SqlDatabase
+    :param project: Committed project the holder's block holds.
+    :type project: Project
+    :returns: Seconds from the moment the queue was held until the asker's block failed.
+    :rtype: float
+    :raises AssertionError: If the queue of the asker's database is not a ``WriteQueue``.
+    """
+    sqlite_held, queue_held, release = anyio.Event(), anyio.Event(), anyio.Event()
+    async with asker_database.sessions() as session:
+        queue = session.info[WRITE_QUEUE_INFO]
+    assert isinstance(queue, WriteQueue)
+
+    async def hold_the_lock() -> None:
+        """Hold the write lock of SQLite until the test lets it go."""
+        async with holder.sessions() as session, SqlAlchemyUnitOfWork(session).change_book(project.id):
+            sqlite_held.set()
+            await release.wait()
+
+    async def hold_the_queue() -> None:
+        """Hold the turn of the asker's queue for most of the asker's limit."""
+        async with queue.turn(BlockKind.OTHER, None, wait_seconds=ASKER_LIMIT_SECONDS):
+            queue_held.set()
+            await anyio.sleep(QUEUE_HOLD_SECONDS)
+
+    # Set inside the task group, which the type checker cannot know runs its body to the end
+    waited_seconds = 0.0
+    async with anyio.create_task_group() as group:
+        group.start_soon(hold_the_lock)
+        await sqlite_held.wait()
+        group.start_soon(hold_the_queue)
+        await queue_held.wait()
+        asked_at = perf_counter()
+        async with asker_database.sessions() as asker:
+            with pytest.raises(BookBusyError):
+                async with SqlAlchemyUnitOfWork(asker, wait_seconds=ASKER_LIMIT_SECONDS).change():
+                    pass
+        waited_seconds = perf_counter() - asked_at
+        release.set()
+    return waited_seconds
 
 
 class TestWriteBlockSpan:
@@ -234,7 +292,7 @@ class TestWaitForTheLock:
 
         The asker's unit of work has a limit of a few milliseconds. When the holder belongs to the other database over
         the same file, each database has its own queue, as two processes would, so the asker meets the holder at the
-        busy timeout of SQLite, which its block sets to what is left of that limit before it begins. When both blocks
+        busy timeout of SQLite, which is that limit too, since the impatient database opens with it. When both blocks
         belong to the impatient database, the asker never reaches SQLite: the queue of the process refuses it.
 
         :param fx_traced_database: Database over the file, whose blocks wait long.
@@ -266,7 +324,7 @@ class TestWaitForTheLock:
         assert_expectations()
 
     async def test_block_waits_for_the_queue_and_the_lock_together_never_twice_its_limit(
-        self, fx_traced_database: SqlDatabase, fx_impatient_database: SqlDatabase, fx_project: Project
+        self, fx_traced_database: SqlDatabase, fx_open_database: Callable[[float], SqlDatabase], fx_project: Project
     ) -> None:
         """Verify a block that spent most of its limit in the queue leaves the write lock only what is left of it.
 
@@ -274,48 +332,40 @@ class TestWaitForTheLock:
         of a 1.0 s limit and then asked SQLite for the full limit would give up only after 1.7 s. The lock is held by
         a block of the other database, as a writer in another process would hold it, and the queue of the asker's
         database is held by a turn taken directly, so the asker spends most of its limit in the queue. Its error must
-        come before the middle of one limit and two.
+        come before the middle of one limit and two. The asker's database opens its connections with a busy timeout
+        longer than the asker's limit, as the database of the application does for the units of work of requests: a
+        block whose limit is not shorter than that value is a block of a job, which sets no busy timeout of its own.
 
         :param fx_traced_database: Database over the file, whose block holds the write lock of SQLite.
         :type fx_traced_database: SqlDatabase
-        :param fx_impatient_database: Database over the same file, with a queue of its own, that the asker opens its
-                                      unit of work on.
-        :type fx_impatient_database: SqlDatabase
+        :param fx_open_database: Function that opens a database over the same file, with a queue of its own, that the
+                                 asker opens its unit of work on.
+        :type fx_open_database: Callable[[float], SqlDatabase]
         :param fx_project: Committed project of the database.
         :type fx_project: Project
         """
-        sqlite_held, queue_held, release = anyio.Event(), anyio.Event(), anyio.Event()
-        async with fx_impatient_database.sessions() as session:
-            queue = session.info[WRITE_QUEUE_INFO]
-        assert isinstance(queue, WriteQueue)
-
-        async def hold_the_lock() -> None:
-            """Hold the write lock of SQLite until the test lets it go."""
-            async with (
-                fx_traced_database.sessions() as session,
-                SqlAlchemyUnitOfWork(session).change_book(fx_project.id),
-            ):
-                sqlite_held.set()
-                await release.wait()
-
-        async def hold_the_queue() -> None:
-            """Hold the turn of the asker's queue for most of the asker's limit."""
-            async with queue.turn(BlockKind.OTHER, None, wait_seconds=ASKER_LIMIT_SECONDS):
-                queue_held.set()
-                await anyio.sleep(QUEUE_HOLD_SECONDS)
-
-        # Set inside the task group, which the type checker cannot know runs its body to the end
-        waited_seconds = 0.0
-        async with anyio.create_task_group() as group:
-            group.start_soon(hold_the_lock)
-            await sqlite_held.wait()
-            group.start_soon(hold_the_queue)
-            await queue_held.wait()
-            asked_at = perf_counter()
-            async with fx_impatient_database.sessions() as asker:
-                with pytest.raises(BookBusyError):
-                    async with SqlAlchemyUnitOfWork(asker, wait_seconds=ASKER_LIMIT_SECONDS).change():
-                        pass
-            waited_seconds = perf_counter() - asked_at
-            release.set()
+        asker_database = fx_open_database(REQUEST_DATABASE_SECONDS)
+        waited_seconds = await measure_asker_wait(fx_traced_database, asker_database, fx_project)
         assert waited_seconds < WAIT_BOUND_SECONDS
+
+    async def test_block_of_a_job_waits_for_the_queue_and_then_for_the_whole_busy_timeout(
+        self, fx_traced_database: SqlDatabase, fx_open_database: Callable[[float], SqlDatabase], fx_project: Project
+    ) -> None:
+        """Verify a block whose limit is the busy timeout of its connections waits for the queue and then that timeout.
+
+        This pins the accepted behaviour of a job, so that nobody changes it back to a busy timeout statement in every
+        block without noticing: the limit of a job covers its turn in the queue, and SQLite then waits the busy timeout
+        the connection opened with. The asker stands in the queue for 0.7 s of its 1.0 s limit and then asks SQLite, in
+        which another database holds the lock, for the whole second, so its error comes after 1.7 s and not after 1.0 s.
+
+        :param fx_traced_database: Database over the file, whose block holds the write lock of SQLite.
+        :type fx_traced_database: SqlDatabase
+        :param fx_open_database: Function that opens a database over the same file, with a queue of its own, that the
+                                 asker opens its unit of work on.
+        :type fx_open_database: Callable[[float], SqlDatabase]
+        :param fx_project: Committed project of the database.
+        :type fx_project: Project
+        """
+        asker_database = fx_open_database(ASKER_LIMIT_SECONDS)
+        waited_seconds = await measure_asker_wait(fx_traced_database, asker_database, fx_project)
+        assert waited_seconds > ASKER_LIMIT_SECONDS + QUEUE_HOLD_SECONDS - JOB_WAIT_TOLERANCE_SECONDS

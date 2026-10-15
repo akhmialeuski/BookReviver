@@ -19,11 +19,16 @@ SQLite ignores foreign keys unless each connection turns them on, so the engine 
 ``ON DELETE CASCADE`` of pages and jobs works the same as on PostgreSQL. ``migrations/env.py`` turns them off again
 for the length of a migration. The engine also sets a busy timeout on every connection when it opens, the longest wait
 limit of a unit of work, so that a statement which meets the lock of a writer in another process waits for it, and
-several clients can use one file at once. A block of the port sets the busy timeout again right before it begins, to
-what is left of its limit after the time it spent in the queue, so the queue and the lock of SQLite together take no
-longer than the limit. The value differs from block to block, so every block sends the statement. The busy timeout a
-block leaves on a pooled connection does not affect a statement outside a block: in the write-ahead log a read never
-waits for the write lock, and every write runs inside a block.
+several clients can use one file at once. A block whose limit is shorter than that value, which is a block of a
+request, sets the busy timeout again right before it begins, to what is left of its limit after the time it spent in
+the queue, so the queue and the lock of SQLite together take no longer than the limit. Any other block, which is a
+block of a job, waits for the queue up to its limit and then for the lock up to the value the connection opened with,
+so a job may wait its time in the queue plus its whole limit. That is accepted, because the limit of a job is long by
+design, and sparing every block of a job a statement keeps the queue short: through the async driver one statement is
+several round trips to its thread, each resumed by the event loop, and the block holds the queue all the while. So the
+statement is sent only when the connection has another value than the block wants, and a connection remembers the
+value it was last given. The busy timeout a block leaves on a pooled connection does not affect a statement outside a
+block: in the write-ahead log a read never waits for the write lock, and every write runs inside a block.
 
 Every connection puts the database in the write-ahead log mode with ``synchronous=NORMAL``. In the rollback journal a
 commit waits for every reader to leave the file, and readers wait for a commit; in the WAL neither waits for the other,
@@ -45,8 +50,9 @@ commits and rolls back nothing by itself. Three listeners on the engine put that
 
 - ``begin`` emits ``BEGIN IMMEDIATE`` for a connection that a block of the persistence port procured with the
   execution option :data:`CHANGE_BLOCK_OPTION`, which takes SQLite's write lock at the start and waits for it up to what
-  is left of the limit of the block. A connection without the option begins nothing, so a read outside a block runs in
-  SQLite's autocommit mode and holds no lock.
+  is left of the limit of a request's block, or up to the busy timeout the connection opened with for a job's block. A
+  connection without the option begins nothing, so a read outside a block runs in SQLite's autocommit mode and holds no
+  lock.
 - ``commit`` and ``rollback`` emit ``COMMIT`` and ``ROLLBACK`` while the driver connection is in a transaction, because
   the commit and rollback of the driver do nothing in this mode.
 
@@ -91,6 +97,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.engine import Connection
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+    from sqlalchemy.pool import ConnectionPoolEntry
 
     from bookreviver.domain.enums import BlockKind
     from bookreviver.domain.ids import ProjectId
@@ -104,6 +111,8 @@ CHANGE_BLOCK_OPTION: str = 'bookreviver_change_block'
 WRITE_QUEUE_INFO: str = 'bookreviver_write_queue'
 # The key of connection.info under which the block that holds a connection waits for its commit or rollback
 WRITE_BLOCK_INFO: str = 'bookreviver_write_block'
+# The key of connection.info under which a connection keeps the busy timeout it was last given, in milliseconds
+BUSY_TIMEOUT_INFO: str = 'bookreviver_busy_timeout_ms'
 # The statement that gives a connection its busy timeout, in milliseconds
 BUSY_TIMEOUT_STATEMENT: str = 'PRAGMA busy_timeout={milliseconds}'
 MILLISECONDS_PER_SECOND: int = 1_000
@@ -142,8 +151,11 @@ class WriteBlock:
     :ivar span: The ``write.block`` span, started when the block joined the queue.
     :ivar asked_at: Reading of the performance counter when the block joined the queue, which the wait is counted from.
     :ivar wait_seconds: How long the block waits for its turn and for the write lock of SQLite together, counted from
-                        ``asked_at``. It is the limit of the unit of work that opened it, and ``begin`` sets what is
-                        left of it as the busy timeout of the connection.
+                        ``asked_at``. It is the limit of the unit of work that opened it. When it is shorter than the
+                        busy timeout every connection opens with, ``begin`` sets what is left of it as the busy
+                        timeout of the connection, so the queue and the lock together take no longer than the limit.
+                        Otherwise the limit covers the queue only, and the lock waits the busy timeout of the
+                        connection.
     :ivar locked_at: Reading of the performance counter when the block resumed after ``BEGIN IMMEDIATE``, which is
                      when the holding is counted from and which lags the lock actually taken by the delay of the event
                      loop, or None while the block has not taken the lock.
@@ -183,9 +195,11 @@ class WriteQueue:
         :type kind: BlockKind
         :param book: Project the block holds, or None for a block outside the content of a book.
         :type book: ProjectId | None
-        :param wait_seconds: How long this block waits for its turn and for the write lock of SQLite together before it
-                             gives up with ``BookBusyError``, which is the limit of the unit of work that opened it.
-                             The turn may take all of it, and ``begin`` then leaves the lock none.
+        :param wait_seconds: How long this block waits before it gives up with ``BookBusyError``, which is the limit of
+                             the unit of work that opened it. For a limit shorter than the busy timeout every
+                             connection opens with, it covers the turn and the write lock of SQLite together: the turn
+                             may take all of it, and ``begin`` then leaves the lock none. For any other limit it covers
+                             the turn only, and the lock then waits the busy timeout of the connection.
         :type wait_seconds: float
         :returns: Iterator yielding the block once its turn has come, which the block hands to its connection through
                   :data:`CHANGE_BLOCK_OPTION`.
@@ -229,9 +243,10 @@ class SqlDatabase:
         :param tracer: Tracer the write blocks of SQLite are timed with; PostgreSQL takes no part of it.
         :type tracer: Tracer
         :param wait_seconds: The busy timeout every connection gets when it opens, which is the longest limit a unit of
-                             work may have. A block sets the busy timeout again before it begins, to what is left of
-                             its own limit, which the unit of work passes to the queue; PostgreSQL takes no part of
-                             it.
+                             work may have. A block whose limit is shorter, which the unit of work passes to the
+                             queue, sets the busy timeout again before it begins, to what is left of that limit; any
+                             other block leaves it as it is, or restores it after such a block. PostgreSQL takes no
+                             part of it.
         :type wait_seconds: float
         """
         on_sqlite = make_url(url).get_backend_name() == SQLITE_DIALECT
@@ -256,25 +271,27 @@ class SqlDatabase:
         self.sessions: Callable[[], AsyncSession] = self.config.create_session_maker()
         self.migrations = AlembicCommands(self.config)
 
-    def _configure_sqlite(self, dbapi_connection: DriverConnection, _record: object) -> None:
+    def _configure_sqlite(self, dbapi_connection: DriverConnection, record: ConnectionPoolEntry) -> None:
         """Make SQLite wait for a lock, enforce foreign keys and keep its journal in the write-ahead log.
 
         A statement that meets the lock of a writer in another process, such as an import committing its pages, waits
         for it up to the wait limit instead of failing with "database is locked" after the few seconds of the default.
-        The busy timeout is set first, so that switching the journal waits for such a writer too.
+        The busy timeout is set first, so that switching the journal waits for such a writer too. The value is kept in
+        the ``info`` of the pool record, which SQLAlchemy documents as the dictionary that lives as long as the driver
+        connection and that ``connection.info`` returns, so that ``_begin_sqlite`` knows what the connection has.
 
         :param dbapi_connection: New SQLite connection, before any statement runs on it.
         :type dbapi_connection: DriverConnection
-        :param _record: Pool record of the connection, required by the event signature and unused.
-        :type _record: object
+        :param record: Pool record of the connection, whose ``info`` keeps the busy timeout the connection was given.
+        :type record: ConnectionPoolEntry
         """
+        record.info[BUSY_TIMEOUT_INFO] = self._busy_timeout_ms
         dbapi_connection.execute(BUSY_TIMEOUT_STATEMENT.format(milliseconds=self._busy_timeout_ms))
         dbapi_connection.execute('PRAGMA foreign_keys=ON')
         dbapi_connection.execute('PRAGMA journal_mode=WAL')
         dbapi_connection.execute('PRAGMA synchronous=NORMAL')
 
-    @staticmethod
-    def _begin_sqlite(connection: Connection) -> None:
+    def _begin_sqlite(self, connection: Connection) -> None:
         """Take SQLite's write lock at the start of a transaction that a block of the port opened, and time the wait.
 
         A connection without the block's execution option begins nothing, so its reads run in SQLite's autocommit mode
@@ -285,20 +302,34 @@ class SqlDatabase:
         time from the request until the loop resumed the block. It includes the delay of the loop, which the
         ``loop.lag`` spans show, and the holding that begins at the same reading is shortened by it.
 
-        The limit of the block covers the queue and the lock together. Right before the statement, the busy timeout of
-        the connection is set to what is left of the limit after the time since the block joined the queue, never below
-        zero, so a writer in another process cannot make the block wait twice its limit. With nothing left,
-        ``BEGIN IMMEDIATE`` takes a free lock at once and fails with SQLITE_BUSY at once when the lock is held. The
-        remaining time differs on nearly every block, so the statement is sent every time.
+        The limit of a block shorter than the busy timeout every connection opens with, which is a block of a request,
+        covers the queue and the lock together. Right before the statement, the busy timeout of the connection is set
+        to what is left of the limit after the time since the block joined the queue, never below zero, so a writer in
+        another process cannot make the block wait twice its limit. With nothing left, ``BEGIN IMMEDIATE`` takes a free
+        lock at once and fails with SQLITE_BUSY at once when the lock is held. The limit of any other block, which is a
+        block of a job, covers the queue, and SQLite then waits the busy timeout the connection opened with, so a job
+        may wait its time in the queue plus its whole limit. That is accepted, because the limit of a job is long by
+        design. The connection wants that value for such a block, and sparing the block a statement keeps the queue
+        short: the statement is several round trips to the driver thread, each resumed by the event loop, while the
+        block holds the queue.
+
+        The statement is sent only when the connection has another value than the block wants. A block of a job on a
+        connection at the value it opened with sends nothing, one after a block of a request sends one statement that
+        restores the value, and a block of a request sends one, since what is left of its limit nearly always differs.
 
         :param connection: Connection that begins a transaction.
         :type connection: Connection
         """
         if not isinstance(block := connection.get_execution_options().get(CHANGE_BLOCK_OPTION), WriteBlock):
             return
-        remaining_seconds = block.wait_seconds - (perf_counter() - block.asked_at)
-        busy_timeout_ms = max(round(remaining_seconds * MILLISECONDS_PER_SECOND), 0)
-        connection.exec_driver_sql(BUSY_TIMEOUT_STATEMENT.format(milliseconds=busy_timeout_ms))
+        if round(block.wait_seconds * MILLISECONDS_PER_SECOND) < self._busy_timeout_ms:
+            remaining_seconds = block.wait_seconds - (perf_counter() - block.asked_at)
+            busy_timeout_ms = max(round(remaining_seconds * MILLISECONDS_PER_SECOND), 0)
+        else:
+            busy_timeout_ms = self._busy_timeout_ms
+        if connection.info.get(BUSY_TIMEOUT_INFO) != busy_timeout_ms:
+            connection.exec_driver_sql(BUSY_TIMEOUT_STATEMENT.format(milliseconds=busy_timeout_ms))
+            connection.info[BUSY_TIMEOUT_INFO] = busy_timeout_ms
         connection.exec_driver_sql('BEGIN IMMEDIATE')
         block.locked_at = perf_counter()
         block.span.set_attribute(SpanAttribute.WAIT_MS, (block.locked_at - block.asked_at) * MILLISECONDS_PER_SECOND)

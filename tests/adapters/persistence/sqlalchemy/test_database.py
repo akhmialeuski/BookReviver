@@ -27,9 +27,10 @@ pytestmark = pytest.mark.anyio
 # A wait limit of a job that is not the default of the settings, so a test cannot pass on the default by chance
 WAIT_SECONDS: float = 2.5
 BUSY_TIMEOUT_MS: int = 2_500
-# The limits of two units of work of requests, both different from that of a job and from each other
+# The limits of three units of work of requests, all shorter than that of a job and different from each other
 SHORT_WAIT_SECONDS: float = 0.5
 MIDDLE_WAIT_SECONDS: float = 1.5
+LONG_WAIT_SECONDS: float = 2.0
 # How far below its limit the busy timeout of a block may be, for the time the block spent before it began
 BUSY_TIMEOUT_TOLERANCE_MS: int = 250
 MILLISECONDS_PER_SECOND: int = 1_000
@@ -142,7 +143,10 @@ class TestSqliteTransactions:
     """Tests for the transactions the listeners of the engine put around a block of the port."""
 
     async def test_block_begins_immediate_and_ends_with_commit(self, fx_database: SqlDatabase) -> None:
-        """Verify a block takes the write lock of SQLite when it begins and commits when it ends.
+        """Verify a block of a job takes the write lock of SQLite when it begins and commits when it ends, and no more.
+
+        The limit of the block is the busy timeout every connection opens with, so the block sends no statement that
+        sets it.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
@@ -152,35 +156,41 @@ class TestSqliteTransactions:
             with StatementLog(fx_database.engine.sync_engine) as log:
                 async with uow.change():
                     pass
-        setter, *rest = log.statements
-        expect(setter.startswith(BUSY_TIMEOUT_SETTER))
-        expect(rest == [BEGIN_STATEMENT, COMMIT_STATEMENT])
-        assert_expectations()
+        assert log.statements == [BEGIN_STATEMENT, COMMIT_STATEMENT]
 
-    async def test_block_sets_the_busy_timeout_to_what_is_left_of_its_limit_before_every_begin(
+    async def test_only_a_block_shorter_than_the_connection_sets_its_busy_timeout(
         self, fx_database: SqlDatabase
     ) -> None:
-        """Verify every block sends one busy timeout statement right before it begins, worth the limit it has left.
+        """Verify only a block shorter than the connection's own limit sets the busy timeout, and a job restores it.
 
-        The remaining time differs on nearly every block, so a block never relies on what the connection was given
-        before. The blocks run one after another over the one connection of the pool, which opened with the limit of a
-        job, and each reads the busy timeout it finds inside the block: at most its limit, and above it by no more than
-        the time a block spends before it begins.
+        The blocks run one after another over the one connection of the pool, which opened with the limit of a job,
+        and each reads the busy timeout it finds inside the block. A job's block reads exactly the value the connection
+        opened with, and sends nothing while the connection has it. A block of a request reads at most its limit, and
+        above it by no more than the time a block spends before it begins, and sends one statement. The first job's
+        block after the requests sends one statement that restores the value, and the next job's block sends none.
+        The limits of the requests differ from each other, so that what is left of two limits never rounds to the same
+        millisecond, which would let a block skip the statement by chance.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
         """
-        limits = [WAIT_SECONDS, SHORT_WAIT_SECONDS, MIDDLE_WAIT_SECONDS, MIDDLE_WAIT_SECONDS, WAIT_SECONDS]
+        limits = [WAIT_SECONDS, SHORT_WAIT_SECONDS, MIDDLE_WAIT_SECONDS, LONG_WAIT_SECONDS, WAIT_SECONDS, WAIT_SECONDS]
+        timeouts: list[int] = []
+        setters: list[list[str]] = []
         for limit in limits:
-            limit_ms = round(limit * MILLISECONDS_PER_SECOND)
             async with fx_database.sessions() as session:
                 with StatementLog(fx_database.engine.sync_engine) as log:
                     async with SqlAlchemyUnitOfWork(session, wait_seconds=limit).change():
-                        timeout: Any = (await session.execute(text(BUSY_TIMEOUT_PRAGMA))).scalar_one()
-            setters = [statement for statement in log.statements if statement.startswith(BUSY_TIMEOUT_SETTER)]
-            expect(limit_ms - BUSY_TIMEOUT_TOLERANCE_MS < timeout <= limit_ms, f'timeout {timeout} of limit {limit_ms}')
-            expect(len(setters) == 1, f'{len(setters)} setters of limit {limit_ms}')
-            expect(log.statements[:2] == [*setters[:1], BEGIN_STATEMENT], f'order of limit {limit_ms}')
+                        timeouts.append((await session.execute(text(BUSY_TIMEOUT_PRAGMA))).scalar_one())
+            setters.append([statement for statement in log.statements if statement.startswith(BUSY_TIMEOUT_SETTER)])
+            expect(log.statements[: len(setters[-1]) + 1] == [*setters[-1], BEGIN_STATEMENT], f'order of {limit}')
+        for limit, timeout in zip(limits, timeouts, strict=True):
+            limit_ms = round(limit * MILLISECONDS_PER_SECOND)
+            in_range = limit_ms - BUSY_TIMEOUT_TOLERANCE_MS < timeout <= limit_ms
+            expect(timeout == BUSY_TIMEOUT_MS if limit == WAIT_SECONDS else in_range, f'{timeout} read of {limit}')
+        restore = BUSY_TIMEOUT_STATEMENT.format(milliseconds=BUSY_TIMEOUT_MS)
+        expect([len(sent) for sent in setters] == [0, 1, 1, 1, 1, 0], f'{setters} sent')
+        expect(setters[4] == [restore], f'{setters[4]} restoring')
         assert_expectations()
 
     async def test_block_left_by_an_exception_ends_with_rollback(self, fx_database: SqlDatabase) -> None:
@@ -204,10 +214,7 @@ class TestSqliteTransactions:
             uow = SqlAlchemyUnitOfWork(session, wait_seconds=WAIT_SECONDS)
             with StatementLog(fx_database.engine.sync_engine) as log, pytest.raises(ValueError, match=r'^$'):
                 await leave_by_exception(uow)
-        setter, *rest = log.statements
-        expect(setter.startswith(BUSY_TIMEOUT_SETTER))
-        expect(rest == [BEGIN_STATEMENT, ROLLBACK_STATEMENT])
-        assert_expectations()
+        assert log.statements == [BEGIN_STATEMENT, ROLLBACK_STATEMENT]
 
     async def test_read_outside_a_block_begins_no_transaction_and_holds_no_lock(
         self, fx_database: SqlDatabase, fx_owner_id: AccountId
