@@ -102,9 +102,8 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
 
         :param session: Session of the current request or job, owned and closed by its provider.
         :type session: AsyncSession
-        :param wait_seconds: How long a block of this unit of work waits before it gives up with ``BookBusyError``. A
-                             limit shorter than the busy timeout of the connections covers the turn and the write lock
-                             together; any other limit covers the turn, and the lock waits that busy timeout.
+        :param wait_seconds: How long a block of this unit of work waits before it gives up with ``BookBusyError``;
+                             :mod:`bookreviver.adapters.persistence.sqlalchemy.database` says what it covers.
         :type wait_seconds: float
         """
         self._session = session

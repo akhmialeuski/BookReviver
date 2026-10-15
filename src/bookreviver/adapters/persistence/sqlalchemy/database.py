@@ -20,7 +20,8 @@ SQLite ignores foreign keys unless each connection turns them on, so the engine 
 for the length of a migration. The engine also sets a busy timeout on every connection when it opens, the longest wait
 limit of a unit of work, so that a statement which meets the lock of a writer in another process waits for it, and
 several clients can use one file at once. A block whose limit is shorter than that value, which is a block of a
-request, sets the busy timeout again right before it begins, to what is left of its limit after the time it spent in
+request, since the settings refuse a request limit that is not shorter than the job limit, sets the busy timeout again
+right before it begins, to what is left of its limit after the time it spent in
 the queue, so the queue and the lock of SQLite together take no longer than the limit. Any other block, which is a
 block of a job, waits for the queue up to its limit and then for the lock up to the value the connection opened with,
 so a job may wait its time in the queue plus its whole limit. That is accepted, because the limit of a job is long by
@@ -150,12 +151,8 @@ class WriteBlock:
 
     :ivar span: The ``write.block`` span, started when the block joined the queue.
     :ivar asked_at: Reading of the performance counter when the block joined the queue, which the wait is counted from.
-    :ivar wait_seconds: How long the block waits for its turn and for the write lock of SQLite together, counted from
-                        ``asked_at``. It is the limit of the unit of work that opened it. When it is shorter than the
-                        busy timeout every connection opens with, ``begin`` sets what is left of it as the busy
-                        timeout of the connection, so the queue and the lock together take no longer than the limit.
-                        Otherwise the limit covers the queue only, and the lock waits the busy timeout of the
-                        connection.
+    :ivar wait_seconds: The limit of the unit of work that opened the block, counted from ``asked_at``; the module
+                        docstring says what it covers.
     :ivar locked_at: Reading of the performance counter when the block resumed after ``BEGIN IMMEDIATE``, which is
                      when the holding is counted from and which lags the lock actually taken by the delay of the event
                      loop, or None while the block has not taken the lock.
@@ -195,11 +192,8 @@ class WriteQueue:
         :type kind: BlockKind
         :param book: Project the block holds, or None for a block outside the content of a book.
         :type book: ProjectId | None
-        :param wait_seconds: How long this block waits before it gives up with ``BookBusyError``, which is the limit of
-                             the unit of work that opened it. For a limit shorter than the busy timeout every
-                             connection opens with, it covers the turn and the write lock of SQLite together: the turn
-                             may take all of it, and ``begin`` then leaves the lock none. For any other limit it covers
-                             the turn only, and the lock then waits the busy timeout of the connection.
+        :param wait_seconds: The limit of the unit of work that opened the block, which the turn may take all of; the
+                             module docstring says what it covers.
         :type wait_seconds: float
         :returns: Iterator yielding the block once its turn has come, which the block hands to its connection through
                   :data:`CHANGE_BLOCK_OPTION`.
@@ -243,10 +237,8 @@ class SqlDatabase:
         :param tracer: Tracer the write blocks of SQLite are timed with; PostgreSQL takes no part of it.
         :type tracer: Tracer
         :param wait_seconds: The busy timeout every connection gets when it opens, which is the longest limit a unit of
-                             work may have. A block whose limit is shorter, which the unit of work passes to the
-                             queue, sets the busy timeout again before it begins, to what is left of that limit; any
-                             other block leaves it as it is, or restores it after such a block. PostgreSQL takes no
-                             part of it.
+                             work may have; the module docstring says how a block with a shorter one changes it.
+                             PostgreSQL takes no part of it.
         :type wait_seconds: float
         """
         on_sqlite = make_url(url).get_backend_name() == SQLITE_DIALECT
@@ -302,20 +294,9 @@ class SqlDatabase:
         time from the request until the loop resumed the block. It includes the delay of the loop, which the
         ``loop.lag`` spans show, and the holding that begins at the same reading is shortened by it.
 
-        The limit of a block shorter than the busy timeout every connection opens with, which is a block of a request,
-        covers the queue and the lock together. Right before the statement, the busy timeout of the connection is set
-        to what is left of the limit after the time since the block joined the queue, never below zero, so a writer in
-        another process cannot make the block wait twice its limit. With nothing left, ``BEGIN IMMEDIATE`` takes a free
-        lock at once and fails with SQLITE_BUSY at once when the lock is held. The limit of any other block, which is a
-        block of a job, covers the queue, and SQLite then waits the busy timeout the connection opened with, so a job
-        may wait its time in the queue plus its whole limit. That is accepted, because the limit of a job is long by
-        design. The connection wants that value for such a block, and sparing the block a statement keeps the queue
-        short: the statement is several round trips to the driver thread, each resumed by the event loop, while the
-        block holds the queue.
-
-        The statement is sent only when the connection has another value than the block wants. A block of a job on a
-        connection at the value it opened with sends nothing, one after a block of a request sends one statement that
-        restores the value, and a block of a request sends one, since what is left of its limit nearly always differs.
+        Before the statement, the busy timeout the block wants is sent when the connection has another one, as the
+        module docstring describes: what is left of a request's limit, never below zero, so that ``BEGIN IMMEDIATE``
+        fails with SQLITE_BUSY at once when nothing is left, or the value the connection opened with for a job.
 
         :param connection: Connection that begins a transaction.
         :type connection: Connection

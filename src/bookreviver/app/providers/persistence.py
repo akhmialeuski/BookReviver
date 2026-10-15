@@ -1,6 +1,8 @@
 """Providers of the persistence adapters, one class per backend selectable in the settings."""
 
 from dishka import Provider, Scope, alias, provide
+
+# Neither exported by dishka's top level nor documented, so tests/app/test_change_wait_provider.py pins its behaviour
 from dishka.entities.marker import HasContext
 from starlette.requests import Request
 
