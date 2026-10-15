@@ -234,8 +234,8 @@ class TestWaitForTheLock:
 
         The asker's unit of work has a limit of a few milliseconds. When the holder belongs to the other database over
         the same file, each database has its own queue, as two processes would, so the asker meets the holder at the
-        busy timeout of SQLite, which its block sets to what is left of that limit before it begins. When both blocks belong to the
-        impatient database, the asker never reaches SQLite: the queue of the process refuses it.
+        busy timeout of SQLite, which its block sets to what is left of that limit before it begins. When both blocks
+        belong to the impatient database, the asker never reaches SQLite: the queue of the process refuses it.
 
         :param fx_traced_database: Database over the file, whose blocks wait long.
         :type fx_traced_database: SqlDatabase
