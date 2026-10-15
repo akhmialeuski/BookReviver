@@ -1,11 +1,13 @@
 """Tests for the settings groups that switch the measurements of the backend on and size the pool of the steps."""
 
+import re
 from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import ValidationError
 
 from bookreviver.app.settings import (
+    REQUEST_WAIT_EXCEEDS_JOB_WAIT,
     STEP_PROCESSES_NEED_PREVIEW_SHARE,
     TRACING_NEEDS_PATH,
     TRACING_PATH_WITHOUT_TRACING,
@@ -31,6 +33,11 @@ JOB_SECONDS_VARIABLE: str = 'BOOKREVIVER_CHANGE_WAIT__JOB_SECONDS'
 # The limits the settings document: 3 seconds for a request and 30 for every other unit of work
 DEFAULT_REQUEST_SECONDS: float = 3.0
 DEFAULT_JOB_SECONDS: float = 30.0
+# The names of the two limits, and a shorter and a longer value for them
+REQUEST_SECONDS_FIELD: str = 'request_seconds'
+JOB_SECONDS_FIELD: str = 'job_seconds'
+SHORTER_SECONDS: float = 5.0
+LONGER_SECONDS: float = 10.0
 # Where the default number of processes reads the cores, which a test replaces
 CPU_COUNT_TARGET: str = 'bookreviver.app.settings.os.process_cpu_count'
 
@@ -183,12 +190,30 @@ class TestChangeWaitSettings:
         change_wait = Settings(_env_file=None).change_wait
         assert (change_wait.request_seconds, change_wait.job_seconds) == (1.5, 45.0)
 
+    @pytest.mark.parametrize('field', [REQUEST_SECONDS_FIELD, JOB_SECONDS_FIELD])
     @pytest.mark.parametrize('seconds', [0, -1], ids=['zero', 'negative'])
-    def test_a_limit_that_is_not_positive_is_refused(self, seconds: float) -> None:
+    def test_a_limit_that_is_not_positive_is_refused(self, field: str, seconds: float) -> None:
         """Verify neither limit may be zero or negative, which would refuse every block at once.
 
-        :param seconds: The value given to both limits.
+        Only the field under test is given a bad value, so the error of the other field cannot hide a field that lost
+        its constraint, and the error must name that field and no other.
+
+        :param field: Name of the limit given the bad value.
+        :type field: str
+        :param seconds: The value given to that limit.
         :type seconds: float
         """
-        with pytest.raises(ValidationError):
-            ChangeWaitSettings(request_seconds=seconds, job_seconds=seconds)
+        with pytest.raises(ValidationError) as refused:
+            ChangeWaitSettings.model_validate({field: seconds})
+        assert [error['loc'] for error in refused.value.errors()] == [(field,)]
+
+    def test_a_request_limit_longer_than_the_job_limit_is_refused(self) -> None:
+        """Verify a request limit above the job limit is refused, since every connection opens with the job limit."""
+        message = REQUEST_WAIT_EXCEEDS_JOB_WAIT.format(request_seconds=LONGER_SECONDS, job_seconds=SHORTER_SECONDS)
+        with pytest.raises(ValidationError, match=re.escape(message)):
+            ChangeWaitSettings(request_seconds=LONGER_SECONDS, job_seconds=SHORTER_SECONDS)
+
+    def test_equal_limits_are_accepted(self) -> None:
+        """Verify a request limit equal to the job limit is accepted, which is the longest a request may wait."""
+        change_wait = ChangeWaitSettings(request_seconds=SHORTER_SECONDS, job_seconds=SHORTER_SECONDS)
+        assert (change_wait.request_seconds, change_wait.job_seconds) == (SHORTER_SECONDS, SHORTER_SECONDS)

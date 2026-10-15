@@ -20,6 +20,10 @@ STEP_PROCESSES_NEED_PREVIEW_SHARE: str = (
     'processing.preview_step_processes must be smaller than processing.step_processes, '
     'so that full runs keep at least one process.'
 )
+REQUEST_WAIT_EXCEEDS_JOB_WAIT: str = (
+    'change_wait.request_seconds ({request_seconds}) must not exceed change_wait.job_seconds ({job_seconds}), '
+    'because every connection opens with the job limit as its busy timeout.'
+)
 
 # The share of the cores the processes of the steps take by default, two thirds, and the fewest they are
 STEP_PROCESSES_CORES_NUMERATOR: int = 2
@@ -208,11 +212,26 @@ class ChangeWaitSettings(BaseModel):
     :ivar request_seconds: Limit of a unit of work that serves an HTTP request, 3 seconds by default, so an interface
                            never hangs for the long wait of a job and is told at once to try again.
     :ivar job_seconds: Limit of every other unit of work, the background jobs and the work of the startup, 30 seconds by
-                       default, so a job does not lose its work to a short wait.
+                       default, so a job does not lose its work to a short wait. It is the longest limit, since every
+                       connection opens with it as its busy timeout, so the request limit may not exceed it.
     """
 
     request_seconds: PositiveFloat = 3.0
     job_seconds: PositiveFloat = DEFAULT_CHANGE_WAIT_SECONDS
+
+    @model_validator(mode='after')
+    def _require_request_limit_within_job_limit(self) -> Self:
+        """Check that the limit of a request is no longer than the limit of a job.
+
+        :returns: The settings, once checked.
+        :rtype: Self
+        :raises ValueError: If the request limit is longer than the job limit.
+        """
+        if self.request_seconds > self.job_seconds:
+            raise ValueError(
+                REQUEST_WAIT_EXCEEDS_JOB_WAIT.format(request_seconds=self.request_seconds, job_seconds=self.job_seconds)
+            )
+        return self
 
 
 class Settings(BaseSettings):

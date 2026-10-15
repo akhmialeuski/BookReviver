@@ -60,7 +60,8 @@ def fx_settings(fx_settings: Settings) -> Settings:
     :returns: The same settings with the wait limit of this module.
     :rtype: Settings
     """
-    return fx_settings.model_copy(update={'change_wait': ChangeWaitSettings(job_seconds=WAIT_SECONDS)})
+    change_wait = ChangeWaitSettings(request_seconds=SHORT_WAIT_SECONDS, job_seconds=WAIT_SECONDS)
+    return fx_settings.model_copy(update={'change_wait': change_wait})
 
 
 class TestSqlDatabase:
