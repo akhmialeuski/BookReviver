@@ -16,9 +16,10 @@ from tests.helpers.builders import make_project
 from tests.helpers.schema import create_schema
 from tests.helpers.seeding import commit_account, store_project
 from tests.helpers.tracers import AskingTracer
+from tests.helpers.wait_limits import IMPATIENT_SECONDS
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Project
@@ -26,8 +27,6 @@ if TYPE_CHECKING:
 
 # Long enough that a block which wrongly waits for a lock that is never given fails the test, and does not hang it
 TRACED_WAIT_SECONDS: float = 10.0
-# Short enough that a block refused the lock gives up at once
-IMPATIENT_SECONDS: float = 0.05
 
 
 @pytest.fixture
@@ -88,23 +87,56 @@ async def fx_traced_database(fx_settings: Settings, fx_tracer: AskingTracer) -> 
 
 
 @pytest.fixture
-async def fx_impatient_database(fx_traced_database: SqlDatabase, fx_tracer: AskingTracer) -> AsyncIterator[SqlDatabase]:
-    """Open a second database over the file of the first, whose blocks give up for the lock almost at once.
+async def fx_open_database(
+    fx_traced_database: SqlDatabase, fx_tracer: AskingTracer
+) -> AsyncIterator[Callable[[float], SqlDatabase]]:
+    """Give a function that opens another database over the file of the traced one, with the busy timeout it is told.
 
-    The second database has a write queue of its own, so its blocks meet those of the first at the busy timeout of
-    SQLite, as the blocks of another process do, and meet each other in its queue.
+    Each database has a write queue of its own, so its blocks meet those of the traced database at the busy timeout of
+    SQLite, as the blocks of another process do, and meet each other in its queue. The busy timeout is the one every
+    connection of the database opens with, so a unit of work whose limit is shorter than it counts as a request, and
+    one whose limit is not shorter counts as a job.
 
-    :param fx_traced_database: The database whose file and schema the second one shares.
+    :param fx_traced_database: The database whose file and schema the others share.
     :type fx_traced_database: SqlDatabase
     :param fx_tracer: Tracer of the test.
     :type fx_tracer: AskingTracer
-    :returns: Iterator yielding the database and disposing of its engine afterwards.
-    :rtype: AsyncIterator[SqlDatabase]
+    :returns: Iterator yielding the opening function and disposing of every engine it opened afterwards.
+    :rtype: AsyncIterator[Callable[[float], SqlDatabase]]
     """
     url = fx_traced_database.engine.url.render_as_string(hide_password=False)
-    database = SqlDatabase(url, tracer=fx_tracer, wait_seconds=IMPATIENT_SECONDS)
-    yield database
-    await database.dispose()
+    opened: list[SqlDatabase] = []
+
+    def open_database(wait_seconds: float) -> SqlDatabase:
+        """Open a database over the shared file.
+
+        :param wait_seconds: The busy timeout every connection of the database opens with.
+        :type wait_seconds: float
+        :returns: The database, which the fixture disposes of.
+        :rtype: SqlDatabase
+        """
+        opened.append(SqlDatabase(url, tracer=fx_tracer, wait_seconds=wait_seconds))
+        return opened[-1]
+
+    yield open_database
+    for database in opened:
+        await database.dispose()
+
+
+@pytest.fixture
+def fx_impatient_database(fx_open_database: Callable[[float], SqlDatabase]) -> SqlDatabase:
+    """Open a second database over the file of the first, for the units of work that give up for the lock at once.
+
+    The second database has a write queue of its own, so its blocks meet those of the first at the busy timeout of
+    SQLite, as the blocks of another process do, and meet each other in its queue. The limit of a block is that of its
+    unit of work, so a test that wants a refusal opens its unit of work with ``IMPATIENT_SECONDS``.
+
+    :param fx_open_database: Function that opens a database over the file of the traced one.
+    :type fx_open_database: Callable[[float], SqlDatabase]
+    :returns: The database, which ``fx_open_database`` disposes of afterwards.
+    :rtype: SqlDatabase
+    """
+    return fx_open_database(IMPATIENT_SECONDS)
 
 
 @pytest.fixture

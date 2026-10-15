@@ -1,14 +1,17 @@
 """Tests for the settings groups that switch the measurements of the backend on and size the pool of the steps."""
 
+import re
 from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import ValidationError
 
 from bookreviver.app.settings import (
+    REQUEST_WAIT_NOT_SHORTER_THAN_JOB_WAIT,
     STEP_PROCESSES_NEED_PREVIEW_SHARE,
     TRACING_NEEDS_PATH,
     TRACING_PATH_WITHOUT_TRACING,
+    ChangeWaitSettings,
     ProcessingSettings,
     Settings,
     TracingSettings,
@@ -25,6 +28,18 @@ SECRET_VARIABLE: str = 'BOOKREVIVER_AUTH__SECRET'
 TRUE_VALUE: str = 'true'
 STEP_PROCESSES_VARIABLE: str = 'BOOKREVIVER_PROCESSING__STEP_PROCESSES'
 PREVIEW_STEP_PROCESSES_VARIABLE: str = 'BOOKREVIVER_PROCESSING__PREVIEW_STEP_PROCESSES'
+REQUEST_SECONDS_VARIABLE: str = 'BOOKREVIVER_CHANGE_WAIT__REQUEST_SECONDS'
+JOB_SECONDS_VARIABLE: str = 'BOOKREVIVER_CHANGE_WAIT__JOB_SECONDS'
+# The limits the settings document: 3 seconds for a request and 30 for every other unit of work
+DEFAULT_REQUEST_SECONDS: float = 3.0
+DEFAULT_JOB_SECONDS: float = 30.0
+# The names of the two limits, and a shorter and a longer value for them
+REQUEST_SECONDS_FIELD: str = 'request_seconds'
+JOB_SECONDS_FIELD: str = 'job_seconds'
+SHORTER_SECONDS: float = 5.0
+LONGER_SECONDS: float = 10.0
+# The id of a case whose two values are equal
+EQUAL_ID: str = 'equal'
 # Where the default number of processes reads the cores, which a test replaces
 CPU_COUNT_TARGET: str = 'bookreviver.app.settings.os.process_cpu_count'
 
@@ -116,7 +131,7 @@ class TestProcessingSettings:
         """Verify previews have a process of their own unless the settings say more."""
         assert ProcessingSettings().preview_step_processes == 1
 
-    @pytest.mark.parametrize(('steps', 'previews'), [(2, 2), (2, 3), (4, 4)], ids=['equal', 'more', 'all'])
+    @pytest.mark.parametrize(('steps', 'previews'), [(2, 2), (2, 3), (4, 4)], ids=[EQUAL_ID, 'more', 'all'])
     def test_previews_may_not_take_every_process(self, steps: int, previews: int) -> None:
         """Verify the settings are refused when no process is left for the full runs.
 
@@ -146,3 +161,67 @@ class TestProcessingSettings:
         monkeypatch.setenv(PREVIEW_STEP_PROCESSES_VARIABLE, '2')
         processing = Settings(_env_file=None).processing
         assert (processing.step_processes, processing.preview_step_processes) == (5, 2)
+
+
+class TestChangeWaitSettings:
+    """Tests for the limits a block of a unit of work waits for the write lock with."""
+
+    def test_defaults_are_three_seconds_for_a_request_and_thirty_for_a_job(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify a request gives up after 3 seconds and every other unit of work after 30.
+
+        :param monkeypatch: Fixture that restores the environment after the test.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        monkeypatch.setenv(SECRET_VARIABLE, SECRET)
+        change_wait = Settings(_env_file=None).change_wait
+        assert (change_wait.request_seconds, change_wait.job_seconds) == (DEFAULT_REQUEST_SECONDS, DEFAULT_JOB_SECONDS)
+
+    def test_environment_variables_set_each_limit_through_the_nested_delimiter(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify the two variables of the group set the two limits.
+
+        :param monkeypatch: Fixture that restores the environment after the test.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        monkeypatch.setenv(SECRET_VARIABLE, SECRET)
+        monkeypatch.setenv(REQUEST_SECONDS_VARIABLE, '1.5')
+        monkeypatch.setenv(JOB_SECONDS_VARIABLE, '45')
+        change_wait = Settings(_env_file=None).change_wait
+        assert (change_wait.request_seconds, change_wait.job_seconds) == (1.5, 45.0)
+
+    @pytest.mark.parametrize('field', [REQUEST_SECONDS_FIELD, JOB_SECONDS_FIELD])
+    @pytest.mark.parametrize('seconds', [0, -1], ids=['zero', 'negative'])
+    def test_a_limit_that_is_not_positive_is_refused(self, field: str, seconds: float) -> None:
+        """Verify neither limit may be zero or negative, which would refuse every block at once.
+
+        Only the field under test is given a bad value, so the error of the other field cannot hide a field that lost
+        its constraint, and the error must name that field and no other.
+
+        :param field: Name of the limit given the bad value.
+        :type field: str
+        :param seconds: The value given to that limit.
+        :type seconds: float
+        """
+        with pytest.raises(ValidationError) as refused:
+            ChangeWaitSettings.model_validate({field: seconds})
+        assert [error['loc'] for error in refused.value.errors()] == [(field,)]
+
+    @pytest.mark.parametrize('request_seconds', [SHORTER_SECONDS, LONGER_SECONDS], ids=[EQUAL_ID, 'longer'])
+    def test_a_request_limit_not_shorter_than_the_job_limit_is_refused(self, request_seconds: float) -> None:
+        """Verify a request limit equal to the job limit or longer is refused.
+
+        Every connection opens with the job limit as its busy timeout, and the adapter caps the lock wait of a block only
+        when its limit is shorter than that. A request whose limit equals the job limit would wait for the queue and then
+        for the whole busy timeout, which is up to twice its limit.
+
+        :param request_seconds: The request limit, against a job limit of ``SHORTER_SECONDS``.
+        :type request_seconds: float
+        """
+        message = REQUEST_WAIT_NOT_SHORTER_THAN_JOB_WAIT.format(
+            request_seconds=request_seconds, job_seconds=SHORTER_SECONDS
+        )
+        with pytest.raises(ValidationError, match=re.escape(message)):
+            ChangeWaitSettings(request_seconds=request_seconds, job_seconds=SHORTER_SECONDS)

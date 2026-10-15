@@ -1,7 +1,7 @@
 """Fixtures giving the port contract tests every adapter of the port, built by the application's own providers."""
 
 from contextlib import AsyncExitStack
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol
 
 import pytest
 from dishka import make_async_container
@@ -10,7 +10,7 @@ from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.app.providers.core import CoreProvider
 from bookreviver.app.providers.database import DatabaseProvider
-from bookreviver.app.providers.persistence import PERSISTENCE_PROVIDERS
+from bookreviver.app.providers.persistence import PERSISTENCE_PROVIDERS, ChangeWaitProvider
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.providers.tracing import TracingProvider
 from bookreviver.app.settings import PersistenceBackend, Settings
@@ -31,7 +31,21 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.ordering import OrderKeys
 
-type UnitOfWorkFactory = Callable[[], Awaitable[UnitOfWork]]
+
+class UnitOfWorkFactory(Protocol):
+    """A function opening a new unit of work of the backend under test, in a scope of the container of its own."""
+
+    def __call__(self, context: dict[Any, Any] | None = None) -> Awaitable[UnitOfWork]:
+        """Open a request scope of the container and return the unit of work it provides.
+
+        :param context: Objects the scope has in its context, such as the ``Request`` of an HTTP request, which makes
+                        the container choose the limit of a request for the unit of work. None for a bare scope.
+        :type context: dict[Any, Any] | None
+        :returns: Unit of work of the new scope, closed with the fixture.
+        :rtype: Awaitable[UnitOfWork]
+        """
+
+
 type OwnerFactory = Callable[[], Awaitable[AccountId]]
 
 # Every adapter of the OrderKeys port by name; each computes keys in memory, so none needs a provider
@@ -71,6 +85,7 @@ async def fx_persistence(
     container = make_async_container(
         CoreProvider(),
         TracingProvider(),
+        ChangeWaitProvider(),
         DatabaseProvider(),
         PERSISTENCE_PROVIDERS[fx_persistence_backend](),
         context={Settings: fx_settings},
@@ -90,13 +105,15 @@ async def fx_uow_factory(fx_persistence: AsyncContainer) -> AsyncIterator[UnitOf
     """
     async with AsyncExitStack() as scopes:
 
-        async def open_unit_of_work() -> UnitOfWork:
+        async def open_unit_of_work(context: dict[Any, Any] | None = None) -> UnitOfWork:
             """Open a request scope of the container and return the unit of work it provides.
 
+            :param context: Objects the scope has in its context, or None for a bare scope.
+            :type context: dict[Any, Any] | None
             :returns: Unit of work of a new request scope, closed with the fixture.
             :rtype: UnitOfWork
             """
-            scope = await scopes.enter_async_context(fx_persistence())
+            scope = await scopes.enter_async_context(fx_persistence(context=context))
             return await scope.get(UnitOfWork)
 
         yield open_unit_of_work

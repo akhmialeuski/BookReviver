@@ -14,6 +14,7 @@ export const HttpStatus = {
   TooManyRequests: 429,
   UnprocessableContent: 422,
   InternalServerError: 500,
+  ServiceUnavailable: 503,
 } as const;
 
 /** One of the status codes of {@link HttpStatus}. */

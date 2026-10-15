@@ -7,7 +7,7 @@ import httpx
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.api.problems import NOT_FOUND_DETAIL, UNEXPECTED_DETAIL
+from bookreviver.api.problems import NOT_FOUND_DETAIL, RETRY_AFTER_HEADER, UNEXPECTED_DETAIL
 from bookreviver.domain.enums import UploadProblem
 from bookreviver.domain.errors import (
     BookBusyError,
@@ -31,6 +31,8 @@ FAILING_PATH: str = '/test/fail'
 SECRET_DETAIL: str = 'password=hunter2 in connection string'
 CONTENT_TYPE_HEADER: str = 'content-type'
 DETAIL_KEY: str = 'detail'
+# The value of the ``Retry-After`` header of a busy book, in seconds as the header carries it
+ONE_SECOND: str = '1'
 # Messages of domain errors, which reach the client unchanged as the problem detail
 FORBIDDEN_MESSAGE: str = 'not yours'
 CONFLICT_MESSAGE: str = 'import running'
@@ -138,6 +140,22 @@ class TestProblemHandler:
         expect(body['status'] == case.status)
         expect(body[DETAIL_KEY] == case.detail)
         expect(SECRET_DETAIL not in response.text)
+        assert_expectations()
+
+    async def test_busy_book_asks_the_client_to_retry_after_a_second(
+        self, fx_client: httpx.AsyncClient, fx_failing_route: Callable[[Exception], None]
+    ) -> None:
+        """Verify a book that stays busy answers 503 with a ``Retry-After`` header of one second.
+
+        :param fx_client: HTTP client talking to the application in-process.
+        :type fx_client: httpx.AsyncClient
+        :param fx_failing_route: Function making ``FAILING_PATH`` raise a given error.
+        :type fx_failing_route: Callable[[Exception], None]
+        """
+        fx_failing_route(BookBusyError())
+        response = await fx_client.get(FAILING_PATH)
+        expect(response.status_code == HTTPStatus.SERVICE_UNAVAILABLE)
+        expect(response.headers[RETRY_AFTER_HEADER] == ONE_SECOND)
         assert_expectations()
 
     async def test_unexpected_error_is_a_problem_that_hides_its_message(

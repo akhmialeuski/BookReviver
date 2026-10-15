@@ -20,6 +20,11 @@ STEP_PROCESSES_NEED_PREVIEW_SHARE: str = (
     'processing.preview_step_processes must be smaller than processing.step_processes, '
     'so that full runs keep at least one process.'
 )
+REQUEST_WAIT_NOT_SHORTER_THAN_JOB_WAIT: str = (
+    'change_wait.request_seconds ({request_seconds}) must be shorter than change_wait.job_seconds ({job_seconds}), '
+    'because every connection opens with the job limit as its busy timeout, and a block whose limit is not shorter '
+    'than that waits for the queue and then for the whole busy timeout.'
+)
 
 # The share of the cores the processes of the steps take by default, two thirds, and the fewest they are
 STEP_PROCESSES_CORES_NUMERATOR: int = 2
@@ -202,6 +207,37 @@ class TracingSettings(BaseModel):
         return self.export_path if self.enabled else None
 
 
+class ChangeWaitSettings(BaseModel):
+    """How long a block of the persistence port waits for the write lock before it gives up as busy.
+
+    :ivar request_seconds: Limit of a unit of work that serves an HTTP request, 3 seconds by default, so an interface
+                           never hangs for the long wait of a job and is told at once to try again.
+    :ivar job_seconds: Limit of every other unit of work, the background jobs and the work of the startup, 30 seconds by
+                       default, so a job does not lose its work to a short wait. It is the longest limit, since every
+                       connection opens with it as its busy timeout, so the request limit must be shorter: the adapter
+                       caps the lock wait of a block only when its limit is shorter than that busy timeout.
+    """
+
+    request_seconds: PositiveFloat = 3.0
+    job_seconds: PositiveFloat = DEFAULT_CHANGE_WAIT_SECONDS
+
+    @model_validator(mode='after')
+    def _require_request_limit_shorter_than_job_limit(self) -> Self:
+        """Check that the limit of a request is shorter than the limit of a job.
+
+        :returns: The settings, once checked.
+        :rtype: Self
+        :raises ValueError: If the request limit is equal to the job limit or longer.
+        """
+        if self.request_seconds >= self.job_seconds:
+            raise ValueError(
+                REQUEST_WAIT_NOT_SHORTER_THAN_JOB_WAIT.format(
+                    request_seconds=self.request_seconds, job_seconds=self.job_seconds
+                )
+            )
+        return self
+
+
 class Settings(BaseSettings):
     """All runtime configuration of the API server and the workers.
 
@@ -217,8 +253,8 @@ class Settings(BaseSettings):
     :ivar max_upload_bytes: Largest total size of one upload, 4 GiB by default.
     :ivar max_upload_files: Largest number of files in one upload, 10000 by default.
     :ivar event_queue_size: Undelivered events each event subscriber keeps before dropping the oldest.
-    :ivar change_wait_seconds: How long a change of a book waits for another change of the same book, 30 seconds by
-                               default, before the request is refused as busy.
+    :ivar change_wait: How long a block of a unit of work waits for the write lock, one limit for the units of work of
+                       HTTP requests and one for those of jobs, before it is refused as busy.
     :ivar auth: Accounts, sessions and social sign-in; required, since it holds the signing secret.
     :ivar mail: Outgoing mail.
     :ivar imaging: Page extraction and tiling.
@@ -244,7 +280,7 @@ class Settings(BaseSettings):
     max_upload_bytes: PositiveInt = 4 * 1024**3
     max_upload_files: PositiveInt = 10_000
     event_queue_size: PositiveInt = 256
-    change_wait_seconds: PositiveFloat = DEFAULT_CHANGE_WAIT_SECONDS
+    change_wait: ChangeWaitSettings = ChangeWaitSettings()
     auth: AuthSettings
     mail: MailSettings = MailSettings()
     imaging: ImagingSettings = ImagingSettings()

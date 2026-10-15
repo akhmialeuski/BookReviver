@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.app.settings import Settings
+from bookreviver.ports.persistence import ChangeWaitSeconds
 from bookreviver.ports.tracing import Tracer
 
 # The command applying the migrations to the database the settings name, a script of pyproject.toml
@@ -36,7 +37,7 @@ class DatabaseProvider(Provider):
         """Open the configured database, check its schema revision, and close it with the application.
 
         :param settings: Application settings, of which the database URL, the data directory and the wait limit of a
-                         change are read.
+                         job are read, which every connection opens with as its busy timeout.
         :type settings: Settings
         :param tracer: Tracer the write blocks are timed with.
         :type tracer: Tracer
@@ -45,7 +46,9 @@ class DatabaseProvider(Provider):
         :raises RuntimeError: When the database is not at the head revision of the migrations, naming the upgrade to
             run, or the downgrade when the database is at a revision the code does not ship.
         """
-        database = SqlDatabase(settings.resolved_database_url, tracer=tracer, wait_seconds=settings.change_wait_seconds)
+        database = SqlDatabase(
+            settings.resolved_database_url, tracer=tracer, wait_seconds=settings.change_wait.job_seconds
+        )
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         try:
             revisions = await database.schema_revisions()
@@ -82,7 +85,7 @@ class DatabaseProvider(Provider):
             await session.close()
 
     @provide(scope=Scope.REQUEST)
-    def unit_of_work(self, session: AsyncSession) -> SqlAlchemyUnitOfWork:
+    def unit_of_work(self, session: AsyncSession, wait_seconds: ChangeWaitSeconds) -> SqlAlchemyUnitOfWork:
         """Build the one unit of work of the session of a request or job.
 
         Two units of work over one session would each guard against the block of the other, so the repositories of
@@ -90,7 +93,10 @@ class DatabaseProvider(Provider):
 
         :param session: Session of the current request or job.
         :type session: AsyncSession
+        :param wait_seconds: How long a block of the unit of work waits for its turn and for the write lock, by the
+                             scope it lives in.
+        :type wait_seconds: ChangeWaitSeconds
         :returns: Unit of work whose repositories share ``session``.
         :rtype: SqlAlchemyUnitOfWork
         """
-        return SqlAlchemyUnitOfWork(session)
+        return SqlAlchemyUnitOfWork(session, wait_seconds=wait_seconds)

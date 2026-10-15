@@ -9,7 +9,7 @@ from bookreviver.app.providers.core import CoreProvider
 from bookreviver.app.providers.database import DatabaseProvider
 from bookreviver.app.providers.imaging import ImagingProvider
 from bookreviver.app.providers.imports import ImportsProvider
-from bookreviver.app.providers.persistence import PERSISTENCE_PROVIDERS
+from bookreviver.app.providers.persistence import PERSISTENCE_PROVIDERS, ChangeWaitProvider
 from bookreviver.app.providers.processing import ProcessingProvider
 from bookreviver.app.providers.projects import ProjectsProvider
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
@@ -35,6 +35,7 @@ def build_container(settings: Settings, extra_providers: Sequence[Provider] = ()
     return make_async_container(
         CoreProvider(),
         TracingProvider(),
+        ChangeWaitProvider(),
         DatabaseProvider(),
         PERSISTENCE_PROVIDERS[settings.persistence](),
         STORAGE_PROVIDERS[settings.storage](),

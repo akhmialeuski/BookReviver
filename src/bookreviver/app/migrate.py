@@ -31,7 +31,7 @@ def migrate(context: click.Context) -> None:
     context.ensure_object(dict)
     # A migration is not measured, so the database gets the tracer that records nothing
     database = SqlDatabase(
-        settings.resolved_database_url, tracer=NullTracer(), wait_seconds=settings.change_wait_seconds
+        settings.resolved_database_url, tracer=NullTracer(), wait_seconds=settings.change_wait.job_seconds
     )
     context.obj['configs'] = [database.config]
 

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 import pytest
+from starlette.requests import Request
 
 from bookreviver.api.auth import current_actor
 from bookreviver.app.main import create_app
@@ -52,6 +53,16 @@ def fx_settings(tmp_path: Path) -> Settings:
         persistence=PersistenceBackend.MEMORY,
         auth=AuthSettings(secret=TEST_SECRET, cookie_secure=False),
     )
+
+
+@pytest.fixture
+def fx_request_context() -> dict[Any, Any]:
+    """Build the context dishka's FastAPI integration puts into the scope of every HTTP request.
+
+    :returns: The context holding a ``Request``, which a scope opened with it takes the limit of a request from.
+    :rtype: dict[Any, Any]
+    """
+    return {Request: Request({'type': 'http'})}
 
 
 @pytest.fixture
