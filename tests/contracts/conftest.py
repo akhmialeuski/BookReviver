@@ -13,7 +13,7 @@ from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.settings import PersistenceBackend, Settings
 from bookreviver.ports.storage import AssetStore, SourceStore
-from tests.helpers.book_gate import hold_book, hold_book_in_thread
+from tests.helpers.book_gate import hold_book_in_thread
 from tests.helpers.builders import new_account_id
 from tests.helpers.job_queues import QueueAdapter
 from tests.helpers.schema import create_schema
@@ -43,7 +43,7 @@ class UnitOfWorkFactory(Protocol):
 
         :param wait_seconds: How long a change of the unit of work waits for its turn before it gives up with
                              ``BookBusyError``, which a request gets shorter than a job. None for the limit of a job
-                             in the settings of the test.
+                             in the settings of the test. The in-memory adapter never waits and takes no limit.
         :type wait_seconds: float | None
         :returns: A new unit of work.
         :rtype: UnitOfWork
@@ -51,12 +51,12 @@ class UnitOfWorkFactory(Protocol):
 
 
 class BookHolder(Protocol):
-    """A function holding the lock of a book of the backend under test, which every change of that book waits for."""
+    """A function holding a book of the SQL backend, which every change of that book waits for."""
 
     def __call__(self, uow: UnitOfWork, project_id: ProjectId | None = None) -> AbstractAsyncContextManager[None]:
-        """Hold the lock for the length of an ``async with`` block.
+        """Hold the book for the length of an ``async with`` block.
 
-        :param uow: Unit of work of the test, which an adapter that runs the work in a thread holds through a change.
+        :param uow: Unit of work of the test, whose change holds the book by blocking the thread its work runs in.
         :type uow: UnitOfWork
         :param project_id: Project whose book is held, or None for the changes outside the content of a book.
         :type project_id: ProjectId | None
@@ -124,47 +124,37 @@ def fx_uow_factory(fx_persistence: Database, fx_settings: Settings) -> UnitOfWor
     def open_unit_of_work(*, wait_seconds: float | None = None) -> UnitOfWork:
         """Open a unit of work over the database of the test.
 
-        :param wait_seconds: How long a change waits for its turn, or None for the job limit of the settings.
+        :param wait_seconds: How long a change waits for its turn, or None for the job limit of the settings. The
+                             in-memory adapter never waits, so it takes no limit.
         :type wait_seconds: float | None
         :returns: A new unit of work.
         :rtype: UnitOfWork
         """
-        seconds = fx_settings.change_wait.job_seconds if wait_seconds is None else wait_seconds
         if isinstance(fx_persistence, SqlDatabase):
+            seconds = fx_settings.change_wait.job_seconds if wait_seconds is None else wait_seconds
             return SqlAlchemyUnitOfWork(fx_persistence, wait_seconds=seconds)
-        return InMemoryUnitOfWork(fx_persistence, wait_seconds=seconds)
+        return InMemoryUnitOfWork(fx_persistence)
 
     return open_unit_of_work
 
 
 @pytest.fixture
 def fx_hold_book(fx_persistence: Database) -> BookHolder:
-    """Return a function holding the lock of a book, in the way the backend under test allows.
+    """Return a function holding a book by a change whose work blocks the thread it runs in.
 
-    The in-memory backend runs the work of a change in the event loop, so the test takes the lock of its database. The
-    SQL backend runs the work in a thread, so a change whose work blocks that thread holds the book.
+    Only the SQL backend runs the work of a change in a thread the test can block. The in-memory backend runs it
+    between two awaits and has no lock, so a change of it never waits and there is no book to hold.
 
     :param fx_persistence: Database of the backend under test.
     :type fx_persistence: Database
     :returns: Function returning a context manager that holds the book while its block runs.
     :rtype: BookHolder
+    :raises TypeError: If the backend under test is not the SQL one, whose test has to select that backend alone.
     """
-
-    def hold(uow: UnitOfWork, project_id: ProjectId | None = None) -> AbstractAsyncContextManager[None]:
-        """Hold the lock of a book, or of the changes outside books, until the block ends.
-
-        :param uow: Unit of work whose change holds the book, for a backend that holds it through a change.
-        :type uow: UnitOfWork
-        :param project_id: Project whose book is held, or None for the changes outside the content of a book.
-        :type project_id: ProjectId | None
-        :returns: Context manager holding the lock.
-        :rtype: AbstractAsyncContextManager[None]
-        """
-        if isinstance(fx_persistence, InMemoryDatabase):
-            return hold_book(fx_persistence, project_id)
-        return hold_book_in_thread(uow, project_id)
-
-    return hold
+    if not isinstance(fx_persistence, SqlDatabase):
+        err_msg = f'A book can be held only on the SQL backend, and the backend under test is {type(fx_persistence)}.'
+        raise TypeError(err_msg)
+    return hold_book_in_thread
 
 
 @pytest.fixture

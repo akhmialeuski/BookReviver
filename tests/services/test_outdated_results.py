@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, PageStage, PageVersion, Project
     from bookreviver.domain.ids import PageVersionId
     from bookreviver.ports.persistence import Repositories
+    from tests.helpers.page_stage_writes import PageStageWrites
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -374,3 +375,25 @@ class TestMarkStale:
         await OutdatedResults(uow=fx_kit.uow(), catalogue=fx_kit.catalogue, clock=fx_kit.clock).mark_stale()
 
         assert asked == {(await page.base()).id: 1, geometry.id: 1, cleanup.id: 1}
+
+    async def test_the_outdated_records_of_a_book_are_written_by_one_save_many_and_never_by_save(
+        self, fx_kit: ProcessingKit, fx_page_stage_writes: PageStageWrites
+    ) -> None:
+        """Verify the two outdated records of a book are written by one ``save_many`` holding both, never by ``save``.
+
+        The end state of the records is the same when each one is written on its own, so only a record of the calls
+        tells a batch of one statement from a statement for each record.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param fx_page_stage_writes: Record of the writes of the page stage repository, not yet started.
+        :type fx_page_stage_writes: PageStageWrites
+        """
+        page = await SeededPage.seed(fx_kit)
+        geometry = await page.result(Stage.GEOMETRY, OUTDATED_GEOMETRY)
+        await page.result(Stage.CLEANUP, CURRENT_CLEANUP, input_id=geometry.id)
+        fx_page_stage_writes.start()
+
+        marked = await mark_stale(fx_kit)
+
+        assert (len(marked), fx_page_stage_writes.batches, fx_page_stage_writes.saves) == (2, [marked], [])

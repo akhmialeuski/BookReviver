@@ -383,6 +383,55 @@ class TestPageStageRepository:
         found = await fx_uow_factory().read(lambda repos: repos.page_stages.find(PageStageKey(page_id, Stage.GEOMETRY)))
         assert found == stale
 
+    async def test_save_many_stores_new_records_and_replaces_stored_ones_in_one_call(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify one call stores two new records and replaces a stored one, and returns them in the order given.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        uow = fx_uow_factory()
+        await uow.change_book(
+            project_id, lambda repos, _project: repos.page_stages.save(make_page_stage(page_id=page_id))
+        )
+        replaced = make_page_stage(page_id=page_id, state=StageState.STALE)
+        batch = [
+            make_page_stage(page_id=page_id, stage=Stage.CLEANUP),
+            replaced,
+            make_page_stage(page_id=page_id, stage=Stage.PAGE_SPLIT),
+        ]
+
+        returned = await uow.change_book(project_id, lambda repos, _project: repos.page_stages.save_many(batch))
+        stored = await fx_uow_factory().read(lambda repos: repos.page_stages.list_for_page(page_id))
+
+        order = list(Stage)
+        expect(list(returned) == batch)
+        expect(list(stored) == sorted(batch, key=lambda record: order.index(record.stage)))
+        assert_expectations()
+
+    async def test_save_many_with_a_record_of_a_missing_page_stores_nothing(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Reject the call and keep its other records out of the book, which the whole call rolls back.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        uow = fx_uow_factory()
+        batch = [make_page_stage(page_id=page_id), make_page_stage(page_id=PageId(new_account_id()))]
+
+        with pytest.raises(NotFoundError):
+            await uow.change_book(project_id, lambda repos, _project: repos.page_stages.save_many(batch))
+
+        assert await fx_uow_factory().read(lambda repos: repos.page_stages.list_for_page(page_id)) == []
+
     async def test_find_returns_none_for_a_stage_that_has_not_run(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
@@ -519,10 +568,12 @@ class TestPageStageRepository:
         )
         assert found == ([mine], [mine], [])
 
-    async def test_list_fresh_returns_the_fresh_records_of_every_project(
+    async def test_fresh_by_project_groups_the_fresh_records_by_the_book_of_their_page(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the fresh records of all the projects are listed by page and stage, and no stale or failed one.
+        """Verify the fresh records are grouped by book, by page and stage in each, and no stale or failed one is in.
+
+        A book whose records are none of them fresh is left out of the groups.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -531,6 +582,7 @@ class TestPageStageRepository:
         """
         project_id, page_id = await _store_page(fx_uow_factory, fx_new_owner)
         other_project_id, other_page_id = await _store_page(fx_uow_factory, fx_new_owner)
+        idle_project_id, idle_page_id = await _store_page(fx_uow_factory, fx_new_owner)
         uow = fx_uow_factory()
         fresh = [
             make_page_stage(page_id=page_id, stage=Stage.CLEANUP),
@@ -539,12 +591,19 @@ class TestPageStageRepository:
         ]
         stale = make_page_stage(page_id=page_id, stage=Stage.PAGE_SPLIT, state=StageState.STALE)
         failed = make_page_stage(page_id=other_page_id, stage=Stage.CLEANUP, state=StageState.FAILED)
+        idle = make_page_stage(page_id=idle_page_id, state=StageState.STALE)
         await uow.change_book(project_id, partial(_save_records, records=[*fresh[:2], stale]))
         await uow.change_book(other_project_id, partial(_save_records, records=[fresh[2], failed]))
+        await uow.change_book(idle_project_id, partial(_save_records, records=[idle]))
         order = list(Stage)
-        expected = sorted(fresh, key=lambda record: (str(record.page_id), order.index(record.stage)))
+        expected = {
+            project_id: sorted(fresh[:2], key=lambda record: order.index(record.stage)),
+            other_project_id: [fresh[2]],
+        }
 
-        assert await fx_uow_factory().read(lambda repos: repos.page_stages.list_fresh()) == expected
+        grouped = await fx_uow_factory().read(lambda repos: repos.page_stages.fresh_by_project())
+
+        assert {project: list(records) for project, records in grouped.items()} == expected
 
     async def test_list_replaced_returns_the_records_made_by_another_version_of_the_processor_in_any_state(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory

@@ -33,7 +33,6 @@ from bookreviver.ports.runtime import JobQueue
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from bookreviver.services.pages import NOT_QUEUED, UNEXPECTED_FAILURE
 from tests.helpers.acting_renditions import ActingRenditionWriter
-from tests.helpers.book_gate import hold_book
 from tests.helpers.books import IMAGE
 from tests.helpers.builders import EPOCH, make_job, make_page, make_project, make_scan, make_source, new_account_id
 from tests.helpers.fake_processing import FakeRenditionWriter
@@ -55,6 +54,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import RenditionInfo
     from bookreviver.ports.persistence import Repositories
     from bookreviver.services.pages import PageService
+    from tests.helpers.book_gate import GatedUnitOfWork
 
 pytestmark = pytest.mark.anyio
 
@@ -615,6 +615,7 @@ class TestAttachScan:
     async def test_binds_the_scan_after_a_printed_number_written_before_it_in_the_queue_of_the_book(
         self,
         fx_database: InMemoryDatabase,
+        fx_gated_uow: Callable[[], GatedUnitOfWork],
         fx_asset_store: LocalAssetStore,
         fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
         fx_actor: Actor,
@@ -627,6 +628,8 @@ class TestAttachScan:
 
         :param fx_database: In-memory database of the test.
         :type fx_database: InMemoryDatabase
+        :param fx_gated_uow: Function opening a unit of work whose changes wait at the gate the test holds the book with.
+        :type fx_gated_uow: Callable[[], GatedUnitOfWork]
         :param fx_asset_store: Local asset store of the test.
         :type fx_asset_store: LocalAssetStore
         :param fx_runtime: The recording bus, the clock and the queue the service reports through.
@@ -636,7 +639,7 @@ class TestAttachScan:
         """
         book, placeholder = await _placeholder_book(fx_database, fx_asset_store, fx_actor)
         scan = await _spare_scan(fx_database, fx_asset_store, book)
-        binding = make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime)
+        binding = make_page_service(fx_gated_uow(), fx_asset_store, fx_runtime)
         bound: list[PageOverview] = []
 
         def write_the_number(repos: Repositories, _project: Project) -> None:
@@ -653,8 +656,8 @@ class TestAttachScan:
             """Bind the scan to the placeholder and keep the overview."""
             bound.append(await binding.attach_scan(fx_actor, book.project.id, placeholder.id, scan.id))
 
-        async with anyio.create_task_group() as group, hold_book(fx_database, book.project.id):
-            group.start_soon(InMemoryUnitOfWork(fx_database).change_book, book.project.id, write_the_number)
+        async with anyio.create_task_group() as group, fx_gated_uow().gate.hold(book.project.id):
+            group.start_soon(fx_gated_uow().change_book, book.project.id, write_the_number)
             await anyio.wait_all_tasks_blocked()
             group.start_soon(bind)
             await anyio.wait_all_tasks_blocked()

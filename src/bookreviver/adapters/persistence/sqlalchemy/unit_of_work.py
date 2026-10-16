@@ -24,13 +24,8 @@ transactions, for the account database.
 from functools import partial
 from typing import TYPE_CHECKING, override
 
-from sqlalchemy import select
-
-from bookreviver.adapters.persistence.sqlalchemy.mappers import ProjectMapper
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyRepositories
-from bookreviver.adapters.persistence.sqlalchemy.tables import ProjectRow
 from bookreviver.domain.enums import BlockKind
-from bookreviver.domain.errors import NotFoundError
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS, UnitOfWork
 
 if TYPE_CHECKING:
@@ -121,9 +116,8 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         :rtype: T
         :raises NotFoundError: If the project is not stored.
         """
-        if (row := session.scalar(select(ProjectRow).where(ProjectRow.id == project_id))) is None:
-            raise NotFoundError(project_id)
-        return work(SqlAlchemyRepositories(session), ProjectMapper().to_entity(row))
+        repositories = SqlAlchemyRepositories(session)
+        return work(repositories, repositories.projects.get(project_id))
 
     async def read_session[T](self, work: Callable[[Session], T]) -> T:
         """Run ``work`` over a session of a transaction that only reads, which is not part of the port.

@@ -75,7 +75,8 @@ class OutdatedResults:
             :returns: The outdated records of each book that has any.
             :rtype: dict[ProjectId, list[PageStage]]
             """
-            records = repos.page_stages.list_fresh()
+            fresh = repos.page_stages.fresh_by_project()
+            records = [record for of_book in fresh.values() for record in of_book]
             versions: dict[PageVersionId, PageVersion] = {}
             replaced: set[PageVersionId] = set()
             asked: set[PageVersionId] = set()
@@ -107,11 +108,15 @@ class OutdatedResults:
                         break
                     current = versions[current].input_id
                 verdicts.update(dict.fromkeys(chain, outdated))
-            by_project: dict[ProjectId, list[PageStage]] = {}
-            for record in records:
-                if record.head_version_id is not None and verdicts.get(record.head_version_id):
-                    by_project.setdefault(repos.pages.get(record.page_id).project_id, []).append(record)
-            return by_project
+            grouped = {
+                project_id: [
+                    record
+                    for record in of_book
+                    if record.head_version_id is not None and verdicts.get(record.head_version_id)
+                ]
+                for project_id, of_book in fresh.items()
+            }
+            return {project_id: of_book for project_id, of_book in grouped.items() if of_book}
 
         by_project = await self._uow.read(find)
         stale: list[PageStage] = []
@@ -123,9 +128,10 @@ class OutdatedResults:
     async def _mark_book(self, project_id: ProjectId, outdated: Sequence[PageStage]) -> list[PageStage]:
         """Mark the outdated records of one book stale, in a ``change_book`` of its own.
 
-        Each record is read again in the transaction, since a request may have marked it, run it or deleted it since the
-        outdated ones were found. A record that is not fresh any longer, or stands on another version, is left as it is.
-        The method opens its transaction, so it is called only outside one.
+        The records of the pages are read again in one query of the transaction, since a request may have marked them,
+        run them or deleted them since the outdated ones were found. A record that is not fresh any longer, or stands
+        on another version, is left as it is, and the others are written by one statement. The method opens its
+        transaction, so it is called only outside one.
 
         :param project_id: Project owning the records.
         :type project_id: ProjectId
@@ -146,16 +152,15 @@ class OutdatedResults:
             :returns: The records that became stale.
             :rtype: list[PageStage]
             """
-            stale: list[PageStage] = []
-            for record in outdated:
-                current = repos.page_stages.find(record.key)
-                if (
-                    current is not None
-                    and current.state is StageState.FRESH
-                    and current.head_version_id == record.head_version_id
-                ):
-                    marked = evolve(current, state=StageState.STALE, updated_at=moment)
-                    stale.append(repos.page_stages.save(marked))
-            return stale
+            found_on = {record.key: record.head_version_id for record in outdated}
+            current = repos.page_stages.list_for_pages({record.page_id for record in outdated})
+            stale = [
+                evolve(record, state=StageState.STALE, updated_at=moment)
+                for record in current
+                if record.key in found_on
+                and record.state is StageState.FRESH
+                and record.head_version_id == found_on[record.key]
+            ]
+            return list(repos.page_stages.save_many(stale))
 
         return await self._uow.change_book(project_id, work)

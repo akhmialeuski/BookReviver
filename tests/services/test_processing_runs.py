@@ -39,6 +39,7 @@ from bookreviver.domain.values import (
     StepPreview,
 )
 from tests.helpers.builders import EPOCH, make_page
+from tests.helpers.counting import CountingUnitOfWork
 from tests.helpers.fake_processing import PREVIEW_TOKEN
 from tests.helpers.meanwhile import change_while_writing
 from tests.helpers.page_batches import PageValues
@@ -916,3 +917,25 @@ class TestRunApplyStep:
         head = await head_of(fx_kit, page, Stage.GEOMETRY)
         expect((head.state, head.mark, head.comment) == (VersionState.READY, ResultMark.BAD, COMMENT_BY_HAND))
         assert_expectations()
+
+
+class TestStartRun:
+    """Tests for the reads that ``ProcessingService.start_run`` makes before it queues the job."""
+
+    async def test_run_over_chosen_pages_with_stored_recipes_takes_one_read(self, fx_kit: ProcessingKit) -> None:
+        """Verify the ownership, the pages and the recipes are read in one transaction, not one for each.
+
+        The recipes are stored by a first read of them, the mode is ``keep`` and no step is named, so the request needs
+        no plan beyond the check. The job is stored by a change, which is no read.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, page = await prepared_page(fx_kit)
+        await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)
+        uow = CountingUnitOfWork(fx_kit.uow())
+        run = StageRun(stage=Stage.GEOMETRY, page_ids=(page.id,))
+
+        job = await fx_kit.service(uow).start_run(actor, project.id, Stage.GEOMETRY, run)
+
+        assert (uow.reads, job.project_id) == (1, project.id)

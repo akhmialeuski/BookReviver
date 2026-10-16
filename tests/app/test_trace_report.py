@@ -16,7 +16,9 @@ The expected values are worked out by hand:
 - Inside the first deskew step that ran, 8.00 to 8.10 s, block E asked at 8.02 s, waited 30 ms and held 30 ms, to
   8.08 s. Inside the second one, 8.20 to 8.50 s, block F asked at 8.21 s, waited 60 ms, held 70 ms and committed in
   10 ms, to 8.35 s, and block G asked at 8.40 s, waited 20 ms and held 30 ms, to 8.45 s. Together the holding is 3 + 0.8
-  + 0.03 + 0.08 + 0.03 = 3.94 s, which is 39.4 % of the 10 s.
+  + 0.03 + 0.08 + 0.03 = 3.94 s, which is 39.4 % of the 10 s. Every span of this file ends where the commit of its block
+  ends, so the share of the run with the write queue held, which runs to the end of the span, is the same 39.4 % as the
+  share with a transaction open. The two differ in the test of a block whose span outlasts its commit.
 - There are 7 write blocks, and their waits are 0, 500, 1000, 50, 30, 60 and 20 ms, in order 0, 20, 30, 50, 60, 500 and
   1000 ms. By nearest rank over seven values the 50th percentile is the ceiling of 3.5, the 4th, 50 ms; the 90th is the
   ceiling of 6.3 and the 99th the ceiling of 6.93, both the 7th, 1000 ms; the maximum is 1000 ms.
@@ -73,7 +75,8 @@ SECOND_STEP_ID: str = '0x00000000000000a2'
 EXPECTED_REPORT: str = f"""Trace report: {FILE_NAME}
 Wall time of the run, s: 10.000
 Write blocks: 7
-Share of the run with the write lock held, %: 39.4
+Share of the run with the write queue held, %: 39.4
+Share of the run with an SQLite write transaction open, %: 39.4
 Wait for the write lock, ms: p50 50.00, p90 1000.00, p99 1000.00, max 1000.00
 Hold of a block, ms: p50 70.00, p90 1900.00, p99 1900.00, max 1900.00
 Commit of a block, ms: p50 10.00, p90 100.00, p99 100.00, max 100.00
@@ -82,6 +85,9 @@ Commit of a block, ms: p50 10.00, p90 100.00, p99 100.00, max 100.00
 |-----------------|-------|-----------------|----------------|------------------------------|
 | {DESKEW} | 4     | 50.0            | 200.0          | 55.0                         |
 | {SPLIT}      | 1     | 0.0             | 40.0           | 0.0                          |"""
+# The two shares the report prints for one block whose span ends 1.3 s after its commit, in a run of 10 s
+QUEUE_SHARE_LINE: str = 'Share of the run with the write queue held, %: 19.0'
+TRANSACTION_SHARE_LINE: str = 'Share of the run with an SQLite write transaction open, %: 6.0'
 # The lags of the probe ticks of one test, and the two lines the report prints for them and for one block of 20 ms
 LAG_VALUES_MS: tuple[float, ...] = (1.0, 2.0, 3.0, 4.0, 10.0)
 WAIT_LINE: str = 'Wait for the write lock, ms: p50 20.00, p90 20.00, p99 20.00, max 20.00'
@@ -435,6 +441,28 @@ class TestReport:
         spans = trace_report.load_spans(fx_span_file)
         assert trace_report.report(spans, fx_span_file.name) == EXPECTED_REPORT
 
+    def test_queue_share_runs_to_the_end_of_the_span_and_transaction_share_to_the_end_of_the_commit(
+        self, fx_write_spans: Callable[[Sequence[str]], Path]
+    ) -> None:
+        """Verify the tail of a block after its commit is held in the queue but is no open transaction.
+
+        The block asked at 1 s and its span ended at 3 s. It waited 100 ms, held its transaction 500 ms and committed in
+        100 ms, so the queue is held from 1.1 s to 3 s, which is 1.9 s, and a transaction is open from 1.1 s to 1.7 s,
+        which is 0.6 s. The tail of 1.3 s is the hand-off of the thread and the return to the event loop. Of the 10 s of
+        the run that is 19.0 % and 6.0 %.
+
+        :param fx_write_spans: Function that writes lines of spans to a file.
+        :type fx_write_spans: Callable[[Sequence[str]], Path]
+        """
+        path = fx_write_spans(
+            [
+                span_line(SpanName.JOB, 0.0, 10.0, {SpanAttribute.JOB_ID: JOB_NAME}, lineage=Lineage(span_id=JOB_ID)),
+                block(1.0, 3.0, BlockOutcome.COMMITTED, BlockTimes(100, 500, 100), parent_id=JOB_ID),
+            ]
+        )
+        lines = trace_report.report(trace_report.load_spans(path), path.name).splitlines()
+        assert lines[3:5] == [QUEUE_SHARE_LINE, TRANSACTION_SHARE_LINE]
+
     def test_wait_of_blocks_outside_the_steps_that_ran_is_not_counted_in_a_step(
         self, fx_write_spans: Callable[[Sequence[str]], Path]
     ) -> None:
@@ -477,7 +505,7 @@ class TestReport:
         ]
         path = fx_write_spans([block(0.0, 1.0, BlockOutcome.COMMITTED, BlockTimes(20)), *ticks])
         lines = trace_report.report(trace_report.load_spans(path), path.name).splitlines()
-        assert lines[4:6] == [WAIT_LINE, LAG_LINE]
+        assert lines[5:7] == [WAIT_LINE, LAG_LINE]
 
     def test_report_reads_the_file_the_exporter_writes(self, tmp_path: Path) -> None:
         """Verify the report of a file the real tracer wrote has the step type and the wait of the block inside it.

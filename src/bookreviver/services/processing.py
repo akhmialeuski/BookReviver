@@ -102,8 +102,9 @@ class ProcessingService:
         :rtype: Slice[Recipe]
         :raises NotFoundError: If the actor has no such project, or the stage has no recipe.
         """
-        await self._uow.read(lambda repos: owned_project(repos.projects, actor, project_id))
-        recipes = await self._recipes.recipes(project_id, stage)
+        recipes = await self._recipes.recipes(
+            project_id, stage, checking=lambda repos: owned_project(repos.projects, actor, project_id)
+        )
         return Slice(items=recipes[request.offset : request.offset + request.limit], total=len(recipes))
 
     async def save_recipe(self, actor: Actor, project_id: ProjectId, key: RecipeKey, draft: RecipeDraft) -> Recipe:
@@ -166,10 +167,19 @@ class ProcessingService:
                                step that the recipe of a page has no such step for, or whose steps up to it are all
                                switched off, or its mode takes the work of pages away and it is not confirmed.
         """
-        await self._uow.read(lambda repos: owned_project(repos.projects, actor, project_id))
-        await self._recipes.recipes(project_id, stage)
-        if (page_ids := run.page_ids) is not None:
-            await self._uow.read(lambda repos: repos.pages.list_by_ids(project_id, page_ids))
+
+        def check(repos: Repositories) -> None:
+            """Require the project of the actor and, for a run over chosen pages, every one of the pages in it.
+
+            :param repos: Repositories of the transaction that reads the recipes.
+            :type repos: Repositories
+            :raises NotFoundError: If the actor has no such project, or a page is not in it.
+            """
+            owned_project(repos.projects, actor, project_id)
+            if (page_ids := run.page_ids) is not None:
+                repos.pages.list_by_ids(project_id, page_ids)
+
+        await self._recipes.recipes(project_id, stage, checking=check)
         if run.through_step is not None:
             planned = {recipe.id: recipe for recipe in (await self._plan(project_id, run).recipes()).values()}
             for recipe in planned.values():
@@ -208,8 +218,9 @@ class ProcessingService:
         :raises ConflictError: If a run or a measure of the project is queued or running, which may be writing the
                                versions that are measured or the recipe.
         """
-        await self._uow.read(lambda repos: owned_project(repos.projects, actor, project_id))
-        await self._recipes.recipes(project_id, Stage.GEOMETRY)
+        await self._recipes.recipes(
+            project_id, Stage.GEOMETRY, checking=lambda repos: owned_project(repos.projects, actor, project_id)
+        )
         return await self._starter.enqueue(project_id, JobKind.MEASURE_BOOK, {})
 
     async def start_preview(self, actor: Actor, project_id: ProjectId, preview: StepPreview) -> Job:

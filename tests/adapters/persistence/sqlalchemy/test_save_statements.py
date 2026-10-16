@@ -1,0 +1,165 @@
+"""Tests for the SQL statements a keyed save and the update of several pages send to SQLite inside a write.
+
+A save, a save of several entities and an update of several pages are each one statement of the database, not one
+statement for every entity and not a read before each write, which is what keeps the writer held for a short time.
+"""
+
+from typing import TYPE_CHECKING
+
+import pytest
+from attrs import evolve
+
+from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
+from bookreviver.domain.enums import Stage
+from tests.helpers.builders import (
+    make_page,
+    make_page_stage,
+    make_page_step_state,
+    make_project,
+    make_step_values,
+)
+from tests.helpers.seeding import store_project
+from tests.helpers.statements import StatementLog
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from bookreviver.domain.entities import Page, Project
+    from bookreviver.domain.ids import AccountId
+    from bookreviver.ports.persistence import Repositories
+
+pytestmark = pytest.mark.anyio
+
+# How many pages, and so how many records or updates, a test writes at once
+BATCH: int = 5
+# The label the updated pages get
+UPDATED_LABEL: str = '[4]'
+# The keyed saves, by the table they write: each builds an entity of the page and calls the save of its repository
+SAVES: dict[str, Callable[[Repositories, Page], object]] = {
+    'page stage': lambda repos, page: repos.page_stages.save(make_page_stage(page_id=page.id)),
+    'step state': lambda repos, page: repos.page_step_states.save(make_page_step_state(page_id=page.id)),
+    'step values': lambda repos, page: repos.step_values.save(make_step_values(project_id=page.project_id)),
+}
+
+
+@pytest.fixture
+async def fx_stored_book(fx_database: SqlDatabase, fx_owner_id: AccountId) -> tuple[Project, list[Page]]:
+    """Commit a book of five pages, which the writes of a test change.
+
+    :param fx_database: Fresh SQLite database with every table created.
+    :type fx_database: SqlDatabase
+    :param fx_owner_id: Committed account owning the book.
+    :type fx_owner_id: AccountId
+    :returns: The project and its pages.
+    :rtype: tuple[Project, list[Page]]
+    """
+    project = make_project(owner_id=fx_owner_id)
+    pages = [make_page(project_id=project.id, order_key=f'a{index}') for index in range(BATCH)]
+    await store_project(SqlAlchemyUnitOfWork(fx_database), project, *pages)
+    return project, pages
+
+
+async def _statements_of(
+    database: SqlDatabase, project: Project, calls: Sequence[Callable[[Repositories], object]]
+) -> list[int]:
+    """Run the calls one after another in one change of the book and count the statements each of them sends.
+
+    :param database: The database whose writer engine is listened to.
+    :type database: SqlDatabase
+    :param project: Project whose book the change holds.
+    :type project: Project
+    :param calls: Functions over the repositories of the change.
+    :type calls: Sequence[Callable[[Repositories], object]]
+    :returns: The number of statements of each call, in the order given.
+    :rtype: list[int]
+    """
+    with StatementLog(database.engine) as log:
+
+        def work(repos: Repositories, _project: Project) -> list[int]:
+            """Call the functions and note how many statements the log gained during each.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: Project of the book, which the work does not need.
+            :type _project: Project
+            :returns: The number of statements of each call.
+            :rtype: list[int]
+            """
+            counts = []
+            for call in calls:
+                sent = len(log.statements)
+                call(repos)
+                counts.append(len(log.statements) - sent)
+            return counts
+
+        return await SqlAlchemyUnitOfWork(database).change_book(project.id, work)
+
+
+class TestKeyedSave:
+    """Tests for the statements ``save`` and ``save_many`` of the keyed repositories send."""
+
+    @pytest.mark.parametrize('save', SAVES.values(), ids=SAVES.keys())
+    async def test_save_sends_one_statement_whether_the_key_is_new_or_stored(
+        self,
+        fx_database: SqlDatabase,
+        fx_stored_book: tuple[Project, list[Page]],
+        save: Callable[[Repositories, Page], object],
+    ) -> None:
+        """Verify the first save of a key and the second, which replaces it, are one statement each.
+
+        A save that read the key first and then inserted or updated it would send two statements for a new key and
+        three for a stored one.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        :param fx_stored_book: The committed project and its pages.
+        :type fx_stored_book: tuple[Project, list[Page]]
+        :param save: Function that saves an entity of the page in the repository under test.
+        :type save: Callable[[Repositories, Page], object]
+        """
+        project, pages = fx_stored_book
+
+        counts = await _statements_of(
+            fx_database, project, [lambda repos: save(repos, pages[0]), lambda repos: save(repos, pages[0])]
+        )
+
+        assert counts == [1, 1]
+
+    async def test_save_many_sends_one_statement_for_five_records(
+        self, fx_database: SqlDatabase, fx_stored_book: tuple[Project, list[Page]]
+    ) -> None:
+        """Verify five records of five pages are stored by one statement, not one for each.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        :param fx_stored_book: The committed project and its pages.
+        :type fx_stored_book: tuple[Project, list[Page]]
+        """
+        project, pages = fx_stored_book
+        records = [make_page_stage(page_id=page.id, stage=Stage.CLEANUP) for page in pages]
+
+        counts = await _statements_of(fx_database, project, [lambda repos: repos.page_stages.save_many(records)])
+
+        assert counts == [1]
+
+
+class TestUpdateMany:
+    """Tests for the statements ``update_many`` of the pages sends."""
+
+    async def test_update_many_sends_one_read_and_one_update_for_five_pages(
+        self, fx_database: SqlDatabase, fx_stored_book: tuple[Project, list[Page]]
+    ) -> None:
+        """Verify five pages are read by one statement and updated by one, not read and updated one at a time.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        :param fx_stored_book: The committed project and its pages.
+        :type fx_stored_book: tuple[Project, list[Page]]
+        """
+        project, pages = fx_stored_book
+        updated = [evolve(page, label=UPDATED_LABEL, included=False) for page in pages]
+
+        counts = await _statements_of(fx_database, project, [lambda repos: repos.pages.update_many(updated)])
+
+        assert counts == [2]

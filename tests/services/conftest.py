@@ -10,9 +10,11 @@ from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUn
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.services.pagination import PaginationService
+from tests.helpers.book_gate import BookGate, GatedUnitOfWork
 from tests.helpers.builders import EPOCH
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.page_services import make_page_service
+from tests.helpers.page_stage_writes import PageStageWrites
 from tests.helpers.processing import CV_DEFAULTS, ProcessingKit
 from tests.helpers.processors import (
     CleanupProcessor,
@@ -40,6 +42,32 @@ def fx_database() -> InMemoryDatabase:
     :rtype: InMemoryDatabase
     """
     return InMemoryDatabase()
+
+
+@pytest.fixture
+def fx_gate() -> BookGate:
+    """Build the gate a test holds a book with, so the changes of that book queue behind it.
+
+    :returns: Gate shared by every gated unit of work of the test.
+    :rtype: BookGate
+    """
+    return BookGate()
+
+
+@pytest.fixture
+def fx_gated_uow(fx_database: InMemoryDatabase, fx_gate: BookGate) -> Callable[[], GatedUnitOfWork]:
+    """Return a function opening a unit of work over the test's database whose changes wait at the gate.
+
+    A test holds the book through the ``gate`` of any unit of work the function opens, since all of them share it.
+
+    :param fx_database: In-memory database every request of the test shares.
+    :type fx_database: InMemoryDatabase
+    :param fx_gate: Gate every unit of work opened here takes its semaphores from.
+    :type fx_gate: BookGate
+    :returns: Function opening a new gated unit of work.
+    :rtype: Callable[[], GatedUnitOfWork]
+    """
+    return lambda: GatedUnitOfWork(InMemoryUnitOfWork(fx_database), fx_gate)
 
 
 @pytest.fixture
@@ -96,6 +124,18 @@ def fx_clock() -> FixedClock:
     :rtype: FixedClock
     """
     return FixedClock(EPOCH)
+
+
+@pytest.fixture
+def fx_page_stage_writes(monkeypatch: pytest.MonkeyPatch) -> PageStageWrites:
+    """Build the record of the writes of the page stage repository, which a test starts after it has seeded.
+
+    :param monkeypatch: Fixture that undoes the patch of the repository after the test.
+    :type monkeypatch: pytest.MonkeyPatch
+    :returns: Record that holds nothing until ``start`` is called.
+    :rtype: PageStageWrites
+    """
+    return PageStageWrites(monkeypatch)
 
 
 @pytest.fixture
@@ -159,21 +199,33 @@ def fx_service(
 
 
 @pytest.fixture
+def fx_pagination_over(fx_events: RecordingEventBus, fx_clock: FixedClock) -> Callable[[UnitOfWork], PaginationService]:
+    """Return a function building the pagination service over a unit of work the test made, which a test may have gated.
+
+    :param fx_events: Recording event bus the service publishes to.
+    :type fx_events: RecordingEventBus
+    :param fx_clock: Clock stopped at the epoch.
+    :type fx_clock: FixedClock
+    :returns: Function building a service over the given unit of work.
+    :rtype: Callable[[UnitOfWork], PaginationService]
+    """
+    return lambda uow: PaginationService(uow=uow, publisher=fx_events, clock=fx_clock)
+
+
+@pytest.fixture
 def fx_pagination(
-    fx_database: InMemoryDatabase, fx_events: RecordingEventBus, fx_clock: FixedClock
+    fx_database: InMemoryDatabase, fx_pagination_over: Callable[[UnitOfWork], PaginationService]
 ) -> Callable[[], PaginationService]:
     """Return a function building the pagination service for one request.
 
     :param fx_database: In-memory database every request of the test shares.
     :type fx_database: InMemoryDatabase
-    :param fx_events: Recording event bus the service publishes to.
-    :type fx_events: RecordingEventBus
-    :param fx_clock: Clock stopped at the epoch.
-    :type fx_clock: FixedClock
+    :param fx_pagination_over: Function building the pagination service over a unit of work.
+    :type fx_pagination_over: Callable[[UnitOfWork], PaginationService]
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], PaginationService]
     """
-    return lambda: PaginationService(uow=InMemoryUnitOfWork(fx_database), publisher=fx_events, clock=fx_clock)
+    return lambda: fx_pagination_over(InMemoryUnitOfWork(fx_database))
 
 
 @pytest.fixture

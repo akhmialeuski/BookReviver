@@ -4,8 +4,7 @@ Services never see a database. They hand the ``UnitOfWork`` a function over ``Re
 runs that function whole on one transaction: ``read`` on a transaction that only reads, ``change`` and ``change_book``
 on one that writes and commits when the function returns. The repositories are synchronous, because the function runs
 from its first statement to its commit without returning to the event loop, which is what keeps a write short: the
-adapter of a database runs it in a thread of its own. The in-memory and SQLAlchemy adapters both run the contract suite
-in ``tests/contracts``, which is what makes them interchangeable.
+adapter of a database runs it in a thread of its own.
 
 The book is the aggregate. Every change of a book runs in ``change_book``, which waits for any other change of that
 book and reads the project first, so it sees only what the previous change committed. A change outside the content of
@@ -140,6 +139,50 @@ class Repository[EntityT, IdT](ABC):
         :param entity_id: Identifier of the entity.
         :type entity_id: IdT
         :raises NotFoundError: If no entity has this identifier.
+        """
+
+
+class KeyedRepository[EntityT, KeyT](Repository[EntityT, KeyT]):
+    """Storage of entities addressed by a key of several values, written by replacing the entity stored under the key.
+
+    Such an entity has no identifier of its own, so ``save`` and ``save_many`` store it whether or not the key is taken,
+    where ``add`` refuses a taken key and ``update`` a free one.
+    """
+
+    def save(self, entity: EntityT) -> EntityT:
+        """Store the entity, replacing the one stored under the same key.
+
+        :param entity: Entity to store.
+        :type entity: EntityT
+        :returns: The entity as stored.
+        :rtype: EntityT
+        :raises NotFoundError: If an entity it refers to, such as its page, is not stored.
+        """
+        [stored] = self.save_many([entity])
+        return stored
+
+    @abstractmethod
+    def save_many(self, entities: Sequence[EntityT]) -> Sequence[EntityT]:
+        """Store several entities at once, each replacing the one under its key, all of them or, on an error, none.
+
+        After an error the change that holds the write rolls back when its work raises the exception, as a database
+        requires.
+
+        :param entities: Entities to store.
+        :type entities: Sequence[EntityT]
+        :returns: The entities as stored, in the given order.
+        :rtype: Sequence[EntityT]
+        :raises NotFoundError: If an entity one of them refers to, such as its page, is not stored.
+        """
+
+    @abstractmethod
+    def find(self, key: KeyT) -> EntityT | None:
+        """Return the entity stored under the key.
+
+        :param key: Key of the entity.
+        :type key: KeyT
+        :returns: The entity, or None when nothing is stored under the key.
+        :rtype: EntityT | None
         """
 
 
@@ -289,20 +332,6 @@ class PageRepository(Repository[Page, PageId]):
         :rtype: Sequence[Page]
         :raises NotFoundError: If an identifier names no page, or a page of another project, which is reported like a
                                missing one.
-        """
-
-    @abstractmethod
-    def list_range(self, project_id: ProjectId, first_key: str, last_key: str) -> Sequence[Page]:
-        """Return the pages of a project whose order keys lie between two keys, both included, in book order.
-
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
-        :param first_key: Smallest order key of the range, in byte order.
-        :type first_key: str
-        :param last_key: Greatest order key of the range, in byte order.
-        :type last_key: str
-        :returns: The pages from ``first_key`` to ``last_key``, none when the range is reversed.
-        :rtype: Sequence[Page]
         """
 
     @abstractmethod
@@ -549,32 +578,13 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         """
 
 
-class PageStageRepository(Repository[PageStage, PageStageKey]):
-    """The current version of each stage of each page; deleting a page removes its records.
+class PageStageRepository(KeyedRepository[PageStage, PageStageKey]):
+    """The current version of each stage of each page, addressed by the page and the stage.
 
-    A record keeps its row when its head version or its recipe is deleted, and loses only that reference.
+    Deleting a page removes its records. A record keeps its row when its head version or its recipe is deleted, and
+    loses only that reference. Storing a record raises ``NotFoundError`` when its page, its head version or its recipe
+    is not stored, and ``find`` returns None for a stage that has not run on the page.
     """
-
-    @abstractmethod
-    def save(self, stage: PageStage) -> PageStage:
-        """Store the record of a stage of a page, replacing the one stored.
-
-        :param stage: Record to store.
-        :type stage: PageStage
-        :returns: The record as stored.
-        :rtype: PageStage
-        :raises NotFoundError: If the page, the head version or the recipe is not stored.
-        """
-
-    @abstractmethod
-    def find(self, key: PageStageKey) -> PageStage | None:
-        """Return the record of a stage of a page.
-
-        :param key: Page and stage.
-        :type key: PageStageKey
-        :returns: The record, or None for a stage that has not run on the page.
-        :rtype: PageStage | None
-        """
 
     @abstractmethod
     def list_for_page(self, page_id: PageId) -> Sequence[PageStage]:
@@ -607,11 +617,12 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
-    def list_fresh(self) -> Sequence[PageStage]:
-        """Return the records of the pages of every book whose current version is up to date, by page and stage.
+    def fresh_by_project(self) -> Mapping[ProjectId, Sequence[PageStage]]:
+        """Return the records of the pages of every book whose current version is up to date, grouped by book.
 
-        :returns: Every record in the fresh state, by page identifier and then in the order of the stages.
-        :rtype: Sequence[PageStage]
+        :returns: For each book that has any, its records in the fresh state, by page identifier and then in the order
+                  of the stages.
+        :rtype: Mapping[ProjectId, Sequence[PageStage]]
         """
 
     @abstractmethod
@@ -678,29 +689,12 @@ class PageStageRepository(Repository[PageStage, PageStageKey]):
         """
 
 
-class PageStepStateRepository(Repository[PageStepState, PageStepKey]):
-    """The settings and the manual edit of each step on each page; deleting a page removes its states."""
+class PageStepStateRepository(KeyedRepository[PageStepState, PageStepKey]):
+    """The settings and the manual edit of each step on each page, addressed by the page, the stage and the step.
 
-    @abstractmethod
-    def save(self, state: PageStepState) -> PageStepState:
-        """Store a state, replacing the one the same step has on the same page and stage.
-
-        :param state: State to store.
-        :type state: PageStepState
-        :returns: The state as stored.
-        :rtype: PageStepState
-        :raises NotFoundError: If the page is not stored.
-        """
-
-    @abstractmethod
-    def find(self, key: PageStepKey) -> PageStepState | None:
-        """Return the state of one step on one page.
-
-        :param key: Page, stage and step.
-        :type key: PageStepKey
-        :returns: The state, or None when the page has neither a setting nor an edit for the step.
-        :rtype: PageStepState | None
-        """
+    Deleting a page removes its states. Storing a state raises ``NotFoundError`` when its page is not stored, and
+    ``find`` returns None when the page has neither a setting nor an edit for the step.
+    """
 
     @abstractmethod
     def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepState]:
@@ -729,29 +723,12 @@ class PageStepStateRepository(Repository[PageStepState, PageStepKey]):
         """
 
 
-class StepValuesRepository(Repository[StepValues, StepValuesKey]):
-    """The values of the steps for the odd pages, the even pages and the groups; deleting a project removes them."""
+class StepValuesRepository(KeyedRepository[StepValues, StepValuesKey]):
+    """The values of the steps for the odd pages, the even pages and the groups, addressed by project, step and part.
 
-    @abstractmethod
-    def save(self, values: StepValues) -> StepValues:
-        """Store values, replacing the ones the same part of the pages has for the same step.
-
-        :param values: Values to store.
-        :type values: StepValues
-        :returns: The values as stored.
-        :rtype: StepValues
-        :raises NotFoundError: If the project is not stored.
-        """
-
-    @abstractmethod
-    def find(self, key: StepValuesKey) -> StepValues | None:
-        """Return the values one part of the pages has for one step.
-
-        :param key: The project, the step and the part of the pages.
-        :type key: StepValuesKey
-        :returns: The values, or None when the part changes no field of the step.
-        :rtype: StepValues | None
-        """
+    Deleting a project removes them. Storing values raises ``NotFoundError`` when the project is not stored, and
+    ``find`` returns None when the part of the pages changes no field of the step.
+    """
 
     @abstractmethod
     def list_for_step(self, project_id: ProjectId, step_id: StepId) -> Sequence[StepValues]:

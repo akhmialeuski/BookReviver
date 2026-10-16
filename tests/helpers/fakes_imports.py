@@ -27,7 +27,6 @@ from bookreviver.adapters.imaging import (
 )
 from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ImagingSettings
@@ -515,12 +514,12 @@ class ImportRig:
         )
 
     def open_uow(self) -> UnitOfWork:
-        """Open a unit of work, as a new request or job would.
+        """Open a unit of work, as a new request or job would, whose changes wait at the gate of the fakes.
 
         :returns: A unit of work over the rig's database.
         :rtype: UnitOfWork
         """
-        return InMemoryUnitOfWork(self.database)
+        return self.fakes.gated_uow()
 
     def service(
         self,
