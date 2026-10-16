@@ -328,12 +328,16 @@ class RowRepository[RowT: ModelProtocol](SQLAlchemySyncRepository[RowT]):
                 yield
         except DuplicateKeyError as error:
             mapper, table = self.model_type.__mapper__, self.model_type.__table__
-            # A declarative class maps one Table, the kind of FromClause that carries constraints
+            # A declarative class maps one Table, the kind of FromClause that carries constraints and indexes. A value
+            # that is unique only among some rows is a partial unique index, not a constraint, and is named too
             constraints = table.constraints if isinstance(table, Table) else set()
+            indexes = table.indexes if isinstance(table, Table) else set()
+            unique_columns = [
+                *(constraint.columns for constraint in constraints if isinstance(constraint, UniqueConstraint)),
+                *(index.columns for index in indexes if index.unique),
+            ]
             unique_keys = [
-                [mapper.get_property_by_column(column).key for column in constraint.columns]
-                for constraint in constraints
-                if isinstance(constraint, UniqueConstraint)
+                [mapper.get_property_by_column(column).key for column in columns] for columns in unique_columns
             ]
             candidates = [
                 candidate

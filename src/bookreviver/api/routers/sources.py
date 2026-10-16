@@ -13,29 +13,37 @@ from typing import Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Path, Query, Request, status
-from fastapi_pagination import Page
+from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.pages import PageAnchorBody
-from bookreviver.api.schemas.sources import ScanQuery, ScanSchema, SourceQuery, SourceSchema
+from bookreviver.api.schemas.sources import ScanQuery, ScanSchema, SourceSchema
 from bookreviver.domain.entities import Scan, Source
+from bookreviver.domain.enums import SourceStatus
 from bookreviver.domain.ids import ProjectId, SourceId
 from bookreviver.services.pages import PageService
 from bookreviver.services.sources import SourceService
 
 PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
 SOURCE_ID_DESCRIPTION: str = 'Identifier of the source'
+STATUS_DESCRIPTION: str = 'List the files in these statuses; the imported sources by default'
+# The statuses the list shows when it is asked for none, which are the sources of the book and not the import report
+IMPORTED_ONLY: frozenset[SourceStatus] = frozenset({SourceStatus.IMPORTED})
 
 router = APIRouter(prefix='/projects', tags=['sources'], route_class=DishkaRoute)
 
 
+# The statuses are a parameter of their own beside the page parameters, not a field of a query model: a list field of a
+# model taken with ``Depends()`` is read as a body, and a model taken with ``Query()`` beside the page parameters is
+# published as one opaque object
 @router.get('/{project_id}/sources')
 async def list_sources(
     project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
     actor: ActorDep,
-    query: Annotated[SourceQuery, Query()],
+    params: Annotated[Params, Depends()],
     sources: FromDishka[SourceService],
+    status: Annotated[frozenset[SourceStatus], Query(description=STATUS_DESCRIPTION)] = IMPORTED_ONLY,
 ) -> Page[SourceSchema]:
     """List the sources of a project in the order they were recorded, the imported ones unless ``status`` says more.
 
@@ -47,15 +55,17 @@ async def list_sources(
     :type project_id: ProjectId
     :param actor: The signed-in account.
     :type actor: Actor
-    :param query: Page number and size, and the statuses of the files to list.
-    :type query: SourceQuery
+    :param params: Page number and size.
+    :type params: Params
     :param sources: Source service of the request.
     :type sources: SourceService
+    :param status: Statuses of the files to list.
+    :type status: frozenset[SourceStatus]
     :returns: One page of the project's files in the statuses.
     :rtype: Page[SourceSchema]
     """
-    pager = Pager[Source, SourceSchema](query, SourceSchema.model_validate)
-    return pager.page(await sources.list(actor, project_id, pager.request, statuses=query.status))
+    pager = Pager[Source, SourceSchema](params, SourceSchema.model_validate)
+    return pager.page(await sources.list(actor, project_id, pager.request, statuses=status))
 
 
 @router.delete('/{project_id}/sources/unimported', status_code=status.HTTP_204_NO_CONTENT)

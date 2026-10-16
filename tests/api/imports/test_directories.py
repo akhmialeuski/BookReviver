@@ -41,8 +41,19 @@ SCANS_PER_VOLUME: int = 500
 SCAN_SIZE_PX: tuple[int, int] = (24, 32)
 # Each scan shows its own number as a row of black and white squares of this many pixels, so no two files are equal
 BIT_SQUARE_PX: int = 4
+TIFF_FORMAT: str = 'TIFF'
 # Formats a directory of scans may mix, by the suffix the browser sends
-SCAN_FORMATS: dict[str, str] = {'jpg': 'JPEG', 'png': 'PNG', 'tif': 'TIFF', 'jp2': 'JPEG2000'}
+SCAN_FORMATS: dict[str, str] = {'jpg': 'JPEG', 'png': 'PNG', 'tif': TIFF_FORMAT, 'jp2': 'JPEG2000'}
+# Fields of the job and of a file of the import report that the API answers with
+ID_FIELD: str = 'id'
+STATE_FIELD: str = 'state'
+REJECTION_FIELD: str = 'rejection'
+# Names of the uploaded files and folders
+VOLUME_FOLDER: str = 'vol{number}'
+FOLDER_SYSTEM_FILE: str = 'kniga/Thumbs.db'
+COVER_NAME: str = 'cover.jpg'
+TIFF_BOOK_NAME: str = 'book.tif'
+FIRST_VOLUME_SCAN: str = 'vol1/001.tif'
 PDF_PART_PAGES: dict[str, int] = {'part10.pdf': 1, 'part2.pdf': 2, 'part1.pdf': 3}
 PART_WIDTHS_PX: dict[str, int] = {'part10.pdf': 150, 'part2.pdf': 160, 'part1.pdf': 170}
 
@@ -126,22 +137,22 @@ class TestUploadDirectories:
             )
             for name in PDF_PART_PAGES
         ]
-        parts.insert(1, _part('kniga/Thumbs.db', b'thumbnails'))
+        parts.insert(1, _part(FOLDER_SYSTEM_FILE, b'thumbnails'))
 
         response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
-        finished = await fx_import.finished(response.json()['id'])
+        finished = await fx_import.finished(response.json()[ID_FIELD])
 
         book = await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)
         sources, pages = book.sources, book.pages
         scans = {scan.id: scan for scan in book.scans}
         report = await fx_import.report(fx_project.id)
         expect(response.status_code == HTTPStatus.ACCEPTED)
-        expect(finished['state'] == JobState.SUCCEEDED)
+        expect(finished[STATE_FIELD] == JobState.SUCCEEDED)
         expect([source.file_name for source in sources] == ['kniga/part10.pdf', 'kniga/part2.pdf', 'kniga/part1.pdf'])
         expect([source.scan_count for source in sources] == list(PDF_PART_PAGES.values()))
         expect(
-            [(file['file_name'], file['rejection']) for file in report]
-            == [('kniga/Thumbs.db', RejectionReason.SYSTEM_FILE)]
+            [(file['file_name'], file[REJECTION_FIELD]) for file in report]
+            == [(FOLDER_SYSTEM_FILE, RejectionReason.SYSTEM_FILE)]
         )
         expect(
             [(scans[page.scan_id].source_id, scans[page.scan_id].number) for page in pages if page.scan_id]
@@ -179,26 +190,27 @@ class TestUploadDirectories:
         for number in range(DIRECTORY_SCANS):
             volume, page = divmod(number, SCANS_PER_VOLUME)
             suffix = next(suffixes)
-            names.append(f'vol{volume + 1}/{page + 1:04}.{suffix}')
+            folder = VOLUME_FOLDER.format(number=volume + 1)
+            names.append(f'{folder}/{page + 1:04}.{suffix}')
             parts.append(_part(names[-1], _scan(number + 1, image_format=SCAN_FORMATS[suffix])))
             if page == 0:
-                parts.append(_part(f'vol{volume + 1}/Thumbs.db', b'thumbnails'))
+                parts.append(_part(f'{folder}/Thumbs.db', b'thumbnails'))
 
         response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
-        finished = await fx_import.finished(response.json()['id'])
+        finished = await fx_import.finished(response.json()[ID_FIELD])
 
         book = await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)
         sources, pages = book.sources, book.pages
         scans = {scan.id: scan for scan in book.scans}
         report = await fx_import.report(fx_project.id)
         expect(response.status_code == HTTPStatus.ACCEPTED)
-        expect(finished['state'] == JobState.SUCCEEDED)
+        expect(finished[STATE_FIELD] == JobState.SUCCEEDED)
         # The progress counts every file dealt with, and a scan to cut for each source
         expect(finished['progress']['total'] == len(parts) + DIRECTORY_SCANS)
         expect([source.file_name for source in sources] == names)
         expect([scans[page.scan_id].source_id for page in pages if page.scan_id] == [source.id for source in sources])
         expect(len(report) == len({name.split('/')[0] for name in names}))
-        expect({file['rejection'] for file in report} == {RejectionReason.SYSTEM_FILE})
+        expect({file[REJECTION_FIELD] for file in report} == {RejectionReason.SYSTEM_FILE})
         assert_expectations()
 
     async def test_one_chosen_file_is_one_source_named_by_its_name(
@@ -222,17 +234,15 @@ class TestUploadDirectories:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        cover = image_upload(tmp_path, 'cover.jpg').file.read()
+        cover = image_upload(tmp_path, COVER_NAME).file.read()
 
-        response = await fx_client.post(
-            SOURCES_PATH.format(project_id=fx_project.id), files=[_part('cover.jpg', cover)]
-        )
-        finished = await fx_import.finished(response.json()['id'])
+        response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=[_part(COVER_NAME, cover)])
+        finished = await fx_import.finished(response.json()[ID_FIELD])
 
         sources = (await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)).sources
         expect(response.status_code == HTTPStatus.ACCEPTED)
-        expect(finished['state'] == JobState.SUCCEEDED)
-        expect([(source.file_name, source.scan_count) for source in sources] == [('cover.jpg', 1)])
+        expect(finished[STATE_FIELD] == JobState.SUCCEEDED)
+        expect([(source.file_name, source.scan_count) for source in sources] == [(COVER_NAME, 1)])
         expect(await fx_import.report(fx_project.id) == [])
         assert_expectations()
 
@@ -258,23 +268,27 @@ class TestUploadDirectories:
         :type tmp_path: Path
         """
         widths = [96, 64, 80]
-        book = write_tiff(tmp_path / 'book.tif', frames=[TiffFrame(mode='L', size_px=(width, 72)) for width in widths])
+        book = write_tiff(
+            tmp_path / TIFF_BOOK_NAME, frames=[TiffFrame(mode='L', size_px=(width, 72)) for width in widths]
+        )
 
         response = await fx_client.post(
-            SOURCES_PATH.format(project_id=fx_project.id), files=[_part('book.tif', book.read_bytes())]
+            SOURCES_PATH.format(project_id=fx_project.id), files=[_part(TIFF_BOOK_NAME, book.read_bytes())]
         )
-        finished = await fx_import.finished(response.json()['id'])
+        finished = await fx_import.finished(response.json()[ID_FIELD])
 
         stored = await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)
         [source], pages = stored.sources, stored.pages
         scans = {scan.id: scan for scan in stored.scans}
-        expect(finished['state'] == JobState.SUCCEEDED)
-        expect((source.file_name, source.scan_count) == ('book.tif', len(widths)))
+        expect(finished[STATE_FIELD] == JobState.SUCCEEDED)
+        expect((source.file_name, source.scan_count) == (TIFF_BOOK_NAME, len(widths)))
         expect(
             [(scan.number, scan.facts.width_px) for scan in sorted(scans.values(), key=attrgetter('number'))]
             == list(enumerate(widths))
         )
-        expect([scans[page.scan_id].number for page in pages if page.scan_id] == [0, 1, 2])
+        # The split the import queues halves the wider frames, so a frame may give two pages, but never out of order
+        frames = [scans[page.scan_id].number for page in pages if page.scan_id]
+        expect((frames == sorted(frames), list(dict.fromkeys(frames))) == (True, [0, 1, 2]), str(frames))
         expect(all(scan.renditions.ready for scan in scans.values()))
         assert_expectations()
 
@@ -297,17 +311,17 @@ class TestUploadDirectories:
         :type fx_project: Project
         """
         parts = [
-            _part('vol1/001.tif', _scan(1, image_format='TIFF')),
-            _part('vol2\\001.tif', _scan(2, image_format='TIFF')),
+            _part(FIRST_VOLUME_SCAN, _scan(1, image_format=TIFF_FORMAT)),
+            _part('vol2\\001.tif', _scan(2, image_format=TIFF_FORMAT)),
         ]
 
         response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
-        finished = await fx_import.finished(response.json()['id'])
+        finished = await fx_import.finished(response.json()[ID_FIELD])
 
         sources = (await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)).sources
         expect(response.status_code == HTTPStatus.ACCEPTED)
-        expect(finished['state'] == JobState.SUCCEEDED)
-        expect([source.file_name for source in sources] == ['vol1/001.tif', 'vol2/001.tif'])
+        expect(finished[STATE_FIELD] == JobState.SUCCEEDED)
+        expect([source.file_name for source in sources] == [FIRST_VOLUME_SCAN, 'vol2/001.tif'])
         assert_expectations()
 
     # The multipart parser of Starlette cuts a full Windows path such as ``C:\dir\001.tif`` down to its file name before
@@ -337,7 +351,10 @@ class TestUploadDirectories:
         :param case: A file name the upload sends, and the problem it must be refused with.
         :type case: UnsafePathCase
         """
-        parts = [_part('001.tif', _scan(1, image_format='TIFF')), _part(case.name, _scan(2, image_format='TIFF'))]
+        parts = [
+            _part('001.tif', _scan(1, image_format=TIFF_FORMAT)),
+            _part(case.name, _scan(2, image_format=TIFF_FORMAT)),
+        ]
 
         response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
 

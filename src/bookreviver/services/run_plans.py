@@ -13,7 +13,7 @@ are one batch, so one undo gives the work back on every page.
 
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import ChangeSource, PageOrigin, RunMode, StageState
+from bookreviver.domain.enums import ChangeSource, PageOrigin, RunMode, StageState, VersionState
 from bookreviver.domain.values import RunImpact
 from bookreviver.services.page_batches import PageBatch
 from bookreviver.services.projects import book_pages, owned_project
@@ -22,7 +22,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bookreviver.domain.entities import Actor, Page, PageStage, PageStepChange, PageStepState, Project, Recipe
-    from bookreviver.domain.ids import PageId, ProjectId, StepId
+    from bookreviver.domain.enums import Stage
+    from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, StepId
     from bookreviver.domain.values import StageRun
     from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
@@ -167,10 +168,12 @@ class RunPlan:
         return self._named_pages
 
     async def _without_fresh(self, pages: Sequence[Page]) -> list[Page]:
-        """Leave out the pages whose record of the stage is fresh, has a head version and was made by their recipe.
+        """Leave out the pages whose result of the stage is fresh, ready and made by their recipe from fresh inputs.
 
         A record that stopped short of the step the run goes through, or went through a step the run does not, is not
-        what this run makes, so its page stays.
+        what this run makes, so its page stays. So does a page whose head version is not ready, which a run makes
+        again, and a page with a stale earlier stage, which the run brings up to date before it reads it. The flag of
+        the record alone does not say either, since a change of an earlier stage leaves the later records as they are.
 
         :param pages: Pages the run would go over.
         :type pages: Sequence[Page]
@@ -180,18 +183,45 @@ class RunPlan:
         """
         picked = await self._picked()
         stage = self._run.stage
-        records = await self._uow.read(
-            lambda repos: {
-                record.page_id: record
-                for record in repos.page_stages.list_for_pages([page.id for page in pages])
-                if record.stage is stage
+
+        def read(repos: Repositories) -> tuple[list[PageStage], set[PageVersionId]]:
+            """Read the records of the pages and which head versions of the stage are ready, from one snapshot.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: Every record of the pages, and the identifiers of the ready head versions of the stage.
+            :rtype: tuple[list[PageStage], set[PageVersionId]]
+            """
+            records = list(repos.page_stages.list_for_pages([page.id for page in pages]))
+            heads = [record.head_version_id for record in records if record.stage is stage and record.head_version_id]
+            ready = {
+                version.id for version in repos.page_versions.list_by_ids(heads) if version.state is VersionState.READY
             }
-        )
-        return [
-            page
-            for page in pages
-            if not self._is_fresh(records.get(page.id), picked[page.id], through_step=self._run.through_step)
-        ]
+            return records, ready
+
+        records, ready = await self._uow.read(read)
+        by_page: dict[PageId, dict[Stage, PageStage]] = {}
+        for record in records:
+            by_page.setdefault(record.page_id, {})[record.stage] = record
+
+        def done(page: Page) -> bool:
+            """Tell whether the page holds what the run would make, so the run leaves it out.
+
+            :param page: A page the run would go over.
+            :type page: Page
+            :returns: Whether the result of the stage is fresh, ready and made from fresh earlier stages.
+            :rtype: bool
+            """
+            stages = by_page.get(page.id, {})
+            record = stages.get(stage)
+            return (
+                self._is_fresh(record, picked[page.id], through_step=self._run.through_step)
+                and record is not None
+                and record.head_version_id in ready
+                and all(earlier.state is StageState.FRESH for key, earlier in stages.items() if key in stage.earlier)
+            )
+
+        return [page for page in pages if not done(page)]
 
     @staticmethod
     def _is_fresh(record: PageStage | None, recipe: Recipe, *, through_step: int | None) -> bool:

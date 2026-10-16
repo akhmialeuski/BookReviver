@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, Self
 
 from fastapi import Query
 from fastapi_pagination import Params
-from pydantic import Field
 
 from bookreviver.api.schemas.base import ResponseModel
 from bookreviver.api.schemas.images import ImagePathsSchema
@@ -69,20 +68,6 @@ class MetadataSuggestionSchema(ResponseModel):
     languages: list[str]
     identifiers: list[IdentifierSchema]
     subjects: list[str]
-
-
-class SourceQuery(Params):
-    """The query of a list of sources: the page parameters of every list, and which files to list.
-
-    :ivar page: Number of the page of the list, from one.
-    :ivar size: Number of sources in one page.
-    :ivar status: Statuses of the files to list, which is the imported sources alone when omitted. The rejected and
-                  skipped files are the report of an import.
-    """
-
-    status: list[SourceStatus] = Field(
-        default=[SourceStatus.IMPORTED], description='List the files in these statuses; the imported sources by default'
-    )
 
 
 class SourceSchema(ResponseModel):

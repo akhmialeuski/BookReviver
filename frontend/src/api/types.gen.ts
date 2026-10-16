@@ -4190,23 +4190,19 @@ export type ListSourcesApiV1ProjectsProjectIdSourcesGetData = {
     };
     query?: {
         /**
-         * Page
-         *
-         * Page number
-         */
-        page?: number;
-        /**
-         * Size
-         *
-         * Page size
-         */
-        size?: number;
-        /**
          * Status
          *
          * List the files in these statuses; the imported sources by default
          */
         status?: Array<SourceStatus>;
+        /**
+         * Page
+         */
+        page?: number;
+        /**
+         * Size
+         */
+        size?: number;
     };
     url: '/api/v1/projects/{project_id}/sources';
 };

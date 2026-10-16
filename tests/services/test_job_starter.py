@@ -70,16 +70,20 @@ def processing_kinds(kit: ProcessingKit, project_id: ProjectId) -> list[JobKind]
 def began(kit: ProcessingKit) -> list[JobId]:
     """List the jobs the board started, in the order it started them.
 
+    A running job is announced when it starts and again with every step of its progress, so a job is listed once, at
+    its first announcement as running.
+
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The identifiers of the jobs that were announced as running.
+    :returns: The identifiers of the jobs that were announced as running, each once.
     :rtype: list[JobId]
     """
-    return [
+    started = (
         event.job.id
         for event in kit.events.published
         if isinstance(event, JobChanged) and event.job.state is JobState.RUNNING
-    ]
+    )
+    return list(dict.fromkeys(started))
 
 
 def params_of(starter: JobStarter, kind: JobKind) -> MetadataMap:
