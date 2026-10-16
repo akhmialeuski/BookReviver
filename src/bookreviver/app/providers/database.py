@@ -29,6 +29,10 @@ MIGRATE_DOWNGRADE_COMMAND: str = 'uv run bookreviver-migrate downgrade'
 NO_REVISION: str = 'none'
 # What stands between the revisions of a database that is at several of them
 REVISION_SEPARATOR: str = ', '
+# The start of a message about the schema, which names the revision of the database, and what stands between the problem
+# and the command that fixes it, up to the opening backtick
+SCHEMA_AT: str = 'Database schema is at revision'
+RUN: str = ': run `'
 
 
 class DatabaseProvider(Provider):
@@ -54,27 +58,20 @@ class DatabaseProvider(Provider):
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         try:
             revisions = await database.schema_revisions()
-            at, expected = (
-                REVISION_SEPARATOR.join(revisions.database) or NO_REVISION,
-                REVISION_SEPARATOR.join(revisions.code),
-            )
-            state = f'Database schema is at revision {at}'
+            at = REVISION_SEPARATOR.join(revisions.database) or NO_REVISION
+            expected = REVISION_SEPARATOR.join(revisions.code)
             # upgrade head cannot move a database from a revision it cannot locate, so that case names the way back
             if unknown := REVISION_SEPARATOR.join(revisions.unknown):
-                problem = f'{state}, which this code does not ship, and code expects {expected}'
-                command = f'{MIGRATE_DOWNGRADE_COMMAND} {expected}'
-                alternative = (
-                    f' with the code that ships {unknown}, or restore the copy of the data directory made before '
-                    f'migrating'
+                err_msg = (
+                    f'{SCHEMA_AT} {at}, which this code does not ship, and code expects '
+                    f'{expected}{RUN}{MIGRATE_DOWNGRADE_COMMAND} {expected}` with the code that ships {unknown}, '
+                    f'or restore the copy of the data directory made before migrating'
                 )
-            elif not revisions.is_current:
-                problem = f'{state}, code expects {expected}'
-                command, alternative = MIGRATE_COMMAND, ''
-            else:
-                yield database
-                return
-            err_msg = f'{problem}: run `{command}`{alternative}'
-            raise RuntimeError(err_msg)
+                raise RuntimeError(err_msg)
+            if not revisions.is_current:
+                err_msg = f'{SCHEMA_AT} {at}, code expects {expected}{RUN}{MIGRATE_COMMAND}`'
+                raise RuntimeError(err_msg)
+            yield database
         finally:
             await database.dispose()
 
