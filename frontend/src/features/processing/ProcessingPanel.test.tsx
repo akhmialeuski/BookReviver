@@ -9,7 +9,8 @@ import { joinRows } from '@/features/workspace/strip';
 import type { StepWorkspace } from '@/features/workspace/useStepWorkspace';
 
 /**
- * What the panel of a stage puts in each slot of the layout: the recipe, the step with its notes, the settings of the open
+ * What the panel of a stage puts in each slot of the layout: the bar of the profile and the recipe above everything else,
+ * the steps of the recipe on a stage without a step bar, the step with its notes, the settings of the open
  * step, the one section of the page with its facts last, the history as the last element of the scrolling area whatever
  * the state of the panel, with the step open in the bar or, on a stage without a bar, the step open in the list of the
  * recipe, and with no step when none is open, and the run in the footer.
@@ -28,6 +29,7 @@ vi.mock('@/features/processing/StepSlots', () => ({
 }));
 vi.mock('@/features/processing/SplitSection', () => ({ SplitSection: stub('split-section') }));
 vi.mock('@/features/processing/RecipeSection', () => ({ RecipeSection: stub('recipe-section') }));
+vi.mock('@/features/processing/RecipeBar', () => ({ RecipeBar: stub('recipe-bar') }));
 vi.mock('@/features/processing/useThisPage', () => ({
   useThisPage: (_processing: unknown, item: { page: { label: string } } | undefined) =>
     item === undefined
@@ -39,7 +41,6 @@ vi.mock('@/features/processing/useThisPage', () => ({
         },
 }));
 vi.mock('@/features/processing/RunControls', () => ({ RunControls: stub('run-controls') }));
-vi.mock('@/features/profiles/ProfileLibraryPanel', () => ({ ProfileLibraryPanel: () => null }));
 vi.mock('@/features/processing/useStageRun', () => ({ useStageRun: () => ({}) }));
 vi.mock('@/features/processing/usePageValues', () => ({ usePageValues: () => undefined }));
 vi.mock('@/features/processing/PageTimeline', () => ({
@@ -133,19 +134,31 @@ describe('ProcessingPanel', () => {
   it('fills the slots of a stage with a bar in the fixed order and ends the area with the history of the open step', () => {
     render(processing({ recipes: [SAVED], recipe: SAVED }), true);
 
-    expect(areaIds()).toEqual([
-      'panel-recipe',
-      'panel-step',
-      'panel-settings',
-      'panel-page',
-      'page-history',
-    ]);
-    expect(find('panel-recipe')?.contains(find('recipe-section'))).toBe(true);
+    expect(areaIds()).toEqual(['panel-step', 'panel-settings', 'panel-page', 'page-history']);
     expect(find('step-panel-title')?.textContent).toBe('Deskew');
     expect(find('panel-step')?.contains(find('step-notes'))).toBe(true);
     expect(find('panel-settings')?.contains(find('step-settings'))).toBe(true);
     expect(history()?.getAttribute('data-step')).toBe(BAR[0]?.stepId);
     expect(history()?.getAttribute('data-page-id')).toBe('p1');
+  });
+
+  it('draws the bar of the profile and the recipe before the panel of the step, outside the scrolling area, with a step open', () => {
+    render(processing({ recipes: [SAVED], recipe: SAVED }), true);
+
+    const bar = find('panel-bar');
+    expect(bar?.contains(find('recipe-bar'))).toBe(true);
+    expect(bar?.nextElementSibling).toBe(find('stage-panel-scroll'));
+    expect(
+      bar?.compareDocumentPosition(find('panel-step') as Node) === Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(true);
+  });
+
+  it('draws the bar before the history as well while no step is open, and lists no steps on a stage with a step bar', () => {
+    render(processing({ recipes: [SAVED], recipe: SAVED }), false);
+
+    expect(find('panel-bar')?.contains(find('recipe-bar'))).toBe(true);
+    expect(find('panel-recipe')).toBeNull();
+    expect(find('recipe-section')).toBeNull();
   });
 
   it('draws the page section once, with the facts last and the history right after it, and no number in the title', () => {
@@ -166,6 +179,8 @@ describe('ProcessingPanel', () => {
     );
 
     expect(areaIds()).toEqual(['panel-recipe', 'panel-settings', 'panel-page', 'page-history']);
+    expect(find('panel-recipe')?.contains(find('recipe-section'))).toBe(true);
+    expect(find('panel-bar')?.contains(find('recipe-bar'))).toBe(true);
     expect(find('panel-settings')?.contains(find('step-settings'))).toBe(true);
     expect(find('panel-page')?.firstElementChild?.nextElementSibling).toBe(find('split-section'));
     expect(find('panel-page')?.lastElementChild).toBe(find('panel-facts'));
@@ -192,6 +207,7 @@ describe('ProcessingPanel', () => {
     );
 
     expect(areaIds()).toEqual(['page-history']);
+    expect(find('panel-bar')).toBeNull();
   });
 
   it('keeps the run, with the summary of the stage that stands in it, in the footer and out of the body', () => {

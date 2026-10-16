@@ -11,18 +11,20 @@ import { Badge } from '@/shared/ui/badge';
  *
  * 1. the header, which the layout draws from the stage: its name, its sentence and, for a stage that cannot be worked
  *    in yet, the word "Soon";
- * 2. `recipe`: the menu of the profile and the bar that saves the recipe, and on a stage without a step bar the picker of
- *    the recipe and the list of its steps with the button that adds one;
- * 3. `step`: the title of the open step, with no number, and the notes about the step itself, such as that it is off or
+ * 2. `bar`: the profile and the recipe in one row, with the amber row that saves the recipe under it while it has unsaved
+ *    changes. It stands between the header and the scrolling area, so it stays in view above the open step, and the
+ *    panel draws it on every stage that has recipes;
+ * 3. `recipe`: on a stage without a step bar, the list of the steps of the recipe with the button that adds one;
+ * 4. `step`: the title of the open step, with no number, and the notes about the step itself, such as that it is off or
  *    stands out of its place;
- * 4. `settings`: every control that sets something, in one bordered frame the layout draws: the form of the open step,
+ * 5. `settings`: every control that sets something, in one bordered frame the layout draws: the form of the open step,
  *    the values pages and parts of the pages have for its settings, the measurement of the book, and on the stages
  *    without steps the actions and fields of the file or of the selection;
- * 5. `page`: one section about the open page, file or selection, with its title, what stands for it (the page editor,
+ * 6. `page`: one section about the open page, file or selection, with its title, what stands for it (the page editor,
  *    the carry-over, a review box, a note) and its facts last, so the facts stand right above the history;
- * 6. `history`, the history of the open page, which every stage ends the scrolling area with, grey and shut with the
+ * 7. `history`, the history of the open page, which every stage ends the scrolling area with, grey and shut with the
  *    reason when the stage keeps none;
- * 7. `footer`, under the scrolling area, for the buttons that start the work.
+ * 8. `footer`, under the scrolling area, for the buttons that start the work.
  *
  * Every grid item inside the panel has a zero minimum width, so no grid of a stage needs its own column template to stay
  * within the panel, however long a label in it is. The scrolling area is positioned, so what is placed absolutely inside
@@ -63,6 +65,7 @@ function filled(node: React.ReactNode): boolean {
 export function StagePanel({
   stage,
   available,
+  bar,
   recipe,
   step,
   settings,
@@ -73,7 +76,9 @@ export function StagePanel({
   stage: Stage;
   /** Whether the stage can be worked in; false puts the word "Soon" beside the name. */
   available: boolean;
-  /** The recipe: the profile menu, the save bar and, on a stage without a step bar, the picker and the list of steps. */
+  /** The profile and the recipe in one row, with the row that saves the recipe under it while it has changes. */
+  bar?: React.ReactNode;
+  /** The recipe of a stage without a step bar: the list of its steps and the button that adds one. */
   recipe?: React.ReactNode;
   /** The open step: its title and the notes about it. */
   step?: StepSlot;
@@ -108,6 +113,11 @@ export function StagePanel({
           {MESSAGES.stages.summaries[stage]}
         </p>
       </header>
+      {filled(bar) ? (
+        <div className="border-b px-4 py-2" data-testid="panel-bar">
+          {bar}
+        </div>
+      ) : null}
       <div
         className="relative flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-4"
         data-testid="stage-panel-scroll"

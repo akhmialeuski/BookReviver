@@ -1,7 +1,7 @@
 import { BookmarkPlusIcon, SettingsIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { StagePageSchema } from '@/api';
-import { RecipeSaveBar } from '@/features/processing/RecipeSaveBar';
+import { RecipeBar } from '@/features/processing/RecipeBar';
 import { StepList } from '@/features/processing/StepList';
 import type { Processing } from '@/features/processing/useProcessing';
 import { SaveProfileDialog } from '@/features/profiles/SaveProfileDialog';
@@ -18,14 +18,14 @@ import {
 } from '@/shared/ui/dialog';
 
 /**
- * The window of the gear in the bar: the list of the steps of the recipe, which is the one the panel of a stage without a
- * bar draws, with the button that keeps the steps as a profile of the account and the one that puts the default steps
- * back. Profiles are applied elsewhere, so the window has no button for that. The settings of a step are not drawn in
- * the list here, since the panel of the open step has them.
+ * The window of the gear in the bar: the recipe bar of the panel, which holds the profile, the choice of the recipe and the
+ * row that saves it, over the list of the steps of the recipe, which is the one the panel of a stage without a bar draws,
+ * with the button that keeps the steps as a profile of the account and the one that puts the default steps back. The
+ * settings of a step are not drawn in the list here, since the panel of the open step has them.
  *
  * It is the one place the order, the switches and the removal of the steps of a stage with a bar are set. It edits the
- * draft that the panel of the open step and the save bar read, so a change made here is the change made there.
- * Nothing is written until the bar is pressed.
+ * draft that the panel of the open step and the recipe bar read, so a change made here is the change made there.
+ * Nothing is written until Save is pressed.
  */
 
 const labels = MESSAGES.workspace.steps.gear;
@@ -67,8 +67,8 @@ export function StepsWindow({
           <DialogTitle>{labels.title(MESSAGES.stages.names[stage])}</DialogTitle>
           <DialogDescription>{labels.hint}</DialogDescription>
         </DialogHeader>
+        <RecipeBar processing={processing} rows={rows} />
         <StepList processing={processing} />
-        <RecipeSaveBar processing={processing} rows={rows} />
         <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
