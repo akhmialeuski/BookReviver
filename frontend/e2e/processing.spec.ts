@@ -5,6 +5,7 @@ import {
   createBook,
   openLibrary,
   openProjectId,
+  snap,
   uploadFolder,
   waitForIdleJobs,
   writePagesFolder,
@@ -152,6 +153,11 @@ test('a reader runs and checks the Geometry stage', async ({ page }) => {
   await test.step('a changed recipe says how many pages it makes out of date and is saved by the button', async () => {
     // The result of the stage is the page the last step made, so its settings are the ones the history tells apart
     await page.getByTestId('bar-step').filter({ hasText: 'Margins' }).click();
+    // The profile and the recipe stand in one row at the top of the panel, with no row to save while nothing changed
+    await expect(page.getByTestId('panel-bar').getByTestId('profile-button')).toBeVisible();
+    await expect(page.getByTestId('panel-bar').getByTestId('recipe-bar-select')).toBeVisible();
+    await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
+    await snap(page, 'recipe-bar-saved');
     await page
       .getByTestId('panel-settings')
       .getByRole('spinbutton', { name: 'Top margin, mm', exact: true })
@@ -159,6 +165,8 @@ test('a reader runs and checks the Geometry stage', async ({ page }) => {
     await expect(page.getByTestId('recipe-stale-warning')).toContainText(
       `${PAGES} pages out of date`,
     );
+    await expect(page.getByTestId('panel-bar').getByTestId('recipe-save-bar')).toBeVisible();
+    await snap(page, 'recipe-bar-unsaved');
     await page.getByTestId('recipe-save').click();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
     // The foot of the panel counts the pages the saved recipe made out of date, and its button runs them once the pages
