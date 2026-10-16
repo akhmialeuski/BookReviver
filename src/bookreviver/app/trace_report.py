@@ -6,8 +6,10 @@ The file is the one ``BOOKREVIVER_TRACING__EXPORT_PATH`` names. It holds one Ope
 report is meant to be pasted into a note:
 
 - the wall time of the run, from the start of the first span to the end of the last;
-- how much of that time some write block held the write lock of the database, from the end of its wait to the end of
-  its commit, where blocks that overlap are counted once;
+- how much of that time the write queue was held, from the end of the wait of a block to the end of its span, which is
+  when the next writer can go, and how much of it an SQLite write transaction was open, from the end of the wait to the
+  end of the commit, which leaves out the hand-off of the thread and the return to the event loop. Blocks that overlap
+  are counted once in each;
 - the number of write blocks, and the wait for the writer, the holding of the transaction and the commit, each as the
   50th, 90th and 99th percentile and the maximum;
 - the lag of the event loop in the same percentiles, when the run has ``loop.lag`` spans;
@@ -118,6 +120,18 @@ class Span:
         return (self.end - self.start) * MILLISECONDS_PER_SECOND
 
 
+@frozen
+class Holdings:
+    """The intervals in which the write blocks of a run held the write queue and had a transaction open.
+
+    :ivar queue: From the end of the wait of each block that began to the end of its span, in seconds.
+    :ivar transaction: From the end of the wait of each block that began to the end of its commit, in seconds.
+    """
+
+    queue: list[tuple[float, float]]
+    transaction: list[tuple[float, float]]
+
+
 def load_spans(path: Path) -> list[Span]:
     """Read the spans of a file, one JSON object per non-empty line, as ``ReadableSpan.to_json`` writes them.
 
@@ -210,19 +224,25 @@ def seconds(span: Span, *keys: SpanAttribute) -> float:
     return sum(float(span.attributes.get(key, 0)) for key in keys) / MILLISECONDS_PER_SECOND
 
 
-def held_intervals(blocks: list[Span]) -> list[tuple[float, float]]:
-    """Give the intervals in which the write blocks held the write lock.
+def held_intervals(blocks: list[Span]) -> Holdings:
+    """Give the intervals in which the write blocks held the write queue and an SQLite write transaction.
 
-    A block holds the lock from the end of its wait to the end of its commit. One that never began held nothing.
+    A block holds the queue from the end of its wait to the end of its span, and has a transaction open from the end of
+    its wait to the end of its commit. One that never began held nothing.
 
     :param blocks: The ``write.block`` spans of the run.
     :type blocks: list[Span]
-    :returns: The start and end of the holding of every block that began, in seconds.
-    :rtype: list[tuple[float, float]]
+    :returns: The start and end of the holdings of every block that began, in seconds.
+    :rtype: Holdings
     """
     begun = [span for span in blocks if span.attributes.get(SpanAttribute.BLOCK_OUTCOME) != BlockOutcome.NOT_BEGUN]
     locked = [(span, span.start + seconds(span, SpanAttribute.WAIT_MS)) for span in begun]
-    return [(lock, lock + seconds(span, SpanAttribute.HOLD_MS, SpanAttribute.COMMIT_MS)) for span, lock in locked]
+    return Holdings(
+        queue=[(lock, span.end) for span, lock in locked],
+        transaction=[
+            (lock, lock + seconds(span, SpanAttribute.HOLD_MS, SpanAttribute.COMMIT_MS)) for span, lock in locked
+        ],
+    )
 
 
 def report(spans: list[Span], title: str) -> str:
@@ -238,8 +258,13 @@ def report(spans: list[Span], title: str) -> str:
     wall = max(span.end for span in spans) - min(span.start for span in spans)
     blocks = [span for span in spans if span.name == SpanName.WRITE_BLOCK]
     lines = [f'Trace report: {title}', f'Wall time of the run, s: {wall:.3f}', f'Write blocks: {len(blocks)}']
-    held = merged_length(held_intervals(blocks)) / wall * PERCENT if wall else 0.0
-    lines.append(f'Share of the run with the write lock held, %{LABEL_SEPARATOR}{held:{ONE_DECIMAL}}')
+    held = held_intervals(blocks)
+    for label, intervals in (
+        ('Share of the run with the write queue held, %', held.queue),
+        ('Share of the run with an SQLite write transaction open, %', held.transaction),
+    ):
+        held_share = merged_length(intervals) / wall * PERCENT if wall else 0.0
+        lines.append(f'{label}{LABEL_SEPARATOR}{held_share:{ONE_DECIMAL}}')
     for label, values in (
         ('Wait for the write lock, ms', attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.WAIT_MS)),
         ('Hold of a block, ms', attribute_values(spans, SpanName.WRITE_BLOCK, SpanAttribute.HOLD_MS)),
