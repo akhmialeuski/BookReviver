@@ -41,10 +41,10 @@ from bookreviver.domain.values import RecipeDraft
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
-    from bookreviver.domain.entities import PageStage, PageVersion, Recipe
+    from bookreviver.domain.entities import PageStage, PageVersion, Project, Recipe
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId
     from bookreviver.domain.values import MetadataMap, Step
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.services.recipes import RecipeBook
     from bookreviver.services.stage_records import StageRecords
 
@@ -314,17 +314,21 @@ class BookSize:
 
 
 class BookBlocks:
-    """Reads the content boxes the normalize step recorded on the current versions of the pages of a book."""
+    """Reads the content boxes the normalize step recorded on the current versions of the pages of a book.
 
-    def __init__(self, uow: UnitOfWork) -> None:
-        """Read through the unit of work of a job or a request.
+    It reads through the repositories of the transaction its caller runs in, so it is made inside the work of
+    ``UnitOfWork.read`` or ``change_book``.
+    """
 
-        :param uow: Unit of work the records and the versions are read through.
-        :type uow: UnitOfWork
+    def __init__(self, repos: Repositories) -> None:
+        """Read through the repositories of a transaction.
+
+        :param repos: Repositories the records and the versions are read through.
+        :type repos: Repositories
         """
-        self._uow = uow
+        self._repos = repos
 
-    async def read(
+    def read(
         self, project_id: ProjectId, stage: Stage, *, leaving_out: Collection[PageId] = ()
     ) -> dict[PageId, BlockMeasure]:
         """Find the measure of every page whose current version came through the normalize step.
@@ -339,12 +343,12 @@ class BookBlocks:
         :rtype: dict[PageId, BlockMeasure]
         """
         measures: dict[PageId, BlockMeasure] = {}
-        for version in await self._versions(project_id, stage, leaving_out):
+        for version in self._versions(project_id, stage, leaving_out):
             if (measure := BlockMeasure.of(version)) is not None:
                 measures[version.page_id] = measure
         return measures
 
-    async def by_the_book(
+    def by_the_book(
         self, project_id: ProjectId, stage: Stage, params: MetadataMap, fresh: Mapping[PageId, BlockMeasure]
     ) -> MetadataMap:
         """Work out the fields of the normalize step that are 0, from the boxes of the pages the step has placed.
@@ -365,7 +369,7 @@ class BookBlocks:
         """
         if not wants_the_book(params):
             return {}
-        others = await self._versions(project_id, stage, fresh)
+        others = self._versions(project_id, stage, fresh)
         held = Counter(setting for version in others if (setting := PageSetting.of(version)) is not None)
         if held and fresh:
             return BookSize(list(fresh.values())).by_the_book(params, held.most_common(1)[0][0])
@@ -375,9 +379,7 @@ class BookBlocks:
         ]
         return BookSize(measures).by_the_book(params) if measures else {}
 
-    async def _versions(
-        self, project_id: ProjectId, stage: Stage, leaving_out: Collection[PageId]
-    ) -> list[PageVersion]:
+    def _versions(self, project_id: ProjectId, stage: Stage, leaving_out: Collection[PageId]) -> list[PageVersion]:
         """Find the current version of the normalize step of every page but some.
 
         :param project_id: Project whose pages are read.
@@ -392,12 +394,12 @@ class BookBlocks:
         left_out = set(leaving_out)
         records = [
             record
-            for record in await self._uow.page_stages.list_for_project_stage(project_id, stage)
+            for record in self._repos.page_stages.list_for_project_stage(project_id, stage)
             if record.page_id not in left_out
         ]
-        return await self._normalized(records)
+        return self._normalized(records)
 
-    async def _normalized(self, records: Sequence[PageStage]) -> list[PageVersion]:
+    def _normalized(self, records: Sequence[PageStage]) -> list[PageVersion]:
         """Find the version the normalize step made on each page, by following the current version back to it.
 
         :param records: The records of the stage of the pages.
@@ -409,7 +411,7 @@ class BookBlocks:
         found: list[PageVersion] = []
         while pending:
             following: set[PageVersionId] = set()
-            for version in await self._uow.page_versions.list_by_ids(pending):
+            for version in self._repos.page_versions.list_by_ids(pending):
                 if version.processor.key == NORMALIZE_KEY:
                     found.append(version)
                 elif version.input_id is not None and version.stage is Stage.GEOMETRY:
@@ -424,7 +426,8 @@ class BookMeasure:
     def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, records: StageRecords) -> None:
         """Work over the ports of one job.
 
-        :param uow: Unit of work, in whose ``change_book`` block the job writes the measures once it has them.
+        :param uow: Unit of work, whose ``read`` holds the reading of the boxes and whose ``change_book`` holds the
+                    writing of the measures once the job has them.
         :type uow: UnitOfWork
         :param recipes: The recipes of the project, which supply the Geometry recipes and rewrite them.
         :type recipes: RecipeBook
@@ -444,9 +447,9 @@ class BookMeasure:
         any of them, so the pages of every kind are placed on one page size and each still holds its content with its
         own margins.
 
-        The job reads and computes without a block, since the boxes of the pages take long to read, and writes in one
-        short ``change_book`` block that reads the recipes again. A recipe that was changed meanwhile, which a user
-        may have done by hand while the pages were measured, is left as it is and nothing is written.
+        The job reads and computes with no change open, since the boxes of the pages take long to read, and writes in
+        one short ``change_book`` that reads the recipes again. A recipe that was changed meanwhile, which a user may
+        have done by hand while the pages were measured, is left as it is and nothing is written.
 
         :param project_id: Project whose pages are measured.
         :type project_id: ProjectId
@@ -464,7 +467,9 @@ class BookMeasure:
                 holders.append((recipe, keys.index(NORMALIZE_KEY)))
         if not holders:
             raise ConflictError(NO_NORMALIZE_STEP.format(key=NORMALIZE_KEY))
-        measures = list((await BookBlocks(self._uow).read(project_id, Stage.GEOMETRY)).values())
+        measures = list(
+            (await self._uow.read(lambda repos: BookBlocks(repos).read(project_id, Stage.GEOMETRY))).values()
+        )
         if not measures:
             raise ConflictError(NOTHING_TO_MEASURE)
         sizes = BookSize(measures)
@@ -474,36 +479,50 @@ class BookMeasure:
             name: max(int(own[name]) for own in measured)
             for name in (NormalizeParam.PAGE_WIDTH, NormalizeParam.PAGE_HEIGHT)
         }
-        stale: list[PageStage] = []
-        async with self._uow.change_book(project_id):
+
+        def work(repos: Repositories, _project: Project) -> list[PageStage]:
+            """Write the measured steps into the recipes that were not changed since they were read.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: The project as the change finds it, which the writing does not read.
+            :type _project: Project
+            :returns: The records of the pages that became stale.
+            :rtype: list[PageStage]
+            :raises ConflictError: If a recipe was changed or deleted while the pages were measured.
+            :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
+            """
+            stale: list[PageStage] = []
             # The steps were measured from the recipes as they were read, so a recipe saved or deleted since is not
             # written over
-            stored = {r.id: r.updated_at for r in await self._uow.recipes.list_for_stage(project_id, Stage.GEOMETRY)}
+            stored = {r.id: r.updated_at for r in repos.recipes.list_for_stage(project_id, Stage.GEOMETRY)}
             if any(stored.get(recipe.id) != recipe.updated_at for recipe, _ in holders):
                 raise ConflictError(MEASURE_OUTDATED)
             for (recipe, position), step, own in zip(holders, steps, measured, strict=True):
                 written = evolve(step, params={**step.params, **own, **page})
                 if written.params != step.params:
-                    stale.extend(await self._write(recipe, position, written))
-        await self._records.announce(project_id, stale)
+                    stale.extend(self._write(repos, recipe, position, written))
+            return stale
+
+        await self._records.announce(project_id, await self._uow.change_book(project_id, work))
         return len(measures)
 
-    async def _write(self, recipe: Recipe, position: int, step: Step) -> list[PageStage]:
-        """Store the recipe with the measured step, and mark the pages it processed stale, in the block of the caller.
+    def _write(self, repos: Repositories, recipe: Recipe, position: int, step: Step) -> list[PageStage]:
+        """Store the recipe with the measured step, and mark the pages it processed stale, for the caller.
 
-        Never opens a block.
-
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
         :param recipe: A recipe of the Geometry stage.
         :type recipe: Recipe
         :param position: Place of the normalize step among the steps of the recipe.
         :type position: int
         :param step: The normalize step with the measured parameters.
         :type step: Step
-        :returns: The records of the pages that became stale, which the caller announces after its block.
+        :returns: The records of the pages that became stale, which the caller announces after its transaction.
         :rtype: list[PageStage]
         :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
         """
         steps = (*recipe.steps[:position], step, *recipe.steps[position + 1 :])
         # The steps keep the order they were saved in, whatever mode that was
-        await self._recipes.rewrite(recipe, RecipeDraft(steps=steps, order=OrderMode.FREE))
-        return await self._records.mark_recipe_stale(recipe.id)
+        self._recipes.rewrite(repos, recipe, RecipeDraft(steps=steps, order=OrderMode.FREE))
+        return self._records.mark_recipe_stale(repos, recipe.id)

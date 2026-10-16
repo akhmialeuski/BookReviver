@@ -9,7 +9,7 @@ catches it and the job stays running, as it does when a worker process dies.
 """
 
 from datetime import timedelta
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, NamedTuple, override
 
 import anyio
 from attrs import field, frozen
@@ -31,6 +31,7 @@ from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ImagingSettings
+from bookreviver.domain.values import SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRuntime, ImportService, ImportStorage
@@ -51,12 +52,12 @@ if TYPE_CHECKING:
     from fastapi import UploadFile
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
-    from bookreviver.domain.entities import Job
+    from bookreviver.domain.entities import Job, Page, PaginationSection, Scan, Source
     from bookreviver.domain.enums import Rendition, SourceKind
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import JobId, ProjectId, SourceId
     from bookreviver.domain.values import SourceAnalysis, UploadedSource
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.storage import SourceStore
     from bookreviver.services.recipes import DefaultRecipes
@@ -74,6 +75,52 @@ DEFAULT_PARALLEL_SCANS: int = 2
 OVERLAP_SECONDS: float = 0.05
 # Bound of an import whose cutters wait on events of the test, so a cutter that never comes fails it instead of hanging
 IMPORT_TIMEOUT_SECONDS: float = 30
+# A window wide enough for every scan and page of a book a test imports
+BOOK_WINDOW: SliceRequest = SliceRequest(limit=5000)
+
+
+class StoredBook(NamedTuple):
+    """The rows an import leaves in a book, read in one snapshot.
+
+    :ivar sources: The sources, in the order they were imported.
+    :ivar scans: The scans, source by source.
+    :ivar pages: The pages, in book order.
+    :ivar sections: The pagination sections, in the order they were made.
+    """
+
+    sources: list[Source]
+    scans: list[Scan]
+    pages: list[Page]
+    sections: list[PaginationSection]
+
+
+async def stored_book(uow: UnitOfWork, project_id: ProjectId) -> StoredBook:
+    """Read the sources, scans, pages and pagination sections of a project as committed.
+
+    :param uow: Unit of work to read through.
+    :type uow: UnitOfWork
+    :param project_id: Project owning the rows.
+    :type project_id: ProjectId
+    :returns: The rows, read in one transaction.
+    :rtype: StoredBook
+    """
+
+    def work(repos: Repositories) -> StoredBook:
+        """Read the four tables of the book.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :returns: The rows of the book.
+        :rtype: StoredBook
+        """
+        return StoredBook(
+            sources=list(repos.sources.list_for_project(project_id)),
+            scans=list(repos.scans.list_for_project(project_id, BOOK_WINDOW).items),
+            pages=list(repos.pages.list_for_project(project_id, BOOK_WINDOW).items),
+            sections=list(repos.pagination_sections.list_for_project(project_id)),
+        )
+
+    return await uow.read(work)
 
 
 def pdf_upload(

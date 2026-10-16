@@ -1,8 +1,8 @@
-"""Test of the connection pool during an import that cuts several scans at once, on one SQLite file.
+"""Test of the connection pools during an import that cuts several scans at once, on one SQLite file.
 
 Up to ``parallel_scans`` coroutines cut the scans of a job, and all of them write through the one unit of work of the
-job, queued on a lock. A unit of work for each of them would hold a pooled connection for each coroutine that waits for
-its block, and an import of a long book would take every connection of the application.
+job. A change takes its connection only when it has the writer, and a change that waits for the writer holds none, so
+the pool of the writer, which holds one connection, is never asked for a second and no connection is left behind.
 """
 
 from typing import TYPE_CHECKING
@@ -19,6 +19,7 @@ from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.values import SliceRequest
 from tests.helpers.builders import make_project
+from tests.helpers.connections import checked_out_connections
 from tests.helpers.fakes_imports import IMPORT_TIMEOUT_SECONDS, ImportRig, pdf_upload
 from tests.helpers.seeding import store_project
 
@@ -93,7 +94,7 @@ def fx_connection_peak(fx_database: SqlDatabase) -> Iterator[ConnectionPeak]:
     :rtype: Iterator[ConnectionPeak]
     """
     counter = ConnectionPeak()
-    pool = fx_database.engine.sync_engine.pool
+    pool = fx_database.engine.pool
     event.listen(pool, POOL_CHECKOUT, counter.on_checkout)
     event.listen(pool, POOL_CHECKIN, counter.on_checkin)
     try:
@@ -113,20 +114,20 @@ class TestRunImportConnections:
         fx_connection_peak: ConnectionPeak,
         tmp_path: Path,
     ) -> None:
-        """Verify an import with four cutters at once checks out one connection at a time and ends with all scans ready.
+        """Verify an import with four cutters at once checks out one writer connection at a time, with all scans ready.
 
         The rasterizer holds every write until all four cutters are writing, so they leave their writes together and
-        each of them then asks for its block of the one unit of work at the same moment. A pause would not do: a block
-        on a SQLite file outlasts it, and the cutters would pass their writes one after another. The blocks queue on
-        the lock of the import, so one coroutine at a time holds the one connection of the session. Were each cutter
-        given a session or a unit of work of its own, the cutters that wait for the write lock of SQLite would each
-        hold a connection while they wait, the count would exceed one, and the peak assertion would fail.
+        each of them then asks for its change of the one unit of work at the same moment. A pause would not do: a
+        change on a SQLite file outlasts it, and the cutters would pass their writes one after another. The changes
+        queue for the writer, and a change that waits holds no connection, so the writer pool shows one connection in
+        use at a time. A change that opened its session before it had the writer would hold a connection while it
+        waits, and the peak assertion would fail.
 
         :param fx_database: Fresh SQLite database with every table created, which gives a file its queue pool.
         :type fx_database: SqlDatabase
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
-        :param fx_connection_peak: Counter of the connections checked out of the pool of the database.
+        :param fx_connection_peak: Counter of the connections checked out of the pool of the writer.
         :type fx_connection_peak: ConnectionPeak
         :param tmp_path: Temporary directory of the test, holding the storage root and the sample file.
         :type tmp_path: Path
@@ -149,21 +150,21 @@ class TestRunImportConnections:
         samples.mkdir()
         owner = Actor(account_id=fx_owner_id)
         project = make_project(owner_id=fx_owner_id)
-        async with fx_database.sessions() as session:
-            await store_project(SqlAlchemyUnitOfWork(session), project)
-        async with fx_database.sessions() as session:
-            job = await rig.service(uow=SqlAlchemyUnitOfWork(session)).start_import(
-                owner, project.id, [pdf_upload(samples, BOOK_PDF, pages=PARALLEL_SCANS)]
+        uow = SqlAlchemyUnitOfWork(fx_database)
+        await store_project(uow, project)
+        job = await rig.service(uow=uow).start_import(
+            owner, project.id, [pdf_upload(samples, BOOK_PDF, pages=PARALLEL_SCANS)]
+        )
+
+        with anyio.fail_after(IMPORT_TIMEOUT_SECONDS):
+            await rig.service(uow=uow, parallel_scans=PARALLEL_SCANS).run_import(job.id)
+
+        stored, scans = await uow.read(
+            lambda repos: (
+                repos.jobs.get(job.id),
+                repos.scans.list_for_project(project.id, SliceRequest(limit=PARALLEL_SCANS)).items,
             )
-
-        async with fx_database.sessions() as session:
-            with anyio.fail_after(IMPORT_TIMEOUT_SECONDS):
-                await rig.service(uow=SqlAlchemyUnitOfWork(session), parallel_scans=PARALLEL_SCANS).run_import(job.id)
-
-        async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            stored = await uow.jobs.get(job.id)
-            scans = (await uow.scans.list_for_project(project.id, SliceRequest(limit=PARALLEL_SCANS))).items
+        )
         # A file database gets a queue pool, which an in-memory one does not, so the limit of the pool is the real one
         expect(isinstance(fx_database.engine.pool, QueuePool))
         expect(rig.rasterizer.peak == PARALLEL_SCANS)
@@ -171,4 +172,5 @@ class TestRunImportConnections:
         expect(len(scans) == PARALLEL_SCANS and all(scan.renditions.ready for scan in scans))
         expect(fx_connection_peak.peak == ONE_CONNECTION)
         expect(fx_connection_peak.checked_out == 0)
+        expect(checked_out_connections(fx_database) == 0, 'a connection of either pool was left checked out')
         assert_expectations()

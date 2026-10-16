@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Page, PageVersion, Project
+    from bookreviver.ports.persistence import Repositories
     from bookreviver.services.pages import PageService
 
 pytestmark = pytest.mark.anyio
@@ -160,13 +161,22 @@ class TestManifest:
         deskewed = evolve(_ready(make_page_version(page_id=page.id, minutes=2)), stage=Stage.GEOMETRY, input_id=base.id)
         regions = evolve(make_page_version(page_id=page.id, minutes=3), stage=Stage.LAYOUT, input_id=deskewed.id)
         await commit_project(fx_database, project, page, versions=[base, deskewed, regions])
-        uow = InMemoryUnitOfWork(fx_database)
-        async with uow.change_book(project.id):
+
+        def save_heads(repos: Repositories, _project: Project) -> None:
+            """Save the records that name the base version and the deskewed one as current, and the regions too.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: The project as the change finds it, which the work does not need.
+            :type _project: Project
+            """
             for version in (base, deskewed):
-                await uow.page_stages.save(
+                repos.page_stages.save(
                     make_page_stage(page_id=page.id, stage=version.stage, head_version_id=version.id)
                 )
-            await uow.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.LAYOUT, head_version_id=regions.id))
+            repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.LAYOUT, head_version_id=regions.id))
+
+        await InMemoryUnitOfWork(fx_database).change_book(project.id, save_heads)
 
         manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
 
@@ -188,11 +198,12 @@ class TestManifest:
         page = make_page(project_id=project.id)
         chosen, newer = (_ready(make_page_version(page_id=page.id, minutes=minutes)) for minutes in (1, 2))
         await commit_project(fx_database, project, page, versions=[chosen, newer])
-        uow = InMemoryUnitOfWork(fx_database)
-        async with uow.change_book(project.id):
-            await uow.page_stages.save(
+        await InMemoryUnitOfWork(fx_database).change_book(
+            project.id,
+            lambda repos, _project: repos.page_stages.save(
                 make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=chosen.id)
-            )
+            ),
+        )
 
         manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
 
@@ -254,7 +265,9 @@ class TestManifest:
         """
         project = make_project(owner_id=fx_actor.account_id)
         await _commit_book(fx_database, project)
-        source = (await InMemoryUnitOfWork(fx_database).sources.list_for_project(project.id))[0]
+        [source, *_] = await InMemoryUnitOfWork(fx_database).read(
+            lambda repos: repos.sources.list_for_project(project.id)
+        )
 
         manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
 
@@ -449,7 +462,7 @@ class TestOpenAsset:
 
 
 class TestJobsQueuedTogether:
-    """Tests for the check of the active jobs and the insert of a job, which one block of the unit of work makes."""
+    """Tests for the check of the active jobs and the insert of a job, which one change of the unit of work makes."""
 
     @pytest.mark.parametrize('requests', [2, 5], ids=['two', 'five'])
     async def test_requests_asking_for_the_detection_together_queue_one_job(
@@ -459,10 +472,10 @@ class TestJobsQueuedTogether:
         fx_database: InMemoryDatabase,
         fx_actor: Actor,
     ) -> None:
-        """Verify the requests that pass the check at the same time are told apart by the block, so one job is stored.
+        """Verify the requests that pass the check at the same time are told apart by the change, so one job is stored.
 
         Each request builds its own unit of work, and all of them start before any has finished, so the unique index
-        would be the only guard without the block that holds the check and the insert together.
+        would be the only guard without the change that holds the check and the insert together.
 
         :param requests: How many requests ask for the detection together.
         :type requests: int

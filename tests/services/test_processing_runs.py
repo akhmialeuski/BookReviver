@@ -18,6 +18,7 @@ from bookreviver.domain.enums import (
     ResultMark,
     Stage,
     StageState,
+    VersionData,
     VersionScale,
     VersionState,
 )
@@ -41,14 +42,16 @@ from tests.helpers.builders import EPOCH, make_page
 from tests.helpers.fake_processing import PREVIEW_TOKEN
 from tests.helpers.meanwhile import change_while_writing
 from tests.helpers.page_batches import PageValues
-from tests.helpers.processing import IMAGE_CONTENT
-from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
+from tests.helpers.processing import IMAGE_CONTENT, found_stage, stage_versions, stored_job
+from tests.helpers.processors import FAILING_PARAMETER, RAN_KEY, STRENGTH_PARAMETER, FakeProcessor
+from tests.helpers.spreads import head_of, stage_of
 from tests.helpers.stage_heads import seed_head
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from bookreviver.domain.entities import Actor, Page, PageVersion, Project
+    from bookreviver.domain.entities import Actor, Page, Project
+    from bookreviver.ports.persistence import Repositories
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -76,24 +79,6 @@ async def run_stage(kit: ProcessingKit, actor: Actor, project: Project, run: Sta
     job = await kit.service().start_run(actor, project.id, run.stage, run)
     await kit.jobs().run_stage(job.id)
     await kit.work_queue()
-
-
-async def head_of(kit: ProcessingKit, page: Page, stage: Stage) -> PageVersion:
-    """Read the current version of a stage of a page.
-
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
-    :param page: The page.
-    :type page: Page
-    :param stage: The stage.
-    :type stage: Stage
-    :returns: The version the stage record names.
-    :rtype: PageVersion
-    """
-    reader = kit.uow()
-    record = await reader.page_stages.get(PageStageKey(page.id, stage))
-    assert record.head_version_id is not None
-    return await reader.page_versions.get(record.head_version_id)
 
 
 async def prepared_page(kit: ProcessingKit, **project_options: ImagePolicy) -> tuple[Actor, Project, Page]:
@@ -124,7 +109,7 @@ class TestRunStage:
         actor, project, page = await prepared_page(fx_kit)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         version = await head_of(fx_kit, page, Stage.GEOMETRY)
-        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        record = await stage_of(fx_kit, page, Stage.GEOMETRY)
         keys = ProjectKeys(project.id)
         async with fx_kit.assets.readable(keys.version_rendition(version, Rendition.FULL_JPEG)) as full:
             content = full.read_bytes()
@@ -132,7 +117,7 @@ class TestRunStage:
         expect((version.renditions is not None and version.renditions.ready, version.tiles_ready) == (True, True))
         expect(content == IMAGE_CONTENT)
         expect(record.state is StageState.FRESH)
-        expect(version.data == {'ran': 1})
+        expect(version.data == {RAN_KEY: 1})
         assert_expectations()
 
     async def test_job_succeeds_and_counts_its_pages(self, fx_kit: ProcessingKit) -> None:
@@ -144,7 +129,7 @@ class TestRunStage:
         actor, project, _ = await prepared_page(fx_kit)
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         ran = await fx_kit.jobs().run_stage(job.id)
-        stored = await fx_kit.uow().jobs.get(job.id)
+        stored = await stored_job(fx_kit, job.id)
         expect((stored.state, stored.progress.done, stored.progress.total) == (JobState.SUCCEEDED, 1, 1))
         expect([queued.kind.value for queued in fx_kit.recording.enqueued] == ['run-stage', 'collect-versions'])
         # The worker reads the job it gets back to follow a page split with the detection of the content
@@ -161,7 +146,7 @@ class TestRunStage:
         actor, project, page = await prepared_page(fx_kit)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        versions = await fx_kit.uow().page_versions.list_for_stage(page.id, Stage.GEOMETRY, None, EVERYTHING)
+        versions = await stage_versions(fx_kit, page, Stage.GEOMETRY)
         expect((fx_kit.fake.runs, versions.total) == (1, 1))
         assert_expectations()
 
@@ -180,19 +165,19 @@ class TestRunStage:
         actor, project, page = await prepared_page(fx_kit)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         first = await head_of(fx_kit, page, Stage.GEOMETRY)
-        strong = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'strength': 2})])
+        strong = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})])
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, strong)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         second = await head_of(fx_kit, page, Stage.GEOMETRY)
-        replaced = await fx_kit.uow().page_versions.find(first.id)
+        replaced = await fx_kit.uow().read(lambda repos: repos.page_versions.find(first.id))
         back_draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY)])
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, back_draft)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         back = await head_of(fx_kit, page, Stage.GEOMETRY)
-        total = (await fx_kit.uow().page_versions.list_for_stage(page.id, Stage.GEOMETRY, None, EVERYTHING)).total
+        total = (await stage_versions(fx_kit, page, Stage.GEOMETRY)).total
         expect((first.id != second.id, back.id == first.id, total) == (True, True, 1))
         expect(replaced is None)
-        expect((fx_kit.fake.runs, second.data) == (3, {'ran': 2}))
+        expect((fx_kit.fake.runs, second.data) == (3, {RAN_KEY: 2}))
         assert_expectations()
 
     async def test_events_announce_the_version_and_the_stage(self, fx_kit: ProcessingKit) -> None:
@@ -226,14 +211,14 @@ class TestRunStage:
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
         cleanup_before = await head_of(fx_kit, page, Stage.CLEANUP)
-        strong = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'strength': 2})])
+        strong = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})])
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, strong)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        stale = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.CLEANUP))
+        stale = await stage_of(fx_kit, page, Stage.CLEANUP)
         expect((stale.state, stale.head_version_id) == (StageState.STALE, cleanup_before.id))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
         cleanup_after = await head_of(fx_kit, page, Stage.CLEANUP)
-        fresh = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.CLEANUP))
+        fresh = await stage_of(fx_kit, page, Stage.CLEANUP)
         expect((cleanup_after.id != cleanup_before.id, fresh.state) == (True, StageState.FRESH))
         expect(cleanup_after.input_id == (await head_of(fx_kit, page, Stage.GEOMETRY)).id)
         assert_expectations()
@@ -246,10 +231,10 @@ class TestRunStage:
         """
         actor, project, page = await prepared_page(fx_kit)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        strong = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'strength': 2})])
+        strong = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})])
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, strong)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
-        geometry = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        geometry = await stage_of(fx_kit, page, Stage.GEOMETRY)
         cleanup = await head_of(fx_kit, page, Stage.CLEANUP)
         expect(geometry.state is StageState.FRESH)
         expect(cleanup.input_id == geometry.head_version_id)
@@ -267,12 +252,12 @@ class TestRunStage:
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
         cleanup_before = await head_of(fx_kit, page, Stage.CLEANUP)
-        failing = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'fail': True})])
+        failing = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={FAILING_PARAMETER: True})])
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, failing)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
-        geometry = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
-        cleanup = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.CLEANUP))
-        versions = await fx_kit.uow().page_versions.list_for_stage(page.id, Stage.CLEANUP, None, EVERYTHING)
+        geometry = await stage_of(fx_kit, page, Stage.GEOMETRY)
+        cleanup = await stage_of(fx_kit, page, Stage.CLEANUP)
+        versions = await stage_versions(fx_kit, page, Stage.CLEANUP)
         expect((geometry.state, cleanup.state) == (StageState.FAILED, StageState.FAILED))
         expect((cleanup.head_version_id, versions.total) == (cleanup_before.id, 1))
         assert_expectations()
@@ -301,17 +286,17 @@ class TestRunStage:
         actor, project, first = await prepared_page(fx_kit)
         second, _ = await fx_kit.seed_scan_page(project, order_key='a1')
         await fx_kit.seed_base_version(second)
-        failing = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={'fail': True})])
+        failing = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={FAILING_PARAMETER: True})])
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, failing)
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         await fx_kit.jobs().run_stage(job.id)
-        versions = await fx_kit.uow().page_versions.list_for_stage(first.id, Stage.GEOMETRY, None, EVERYTHING)
-        stage = await fx_kit.uow().page_stages.get(PageStageKey(first.id, Stage.GEOMETRY))
-        other = await fx_kit.uow().page_stages.get(PageStageKey(second.id, Stage.GEOMETRY))
-        stored = await fx_kit.uow().jobs.get(job.id)
+        versions = await stage_versions(fx_kit, first, Stage.GEOMETRY)
+        stage = await stage_of(fx_kit, first, Stage.GEOMETRY)
+        other = await stage_of(fx_kit, second, Stage.GEOMETRY)
+        stored = await stored_job(fx_kit, job.id)
         expect(
             [(version.state, version.data) for version in versions.items]
-            == [(VersionState.FAILED, {'error': 'The fake step was told to fail.'})]
+            == [(VersionState.FAILED, {VersionData.ERROR: 'The fake step was told to fail.'})]
         )
         expect((stage.state, other.state) == (StageState.FAILED, StageState.FAILED))
         expect((stored.state, stored.progress.total) == (JobState.FAILED, 2))
@@ -326,12 +311,15 @@ class TestRunStage:
         actor, project, page = await prepared_page(fx_kit)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         good = await head_of(fx_kit, page, Stage.GEOMETRY)
-        uow = fx_kit.uow()
-        async with uow.change_book(project.id):
-            await uow.page_versions.update(evolve(good, state=VersionState.FAILED, data={'error': 'x'}))
+        await fx_kit.uow().change_book(
+            project.id,
+            lambda repos, _project: repos.page_versions.update(
+                evolve(good, state=VersionState.FAILED, data={VersionData.ERROR: 'x'})
+            ),
+        )
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         again = await fx_kit.stored_version(good.id)
-        expect((again.state, again.data) == (VersionState.READY, {'ran': 1}))
+        expect((again.state, again.data) == (VersionState.READY, {RAN_KEY: 1}))
         assert_expectations()
 
     async def test_placeholder_is_skipped(self, fx_kit: ProcessingKit) -> None:
@@ -342,12 +330,10 @@ class TestRunStage:
         """
         actor, project = await fx_kit.seed_project()
         placeholder = make_page(project_id=project.id)
-        uow = fx_kit.uow()
-        async with uow.change_book(project.id):
-            await uow.pages.add(placeholder)
+        await fx_kit.uow().change_book(project.id, lambda repos, _project: repos.pages.add(placeholder))
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         await fx_kit.jobs().run_stage(job.id)
-        stored = await fx_kit.uow().jobs.get(job.id)
+        stored = await stored_job(fx_kit, job.id)
         assert (stored.state, stored.progress.total, fx_kit.fake.runs) == (JobState.SUCCEEDED, 0, 0)
 
     async def test_page_split_runs_the_split_none_plugin_on_the_scan(self, fx_kit: ProcessingKit) -> None:
@@ -395,7 +381,9 @@ class TestRunStage:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared_page(fx_kit)
-        twice = RecipeDraft(steps=[Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={'strength': 2})])
+        twice = RecipeDraft(
+            steps=[Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})]
+        )
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, twice)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         last = await head_of(fx_kit, page, Stage.GEOMETRY)
@@ -410,13 +398,16 @@ class TestRunStage:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared_page(fx_kit)
-        steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={'strength': 7}, enabled=False)]
+        steps = [
+            Step(processor_key=FAKE_KEY),
+            Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 7}, enabled=False),
+        ]
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=steps))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        versions = await fx_kit.uow().page_versions.list_for_stage(page.id, Stage.GEOMETRY, None, EVERYTHING)
+        versions = await stage_versions(fx_kit, page, Stage.GEOMETRY)
         head = await head_of(fx_kit, page, Stage.GEOMETRY)
         expect((fx_kit.fake.runs, versions.total) == (1, 1))
-        expect(head.params['strength'] == 1)
+        expect(head.params[STRENGTH_PARAMETER] == 1)
         assert_expectations()
 
     async def test_cancelled_job_stops_before_its_next_page(self, fx_kit: ProcessingKit) -> None:
@@ -427,14 +418,9 @@ class TestRunStage:
         """
         actor, project, page = await prepared_page(fx_kit)
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        uow = fx_kit.uow()
-        async with uow.change():
-            await uow.jobs.update(evolve(job, state=JobState.CANCELLED))
+        await fx_kit.uow().change(lambda repos: repos.jobs.update(evolve(job, state=JobState.CANCELLED)))
         await fx_kit.jobs().run_stage(job.id)
-        assert (fx_kit.fake.runs, await fx_kit.uow().page_stages.find(PageStageKey(page.id, Stage.GEOMETRY))) == (
-            0,
-            None,
-        )
+        assert (fx_kit.fake.runs, await found_stage(fx_kit, page, Stage.GEOMETRY)) == (0, None)
 
     async def test_job_with_parameters_it_cannot_read_fails_with_the_reason(self, fx_kit: ProcessingKit) -> None:
         """Verify a job whose stored parameters are not those of a run fails and says so.
@@ -444,11 +430,9 @@ class TestRunStage:
         """
         actor, project, _ = await prepared_page(fx_kit)
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        uow = fx_kit.uow()
-        async with uow.change():
-            await uow.jobs.update(evolve(job, params={'stage': 'nowhere'}))
+        await fx_kit.uow().change(lambda repos: repos.jobs.update(evolve(job, params={'stage': 'nowhere'})))
         await fx_kit.jobs().run_stage(job.id)
-        stored = await fx_kit.uow().jobs.get(job.id)
+        stored = await stored_job(fx_kit, job.id)
         assert (stored.state, 'not valid' in stored.error) == (JobState.FAILED, True)
 
 
@@ -479,8 +463,8 @@ class TestRunThroughStep:
         await save_three_steps(fx_kit, actor, project)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=1))
         head = await head_of(fx_kit, page, Stage.GEOMETRY)
-        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
-        versions = await fx_kit.uow().page_versions.list_for_stage(page.id, Stage.GEOMETRY, None, EVERYTHING)
+        record = await stage_of(fx_kit, page, Stage.GEOMETRY)
+        versions = await stage_versions(fx_kit, page, Stage.GEOMETRY)
         expect((fx_kit.fake.runs, versions.total) == (2, 2))
         expect(head.params[STRENGTH_PARAMETER] == 2)
         expect((record.through_step, record.state) == (1, StageState.FRESH))
@@ -501,8 +485,8 @@ class TestRunThroughStep:
         for through_step in (0, 1, None):
             await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=through_step))
             calls.append(fx_kit.fake.runs)
-        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
-        versions = await fx_kit.uow().page_versions.list_for_stage(page.id, Stage.GEOMETRY, None, EVERYTHING)
+        record = await stage_of(fx_kit, page, Stage.GEOMETRY)
+        versions = await stage_versions(fx_kit, page, Stage.GEOMETRY)
         expect(calls == [1, 2, 3])
         expect(versions.total == 3)
         expect(record.through_step is None)
@@ -521,7 +505,7 @@ class TestRunThroughStep:
         ]
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=steps))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=0))
-        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        record = await stage_of(fx_kit, page, Stage.GEOMETRY)
         assert record.through_step is None
 
     async def test_page_stopped_before_the_last_step_is_run_through_the_rest_before_the_next_stage(
@@ -536,7 +520,7 @@ class TestRunThroughStep:
         await save_three_steps(fx_kit, actor, project)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=0))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
-        geometry = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        geometry = await stage_of(fx_kit, page, Stage.GEOMETRY)
         cleanup = await head_of(fx_kit, page, Stage.CLEANUP)
         expect((geometry.through_step, geometry.state) == (None, StageState.FRESH))
         expect(cleanup.input_id == geometry.head_version_id)
@@ -576,7 +560,7 @@ class TestRunThroughStep:
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=steps))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=0))
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, through_step=1))
-        record = await fx_kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        record = await stage_of(fx_kit, page, Stage.GEOMETRY)
         expect((record.state, record.through_step) == (StageState.FAILED, 0))
         assert_expectations()
 
@@ -642,15 +626,15 @@ class TestPreviewStep:
         )
         job = await fx_kit.service().start_preview(actor, project.id, preview)
         await fx_kit.jobs().preview_step(job.id)
-        versions = await fx_kit.uow().page_versions.list_for_stage(
-            page.id, Stage.GEOMETRY, VersionScale.PREVIEW, EVERYTHING
+        versions = await fx_kit.uow().read(
+            lambda repos: repos.page_versions.list_for_stage(page.id, Stage.GEOMETRY, VersionScale.PREVIEW, EVERYTHING)
         )
         [version] = versions.items
         async with fx_kit.assets.readable(
             ProjectKeys(project.id).version_rendition(version, Rendition.PREVIEW)
         ) as file:
             content = file.read_bytes()
-        record = await fx_kit.uow().page_stages.find(PageStageKey(page.id, Stage.GEOMETRY))
+        record = await found_stage(fx_kit, page, Stage.GEOMETRY)
         expect((version.state, fx_kit.fake.previews, fx_kit.fake.runs) == (VersionState.READY, 1, 0))
         expect(content == PREVIEW_TOKEN)
         expect(record is None)
@@ -680,7 +664,7 @@ class TestPreviewStep:
         actor, project, page = await prepared_page(fx_kit)
         first = Step(processor_key=FAKE_KEY)
         for strength in (1, 2):
-            steps = (first, Step(processor_key=FAKE_KEY, params={'strength': strength + 1}))
+            steps = (first, Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: strength + 1}))
             preview = StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=steps, step_index=1)
             job = await fx_kit.service().start_preview(actor, project.id, preview)
             await fx_kit.jobs().preview_step(job.id)
@@ -693,11 +677,14 @@ class TestPreviewStep:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared_page(fx_kit)
-        steps = (Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY, params={'strength': 2}, enabled=False))
+        steps = (
+            Step(processor_key=FAKE_KEY),
+            Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2}, enabled=False),
+        )
         preview = StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=steps, step_index=1)
         job = await fx_kit.service().start_preview(actor, project.id, preview)
         await fx_kit.jobs().preview_step(job.id)
-        stored = await fx_kit.uow().jobs.get(job.id)
+        stored = await stored_job(fx_kit, job.id)
         expect((stored.state, fx_kit.fake.previews) == (JobState.SUCCEEDED, 1))
         assert_expectations()
 
@@ -708,11 +695,14 @@ class TestPreviewStep:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared_page(fx_kit)
-        steps = (Step(processor_key=FAKE_KEY, enabled=False), Step(processor_key=FAKE_KEY, params={'strength': 2}))
+        steps = (
+            Step(processor_key=FAKE_KEY, enabled=False),
+            Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2}),
+        )
         preview = StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=steps, step_index=0)
         job = await fx_kit.service().start_preview(actor, project.id, preview)
         await fx_kit.jobs().preview_step(job.id)
-        stored = await fx_kit.uow().jobs.get(job.id)
+        stored = await stored_job(fx_kit, job.id)
         expect((stored.state, fx_kit.fake.previews) == (JobState.FAILED, 0))
         expect('switched off' in stored.error)
         assert_expectations()
@@ -743,15 +733,13 @@ class TestPreviewStep:
         """
         actor, project = await fx_kit.seed_project()
         placeholder = make_page(project_id=project.id)
-        uow = fx_kit.uow()
-        async with uow.change_book(project.id):
-            await uow.pages.add(placeholder)
+        await fx_kit.uow().change_book(project.id, lambda repos, _project: repos.pages.add(placeholder))
         preview = StepPreview(
             page_id=placeholder.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=FAKE_KEY),), step_index=0
         )
         job = await fx_kit.service().start_preview(actor, project.id, preview)
         await fx_kit.jobs().preview_step(job.id)
-        stored = await fx_kit.uow().jobs.get(job.id)
+        stored = await stored_job(fx_kit, job.id)
         assert (stored.state, stored.error) == (JobState.FAILED, 'The page has no image to preview a step on.')
 
 
@@ -776,9 +764,7 @@ async def delete_the_page(kit: ProcessingKit, seeded: SeededPage) -> None:
     :param seeded: The project and the page.
     :type seeded: SeededPage
     """
-    uow = kit.uow()
-    async with uow.change_book(seeded.project.id):
-        await uow.pages.delete(seeded.page.id)
+    await kit.uow().change_book(seeded.project.id, lambda repos, _project: repos.pages.delete(seeded.page.id))
 
 
 async def set_a_setting_by_hand(kit: ProcessingKit, seeded: SeededPage) -> None:
@@ -801,13 +787,22 @@ async def replace_the_input(kit: ProcessingKit, seeded: SeededPage) -> None:
     :param seeded: The project and the page.
     :type seeded: SeededPage
     """
-    uow = kit.uow()
-    [base] = await uow.page_versions.list_base_versions([seeded.page.id])
-    other = evolve(base, id=PageVersionId(OTHER_INPUT_ID))
-    record = await uow.page_stages.get(PageStageKey(seeded.page.id, Stage.PAGE_SPLIT))
-    async with uow.change_book(seeded.project.id):
-        await uow.page_versions.add(other)
-        await uow.page_stages.save(evolve(record, head_version_id=other.id))
+
+    def replace(repos: Repositories, _project: Project) -> None:
+        """Add a copy of the base version under another identifier, and make it the head of the page split.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :param _project: Project of the book, which the work does not need.
+        :type _project: Project
+        """
+        [base] = repos.page_versions.list_base_versions([seeded.page.id])
+        other = evolve(base, id=PageVersionId(OTHER_INPUT_ID))
+        record = repos.page_stages.get(PageStageKey(seeded.page.id, Stage.PAGE_SPLIT))
+        repos.page_versions.add(other)
+        repos.page_stages.save(evolve(record, head_version_id=other.id))
+
+    await kit.uow().change_book(seeded.project.id, replace)
 
 
 async def save_the_recipe(kit: ProcessingKit, seeded: SeededPage) -> None:
@@ -825,7 +820,7 @@ async def save_the_recipe(kit: ProcessingKit, seeded: SeededPage) -> None:
 
 
 class TestRunApplyStep:
-    """Tests for the block that makes the result of a run current, which reads again what the run went by."""
+    """Tests for the change that makes the result of a run current, which reads again what the run went by."""
 
     @pytest.mark.parametrize(
         'change',
@@ -844,7 +839,7 @@ class TestRunApplyStep:
     ) -> None:
         """Verify a change that lands while the steps run leaves the stage without a head, and says nothing of it.
 
-        The change lands after the step is computed and before the block that stores its version, which is where a
+        The change lands after the step is computed and before the change that stores its version, which is where a
         request made while the job runs lands. The job ends as succeeded with no page made, since a page that was
         skipped is not a failure, and the stage keeps the mark the change gave it.
 
@@ -861,8 +856,8 @@ class TestRunApplyStep:
         )
         change_while_writing(fx_kit, monkeypatch, partial(change, fx_kit, seeded))
         made = await fx_kit.jobs().run_stage(job.id)
-        stored = await fx_kit.uow().jobs.get(job.id)
-        record = await fx_kit.uow().page_stages.find(PageStageKey(seeded.page.id, Stage.GEOMETRY))
+        stored = await stored_job(fx_kit, job.id)
+        record = await found_stage(fx_kit, seeded.page, Stage.GEOMETRY)
         announced = [
             event
             for event in fx_kit.events.published
@@ -896,7 +891,7 @@ class TestRunApplyStep:
     async def test_a_mark_and_a_comment_put_on_the_version_while_it_ran_are_kept(
         self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Verify the block that stores the result of a step does not write the mark of the version it read before.
+        """Verify the change that stores the result of a step does not write the mark of the version it read before.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -907,11 +902,14 @@ class TestRunApplyStep:
 
         async def mark_the_running_version() -> None:
             """Mark and comment the version of the stage that is being made, through a unit of work of its own."""
-            uow = fx_kit.uow()
-            listed = await uow.page_versions.list_for_stage(page.id, Stage.GEOMETRY, None, EVERYTHING)
+            listed = await stage_versions(fx_kit, page, Stage.GEOMETRY)
             [running] = [version for version in listed.items if version.state is VersionState.RUNNING]
-            async with uow.change_book(project.id):
-                await uow.page_versions.update(evolve(running, mark=ResultMark.BAD, comment=COMMENT_BY_HAND))
+            await fx_kit.uow().change_book(
+                project.id,
+                lambda repos, _project: repos.page_versions.update(
+                    evolve(running, mark=ResultMark.BAD, comment=COMMENT_BY_HAND)
+                ),
+            )
 
         change_while_writing(fx_kit, monkeypatch, mark_the_running_version)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))

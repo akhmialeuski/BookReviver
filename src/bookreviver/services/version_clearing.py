@@ -2,8 +2,8 @@
 
 A version is deleted with its files, its row and the log of its marks, in this order: the mark first, so a version whose
 files are half removed is never taken for a result, then the directory, and the row only when the directory is gone. A
-batch is written by two blocks, one for the marks and one for the rows, so a version whose directory cannot be removed
-keeps its mark and its row and takes back nothing of the others.
+batch is written by two transactions, one for the marks and one for the rows, so a version whose directory cannot be
+removed keeps its mark and its row and takes back nothing of the others.
 
 The versions of a collection are given to ``VersionClearing`` readers first, as ``readers_first`` groups them. A version
 that stays, because its files could not be removed, holds the version it reads, and so does every version that is held,
@@ -22,9 +22,9 @@ from bookreviver.domain.keys import ProjectKeys
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
-    from bookreviver.domain.entities import PageVersion
+    from bookreviver.domain.entities import PageVersion, Project
     from bookreviver.domain.ids import PageVersionId, ProjectId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.ports.storage import AssetStore
 
 BEING_COLLECTED: str = 'The version is being deleted.'
@@ -54,9 +54,8 @@ class VersionClearing:
     async def clear(self, batch: Sequence[PageVersion]) -> int:
         """Delete the versions of a batch that no version which stays reads.
 
-        It opens two ``change_book`` blocks, the first marking the versions and the second deleting the rows of those
-        whose files are gone, with the removal of the files between them, outside any block. So it is called only
-        outside a block.
+        It opens two ``change_book`` calls, the first marking the versions and the second deleting the rows of those
+        whose files are gone, with the removal of the files between them, outside any transaction.
 
         :param batch: Versions that read none of each other and are read by none of the versions cleared later, taken
                       from one group of ``readers_first``.
@@ -66,15 +65,26 @@ class VersionClearing:
         """
         going = [version for version in batch if version.id not in self._held]
         self._hold(version for version in batch if version.id in self._held)
-        async with self._uow.change_book(self._project_id):
-            # The versions are read again, so a version deleted meanwhile is left out and a mark or a comment a user
-            # put on one since the collection chose it is kept
-            for version in await self._uow.page_versions.list_by_ids([version.id for version in going]):
+
+        def mark(repos: Repositories, _project: Project) -> None:
+            """Mark the versions that are ready as failed, so none of them is taken for a result while its files go.
+
+            The versions are read again, so a version deleted meanwhile is left out and a mark or a comment a user put
+            on one since the collection chose it is kept.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: The project as the change finds it, which the marking does not read.
+            :type _project: Project
+            """
+            for version in repos.page_versions.list_by_ids([version.id for version in going]):
                 if version.state is VersionState.READY:
                     marked = evolve(
                         version, state=VersionState.FAILED, data={**version.data, VersionData.ERROR: BEING_COLLECTED}
                     )
-                    await self._uow.page_versions.update(marked)
+                    repos.page_versions.update(marked)
+
+        await self._uow.change_book(self._project_id, mark)
         gone: list[PageVersionId] = []
         for version in going:
             try:
@@ -84,8 +94,7 @@ class VersionClearing:
                 self._hold([version])
             else:
                 gone.append(version.id)
-        async with self._uow.change_book(self._project_id):
-            await self._uow.page_versions.delete_many(gone)
+        await self._uow.change_book(self._project_id, lambda repos, _project: repos.page_versions.delete_many(gone))
         return len(gone)
 
     def _hold(self, staying: Iterable[PageVersion]) -> None:

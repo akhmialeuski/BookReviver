@@ -1,7 +1,6 @@
 """Tests for the job service: reading and cancelling jobs, and the event stream of a project."""
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from attrs import evolve
@@ -22,8 +21,6 @@ pytestmark = pytest.mark.anyio
 
 # Name of the test argument that the state of the job is passed in
 STATE_ARGUMENT: str = 'state'
-# The method of the unit of work that the event stream calls once the owner is checked, which the tests replace
-RELEASE_READS: str = 'release_reads'
 ACTIVE_STATES: tuple[JobState, ...] = (JobState.QUEUED, JobState.RUNNING)
 FINAL_STATES: tuple[JobState, ...] = (JobState.SUCCEEDED, JobState.FAILED, JobState.CANCELLED)
 
@@ -172,8 +169,7 @@ class TestCancel:
         # The service reads the job running, and the worker finishes it before the service writes the cancellation
         read = await service.get(fx_owner, job.id)
         worker = InMemoryUnitOfWork(fx_fakes.database)
-        async with worker.change():
-            await worker.jobs.update(evolve(job, state=JobState.SUCCEEDED))
+        await worker.change(lambda repos: repos.jobs.update(evolve(job, state=JobState.SUCCEEDED)))
         expect(read.state is JobState.RUNNING)
         with pytest.raises(ConflictError):
             await service.cancel(fx_owner, job.id)
@@ -228,7 +224,7 @@ class TestEvents:
     async def test_project_of_another_account_is_not_found(
         self, fx_fakes: JobFakes, fx_stranger: Actor, fx_project: Project
     ) -> None:
-        """Verify an account cannot listen to a project it does not own, and that nothing is released for the refusal.
+        """Verify an account cannot listen to a project it does not own, and that no subscription is made for it.
 
         :param fx_fakes: Adapters of the service.
         :type fx_fakes: JobFakes
@@ -238,31 +234,7 @@ class TestEvents:
         :type fx_project: Project
         """
         await fx_fakes.store(fx_project)
-        with (
-            patch.object(InMemoryUnitOfWork, RELEASE_READS, new_callable=AsyncMock) as released,
-            pytest.raises(NotFoundError),
-        ):
+        with pytest.raises(NotFoundError):
             await fx_fakes.job_service().events(fx_stranger, fx_project.id)
         expect(not fx_fakes.events.subscribed.is_set())
-        expect(not released.await_count)
-        assert_expectations()
-
-    @patch.object(InMemoryUnitOfWork, RELEASE_READS, new_callable=AsyncMock)
-    async def test_reads_are_released_once_the_owner_is_checked(
-        self, released: AsyncMock, fx_fakes: JobFakes, fx_owner: Actor, fx_project: Project
-    ) -> None:
-        """Verify the owner's subscription is returned after exactly one release of the reads, which the check made.
-
-        :param released: The release of the unit of work, which records its calls instead of ending a transaction.
-        :type released: AsyncMock
-        :param fx_fakes: Adapters of the service.
-        :type fx_fakes: JobFakes
-        :param fx_owner: Account owning the project.
-        :type fx_owner: Actor
-        :param fx_project: Project of ``fx_owner``.
-        :type fx_project: Project
-        """
-        await fx_fakes.store(fx_project)
-        async with await fx_fakes.job_service().events(fx_owner, fx_project.id):
-            expect(released.await_count == 1)
         assert_expectations()

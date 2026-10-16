@@ -1,4 +1,4 @@
-"""In-memory unit of work: repositories work on a copy of the database, and a block publishes only the changes.
+"""In-memory unit of work: the work of a change runs on a private copy of the database that replaces it on commit.
 
 The adapter backs the service and API tests and runs the same port contract suite as the SQLAlchemy adapter, so it
 reproduces the behaviour services rely on rather than only storing rows. It mirrors the schema of the SQL tables and
@@ -17,19 +17,20 @@ transaction isolation:
   cover, a deleted scan leaves its pages without their scan, a deleted job leaves the sources it imported without
   their import job, a deleted version leaves the versions it fed without their input and the stage records it headed
   without their head, and a deleted recipe leaves the stage records it processed without their recipe.
-- Isolation: a unit of work reads and writes a private copy of the tables, and a block that ends normally merges only
-  the rows it added, replaced or removed, so two units of work touching different rows do not overwrite each other.
-- Locks: the database holds one single-holder semaphore for each book and one for the blocks outside a book. A block
+- Isolation: ``change`` and ``change_book`` hand their work a private copy of the tables, which replaces the committed
+  tables when the work returns and is dropped when it raises, and ``read`` hands its work the committed tables with
+  every write refused. The work is a synchronous function that never returns to the event loop, so no other
+  transaction commits while it runs, and its copy is the state it would find at its commit.
+- Locks: the database holds one single-holder semaphore for each book and one for the changes outside a book. A change
   of the port takes its semaphore in its turn under the wait limit, as :mod:`bookreviver.adapters.persistence.turns`
-  describes, and takes a fresh copy of the tables once it holds it, so it reads what the previous change of the book
-  committed. Nothing writes outside a block, which the repositories enforce.
+  describes, and copies the tables once it holds it, so it reads what the previous change of the book committed. A read
+  takes no lock.
 
 Each repository states its table's keys in two hooks of the generic repository, ``_check`` before a row is stored and
 ``_cascade`` after one is removed, so the generic operations stay in one place.
 """
 
 from collections import Counter
-from contextlib import asynccontextmanager
 from functools import partial
 from operator import attrgetter
 from typing import TYPE_CHECKING, override
@@ -89,7 +90,6 @@ from bookreviver.ports.persistence import (
     DEFAULT_CHANGE_WAIT_SECONDS,
     BookPlaceRepository,
     JobRepository,
-    NestedChangeError,
     NoChangeOpenError,
     PageRepository,
     PageStageRepository,
@@ -100,6 +100,7 @@ from bookreviver.ports.persistence import (
     ProjectRepository,
     RecipeProfileRepository,
     RecipeRepository,
+    Repositories,
     Repository,
     ResultMarkChangeRepository,
     ScanRepository,
@@ -109,7 +110,7 @@ from bookreviver.ports.persistence import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Collection, Hashable, Iterable, Mapping, Sequence
+    from collections.abc import Callable, Collection, Hashable, Iterable, Mapping, Sequence
     from datetime import datetime
 
     from bookreviver.domain.enums import RecipeKind
@@ -120,6 +121,14 @@ if TYPE_CHECKING:
 ID_ATTRIBUTE: str = 'id'
 # Property holding the composite key of an entity that is addressed by one
 KEY_ATTRIBUTE: str = 'key'
+# Attributes of the entities that the repositories sort by or take a unique value from
+CREATED_AT: str = 'created_at'
+IMPORTED_AT: str = 'imported_at'
+NUMBER: str = 'number'
+PAGE_ID: str = 'page_id'
+PROJECT_ID: str = 'project_id'
+SEQUENCE: str = 'sequence'
+SLOT: str = 'slot'
 # The kinds and states of the jobs of which a project has at most one, each the rows of a partial unique index of the
 # ``jobs`` table: the imports, the writing of page images, the jobs the user asks to process the versions of pages, the
 # housekeeping jobs on them, and the one of all of these that is running
@@ -169,6 +178,25 @@ class InMemoryTables:
     jobs: dict[JobId, Job] = field(factory=dict)
     book_places: dict[BookPlaceKey, BookPlace] = field(factory=dict)
 
+    def copy(self) -> InMemoryTables:
+        """Copy every table, which is all a private working copy needs, since the rows are immutable.
+
+        :returns: Tables holding the same rows, each in a dictionary of its own.
+        :rtype: InMemoryTables
+        """
+        return InMemoryTables(**{table.name: dict(getattr(self, table.name)) for table in fields(InMemoryTables)})
+
+    def replace_with(self, other: InMemoryTables) -> None:
+        """Take the rows of another set of tables, in place so everyone holding these tables sees them.
+
+        :param other: Tables whose rows replace the rows of these.
+        :type other: InMemoryTables
+        """
+        for table in fields(InMemoryTables):
+            rows = getattr(self, table.name)
+            rows.clear()
+            rows.update(getattr(other, table.name))
+
     def forget_scans(self, scan_ids: Collection[ScanId]) -> None:
         """Leave the pages cut from these scans without their scan, as the database's ``SET NULL`` does.
 
@@ -184,7 +212,7 @@ class InMemoryDatabase:
     """The committed state shared by every unit of work, like a database server, and the locks of its changes.
 
     :ivar tables: Committed rows of every table.
-    :ivar change_lock: Single-holder semaphore of the blocks that write outside the content of a book.
+    :ivar change_lock: Single-holder semaphore of the changes outside the content of a book.
     """
 
     tables: InMemoryTables = field(factory=InMemoryTables)
@@ -202,24 +230,6 @@ class InMemoryDatabase:
         return self._book_locks.setdefault(project_id, anyio.Semaphore(1))
 
 
-@define
-class ChangeState:
-    """Whether a block of one unit of work is open, which every write of its repositories requires.
-
-    :ivar is_open: Whether a ``change_book`` or ``change`` block is open.
-    """
-
-    is_open: bool = False
-
-    def require_open(self) -> None:
-        """Refuse a write while no block is open.
-
-        :raises NoChangeOpenError: If no block is open.
-        """
-        if not self.is_open:
-            raise NoChangeOpenError
-
-
 def require[KeyT](rows: Mapping[KeyT, object], key: KeyT | None) -> None:
     """Mirror a foreign key: a key that is given must be stored.
 
@@ -234,7 +244,7 @@ def require[KeyT](rows: Mapping[KeyT, object], key: KeyT | None) -> None:
 
 
 def remove_where[KeyT, RowT](rows: dict[KeyT, RowT], predicate: Callable[[RowT], bool]) -> None:
-    """Remove every row matching ``predicate``, in place so every repository of the unit keeps seeing the same table.
+    """Remove every row matching ``predicate``, in place so every repository of the transaction keeps seeing the table.
 
     :param rows: Table to remove rows from.
     :type rows: dict[KeyT, RowT]
@@ -248,23 +258,23 @@ def remove_where[KeyT, RowT](rows: dict[KeyT, RowT], predicate: Callable[[RowT],
 class InMemoryRepository[EntityT, IdT](Repository[EntityT, IdT]):
     """Generic repository over one table of the working copy, with hooks for the keys of the table."""
 
-    def __init__(self, rows: dict[IdT, EntityT], tables: InMemoryTables, *, change: ChangeState) -> None:
-        """Work on one table of the unit of work's copy.
+    def __init__(self, rows: dict[IdT, EntityT], tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on one table of the transaction's tables.
 
-        :param rows: Table of the working copy, changed in place.
+        :param rows: Table of the transaction's tables, changed in place.
         :type rows: dict[IdT, EntityT]
-        :param tables: Every table of the working copy, which the keys of this table refer to.
+        :param tables: Every table of the transaction, which the keys of this table refer to.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
         self._rows = rows
         self._tables = tables
-        self._change = change
+        self._writable = writable
         self._identify: Callable[[EntityT], IdT] = attrgetter(ID_ATTRIBUTE)
 
     @override
-    async def get(self, entity_id: IdT) -> EntityT:
+    def get(self, entity_id: IdT) -> EntityT:
         """Return the entity with this identifier.
 
         :param entity_id: Identifier of the entity.
@@ -278,18 +288,18 @@ class InMemoryRepository[EntityT, IdT](Repository[EntityT, IdT]):
         return entity
 
     @override
-    async def add(self, entity: EntityT) -> EntityT:
+    def add(self, entity: EntityT) -> EntityT:
         """Store a new entity.
 
         :param entity: Entity to store, with its identifier already assigned.
         :type entity: EntityT
         :returns: The entity as stored.
         :rtype: EntityT
-        :raises NoChangeOpenError: If no block of the unit of work is open.
+        :raises NoChangeOpenError: If the transaction only reads.
         :raises ConflictError: If an entity with this identifier or one of its unique values is already stored.
         :raises NotFoundError: If an entity it refers to is not stored.
         """
-        self._change.require_open()
+        self._require_writable()
         if (entity_id := self._identify(entity)) in self._rows:
             raise ConflictError(entity_id)
         self._check(entity)
@@ -297,57 +307,65 @@ class InMemoryRepository[EntityT, IdT](Repository[EntityT, IdT]):
         return entity
 
     @override
-    async def add_many(self, entities: Sequence[EntityT]) -> Sequence[EntityT]:
+    def add_many(self, entities: Sequence[EntityT]) -> Sequence[EntityT]:
         """Store several new entities, all of them or none, as one database statement does.
 
         :param entities: Entities to store, with their identifiers already assigned.
         :type entities: Sequence[EntityT]
         :returns: The entities as stored, in the given order.
         :rtype: Sequence[EntityT]
-        :raises NoChangeOpenError: If no block of the unit of work is open.
+        :raises NoChangeOpenError: If the transaction only reads.
         :raises ConflictError: If an identifier or a unique value of one entity is stored already or given twice.
         :raises NotFoundError: If an entity one of them refers to is not stored.
         """
-        self._change.require_open()
+        self._require_writable()
         before = dict(self._rows)
         try:
-            return [await self.add(entity) for entity in entities]
+            return [self.add(entity) for entity in entities]
         except DomainError:
             self._rows.clear()
             self._rows.update(before)
             raise
 
     @override
-    async def update(self, entity: EntityT) -> EntityT:
+    def update(self, entity: EntityT) -> EntityT:
         """Replace the stored state of an existing entity.
 
         :param entity: Entity with its new state.
         :type entity: EntityT
         :returns: The entity as stored.
         :rtype: EntityT
-        :raises NoChangeOpenError: If no block of the unit of work is open.
+        :raises NoChangeOpenError: If the transaction only reads.
         :raises NotFoundError: If the entity, or an entity it refers to, is not stored.
         :raises ConflictError: If its new state takes a unique value of another entity.
         """
-        self._change.require_open()
-        await self.get(entity_id := self._identify(entity))
+        self._require_writable()
+        self.get(entity_id := self._identify(entity))
         self._check(entity)
         self._rows[entity_id] = entity
         return entity
 
     @override
-    async def delete(self, entity_id: IdT) -> None:
+    def delete(self, entity_id: IdT) -> None:
         """Remove the entity and apply the actions of the foreign keys referring to it.
 
         :param entity_id: Identifier of the entity.
         :type entity_id: IdT
-        :raises NoChangeOpenError: If no block of the unit of work is open.
+        :raises NoChangeOpenError: If the transaction only reads.
         :raises NotFoundError: If no entity has this identifier.
         """
-        self._change.require_open()
-        entity = await self.get(entity_id)
+        self._require_writable()
+        entity = self.get(entity_id)
         del self._rows[entity_id]
         self._cascade(entity)
+
+    def _require_writable(self) -> None:
+        """Refuse a write in a transaction that only reads.
+
+        :raises NoChangeOpenError: If the transaction only reads.
+        """
+        if not self._writable:
+            raise NoChangeOpenError
 
     def _check(self, entity: EntityT) -> None:
         """Mirror the foreign keys and unique keys of the table for an entity about to be stored; none by default.
@@ -380,15 +398,15 @@ class InMemoryRepository[EntityT, IdT](Repository[EntityT, IdT]):
 class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectRepository):
     """Projects with the counts of their books computed from the page, source and scan tables."""
 
-    def __init__(self, tables: InMemoryTables, *, change: ChangeState) -> None:
-        """Work on the project table of the unit of work's copy, reading the tables of its books as well.
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on the project table of the transaction, reading the tables of its books as well.
 
-        :param tables: Every table of the working copy.
+        :param tables: Every table of the transaction.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
-        super().__init__(tables.projects, tables, change=change)
+        super().__init__(tables.projects, tables, writable=writable)
 
     @override
     def _check(self, entity: Project) -> None:
@@ -427,7 +445,7 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
         remove_where(self._tables.book_places, lambda place: place.project_id == entity.id)
 
     @override
-    async def overview(self, project: Project) -> ProjectOverview:
+    def overview(self, project: Project) -> ProjectOverview:
         """Count the included pages, the sources and the scans of the project.
 
         :param project: Project whose book is counted.
@@ -448,7 +466,7 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
         )
 
     @override
-    async def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:
+    def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:
         """Return one window of the owner's projects, most recently updated first, ties by identifier.
 
         :param owner_id: Account owning the projects.
@@ -465,21 +483,21 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
         # A stable sort keeps the identifier order among projects updated at the same moment
         owned = sorted(by_id, key=attrgetter('updated_at'), reverse=True)
         window = owned[request.offset : request.offset + request.limit]
-        return Slice(items=[await self.overview(project) for project in window], total=len(owned))
+        return Slice(items=[self.overview(project) for project in window], total=len(owned))
 
 
 class InMemorySourceRepository(InMemoryRepository[Source, SourceId], SourceRepository):
     """Sources, unique by project and the digest of their main file."""
 
-    def __init__(self, tables: InMemoryTables, *, change: ChangeState) -> None:
-        """Work on the source table of the unit of work's copy, checking sources against projects and jobs.
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on the source table of the transaction, checking sources against projects and jobs.
 
-        :param tables: Every table of the working copy.
+        :param tables: Every table of the transaction.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
-        super().__init__(tables.sources, tables, change=change)
+        super().__init__(tables.sources, tables, writable=writable)
 
     @override
     def _check(self, entity: Source) -> None:
@@ -492,7 +510,7 @@ class InMemorySourceRepository(InMemoryRepository[Source, SourceId], SourceRepos
         """
         require(self._tables.projects, entity.project_id)
         require(self._tables.jobs, entity.import_job_id)
-        self._require_unique(entity, attrgetter('project_id', 'sha256'))
+        self._require_unique(entity, attrgetter(PROJECT_ID, 'sha256'))
 
     @override
     def _cascade(self, entity: Source) -> None:
@@ -506,7 +524,7 @@ class InMemorySourceRepository(InMemoryRepository[Source, SourceId], SourceRepos
         self._tables.forget_scans(doomed_scans)
 
     @override
-    async def list_for_project(self, project_id: ProjectId) -> Sequence[Source]:
+    def list_for_project(self, project_id: ProjectId) -> Sequence[Source]:
         """Return the project's sources, the earliest import first, ties by identifier.
 
         :param project_id: Project owning the sources.
@@ -516,11 +534,11 @@ class InMemorySourceRepository(InMemoryRepository[Source, SourceId], SourceRepos
         """
         return sorted(
             (source for source in self._rows.values() if source.project_id == project_id),
-            key=attrgetter('imported_at', ID_ATTRIBUTE),
+            key=attrgetter(IMPORTED_AT, ID_ATTRIBUTE),
         )
 
     @override
-    async def find_by_sha256(self, project_id: ProjectId, sha256: str) -> Source | None:
+    def find_by_sha256(self, project_id: ProjectId, sha256: str) -> Source | None:
         """Return the project's source with this digest.
 
         :param project_id: Project owning the sources.
@@ -539,15 +557,15 @@ class InMemorySourceRepository(InMemoryRepository[Source, SourceId], SourceRepos
 class InMemoryScanRepository(InMemoryRepository[Scan, ScanId], ScanRepository):
     """Scans, unique by source and number."""
 
-    def __init__(self, tables: InMemoryTables, *, change: ChangeState) -> None:
-        """Work on the scan table of the unit of work's copy, checking scans against projects and sources.
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on the scan table of the transaction, checking scans against projects and sources.
 
-        :param tables: Every table of the working copy.
+        :param tables: Every table of the transaction.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
-        super().__init__(tables.scans, tables, change=change)
+        super().__init__(tables.scans, tables, writable=writable)
 
     @override
     def _check(self, entity: Scan) -> None:
@@ -560,7 +578,7 @@ class InMemoryScanRepository(InMemoryRepository[Scan, ScanId], ScanRepository):
         """
         require(self._tables.projects, entity.project_id)
         require(self._tables.sources, entity.source_id)
-        self._require_unique(entity, attrgetter('source_id', 'number'))
+        self._require_unique(entity, attrgetter('source_id', NUMBER))
 
     @override
     def _cascade(self, entity: Scan) -> None:
@@ -572,7 +590,7 @@ class InMemoryScanRepository(InMemoryRepository[Scan, ScanId], ScanRepository):
         self._tables.forget_scans({entity.id})
 
     @override
-    async def list_for_source(self, source_id: SourceId) -> Sequence[Scan]:
+    def list_for_source(self, source_id: SourceId) -> Sequence[Scan]:
         """Return the scans of one source by number.
 
         :param source_id: Source holding the scans.
@@ -580,10 +598,10 @@ class InMemoryScanRepository(InMemoryRepository[Scan, ScanId], ScanRepository):
         :returns: Every scan of the source.
         :rtype: Sequence[Scan]
         """
-        return sorted((scan for scan in self._rows.values() if scan.source_id == source_id), key=attrgetter('number'))
+        return sorted((scan for scan in self._rows.values() if scan.source_id == source_id), key=attrgetter(NUMBER))
 
     @override
-    async def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Scan]:
+    def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Scan]:
         """Return one window of the project's scans, source by source in import order and by number within one.
 
         :param project_id: Project owning the scans.
@@ -595,7 +613,7 @@ class InMemoryScanRepository(InMemoryRepository[Scan, ScanId], ScanRepository):
         """
         sources = sorted(
             (source for source in self._tables.sources.values() if source.project_id == project_id),
-            key=attrgetter('imported_at', ID_ATTRIBUTE),
+            key=attrgetter(IMPORTED_AT, ID_ATTRIBUTE),
         )
         rank = {source.id: position for position, source in enumerate(sources)}
         scans = sorted(
@@ -605,7 +623,7 @@ class InMemoryScanRepository(InMemoryRepository[Scan, ScanId], ScanRepository):
         return Slice(items=scans[request.offset : request.offset + request.limit], total=len(scans))
 
     @override
-    async def list_by_ids(self, scan_ids: Collection[ScanId]) -> Sequence[Scan]:
+    def list_by_ids(self, scan_ids: Collection[ScanId]) -> Sequence[Scan]:
         """Return the stored scans among the given identifiers.
 
         :param scan_ids: Scans to read.
@@ -616,7 +634,7 @@ class InMemoryScanRepository(InMemoryRepository[Scan, ScanId], ScanRepository):
         return [scan for scan_id in set(scan_ids) if (scan := self._rows.get(scan_id)) is not None]
 
     @override
-    async def list_unready(self, project_id: ProjectId) -> Sequence[Scan]:
+    def list_unready(self, project_id: ProjectId) -> Sequence[Scan]:
         """Return the project's scans whose renditions are not ready, in the order ``list_for_project`` lists them.
 
         :param project_id: Project owning the scans.
@@ -624,22 +642,22 @@ class InMemoryScanRepository(InMemoryRepository[Scan, ScanId], ScanRepository):
         :returns: The scans without ready renditions.
         :rtype: Sequence[Scan]
         """
-        every_scan = await self.list_for_project(project_id, SliceRequest(limit=max(len(self._rows), 1)))
+        every_scan = self.list_for_project(project_id, SliceRequest(limit=max(len(self._rows), 1)))
         return [scan for scan in every_scan.items if not scan.renditions.ready]
 
 
 class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
     """Pages of the book, unique by project and order key and by scan and slot."""
 
-    def __init__(self, tables: InMemoryTables, *, change: ChangeState) -> None:
-        """Work on the page table of the unit of work's copy, checking pages against projects and scans.
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on the page table of the transaction, checking pages against projects and scans.
 
-        :param tables: Every table of the working copy.
+        :param tables: Every table of the transaction.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
-        super().__init__(tables.pages, tables, change=change)
+        super().__init__(tables.pages, tables, writable=writable)
 
     @override
     def _check(self, entity: Page) -> None:
@@ -655,9 +673,9 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         """
         require(self._tables.projects, entity.project_id)
         require(self._tables.scans, entity.scan_id)
-        self._require_unique(entity, attrgetter('project_id', 'order_key'))
+        self._require_unique(entity, attrgetter(PROJECT_ID, 'order_key'))
         if entity.scan_id is not None:
-            self._require_unique(entity, attrgetter('scan_id', 'slot'))
+            self._require_unique(entity, attrgetter('scan_id', SLOT))
 
     @override
     def _cascade(self, entity: Page) -> None:
@@ -677,7 +695,7 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
             self._tables.projects[project.id] = evolve(project, cover_page_id=None)
 
     @override
-    async def list_for_project(
+    def list_for_project(
         self, project_id: ProjectId, request: SliceRequest, *, included_only: bool = False
     ) -> Slice[Page]:
         """Return one window of a project's pages in the byte order of their order keys.
@@ -699,7 +717,7 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         return Slice(items=pages[request.offset : request.offset + request.limit], total=len(pages))
 
     @override
-    async def list_by_ids(self, project_id: ProjectId, page_ids: Collection[PageId]) -> Sequence[Page]:
+    def list_by_ids(self, project_id: ProjectId, page_ids: Collection[PageId]) -> Sequence[Page]:
         """Return the given pages of a project in the byte order of their order keys.
 
         :param project_id: Project owning the pages.
@@ -717,7 +735,7 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         return self._in_book_order(pages)
 
     @override
-    async def list_range(self, project_id: ProjectId, first_key: str, last_key: str) -> Sequence[Page]:
+    def list_range(self, project_id: ProjectId, first_key: str, last_key: str) -> Sequence[Page]:
         """Return the pages whose order keys lie between the two keys in byte order, both included.
 
         :param project_id: Project owning the pages.
@@ -737,7 +755,7 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         )
 
     @override
-    async def list_for_source(self, project_id: ProjectId, source_id: SourceId) -> Sequence[Page]:
+    def list_for_source(self, project_id: ProjectId, source_id: SourceId) -> Sequence[Page]:
         """Return the pages whose scans belong to the source, in book order.
 
         :param project_id: Project owning the pages.
@@ -753,7 +771,7 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         )
 
     @override
-    async def neighbour_key(
+    def neighbour_key(
         self, project_id: ProjectId, key: str, side: Side, *, excluding: Collection[PageId] = ()
     ) -> str | None:
         """Return the nearest order key on one side of ``key``, without the excluded pages.
@@ -778,18 +796,20 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         return min((other for other in keys if other.encode() > pivot), key=str.encode, default=None)
 
     @override
-    async def update_many(self, pages: Sequence[Page]) -> None:
+    def update_many(self, pages: Sequence[Page]) -> None:
         """Replace the stored state of several pages, all of them or none, as one database transaction does.
 
         :param pages: Pages with their new state.
         :type pages: Sequence[Page]
+        :raises NoChangeOpenError: If the transaction only reads.
         :raises NotFoundError: If a page is not stored.
         :raises ConflictError: If the new state of a page takes a key another page has.
         """
+        self._require_writable()
         before = dict(self._rows)
         try:
             for page in pages:
-                await self.update(page)
+                self.update(page)
         except DomainError:
             self._rows.clear()
             self._rows.update(before)
@@ -807,7 +827,7 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         return sorted(pages, key=lambda page: page.order_key.encode())
 
     @override
-    async def list_for_scan(self, scan_id: ScanId) -> Sequence[Page]:
+    def list_for_scan(self, scan_id: ScanId) -> Sequence[Page]:
         """Return the pages cut from one scan by their slot.
 
         :param scan_id: Scan the pages were cut from.
@@ -815,10 +835,10 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         :returns: Every page that names the scan.
         :rtype: Sequence[Page]
         """
-        return sorted((page for page in self._rows.values() if page.scan_id == scan_id), key=attrgetter('slot'))
+        return sorted((page for page in self._rows.values() if page.scan_id == scan_id), key=attrgetter(SLOT))
 
     @override
-    async def count_before(self, page: Page) -> int:
+    def count_before(self, page: Page) -> int:
         """Count the project's pages whose order key is smaller in byte order.
 
         :param page: Stored page of the project.
@@ -834,7 +854,7 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         )
 
     @override
-    async def last_order_key(self, project_id: ProjectId) -> str | None:
+    def last_order_key(self, project_id: ProjectId) -> str | None:
         """Return the greatest order key of the project's pages in byte order.
 
         :param project_id: Project owning the pages.
@@ -846,7 +866,7 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         return max(keys, key=str.encode, default=None)
 
     @override
-    async def kind_tally(self, project_id: ProjectId) -> Mapping[RecipeKind, int]:
+    def kind_tally(self, project_id: ProjectId) -> Mapping[RecipeKind, int]:
         """Count the pages with an image of each kind, leaving out the placeholders.
 
         :param project_id: Project owning the pages.
@@ -866,15 +886,15 @@ class InMemoryPaginationSectionRepository(
 ):
     """The pagination sections of the books."""
 
-    def __init__(self, tables: InMemoryTables, *, change: ChangeState) -> None:
-        """Work on the section table of the unit of work's copy, checking sections against projects and pages.
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on the section table of the transaction, checking sections against projects and pages.
 
-        :param tables: Every table of the working copy.
+        :param tables: Every table of the transaction.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
-        super().__init__(tables.pagination_sections, tables, change=change)
+        super().__init__(tables.pagination_sections, tables, writable=writable)
 
     @override
     def _check(self, entity: PaginationSection) -> None:
@@ -888,7 +908,7 @@ class InMemoryPaginationSectionRepository(
         require(self._tables.pages, entity.first_page_id)
 
     @override
-    async def list_for_project(self, project_id: ProjectId) -> Sequence[PaginationSection]:
+    def list_for_project(self, project_id: ProjectId) -> Sequence[PaginationSection]:
         """Return the sections of a project in the order they were made, ties by identifier.
 
         :param project_id: Project owning the sections.
@@ -905,43 +925,15 @@ class InMemoryPaginationSectionRepository(
 class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionId], PageVersionRepository):
     """Versions of the pages of the book."""
 
-    def __init__(
-        self, tables: InMemoryTables, *, change: ChangeState, snapshot: InMemoryTables, committed: InMemoryTables
-    ) -> None:
-        """Work on the page version table of the unit of work's copy, checking versions against pages.
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on the page version table of the transaction, checking versions against pages.
 
-        :param tables: Every table of the working copy.
+        :param tables: Every table of the transaction.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
-        :param snapshot: The committed tables as the transaction began, which tell its own rows from others'.
-        :type snapshot: InMemoryTables
-        :param committed: The committed tables shared with every unit of work, which another transaction may have
-                          changed since this one began.
-        :type committed: InMemoryTables
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
-        super().__init__(tables.page_versions, tables, change=change)
-        self._snapshot = snapshot
-        self._committed = committed
-
-    @override
-    async def update(self, entity: PageVersion) -> PageVersion:
-        """Replace the stored state of a version, which another transaction may have deleted with its page meanwhile.
-
-        A database statement updates no row then, so this fails like it instead of letting the commit bring the
-        deleted row back.
-
-        :param entity: Version with its new state.
-        :type entity: PageVersion
-        :returns: The version as stored.
-        :rtype: PageVersion
-        :raises NotFoundError: If the version, or a version or page it refers to, is not stored, or was deleted by a
-                               transaction that committed after this one began.
-        :raises ConflictError: If its new state takes a unique value of another version.
-        """
-        if entity.id in self._snapshot.page_versions and entity.id not in self._committed.page_versions:
-            raise NotFoundError(entity.id)
-        return await super().update(entity)
+        super().__init__(tables.page_versions, tables, writable=writable)
 
     @override
     def _check(self, entity: PageVersion) -> None:
@@ -970,7 +962,7 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
             self._tables.page_stages[stage.key] = evolve(stage, head_version_id=None)
 
     @override
-    async def list_for_page(self, page_id: PageId) -> Sequence[PageVersion]:
+    def list_for_page(self, page_id: PageId) -> Sequence[PageVersion]:
         """Return the versions of one page, the earliest first, ties by identifier.
 
         :param page_id: Page owning the versions.
@@ -980,11 +972,11 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
         """
         return sorted(
             (version for version in self._rows.values() if version.page_id == page_id),
-            key=attrgetter('created_at', ID_ATTRIBUTE),
+            key=attrgetter(CREATED_AT, ID_ATTRIBUTE),
         )
 
     @override
-    async def list_to_prepare(self, project_id: ProjectId, processor_keys: Collection[str]) -> Sequence[PageVersion]:
+    def list_to_prepare(self, project_id: ProjectId, processor_keys: Collection[str]) -> Sequence[PageVersion]:
         """Return the pending and failed versions of the project's pages made by the given processors.
 
         :param project_id: Project owning the pages.
@@ -1003,11 +995,11 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
                 and version.state in waiting
                 and self._tables.pages[version.page_id].project_id == project_id
             ),
-            key=attrgetter('created_at', ID_ATTRIBUTE),
+            key=attrgetter(CREATED_AT, ID_ATTRIBUTE),
         )
 
     @override
-    async def base_sizes(self, project_id: ProjectId) -> Sequence[PageSize]:
+    def base_sizes(self, project_id: ProjectId) -> Sequence[PageSize]:
         """Return the recorded sizes of the base versions of the project's included pages cut from a scan.
 
         A leaf drawn in place of a scan is a version of the page order, so it is not counted.
@@ -1030,7 +1022,7 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
         return [size for size in sizes if size is not None]
 
     @override
-    async def list_base_versions(self, page_ids: Collection[PageId]) -> Sequence[PageVersion]:
+    def list_base_versions(self, page_ids: Collection[PageId]) -> Sequence[PageVersion]:
         """Return the versions of the given pages that have no input version, the earliest first, ties by identifier.
 
         :param page_ids: Pages whose base versions are read.
@@ -1040,11 +1032,11 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
         """
         return sorted(
             (version for version in self._rows.values() if version.page_id in page_ids and version.input_id is None),
-            key=attrgetter('created_at', ID_ATTRIBUTE),
+            key=attrgetter(CREATED_AT, ID_ATTRIBUTE),
         )
 
     @override
-    async def list_by_ids(self, version_ids: Collection[PageVersionId]) -> Sequence[PageVersion]:
+    def list_by_ids(self, version_ids: Collection[PageVersionId]) -> Sequence[PageVersion]:
         """Return the stored versions among the given identifiers, the earliest first, ties by identifier.
 
         :param version_ids: Identifiers of the versions to read.
@@ -1054,11 +1046,11 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
         """
         return sorted(
             (version for version in self._rows.values() if version.id in version_ids),
-            key=attrgetter('created_at', ID_ATTRIBUTE),
+            key=attrgetter(CREATED_AT, ID_ATTRIBUTE),
         )
 
     @override
-    async def find(self, version_id: PageVersionId) -> PageVersion | None:
+    def find(self, version_id: PageVersionId) -> PageVersion | None:
         """Return the version with this identifier.
 
         :param version_id: Identifier of the version.
@@ -1069,7 +1061,7 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
         return self._rows.get(version_id)
 
     @override
-    async def list_for_stage(
+    def list_for_stage(
         self,
         page_id: PageId,
         stage: Stage | None,
@@ -1101,12 +1093,12 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
                 and (scale is None or version.scale == scale)
                 and (mark is None or version.mark == mark)
             ),
-            key=attrgetter('created_at', ID_ATTRIBUTE),
+            key=attrgetter(CREATED_AT, ID_ATTRIBUTE),
         )
         return Slice(items=matching[request.offset : request.offset + request.limit], total=len(matching))
 
     @override
-    async def collectable(self, project_id: ProjectId, previews_older_than: datetime) -> Sequence[PageVersion]:
+    def collectable(self, project_id: ProjectId, previews_older_than: datetime) -> Sequence[PageVersion]:
         """Return the versions that are neither base versions nor in the chain of a current version.
 
         :param project_id: Project owning the pages.
@@ -1134,32 +1126,34 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
         goes = collectable_versions(
             {version.id: version.input_id for version in versions.values()}, eligible=eligible, heads=heads
         )
-        return sorted((versions[version_id] for version_id in goes), key=attrgetter('created_at', ID_ATTRIBUTE))
+        return sorted((versions[version_id] for version_id in goes), key=attrgetter(CREATED_AT, ID_ATTRIBUTE))
 
     @override
-    async def delete_many(self, version_ids: Collection[PageVersionId]) -> None:
+    def delete_many(self, version_ids: Collection[PageVersionId]) -> None:
         """Remove the stored versions among the given ones, with the actions of the keys that refer to them.
 
         :param version_ids: Versions to remove.
         :type version_ids: Collection[PageVersionId]
+        :raises NoChangeOpenError: If the transaction only reads.
         """
+        self._require_writable()
         for version_id in version_ids:
             if version_id in self._rows:
-                await self.delete(version_id)
+                self.delete(version_id)
 
 
 class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], PageStageRepository):
     """The current version of each stage of each page."""
 
-    def __init__(self, tables: InMemoryTables, *, change: ChangeState) -> None:
-        """Work on the page stage table of the unit of work's copy, checking records against pages, versions, recipes.
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on the page stage table of the transaction, checking records against pages, versions, recipes.
 
-        :param tables: Every table of the working copy.
+        :param tables: Every table of the transaction.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
-        super().__init__(tables.page_stages, tables, change=change)
+        super().__init__(tables.page_stages, tables, writable=writable)
         self._identify = attrgetter(KEY_ATTRIBUTE)
 
     @override
@@ -1175,23 +1169,23 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         require(self._tables.recipes, entity.recipe_id)
 
     @override
-    async def save(self, stage: PageStage) -> PageStage:
+    def save(self, stage: PageStage) -> PageStage:
         """Store the record, replacing the one of the same page and stage.
 
         :param stage: Record to store.
         :type stage: PageStage
         :returns: The record as stored.
         :rtype: PageStage
-        :raises NoChangeOpenError: If no block of the unit of work is open.
+        :raises NoChangeOpenError: If the transaction only reads.
         :raises NotFoundError: If the page, the head version or the recipe is not stored.
         """
-        self._change.require_open()
+        self._require_writable()
         self._check(stage)
         self._rows[stage.key] = stage
         return stage
 
     @override
-    async def find(self, key: PageStageKey) -> PageStage | None:
+    def find(self, key: PageStageKey) -> PageStage | None:
         """Return the record of a stage of a page.
 
         :param key: Page and stage.
@@ -1202,7 +1196,7 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         return self._rows.get(key)
 
     @override
-    async def list_for_page(self, page_id: PageId) -> Sequence[PageStage]:
+    def list_for_page(self, page_id: PageId) -> Sequence[PageStage]:
         """Return the records of one page in the order of the stages.
 
         :param page_id: Page owning the records.
@@ -1216,7 +1210,7 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         )
 
     @override
-    async def list_for_pages(self, page_ids: Collection[PageId]) -> Sequence[PageStage]:
+    def list_for_pages(self, page_ids: Collection[PageId]) -> Sequence[PageStage]:
         """Return the records of several pages, by page and then in the order of the stages.
 
         :param page_ids: Pages whose records are read.
@@ -1231,7 +1225,7 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         )
 
     @override
-    async def list_for_recipe(self, recipe_id: RecipeId) -> Sequence[PageStage]:
+    def list_for_recipe(self, recipe_id: RecipeId) -> Sequence[PageStage]:
         """Return the records that name the recipe, by page identifier.
 
         :param recipe_id: Recipe whose pages are listed.
@@ -1239,12 +1233,10 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         :returns: Every record that names the recipe.
         :rtype: Sequence[PageStage]
         """
-        return sorted(
-            (stage for stage in self._rows.values() if stage.recipe_id == recipe_id), key=attrgetter('page_id')
-        )
+        return sorted((stage for stage in self._rows.values() if stage.recipe_id == recipe_id), key=attrgetter(PAGE_ID))
 
     @override
-    async def list_fresh(self) -> Sequence[PageStage]:
+    def list_fresh(self) -> Sequence[PageStage]:
         """Return the records in the fresh state, by page and then in the order of the stages.
 
         :returns: Every record whose current version is up to date.
@@ -1257,7 +1249,7 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         )
 
     @override
-    async def list_replaced(self, stage: Stage, processor: ProcessorRef) -> Sequence[PageStage]:
+    def list_replaced(self, stage: Stage, processor: ProcessorRef) -> Sequence[PageStage]:
         """Return the records of a stage whose current version a replaced version of a processor made.
 
         :param stage: The stage whose records are read.
@@ -1278,11 +1270,11 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
                 and head.processor.key == processor.key
                 and head.processor.version != processor.version
             ),
-            key=attrgetter('page_id'),
+            key=attrgetter(PAGE_ID),
         )
 
     @override
-    async def list_for_project_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[PageStage]:
+    def list_for_project_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[PageStage]:
         """Return the records of one stage over the pages of a project, by page identifier.
 
         :param project_id: Project owning the pages.
@@ -1295,11 +1287,11 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         pages = {page.id for page in self._tables.pages.values() if page.project_id == project_id}
         return sorted(
             (record for record in self._rows.values() if record.stage == stage and record.page_id in pages),
-            key=attrgetter('page_id'),
+            key=attrgetter(PAGE_ID),
         )
 
     @override
-    async def head_ids(self, project_id: ProjectId) -> Collection[PageVersionId]:
+    def head_ids(self, project_id: ProjectId) -> Collection[PageVersionId]:
         """Return the distinct head versions of the stage records of the project's pages.
 
         :param project_id: Project owning the pages.
@@ -1315,7 +1307,7 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         }
 
     @override
-    async def tally(self, project_ids: Collection[ProjectId]) -> Sequence[StageTally]:
+    def tally(self, project_ids: Collection[ProjectId]) -> Sequence[StageTally]:
         """Count the records of every stage of the given projects by state, leaving out the pages with no image.
 
         :param project_ids: Projects whose stages are counted.
@@ -1358,7 +1350,7 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         ]
 
     @override
-    async def step_tally(self, project_id: ProjectId) -> Sequence[StepTally]:
+    def step_tally(self, project_id: ProjectId) -> Sequence[StepTally]:
         """Count the pages a run stopped at each step, for every stage of the project, leaving out failed records.
 
         :param project_id: Project owning the pages.
@@ -1383,15 +1375,15 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
 class InMemoryPageStepStateRepository(InMemoryRepository[PageStepState, PageStepKey], PageStepStateRepository):
     """Settings and manual edits of the steps of the pages."""
 
-    def __init__(self, tables: InMemoryTables, *, change: ChangeState) -> None:
-        """Work on the page step state table of the unit of work's copy, checking states against pages.
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on the page step state table of the transaction, checking states against pages.
 
-        :param tables: Every table of the working copy.
+        :param tables: Every table of the transaction.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
-        super().__init__(tables.page_step_states, tables, change=change)
+        super().__init__(tables.page_step_states, tables, writable=writable)
         self._identify = attrgetter(KEY_ATTRIBUTE)
 
     @override
@@ -1405,23 +1397,23 @@ class InMemoryPageStepStateRepository(InMemoryRepository[PageStepState, PageStep
         require(self._tables.pages, entity.page_id)
 
     @override
-    async def save(self, state: PageStepState) -> PageStepState:
+    def save(self, state: PageStepState) -> PageStepState:
         """Store the state, replacing the one of the same page, stage and step.
 
         :param state: State to store.
         :type state: PageStepState
         :returns: The state as stored.
         :rtype: PageStepState
-        :raises NoChangeOpenError: If no block of the unit of work is open.
+        :raises NoChangeOpenError: If the transaction only reads.
         :raises NotFoundError: If the page is not stored.
         """
-        self._change.require_open()
+        self._require_writable()
         self._check(state)
         self._rows[state.key] = state
         return state
 
     @override
-    async def find(self, key: PageStepKey) -> PageStepState | None:
+    def find(self, key: PageStepKey) -> PageStepState | None:
         """Return the state of one step on one page.
 
         :param key: Page, stage and step.
@@ -1432,7 +1424,7 @@ class InMemoryPageStepStateRepository(InMemoryRepository[PageStepState, PageStep
         return self._rows.get(key)
 
     @override
-    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepState]:
+    def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepState]:
         """Return the states of one page, by stage and step.
 
         :param page_id: Page owning the states.
@@ -1453,9 +1445,7 @@ class InMemoryPageStepStateRepository(InMemoryRepository[PageStepState, PageStep
         )
 
     @override
-    async def list_for_step(
-        self, page_ids: Collection[PageId], stage: Stage, step_id: StepId
-    ) -> Sequence[PageStepState]:
+    def list_for_step(self, page_ids: Collection[PageId], stage: Stage, step_id: StepId) -> Sequence[PageStepState]:
         """Return the states one step of a stage has on several pages, by page identifier.
 
         :param page_ids: Pages whose states are read.
@@ -1480,15 +1470,15 @@ class InMemoryPageStepStateRepository(InMemoryRepository[PageStepState, PageStep
 class InMemoryStepValuesRepository(InMemoryRepository[StepValues, StepValuesKey], StepValuesRepository):
     """The values of the steps for the odd pages, the even pages and the groups."""
 
-    def __init__(self, tables: InMemoryTables, *, change: ChangeState) -> None:
-        """Work on the step values table of the unit of work's copy, checking values against projects.
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on the step values table of the transaction, checking values against projects.
 
-        :param tables: Every table of the working copy.
+        :param tables: Every table of the transaction.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
-        super().__init__(tables.step_values, tables, change=change)
+        super().__init__(tables.step_values, tables, writable=writable)
         self._identify = attrgetter(KEY_ATTRIBUTE)
 
     @override
@@ -1502,23 +1492,23 @@ class InMemoryStepValuesRepository(InMemoryRepository[StepValues, StepValuesKey]
         require(self._tables.projects, entity.project_id)
 
     @override
-    async def save(self, values: StepValues) -> StepValues:
+    def save(self, values: StepValues) -> StepValues:
         """Store the values, replacing the ones of the same step and part of the pages.
 
         :param values: Values to store.
         :type values: StepValues
         :returns: The values as stored.
         :rtype: StepValues
-        :raises NoChangeOpenError: If no block of the unit of work is open.
+        :raises NoChangeOpenError: If the transaction only reads.
         :raises NotFoundError: If the project is not stored.
         """
-        self._change.require_open()
+        self._require_writable()
         self._check(values)
         self._rows[values.key] = values
         return values
 
     @override
-    async def find(self, key: StepValuesKey) -> StepValues | None:
+    def find(self, key: StepValuesKey) -> StepValues | None:
         """Return the values one part of the pages has for one step.
 
         :param key: The project, the step and the part of the pages.
@@ -1529,7 +1519,7 @@ class InMemoryStepValuesRepository(InMemoryRepository[StepValues, StepValuesKey]
         return self._rows.get(key)
 
     @override
-    async def list_for_step(self, project_id: ProjectId, step_id: StepId) -> Sequence[StepValues]:
+    def list_for_step(self, project_id: ProjectId, step_id: StepId) -> Sequence[StepValues]:
         """Return the values every part of the pages of a project has for one step, by scope and group.
 
         :param project_id: Project owning the step.
@@ -1545,7 +1535,7 @@ class InMemoryStepValuesRepository(InMemoryRepository[StepValues, StepValuesKey]
         )
 
     @override
-    async def list_for_project(self, project_id: ProjectId) -> Sequence[StepValues]:
+    def list_for_project(self, project_id: ProjectId) -> Sequence[StepValues]:
         """Return the values of every step of a project, by step, scope and group.
 
         :param project_id: Project owning the steps.
@@ -1562,29 +1552,30 @@ class InMemoryStepValuesRepository(InMemoryRepository[StepValues, StepValuesKey]
 class InMemoryPageStepChangeRepository(InMemoryRepository[PageStepChange, PageStepChangeId], PageStepChangeRepository):
     """The history of the layers of the steps of the pages."""
 
-    def __init__(self, tables: InMemoryTables, *, change: ChangeState) -> None:
-        """Work on the page step change table of the unit of work's copy, checking changes against pages.
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on the page step change table of the transaction, checking changes against pages.
 
-        :param tables: Every table of the working copy.
+        :param tables: Every table of the transaction.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
-        super().__init__(tables.page_step_changes, tables, change=change)
+        super().__init__(tables.page_step_changes, tables, writable=writable)
 
     @override
-    async def add(self, entity: PageStepChange) -> PageStepChange:
+    def add(self, entity: PageStepChange) -> PageStepChange:
         """Store a change, numbering it after the last change of its page.
 
         :param entity: Change to store.
         :type entity: PageStepChange
         :returns: The change as stored, with its sequence.
         :rtype: PageStepChange
+        :raises NoChangeOpenError: If the transaction only reads.
         :raises ConflictError: If a change with this identifier is stored already.
         :raises NotFoundError: If the page is not stored.
         """
         last = max((change.sequence for change in self._rows.values() if change.page_id == entity.page_id), default=0)
-        return await super().add(evolve(entity, sequence=last + 1))
+        return super().add(evolve(entity, sequence=last + 1))
 
     @override
     def _check(self, entity: PageStepChange) -> None:
@@ -1597,7 +1588,7 @@ class InMemoryPageStepChangeRepository(InMemoryRepository[PageStepChange, PageSt
         require(self._tables.pages, entity.page_id)
 
     @override
-    async def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepChange]:
+    def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepChange]:
         """Return the changes of one page, by their sequence.
 
         :param page_id: Page the changes were made on.
@@ -1613,11 +1604,11 @@ class InMemoryPageStepChangeRepository(InMemoryRepository[PageStepChange, PageSt
                 for change in self._rows.values()
                 if change.page_id == page_id and (stage is None or change.stage == stage)
             ),
-            key=attrgetter('sequence'),
+            key=attrgetter(SEQUENCE),
         )
 
     @override
-    async def list_for_batch(self, batch_id: ChangeBatchId) -> Sequence[PageStepChange]:
+    def list_for_batch(self, batch_id: ChangeBatchId) -> Sequence[PageStepChange]:
         """Return the changes of one batch, by page and then by sequence.
 
         :param batch_id: Identifier the changes of the batch share.
@@ -1627,11 +1618,11 @@ class InMemoryPageStepChangeRepository(InMemoryRepository[PageStepChange, PageSt
         """
         return sorted(
             (change for change in self._rows.values() if change.batch_id == batch_id),
-            key=attrgetter('page_id', 'sequence'),
+            key=attrgetter(PAGE_ID, SEQUENCE),
         )
 
     @override
-    async def list_undoing(self, change_ids: Collection[PageStepChangeId]) -> Sequence[PageStepChange]:
+    def list_undoing(self, change_ids: Collection[PageStepChangeId]) -> Sequence[PageStepChange]:
         """Return the changes that take back any of the given changes, by page and then by sequence.
 
         :param change_ids: Identifiers of the changes that may have been undone.
@@ -1642,20 +1633,20 @@ class InMemoryPageStepChangeRepository(InMemoryRepository[PageStepChange, PageSt
         wanted = set(change_ids)
         return sorted(
             (change for change in self._rows.values() if change.undoes in wanted),
-            key=attrgetter('page_id', 'sequence'),
+            key=attrgetter(PAGE_ID, SEQUENCE),
         )
 
     @override
-    async def delete_for_step(self, key: PageStepKey) -> int:
+    def delete_for_step(self, key: PageStepKey) -> int:
         """Delete every change of one step on one page.
 
         :param key: The page, the stage and the step.
         :type key: PageStepKey
         :returns: How many changes were deleted.
         :rtype: int
-        :raises NoChangeOpenError: If no block of the unit of work is open.
+        :raises NoChangeOpenError: If the transaction only reads.
         """
-        self._change.require_open()
+        self._require_writable()
         doomed = [
             change.id
             for change in self._rows.values()
@@ -1671,31 +1662,32 @@ class InMemoryResultMarkChangeRepository(
 ):
     """The log of the marks and comments of the results."""
 
-    def __init__(self, tables: InMemoryTables, *, change: ChangeState) -> None:
-        """Work on the result mark change table of the unit of work's copy, checking changes against versions.
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on the result mark change table of the transaction, checking changes against versions.
 
-        :param tables: Every table of the working copy.
+        :param tables: Every table of the transaction.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
-        super().__init__(tables.result_mark_changes, tables, change=change)
+        super().__init__(tables.result_mark_changes, tables, writable=writable)
 
     @override
-    async def add(self, entity: ResultMarkChange) -> ResultMarkChange:
+    def add(self, entity: ResultMarkChange) -> ResultMarkChange:
         """Store a change, numbering it after the last change of its version.
 
         :param entity: Change to store.
         :type entity: ResultMarkChange
         :returns: The change as stored, with its sequence.
         :rtype: ResultMarkChange
+        :raises NoChangeOpenError: If the transaction only reads.
         :raises ConflictError: If a change with this identifier is stored already.
         :raises NotFoundError: If the version is not stored.
         """
         last = max(
             (change.sequence for change in self._rows.values() if change.version_id == entity.version_id), default=0
         )
-        return await super().add(evolve(entity, sequence=last + 1))
+        return super().add(evolve(entity, sequence=last + 1))
 
     @override
     def _check(self, entity: ResultMarkChange) -> None:
@@ -1708,7 +1700,7 @@ class InMemoryResultMarkChangeRepository(
         require(self._tables.page_versions, entity.version_id)
 
     @override
-    async def list_for_version(self, version_id: PageVersionId) -> Sequence[ResultMarkChange]:
+    def list_for_version(self, version_id: PageVersionId) -> Sequence[ResultMarkChange]:
         """Return the changes of one version, by their sequence.
 
         :param version_id: Version the changes were made on.
@@ -1717,31 +1709,23 @@ class InMemoryResultMarkChangeRepository(
         :rtype: Sequence[ResultMarkChange]
         """
         return sorted(
-            (change for change in self._rows.values() if change.version_id == version_id), key=attrgetter('sequence')
+            (change for change in self._rows.values() if change.version_id == version_id), key=attrgetter(SEQUENCE)
         )
 
 
 class InMemoryBookPlaceRepository(InMemoryRepository[BookPlace, BookPlaceKey], BookPlaceRepository):
     """The places accounts left books at."""
 
-    def __init__(
-        self, tables: InMemoryTables, *, change: ChangeState, snapshot: InMemoryTables, committed: InMemoryTables
-    ) -> None:
-        """Work on the book place table of the unit of work's copy, checking places against projects.
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on the book place table of the transaction, checking places against projects.
 
-        :param tables: Every table of the working copy.
+        :param tables: Every table of the transaction.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
-        :param snapshot: The committed tables as the transaction began, which tell its own changes from others'.
-        :type snapshot: InMemoryTables
-        :param committed: The committed tables shared with every unit of work, read by a save.
-        :type committed: InMemoryTables
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
-        super().__init__(tables.book_places, tables, change=change)
+        super().__init__(tables.book_places, tables, writable=writable)
         self._identify = attrgetter(KEY_ATTRIBUTE)
-        self._snapshot = snapshot
-        self._committed = committed
 
     @override
     def _check(self, entity: BookPlace) -> None:
@@ -1756,30 +1740,27 @@ class InMemoryBookPlaceRepository(InMemoryRepository[BookPlace, BookPlaceKey], B
         require(self._tables.projects, entity.project_id)
 
     @override
-    async def save(self, place: BookPlace) -> BookPlace:
+    def save(self, place: BookPlace) -> BookPlace:
         """Store the place whole, replacing the one of the same account and book unless that one was written later.
 
-        Like a database statement, the comparison sees the place as last committed by anyone, unless this transaction
-        wrote the place itself.
+        No other transaction commits while this one runs, so the stored place is the latest committed one.
 
         :param place: Place to store.
         :type place: BookPlace
         :returns: The place as stored, which is the stored place when it was written later than ``place``.
         :rtype: BookPlace
-        :raises NoChangeOpenError: If no block of the unit of work is open.
+        :raises NoChangeOpenError: If the transaction only reads.
         :raises NotFoundError: If the book is not stored.
         """
-        self._change.require_open()
+        self._require_writable()
         self._check(place)
-        own = self._rows.get(place.key)
-        changed_here = self._snapshot.book_places.get(place.key) is not own
-        current = own if changed_here else self._committed.book_places.get(place.key)
+        current = self._rows.get(place.key)
         stored = current if current is not None and current.updated_at > place.updated_at else place
         self._rows[place.key] = stored
         return stored
 
     @override
-    async def find(self, key: BookPlaceKey) -> BookPlace | None:
+    def find(self, key: BookPlaceKey) -> BookPlace | None:
         """Return the place of an account in a book.
 
         :param key: Account and book.
@@ -1793,15 +1774,15 @@ class InMemoryBookPlaceRepository(InMemoryRepository[BookPlace, BookPlaceKey], B
 class InMemoryRecipeRepository(InMemoryRepository[Recipe, RecipeId], RecipeRepository):
     """Recipes of the projects, one for each kind of a stage of a project."""
 
-    def __init__(self, tables: InMemoryTables, *, change: ChangeState) -> None:
-        """Work on the recipe table of the unit of work's copy, checking recipes against projects.
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on the recipe table of the transaction, checking recipes against projects.
 
-        :param tables: Every table of the working copy.
+        :param tables: Every table of the transaction.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
-        super().__init__(tables.recipes, tables, change=change)
+        super().__init__(tables.recipes, tables, writable=writable)
 
     @override
     def _check(self, entity: Recipe) -> None:
@@ -1814,7 +1795,7 @@ class InMemoryRecipeRepository(InMemoryRepository[Recipe, RecipeId], RecipeRepos
         """
         require(self._tables.projects, entity.project_id)
         require(self._tables.recipe_profiles, entity.profile_id)
-        self._require_unique(entity, attrgetter('project_id', 'stage', 'kind'))
+        self._require_unique(entity, attrgetter(PROJECT_ID, 'stage', 'kind'))
 
     @override
     def _cascade(self, entity: Recipe) -> None:
@@ -1827,7 +1808,7 @@ class InMemoryRecipeRepository(InMemoryRepository[Recipe, RecipeId], RecipeRepos
             self._tables.page_stages[stage.key] = evolve(stage, recipe_id=None)
 
     @override
-    async def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[Recipe]:
+    def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[Recipe]:
         """Return the recipes of one stage by creation, ties by identifier.
 
         :param project_id: Project owning the recipes.
@@ -1839,11 +1820,11 @@ class InMemoryRecipeRepository(InMemoryRepository[Recipe, RecipeId], RecipeRepos
         """
         return sorted(
             (recipe for recipe in self._rows.values() if recipe.project_id == project_id and recipe.stage == stage),
-            key=attrgetter('created_at', 'id'),
+            key=attrgetter(CREATED_AT, 'id'),
         )
 
     @override
-    async def list_for_project(self, project_id: ProjectId) -> Sequence[Recipe]:
+    def list_for_project(self, project_id: ProjectId) -> Sequence[Recipe]:
         """Return the recipes of every stage of a project, in the order of the stages and then by creation.
 
         :param project_id: Project owning the recipes.
@@ -1860,15 +1841,15 @@ class InMemoryRecipeRepository(InMemoryRepository[Recipe, RecipeId], RecipeRepos
 class InMemoryRecipeProfileRepository(InMemoryRepository[RecipeProfile, RecipeProfileId], RecipeProfileRepository):
     """The recipe profiles of the accounts, one default per stage of an account."""
 
-    def __init__(self, tables: InMemoryTables, *, change: ChangeState) -> None:
-        """Work on the profile table of the unit of work's copy.
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on the profile table of the transaction.
 
-        :param tables: Every table of the working copy.
+        :param tables: Every table of the transaction.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
-        super().__init__(tables.recipe_profiles, tables, change=change)
+        super().__init__(tables.recipe_profiles, tables, writable=writable)
 
     @override
     def _cascade(self, entity: RecipeProfile) -> None:
@@ -1896,7 +1877,7 @@ class InMemoryRecipeProfileRepository(InMemoryRepository[RecipeProfile, RecipePr
             )
 
     @override
-    async def list_for_account(self, account_id: AccountId, stage: Stage | None = None) -> Sequence[RecipeProfile]:
+    def list_for_account(self, account_id: AccountId, stage: Stage | None = None) -> Sequence[RecipeProfile]:
         """Return the account's profiles in the order of the stages, then by creation, ties by identifier.
 
         :param account_id: Account owning the profiles.
@@ -1916,7 +1897,7 @@ class InMemoryRecipeProfileRepository(InMemoryRepository[RecipeProfile, RecipePr
         )
 
     @override
-    async def find_default(self, account_id: AccountId, stage: Stage) -> RecipeProfile | None:
+    def find_default(self, account_id: AccountId, stage: Stage) -> RecipeProfile | None:
         """Return the profile a new book of the account starts a stage with.
 
         :param account_id: Account owning the profile.
@@ -1936,7 +1917,7 @@ class InMemoryRecipeProfileRepository(InMemoryRepository[RecipeProfile, RecipePr
         )
 
     @override
-    async def count_books(self, profile_ids: Collection[RecipeProfileId]) -> Mapping[RecipeProfileId, int]:
+    def count_books(self, profile_ids: Collection[RecipeProfileId]) -> Mapping[RecipeProfileId, int]:
         """Count the books that have a recipe made from each of the given profiles.
 
         :param profile_ids: Profiles to count the books of.
@@ -1954,28 +1935,15 @@ class InMemoryRecipeProfileRepository(InMemoryRepository[RecipeProfile, RecipePr
 class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
     """Jobs of every project."""
 
-    def __init__(
-        self,
-        tables: InMemoryTables,
-        *,
-        change: ChangeState,
-        snapshot: InMemoryTables,
-        committed: InMemoryTables,
-    ) -> None:
-        """Work on the job table of the unit of work's copy, checking jobs against its projects.
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on the job table of the transaction, checking jobs against its projects.
 
-        :param tables: Every table of the working copy.
+        :param tables: Every table of the transaction.
         :type tables: InMemoryTables
-        :param change: Whether a block of the unit of work is open, which every write requires.
-        :type change: ChangeState
-        :param snapshot: The committed tables as the transaction began, which tell its own changes from others'.
-        :type snapshot: InMemoryTables
-        :param committed: The committed tables shared with every unit of work, read by a guarded write.
-        :type committed: InMemoryTables
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
         """
-        super().__init__(tables.jobs, tables, change=change)
-        self._snapshot = snapshot
-        self._committed = committed
+        super().__init__(tables.jobs, tables, writable=writable)
 
     @override
     def _check(self, entity: Job) -> None:
@@ -2021,7 +1989,7 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
             self._tables.sources[source.id] = evolve(source, import_job_id=None)
 
     @override
-    async def list_for_project(self, project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
+    def list_for_project(self, project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
         """Return a project's jobs in the given states, newest first.
 
         :param project_id: Project owning the jobs.
@@ -2032,12 +2000,10 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
         :rtype: Sequence[Job]
         """
         jobs = (job for job in self._tables.jobs.values() if job.project_id == project_id and job.state in states)
-        return sorted(jobs, key=attrgetter('created_at'), reverse=True)
+        return sorted(jobs, key=attrgetter(CREATED_AT), reverse=True)
 
     @override
-    async def list_for_projects(
-        self, project_ids: Collection[ProjectId], states: Collection[JobState]
-    ) -> Sequence[Job]:
+    def list_for_projects(self, project_ids: Collection[ProjectId], states: Collection[JobState]) -> Sequence[Job]:
         """Return the jobs of several projects in the given states, newest first.
 
         :param project_ids: Projects owning the jobs.
@@ -2048,180 +2014,149 @@ class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
         :rtype: Sequence[Job]
         """
         jobs = (job for job in self._tables.jobs.values() if job.project_id in project_ids and job.state in states)
-        return sorted(jobs, key=attrgetter('created_at'), reverse=True)
+        return sorted(jobs, key=attrgetter(CREATED_AT), reverse=True)
 
     @override
-    async def update_if_state(self, entity: Job, *, expected: Collection[JobState]) -> Job | None:
-        """Replace the job in the working copy while its latest state is one of ``expected``.
+    def update_if_state(self, entity: Job, *, expected: Collection[JobState]) -> Job | None:
+        """Replace the job while its state is one of ``expected``.
 
-        Like a database statement, the check sees the job as last committed by anyone, unless this transaction changed
-        the job itself.
+        No other transaction commits while this one runs, so the stored state is the latest committed one.
 
         :param entity: Job with its new state.
         :type entity: Job
         :param expected: States the stored job must be in for the replacement to happen.
         :type expected: Collection[JobState]
-        :returns: The job as stored, or None when its latest state is not one of ``expected``.
+        :returns: The job as stored, or None when its state is not one of ``expected``.
         :rtype: Job | None
-        :raises NoChangeOpenError: If no block of the unit of work is open.
+        :raises NoChangeOpenError: If the transaction only reads.
         :raises NotFoundError: If the job is not stored.
         """
-        self._change.require_open()
-        own = await self.get(entity.id)
-        committed = self._committed.jobs.get(entity.id)
-        changed_here = self._snapshot.jobs.get(entity.id) is not own
-        if (current := own if changed_here else committed) is None:
-            raise NotFoundError(entity.id)
-        if current.state not in expected:
+        self._require_writable()
+        if self.get(entity.id).state not in expected:
             return None
         self._rows[entity.id] = entity
         return entity
 
 
+class InMemoryRepositories(Repositories):
+    """Every in-memory repository of one transaction, over the tables of that transaction.
+
+    :ivar projects: Project repository of this transaction.
+    :ivar sources: Source repository of this transaction.
+    :ivar scans: Scan repository of this transaction.
+    :ivar pages: Page repository of this transaction.
+    :ivar pagination_sections: Pagination section repository of this transaction.
+    :ivar page_versions: Page version repository of this transaction.
+    :ivar page_stages: Page stage repository of this transaction.
+    :ivar page_step_states: Page step state repository of this transaction.
+    :ivar page_step_changes: Page step change repository of this transaction.
+    :ivar step_values: Step values repository of this transaction.
+    :ivar result_mark_changes: Result mark change repository of this transaction.
+    :ivar recipes: Recipe repository of this transaction.
+    :ivar recipe_profiles: Recipe profile repository of this transaction.
+    :ivar jobs: Job repository of this transaction.
+    :ivar book_places: Book place repository of this transaction.
+    """
+
+    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
+        """Build the repositories over the tables of one transaction.
+
+        :param tables: Tables the repositories read and, when ``writable``, change in place.
+        :type tables: InMemoryTables
+        :param writable: Whether the transaction may write, which every write of a repository requires.
+        :type writable: bool
+        """
+        self.projects = InMemoryProjectRepository(tables, writable=writable)
+        self.sources = InMemorySourceRepository(tables, writable=writable)
+        self.scans = InMemoryScanRepository(tables, writable=writable)
+        self.pages = InMemoryPageRepository(tables, writable=writable)
+        self.pagination_sections = InMemoryPaginationSectionRepository(tables, writable=writable)
+        self.page_versions = InMemoryPageVersionRepository(tables, writable=writable)
+        self.page_stages = InMemoryPageStageRepository(tables, writable=writable)
+        self.page_step_states = InMemoryPageStepStateRepository(tables, writable=writable)
+        self.page_step_changes = InMemoryPageStepChangeRepository(tables, writable=writable)
+        self.step_values = InMemoryStepValuesRepository(tables, writable=writable)
+        self.result_mark_changes = InMemoryResultMarkChangeRepository(tables, writable=writable)
+        self.recipes = InMemoryRecipeRepository(tables, writable=writable)
+        self.recipe_profiles = InMemoryRecipeProfileRepository(tables, writable=writable)
+        self.jobs = InMemoryJobRepository(tables, writable=writable)
+        self.book_places = InMemoryBookPlaceRepository(tables, writable=writable)
+
+
 class InMemoryUnitOfWork(UnitOfWork):
-    """A transaction over a private copy of the database that publishes only its own changes when a block ends.
+    """Runs the work of a use case on the in-memory database, one transaction for each call.
 
-    Rows are frozen entities, so a changed row is a different object: comparing identities against the snapshot taken
-    when the transaction began finds exactly what this unit added, replaced or removed.
-
-    :ivar projects: Project repository over the working copy.
-    :ivar sources: Source repository over the working copy.
-    :ivar scans: Scan repository over the working copy.
-    :ivar pages: Page repository over the working copy.
-    :ivar pagination_sections: Pagination section repository over the working copy.
-    :ivar page_versions: Page version repository over the working copy.
-    :ivar page_stages: Page stage repository over the working copy.
-    :ivar page_step_states: Page step state repository over the working copy.
-    :ivar page_step_changes: Page step change repository over the working copy.
-    :ivar step_values: Step values repository over the working copy.
-    :ivar result_mark_changes: Result mark change repository over the working copy.
-    :ivar recipes: Recipe repository over the working copy.
-    :ivar recipe_profiles: Recipe profile repository over the working copy.
-    :ivar jobs: Job repository over the working copy.
-    :ivar book_places: Book place repository over the working copy.
+    The unit of work keeps no state between calls: every call builds the repositories of its own transaction.
     """
 
     def __init__(self, database: InMemoryDatabase, *, wait_seconds: float = DEFAULT_CHANGE_WAIT_SECONDS) -> None:
-        """Begin a transaction over ``database``.
+        """Run the work of its calls on ``database``.
 
         :param database: Committed state shared with every other unit of work.
         :type database: InMemoryDatabase
-        :param wait_seconds: How long a block of this unit of work waits for its lock before it gives up with
+        :param wait_seconds: How long a change of this unit of work waits for its lock before it gives up with
                              ``BookBusyError``.
         :type wait_seconds: float
         """
         self._database = database
         self._wait_seconds = wait_seconds
-        self._change = ChangeState()
-        # The repositories are built once and keep these tables for the life of the unit of work, as the repositories
-        # of a database adapter keep their session; every transaction refills the tables in place
-        self._snapshot = InMemoryTables()
-        self._tables = InMemoryTables()
-        change, committed = self._change, self._database.tables
-        self.projects = InMemoryProjectRepository(self._tables, change=change)
-        self.sources = InMemorySourceRepository(self._tables, change=change)
-        self.scans = InMemoryScanRepository(self._tables, change=change)
-        self.pages = InMemoryPageRepository(self._tables, change=change)
-        self.pagination_sections = InMemoryPaginationSectionRepository(self._tables, change=change)
-        self.page_versions = InMemoryPageVersionRepository(
-            self._tables, change=change, snapshot=self._snapshot, committed=committed
-        )
-        self.page_stages = InMemoryPageStageRepository(self._tables, change=change)
-        self.page_step_states = InMemoryPageStepStateRepository(self._tables, change=change)
-        self.page_step_changes = InMemoryPageStepChangeRepository(self._tables, change=change)
-        self.step_values = InMemoryStepValuesRepository(self._tables, change=change)
-        self.result_mark_changes = InMemoryResultMarkChangeRepository(self._tables, change=change)
-        self.recipes = InMemoryRecipeRepository(self._tables, change=change)
-        self.recipe_profiles = InMemoryRecipeProfileRepository(self._tables, change=change)
-        self.jobs = InMemoryJobRepository(self._tables, change=change, snapshot=self._snapshot, committed=committed)
-        self.book_places = InMemoryBookPlaceRepository(
-            self._tables, change=change, snapshot=self._snapshot, committed=committed
-        )
-        self._begin()
 
     @override
-    @asynccontextmanager
-    async def change_book(self, project_id: ProjectId) -> AsyncIterator[Project]:
-        """Open a block that holds the lock of the book, and read the project from a copy taken once it is held.
+    async def read[T](self, work: Callable[[Repositories], T]) -> T:
+        """Run ``work`` on the committed tables, which its repositories refuse to write.
+
+        Nothing commits while the work runs, so every read of it sees the same state, and a read takes no lock.
+
+        :param work: Function over the repositories of the transaction.
+        :type work: Callable[[Repositories], T]
+        :returns: What the work returns.
+        :rtype: T
+        :raises NoChangeOpenError: If the work writes.
+        """
+        return work(InMemoryRepositories(self._database.tables, writable=False))
+
+    @override
+    async def change[T](self, work: Callable[[Repositories], T]) -> T:
+        """Run ``work`` on a copy of the tables under the lock of the changes outside the content of a book.
+
+        :param work: Function over the repositories of the transaction.
+        :type work: Callable[[Repositories], T]
+        :returns: What the work returns.
+        :rtype: T
+        :raises BookBusyError: If the lock was not free within the wait limit.
+        """
+        async with hold_in_turn(self._database.change_lock, wait_seconds=self._wait_seconds):
+            return self._run(work)
+
+    @override
+    async def change_book[T](self, project_id: ProjectId, work: Callable[[Repositories, Project], T]) -> T:
+        """Run ``work`` on a copy of the tables under the lock of the book, with the project read from that copy.
 
         :param project_id: Project whose book is changed.
         :type project_id: ProjectId
-        :returns: Iterator yielding the project as the previous change of the book left it.
-        :rtype: AsyncIterator[Project]
+        :param work: Function over the repositories of the transaction and the project read at its start.
+        :type work: Callable[[Repositories, Project], T]
+        :returns: What the work returns.
+        :rtype: T
         :raises NotFoundError: If the project is not stored.
         :raises BookBusyError: If the lock of the book was not free within the wait limit.
-        :raises NestedChangeError: If a block of this unit of work is open already.
         """
-        async with self._block(self._database.book_lock(project_id)):
-            yield await self.projects.get(project_id)
+        async with hold_in_turn(self._database.book_lock(project_id), wait_seconds=self._wait_seconds):
+            return self._run(lambda repositories: work(repositories, repositories.projects.get(project_id)))
 
-    @override
-    @asynccontextmanager
-    async def change(self) -> AsyncIterator[None]:
-        """Open a block that holds the lock of the changes outside the content of a book.
+    def _run[T](self, work: Callable[[Repositories], T]) -> T:
+        """Run ``work`` on a copy of the committed tables, which replaces them when the work returns.
 
-        :returns: Iterator yielding once the lock is held and the copy of the tables taken.
-        :rtype: AsyncIterator[None]
-        :raises BookBusyError: If the lock was not free within the wait limit.
-        :raises NestedChangeError: If a block of this unit of work is open already.
+        The copy is taken after the lock is held, so the work reads what the change that held the lock before it
+        committed. The work never returns to the event loop, so nothing commits between the copy and the replacement.
+        When the work raises, the copy is dropped and the exception goes on.
+
+        :param work: Function over the repositories of the transaction.
+        :type work: Callable[[Repositories], T]
+        :returns: What the work returns.
+        :rtype: T
         """
-        async with self._block(self._database.change_lock):
-            yield
-
-    @override
-    async def release_reads(self) -> None:
-        """Hold nothing outside a block, so there is nothing to end, and refuse the call inside one as a database does.
-
-        A read outside a block takes no lock and no connection from the in-memory database, and a write there is
-        refused at once, so no transaction is open between the blocks. The copy of the tables is not retaken, as a
-        database adapter does not promise the next read to be fresher either.
-
-        :raises NestedChangeError: If a block of this unit of work is open, whose transaction this would end.
-        """
-        if self._change.is_open:
-            raise NestedChangeError
-
-    @asynccontextmanager
-    async def _block(self, lock: anyio.Semaphore) -> AsyncIterator[None]:
-        """Hold a lock for a transaction that publishes its rows on exit and is discarded on an exception.
-
-        The copy of the tables is taken after the lock is held, so the block reads what the change that held the lock
-        before it committed. A normal exit merges only the rows the block added, replaced or removed into the committed
-        state, and nothing awaits between the first row and the last, so no other merge interleaves. Either way the
-        copy is taken again from the committed state, which a read outside a block then sees.
-
-        :param lock: Single-holder semaphore of the book or of the changes outside books.
-        :type lock: anyio.Semaphore
-        :returns: Iterator yielding once the lock is held and the copy of the tables taken.
-        :rtype: AsyncIterator[None]
-        :raises BookBusyError: If the lock was not free within the wait limit.
-        :raises NestedChangeError: If a block of this unit of work is open already.
-        """
-        if self._change.is_open:
-            raise NestedChangeError
-        async with hold_in_turn(lock, wait_seconds=self._wait_seconds):
-            self._begin()
-            self._change.is_open = True
-            try:
-                yield
-                committed = self._database.tables
-                for table in fields(InMemoryTables):
-                    before, after = getattr(self._snapshot, table.name), getattr(self._tables, table.name)
-                    target = getattr(committed, table.name)
-                    for key in before.keys() - after.keys():
-                        target.pop(key, None)
-                    target.update({key: row for key, row in after.items() if before.get(key) is not row})
-            finally:
-                self._begin()
-                self._change.is_open = False
-
-    def _begin(self) -> None:
-        """Start a transaction from the committed state, refilling in place the tables the repositories hold.
-
-        The rows themselves are immutable and shared with the committed state, only the tables are copied.
-        """
-        for table in fields(InMemoryTables):
-            committed = getattr(self._database.tables, table.name)
-            for copy in (getattr(self._snapshot, table.name), getattr(self._tables, table.name)):
-                copy.clear()
-                copy.update(committed)
+        tables = self._database.tables.copy()
+        result = work(InMemoryRepositories(tables, writable=True))
+        self._database.tables.replace_with(tables)
+        return result

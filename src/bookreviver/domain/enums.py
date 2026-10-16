@@ -1269,10 +1269,10 @@ class SpanAttribute(LabeledStrEnum):
     BLOCK_OUTCOME = 'block.outcome', 'How the block ended'
     WAIT_MS = (
         'wait.ms',
-        'Milliseconds from asking for the write lock until the block resumed, event-loop delay included',
+        'Milliseconds from asking for the writer until the block had it, event-loop delay included',
     )
-    HOLD_MS = 'hold.ms', 'Milliseconds from the block resuming until its commit began, event-loop delay included'
-    COMMIT_MS = 'commit.ms', 'Milliseconds the commit of the block took, event-loop delay included'
+    HOLD_MS = 'hold.ms', 'Milliseconds the work held the transaction, from BEGIN until its commit began'
+    COMMIT_MS = 'commit.ms', 'Milliseconds the commit of the block took'
     LAG_MS = 'lag.ms', 'Milliseconds a sleep of the probe overran its interval'
 
 
@@ -1303,4 +1303,4 @@ class BlockOutcome(LabeledStrEnum):
 
     COMMITTED = 'committed', 'Committed'
     ROLLED_BACK = 'rolled-back', 'Rolled back'
-    NOT_BEGUN = 'not-begun', 'The lock was not taken'
+    NOT_BEGUN = 'not-begun', 'The transaction did not begin'

@@ -143,4 +143,4 @@ class TestPlaceService:
         with pytest.raises(NotFoundError):
             await places.save(stranger, project.id, _place())
         key = BookPlaceKey(stranger.account_id, project.id)
-        assert await InMemoryUnitOfWork(fx_database).book_places.find(key) is None
+        assert await InMemoryUnitOfWork(fx_database).read(lambda repos: repos.book_places.find(key)) is None

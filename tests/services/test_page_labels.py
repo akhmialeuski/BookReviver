@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Page, Project
     from bookreviver.domain.ids import PageId, ProjectId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.fakes_jobs import RecordingEventBus
 
@@ -231,21 +231,20 @@ class TestUpdate:
 
 
 class TestConcurrentWrites:
-    """Tests for the use cases that write pages while another block of the same book is open."""
+    """Tests for the use cases that write pages while another change of the same book is waiting for the book."""
 
-    async def test_a_job_writing_a_moved_page_during_a_group_move_keeps_both_changes(
+    async def test_a_job_writing_a_moved_page_after_a_group_move_keeps_both_changes(
         self,
         fx_database: InMemoryDatabase,
         fx_asset_store: LocalAssetStore,
         fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
         fx_actor: Actor,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Verify a group move ends in the new order while a job records the content of one of the moved pages.
 
-        It replays the failure of ``pages.spec.ts`` of 2026-10-09. The move is inside its block when the job's write
-        starts as a concurrent task, so the job's block has to wait for the move and then read the new order. Ordering
-        is proved with events and ``wait_all_tasks_blocked``, never by waiting for a time.
+        It replays the failure of ``pages.spec.ts`` of 2026-10-09. The book is held, the move asks for it first and
+        the job's write second, so the job's change has to wait for the move and then read the new order. Ordering is
+        proved with ``wait_all_tasks_blocked``, never by waiting for a time.
 
         :param fx_database: In-memory database of the test.
         :type fx_database: InMemoryDatabase
@@ -255,32 +254,30 @@ class TestConcurrentWrites:
         :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param monkeypatch: Fixture that restores the patched method after the test.
-        :type monkeypatch: pytest.MonkeyPatch
         """
         project, pages = await _commit_book(fx_database, fx_actor)
         moved = [pages[0].id, pages[1].id]
         anchor = PageAnchor(page_id=pages[3].id, side=Side.AFTER)
-        mover = InMemoryUnitOfWork(fx_database)
-        gate = hold_book(mover, monkeypatch)
         seen_by_job: list[PageId] = []
 
-        async def job_writes_content() -> None:
-            """Record the content of the second moved page in a block of its own, and note the order it read there."""
-            job = InMemoryUnitOfWork(fx_database)
-            async with job.change_book(project.id):
-                seen_by_job.extend(page.id for page in await book_pages(job.pages, project.id))
-                await job.pages.update(evolve(await job.pages.get(moved[1]), content_type=ContentType.COLOR_PICTURE))
+        def job_writes_content(repos: Repositories, _project: Project) -> None:
+            """Note the order of the book the job finds, and record the content of the second moved page.
 
-        async with anyio.create_task_group() as group:
-            group.start_soon(
-                make_page_service(mover, fx_asset_store, fx_runtime).move_group, fx_actor, project.id, moved, anchor
-            )
-            await gate.entered.wait()
-            group.start_soon(job_writes_content)
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: The project as the change finds it, which the work does not need.
+            :type _project: Project
+            """
+            seen_by_job.extend(page.id for page in book_pages(repos.pages, project.id))
+            repos.pages.update(evolve(repos.pages.get(moved[1]), content_type=ContentType.COLOR_PICTURE))
+
+        mover = make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime)
+        async with anyio.create_task_group() as group, hold_book(fx_database, project.id):
+            group.start_soon(mover.move_group, fx_actor, project.id, moved, anchor)
+            await anyio.wait_all_tasks_blocked()
+            group.start_soon(InMemoryUnitOfWork(fx_database).change_book, project.id, job_writes_content)
             await anyio.wait_all_tasks_blocked()
             expect(not seen_by_job)
-            gate.proceed.set()
 
         order = sorted(fx_database.tables.pages.values(), key=lambda page: page.order_key)
         expected = [pages[2].id, pages[3].id, *moved, pages[4].id]
@@ -290,15 +287,17 @@ class TestConcurrentWrites:
         assert_expectations()
 
     @pytest.mark.parametrize('write', [_update_kind, _delete_page], ids=['update', 'delete'])
-    async def test_a_use_case_started_while_another_is_inside_its_block_waits_for_it(
+    async def test_a_use_case_started_while_the_book_is_held_writes_after_the_one_asked_before_it(
         self,
         write: Callable[[PageService, Actor, ProjectId, list[PageId]], Coroutine[Any, Any, None]],
         fx_database: InMemoryDatabase,
         fx_service_over: Callable[[UnitOfWork], PageService],
         fx_actor: Actor,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Verify a use case that starts while a move holds the book writes nothing before the move has ended.
+        """Verify two use cases that ask for a held book write nothing before it is free, and then in the order asked.
+
+        The move asks first and the other use case second. Each is blocked at the book, so neither has written when
+        the book is held, and after it is freed the move has written and the other use case ran on the book it left.
 
         :param write: The use case that starts second, given the service, the actor, the project and the page ids.
         :type write: Callable[[PageService, Actor, ProjectId, list[PageId]], Coroutine[Any, Any, None]]
@@ -308,34 +307,25 @@ class TestConcurrentWrites:
         :type fx_service_over: Callable[[UnitOfWork], PageService]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param monkeypatch: Fixture that restores the patched method after the test.
-        :type monkeypatch: pytest.MonkeyPatch
         """
         project, pages = await _commit_book(fx_database, fx_actor)
         ids = [page.id for page in pages]
-        mover = InMemoryUnitOfWork(fx_database)
-        gate = hold_book(mover, monkeypatch)
         before = dict(fx_database.tables.pages)
 
-        async with anyio.create_task_group() as group:
+        async with anyio.create_task_group() as group, hold_book(fx_database, project.id):
             group.start_soon(
-                fx_service_over(mover).move,
+                fx_service_over(InMemoryUnitOfWork(fx_database)).move,
                 fx_actor,
                 project.id,
                 ids[0],
                 PageAnchor(page_id=ids[3], side=Side.AFTER),
             )
-            await gate.entered.wait()
-            group.start_soon(
-                write,
-                fx_service_over(InMemoryUnitOfWork(fx_database)),
-                fx_actor,
-                project.id,
-                ids,
-            )
+            await anyio.wait_all_tasks_blocked()
+            group.start_soon(write, fx_service_over(InMemoryUnitOfWork(fx_database)), fx_actor, project.id, ids)
             await anyio.wait_all_tasks_blocked()
             expect(_written(fx_database, before) == set())
-            gate.proceed.set()
 
         expect(fx_database.tables.pages[ids[0]].order_key != pages[0].order_key)
+        # The third page is the one both use cases of the parameters write: its row is changed or gone
+        expect(fx_database.tables.pages.get(ids[2]) is not before[ids[2]])
         assert_expectations()

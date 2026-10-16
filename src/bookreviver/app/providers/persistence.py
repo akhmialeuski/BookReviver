@@ -75,10 +75,10 @@ class MemoryPersistenceProvider(Provider):
 
 
 class SqlAlchemyPersistenceProvider(Provider):
-    """SQL persistence: the unit of work of the request session that ``DatabaseProvider`` builds is the port's.
+    """SQL persistence: the unit of work of the request that ``DatabaseProvider`` builds is the port's.
 
-    The provider builds nothing. The engine, the session and the unit of work come from ``DatabaseProvider``, which
-    the account tables share, so selecting this backend adds no second connection pool and no second unit of work.
+    The provider builds nothing. The engines and the unit of work come from ``DatabaseProvider``, which the account
+    tables share, so selecting this backend adds no second connection pool and no second unit of work.
     """
 
     unit_of_work = alias(source=SqlAlchemyUnitOfWork, provides=UnitOfWork)

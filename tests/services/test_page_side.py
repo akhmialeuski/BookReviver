@@ -18,6 +18,7 @@ from tests.helpers.processors import FakeProcessor
 if TYPE_CHECKING:
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Page, PageVersion
+    from bookreviver.ports.persistence import Repositories
     from bookreviver.ports.processing import StepInput
 
 pytestmark = pytest.mark.anyio
@@ -73,10 +74,20 @@ async def head_of(kit: ProcessingKit, page: Page) -> PageVersion:
     :returns: The version the stage record names.
     :rtype: PageVersion
     """
-    reader = kit.uow()
-    record = await reader.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
-    assert record.head_version_id is not None
-    return await reader.page_versions.get(record.head_version_id)
+
+    def read_head(repos: Repositories) -> PageVersion:
+        """Read the record of the stage and the version it names, in one snapshot.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :returns: The version the stage record names.
+        :rtype: PageVersion
+        """
+        record = repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        assert record.head_version_id is not None
+        return repos.page_versions.get(record.head_version_id)
+
+    return await kit.uow().read(read_head)
 
 
 class TestPageSide:

@@ -1,7 +1,7 @@
 """Fixtures giving the SQLAlchemy adapter tests a fresh SQLite database at the head revision, and an owner.
 
 The tests of the write blocks get a database whose blocks are timed by a tracer that tells them when a block asks for
-the lock, a second database over the same file whose blocks give up almost at once, and a project to change.
+the writer, a second database over the same file whose blocks give up almost at once, and a project to change.
 """
 
 from typing import TYPE_CHECKING
@@ -94,8 +94,7 @@ async def fx_open_database(
 
     Each database has a write queue of its own, so its blocks meet those of the traced database at the busy timeout of
     SQLite, as the blocks of another process do, and meet each other in its queue. The busy timeout is the one every
-    connection of the database opens with, so a unit of work whose limit is shorter than it counts as a request, and
-    one whose limit is not shorter counts as a job.
+    connection of the database opens with.
 
     :param fx_traced_database: The database whose file and schema the others share.
     :type fx_traced_database: SqlDatabase
@@ -153,7 +152,6 @@ async def fx_project(fx_traced_database: SqlDatabase, fx_tracer: AskingTracer) -
     :rtype: Project
     """
     project = make_project(owner_id=await commit_account(fx_traced_database))
-    async with fx_traced_database.sessions() as session:
-        await store_project(SqlAlchemyUnitOfWork(session), project)
+    await store_project(SqlAlchemyUnitOfWork(fx_traced_database), project)
     fx_tracer.finished.clear()
     return project

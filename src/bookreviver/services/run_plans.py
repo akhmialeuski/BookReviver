@@ -19,12 +19,12 @@ from bookreviver.services.page_batches import PageBatch
 from bookreviver.services.projects import book_pages, owned_project
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
-    from bookreviver.domain.entities import Actor, Page, PageStepChange, PageStepState, Recipe
+    from bookreviver.domain.entities import Actor, Page, PageStepChange, PageStepState, Project, Recipe
     from bookreviver.domain.ids import PageId, ProjectId, StepId
     from bookreviver.domain.values import StageRun
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.services.recipes import RecipeBook
 
@@ -37,7 +37,7 @@ class RunPlan:
     ) -> None:
         """Plan one run over the ports of a request or a job.
 
-        :param uow: Unit of work the pages, the recipes and the states are read through.
+        :param uow: Unit of work the pages and the states are read through and the work of the mode is written by.
         :type uow: UnitOfWork
         :param recipes: The recipes of the project, which supply the recipe of each page.
         :type recipes: RecipeBook
@@ -100,25 +100,37 @@ class RunPlan:
         )
 
     async def apply_mode(self) -> Sequence[PageStepChange]:
-        """Take the work the mode names away from the steps of the run on its pages, as one batch, in one block.
+        """Take the work the mode names away from the steps of the run on its pages, as one batch, in one transaction.
 
-        Called outside any block, and it opens a ``change_book`` of its own. The recipes are chosen before the block,
-        since choosing them may store the defaults in a block of its own, and the states of the steps are read inside
-        it, so a page that was deleted meanwhile has none left to remove and a state a user changed is removed as it
-        stands. A run that keeps the work changes nothing. The stage of a page is not marked stale, since the run that
-        follows makes it again.
+        Called outside any transaction, and it opens a ``change_book`` of its own. The recipes are chosen before it,
+        since choosing them may store the defaults in a transaction of their own, and the states of the steps are read
+        inside it, so a page that was deleted meanwhile has none left to remove and a state a user changed is removed
+        as it stands. A run that keeps the work changes nothing. The stage of a page is not marked stale, since the run
+        that follows makes it again.
 
         :returns: The changes written, one for each layer removed, which are none when no page had any.
         :rtype: Sequence[PageStepChange]
         """
         if self._run.mode is not RunMode.DROP_OWN:
             return ()
-        await self._picked()
-        async with self._uow.change_book(self._project_id):
-            batch = PageBatch(uow=self._uow, source=ChangeSource.RUN, moment=self._clock.now())
-            for state in await self._states():
-                await batch.clear_work(state)
-            return await batch.flush()
+        picked = await self._picked()
+
+        def work(repos: Repositories, _project: Project) -> Sequence[PageStepChange]:
+            """Remove the settings and the manual edits of the steps of the run, as one batch.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: The project as the change finds it, which the removal does not read.
+            :type _project: Project
+            :returns: The changes written, one for each layer removed.
+            :rtype: Sequence[PageStepChange]
+            """
+            batch = PageBatch(repos=repos, source=ChangeSource.RUN, moment=self._clock.now())
+            for state in self._states_in(repos, picked):
+                batch.clear_work(state)
+            return batch.flush()
+
+        return await self._uow.change_book(self._project_id, work)
 
     async def _named(self) -> Sequence[Page]:
         """Choose the pages the run names, or every page of the book that has an image, before any is left out.
@@ -128,10 +140,21 @@ class RunPlan:
         :raises NotFoundError: If a page the run names is not one of the project.
         """
         if self._named_pages is None:
-            if self._run.page_ids is None:
-                found = await book_pages(self._uow.pages, self._project_id)
-            else:
-                found = list(await self._uow.pages.list_by_ids(self._project_id, self._run.page_ids))
+
+            def work(repos: Repositories) -> list[Page]:
+                """Read the pages the run names from one snapshot of the book.
+
+                :param repos: Repositories of the transaction.
+                :type repos: Repositories
+                :returns: The pages in book order.
+                :rtype: list[Page]
+                :raises NotFoundError: If a page the run names is not one of the project.
+                """
+                if self._run.page_ids is None:
+                    return book_pages(repos.pages, self._project_id)
+                return list(repos.pages.list_by_ids(self._project_id, self._run.page_ids))
+
+            found = await self._uow.read(work)
             self._named_pages = [page for page in found if page.origin is not PageOrigin.PLACEHOLDER]
         return self._named_pages
 
@@ -160,16 +183,31 @@ class RunPlan:
     async def _states(self) -> list[PageStepState]:
         """Read the states of the steps the run goes over, each step on the pages the run names with it.
 
+        The recipes are chosen first, outside the transaction that reads, since choosing them may store the defaults.
+
+        :returns: The states that are stored, which are none for a step and a page without settings and edit.
+        :rtype: list[PageStepState]
+        """
+        picked = await self._picked()
+        return await self._uow.read(lambda repos: self._states_in(repos, picked))
+
+    def _states_in(self, repos: Repositories, picked: Mapping[PageId, Recipe]) -> list[PageStepState]:
+        """Read the states of the steps the run goes over in the transaction of the caller.
+
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: Repositories
+        :param picked: The recipe of every page the run names.
+        :type picked: Mapping[PageId, Recipe]
         :returns: The states that are stored, which are none for a step and a page without settings and edit.
         :rtype: list[PageStepState]
         """
         by_step: dict[StepId, list[PageId]] = {}
-        for page_id, recipe in (await self._picked()).items():
+        for page_id, recipe in picked.items():
             for _, step in recipe.indexed_steps_through(self._run.through_step):
                 by_step.setdefault(step.step_id, []).append(page_id)
         states: list[PageStepState] = []
         for step_id, page_ids in by_step.items():
-            states.extend(await self._uow.page_step_states.list_for_step(page_ids, self._run.stage, step_id))
+            states.extend(repos.page_step_states.list_for_step(page_ids, self._run.stage, step_id))
         return states
 
 
@@ -204,6 +242,6 @@ class RunImpactService:
         :rtype: RunImpact
         :raises NotFoundError: If the actor has no such project or page, or the stage has no recipe.
         """
-        await owned_project(self._uow.projects, actor, project_id)
+        await self._uow.read(lambda repos: owned_project(repos.projects, actor, project_id))
         plan = RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, project_id=project_id, run=run)
         return await plan.impact()

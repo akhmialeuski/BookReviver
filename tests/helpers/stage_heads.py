@@ -9,8 +9,9 @@ from bookreviver.domain.values import Renditions
 from tests.helpers.builders import make_page_stage, make_page_version
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Page, PageVersion
+    from bookreviver.domain.entities import Page, PageVersion, Project
     from bookreviver.domain.enums import Stage
+    from bookreviver.ports.persistence import Repositories
     from tests.helpers.processing import ProcessingKit
 
 
@@ -39,10 +40,19 @@ async def seed_head(
         renditions=Renditions(ready=ready),
         state=VersionState.READY,
     )
-    uow = kit.uow()
-    async with uow.change_book(page.project_id):
-        await uow.page_versions.add(version)
-        await uow.page_stages.save(
+
+    def save_head(repos: Repositories, _project: Project) -> None:
+        """Add the version and save the record of the stage that names it as current.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :param _project: Project of the book, which the work does not need.
+        :type _project: Project
+        """
+        repos.page_versions.add(version)
+        repos.page_stages.save(
             make_page_stage(page_id=page.id, stage=stage, head_version_id=version.id, state=StageState.FRESH)
         )
+
+    await kit.uow().change_book(page.project_id, save_head)
     return version

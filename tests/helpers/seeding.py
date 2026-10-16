@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
+from bookreviver.domain.enums import BlockKind
+from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 from tests.helpers.builders import new_account_id
 
 if TYPE_CHECKING:
@@ -13,7 +15,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Page, PageVersion, Project, Scan, Source
     from bookreviver.domain.ids import AccountId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
 
 # Domain of the addresses of seeded accounts, reserved for examples by RFC 2606
 ACCOUNT_DOMAIN: str = 'example.org'
@@ -37,18 +39,20 @@ async def commit_account(
     """
     if account_id is None:
         account_id = new_account_id()
-    async with database.sessions() as session:
-        session.add(
-            AccountTable(
-                id=account_id,
-                email=f'{account_id}@{ACCOUNT_DOMAIN}',
-                hashed_password=hashed_password,
-                is_active=True,
-                is_superuser=False,
-                is_verified=True,
-            )
-        )
-        await session.commit()
+    account = AccountTable(
+        id=account_id,
+        email=f'{account_id}@{ACCOUNT_DOMAIN}',
+        hashed_password=hashed_password,
+        is_active=True,
+        is_superuser=False,
+        is_verified=True,
+    )
+    await database.write(
+        lambda session: session.add(account),
+        kind=BlockKind.OTHER,
+        book=None,
+        wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
+    )
     return account_id
 
 
@@ -65,7 +69,7 @@ async def store_project(
     The project is a change outside the content of a book, so it is stored by ``change``. The rest is the content of
     the book, so it is stored by ``change_book`` of the project, which cannot open before the project exists.
 
-    :param uow: Unit of work of any backend, with no block open.
+    :param uow: Unit of work of any backend.
     :type uow: UnitOfWork
     :param project: Project to store.
     :type project: Project
@@ -78,13 +82,22 @@ async def store_project(
     :param versions: Versions of those pages.
     :type versions: Sequence[PageVersion]
     """
-    async with uow.change():
-        await uow.projects.add(project)
-    async with uow.change_book(project.id):
-        await uow.sources.add_many(sources)
-        await uow.scans.add_many(scans)
-        await uow.pages.add_many(pages)
-        await uow.page_versions.add_many(versions)
+
+    def store_content(repos: Repositories, _project: Project) -> None:
+        """Store the sources, scans, pages and versions of the book in the order their keys need.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :param _project: Project of the book, which the work does not need.
+        :type _project: Project
+        """
+        repos.sources.add_many(sources)
+        repos.scans.add_many(scans)
+        repos.pages.add_many(pages)
+        repos.page_versions.add_many(versions)
+
+    await uow.change(lambda repos: repos.projects.add(project))
+    await uow.change_book(project.id, store_content)
 
 
 async def commit_project(

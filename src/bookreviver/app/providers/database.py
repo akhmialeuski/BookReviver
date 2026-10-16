@@ -1,6 +1,7 @@
 """Provider of the SQL database, used by the SQLAlchemy persistence backend and by the account tables.
 
-The session of a request carries one unit of work, which is built here so that the books and the accounts share it.
+The database is one per application, and the unit of work over it is built per request or job, so that the books and
+the accounts share it.
 
 The application never changes the schema. Migrations are applied by hand, after a copy of the data directory if it
 matters, and the provider only compares the revision of the database with the head of the migrations the code
@@ -13,7 +14,6 @@ know that revision, so the message names the downgrade to run with the code that
 from collections.abc import AsyncIterator
 
 from dishka import Provider, Scope, provide
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
@@ -27,10 +27,12 @@ MIGRATE_COMMAND: str = 'uv run bookreviver-migrate upgrade head'
 MIGRATE_DOWNGRADE_COMMAND: str = 'uv run bookreviver-migrate downgrade'
 # How the message names a database no revision was ever applied to
 NO_REVISION: str = 'none'
+# What stands between the revisions of a database that is at several of them
+REVISION_SEPARATOR: str = ', '
 
 
 class DatabaseProvider(Provider):
-    """One database per application whose schema is at the head revision, and one session per request."""
+    """One database per application whose schema is at the head revision, and one unit of work per request."""
 
     @provide(scope=Scope.APP)
     async def database(self, settings: Settings, tracer: Tracer) -> AsyncIterator[SqlDatabase]:
@@ -52,51 +54,42 @@ class DatabaseProvider(Provider):
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         try:
             revisions = await database.schema_revisions()
-            at, expected = ', '.join(revisions.database) or NO_REVISION, ', '.join(revisions.code)
+            at, expected = (
+                REVISION_SEPARATOR.join(revisions.database) or NO_REVISION,
+                REVISION_SEPARATOR.join(revisions.code),
+            )
+            state = f'Database schema is at revision {at}'
             # upgrade head cannot move a database from a revision it cannot locate, so that case names the way back
-            if unknown := ', '.join(revisions.unknown):
-                err_msg = (
-                    f'Database schema is at revision {at}, which this code does not ship, and code expects '
-                    f'{expected}: run `{MIGRATE_DOWNGRADE_COMMAND} {expected}` with the code that ships {unknown}, '
-                    f'or restore the copy of the data directory made before migrating'
+            if unknown := REVISION_SEPARATOR.join(revisions.unknown):
+                problem = f'{state}, which this code does not ship, and code expects {expected}'
+                command = f'{MIGRATE_DOWNGRADE_COMMAND} {expected}'
+                alternative = (
+                    f' with the code that ships {unknown}, or restore the copy of the data directory made before '
+                    f'migrating'
                 )
-                raise RuntimeError(err_msg)
-            if not revisions.is_current:
-                err_msg = f'Database schema is at revision {at}, code expects {expected}: run `{MIGRATE_COMMAND}`'
-                raise RuntimeError(err_msg)
-            yield database
+            elif not revisions.is_current:
+                problem = f'{state}, code expects {expected}'
+                command, alternative = MIGRATE_COMMAND, ''
+            else:
+                yield database
+                return
+            err_msg = f'{problem}: run `{command}`{alternative}'
+            raise RuntimeError(err_msg)
         finally:
             await database.dispose()
 
     @provide(scope=Scope.REQUEST)
-    async def session(self, database: SqlDatabase) -> AsyncIterator[AsyncSession]:
-        """Open a session for one request or job, rolled back unless its owner committed.
+    def unit_of_work(self, database: SqlDatabase, wait_seconds: ChangeWaitSeconds) -> SqlAlchemyUnitOfWork:
+        """Build the unit of work of a request or job, which keeps no state but the wait limit of its scope.
 
-        :param database: The application's database.
+        The repositories of the books and the account database both take this one, whatever backend the books are
+        stored in. It holds no session or connection, so it needs no closing.
+
+        :param database: The application's database, whose threads and connections the transactions use.
         :type database: SqlDatabase
-        :returns: Iterator yielding the session and closing it afterwards.
-        :rtype: AsyncIterator[AsyncSession]
-        """
-        # try/finally rather than `async with` around the yield: dishka drives this generator (ASYNC119)
-        session = database.sessions()
-        try:
-            yield session
-        finally:
-            await session.close()
-
-    @provide(scope=Scope.REQUEST)
-    def unit_of_work(self, session: AsyncSession, wait_seconds: ChangeWaitSeconds) -> SqlAlchemyUnitOfWork:
-        """Build the one unit of work of the session of a request or job.
-
-        Two units of work over one session would each guard against the block of the other, so the repositories of
-        the books and the account database both take this one, whatever backend the books are stored in.
-
-        :param session: Session of the current request or job.
-        :type session: AsyncSession
-        :param wait_seconds: How long a block of the unit of work waits for its turn and for the write lock, by the
-                             scope it lives in.
+        :param wait_seconds: How long a change of the unit of work waits for the writer, by the scope it lives in.
         :type wait_seconds: ChangeWaitSeconds
-        :returns: Unit of work whose repositories share ``session``.
+        :returns: Unit of work over the application's database.
         :rtype: SqlAlchemyUnitOfWork
         """
-        return SqlAlchemyUnitOfWork(session, wait_seconds=wait_seconds)
+        return SqlAlchemyUnitOfWork(database, wait_seconds=wait_seconds)

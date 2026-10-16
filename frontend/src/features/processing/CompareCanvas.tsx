@@ -49,6 +49,7 @@ export function CompareCanvas({
   roomShare = 0,
   reach = null,
   placement = null,
+  placementPending = false,
 }: {
   pairs: ComparePair;
   mode: CompareMode;
@@ -65,6 +66,11 @@ export function CompareCanvas({
   reach?: EditorReach | null;
   /** Where the two pictures stand in one world, or null for both as tall as a page. */
   placement?: PairPlacement | null;
+  /**
+   * Whether what the place is worked out from is still being read. The canvas then loads no picture and stays loading,
+   * since a picture shown now would stand as tall as the other and jump once the place is known.
+   */
+  placementPending?: boolean;
 }): React.JSX.Element {
   const [first, setFirst] = useState<HTMLDivElement | null>(null);
   const [aside, setAside] = useState<HTMLDivElement | null>(null);
@@ -129,6 +135,9 @@ export function CompareCanvas({
     let current = true;
     setState('loading');
     setSources([]);
+    if (placementPending) {
+      return;
+    }
     const before =
       beforeUrl === null || beforeKind === null ? null : { kind: beforeKind, url: beforeUrl };
     const after =
@@ -142,7 +151,7 @@ export function CompareCanvas({
     return () => {
       current = false;
     };
-  }, [stage, beforeKind, beforeUrl, afterKind, afterUrl, pageKey, stand]);
+  }, [stage, beforeKind, beforeUrl, afterKind, afterUrl, pageKey, stand, placementPending]);
 
   useEffect(() => stage?.setMode(mode), [stage, mode]);
   useEffect(() => stage?.setDivider(divider), [stage, divider]);

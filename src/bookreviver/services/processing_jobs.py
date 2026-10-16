@@ -47,9 +47,9 @@ from bookreviver.services.version_clearing import VersionClearing
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bookreviver.domain.entities import Job, Page, Recipe
-    from bookreviver.domain.ids import JobId, PageId, RecipeId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.domain.entities import Job, Page, PageStage, PageVersion, Project, Recipe
+    from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.ports.storage import AssetStore
     from bookreviver.services.book_measure import BlockMeasure
     from bookreviver.services.processing_parts import ProcessingParts
@@ -254,7 +254,7 @@ class ProcessingJobs:
         :raises DomainError: If the parameters of the job are not valid, or the recipe or a page it names is gone.
         """
         run = StageRun.from_map(job.params)
-        project = await self._uow.projects.get(job.project_id)
+        project = await self._uow.read(lambda repos: repos.projects.get(job.project_id))
         plan = RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, project_id=project.id, run=run)
         pages = await plan.pages()
         executor = RecipeRun(
@@ -336,14 +336,25 @@ class ProcessingJobs:
                 outcome = await executor.run(page, recipe, confirmed=run.confirm_unsplit, through_step=run.through_step)
             except Exception:
                 logger.exception('The stage %s failed on page %s', recipe.stage, page.id)
-                record = None
-                async with self._uow.change_book(page.project_id):
+
+                def fail(repos: Repositories, _project: Project) -> PageStage | None:
+                    """Record that the stage failed on the page, unless the page was deleted meanwhile.
+
+                    :param repos: Repositories of the transaction.
+                    :type repos: Repositories
+                    :param _project: The project as the change finds it, which the record does not read.
+                    :type _project: Project
+                    :returns: The record of the failed stage, or None when the page is gone.
+                    :rtype: PageStage | None
+                    """
                     try:
-                        await self._uow.pages.get(page.id)
+                        repos.pages.get(page.id)
                     except NotFoundError:
                         logger.warning('Page %s was deleted while its stage %s ran', page.id, recipe.stage)
-                    else:
-                        record = await self._records.mark_failed(page.id, recipe.stage, recipe_id=recipe.id)
+                        return None
+                    return self._records.mark_failed(repos, page.id, recipe.stage, recipe_id=recipe.id)
+
+                record = await self._uow.change_book(page.project_id, fail)
                 if record is not None:
                     await self._records.announce(page.project_id, [record])
                 outcome = RunOutcome.FAILED
@@ -358,15 +369,16 @@ class ProcessingJobs:
         :raises DomainError: If the parameters are not valid, the page is gone, or a step fails.
         """
         preview = StepPreview.from_map(job.params)
-        project = await self._uow.projects.get(job.project_id)
-        page = await self._uow.pages.get(preview.page_id)
+        project, page = await self._uow.read(
+            lambda repos: (repos.projects.get(job.project_id), repos.pages.get(preview.page_id))
+        )
         executor = PreviewRun(project=project, uow=self._uow, runtime=self._runtime)
         await executor.run(page, preview.stage, preview.steps, preview.step_index)
 
     async def _cut(self, job: Job) -> int | None:
         """Cut the pyramids of a ``cut-tiles`` job.
 
-        A pyramid is cut outside any block, and the version is marked in a short ``change_book`` that reads it again.
+        A pyramid is cut with no change open, and the version is marked in a short ``change_book`` that reads it again.
         A version that is gone or has changed since it was read keeps no mark, and a pyramid left for a version that is
         gone is removed.
 
@@ -377,26 +389,53 @@ class ProcessingJobs:
         :raises DomainError: If the parameters of the job are not valid.
         """
         cut = TileCut.from_map(job.params)
-        keys = ProjectKeys(job.project_id)
         for done, version_id in enumerate(cut.version_ids):
             if (saved := await self._tracker.advance(job, done=done, total=len(cut.version_ids))) is None:
                 return None
             job = saved
-            version = await self._uow.page_versions.find(version_id)
-            if version is None or version.state is not VersionState.READY or version.tiles_ready:
-                continue
-            if version.renditions is None:
-                continue
-            cut_version = await self._runtime.runner.cut_tiles(keys, version)
-            async with self._uow.change_book(job.project_id):
-                current = await self._uow.page_versions.find(version_id)
-                if stored := current == version:
-                    await self._uow.page_versions.update(cut_version)
-            if stored:
-                await self._runtime.publisher.publish(PageVersionReady(project_id=job.project_id, version=cut_version))
-            elif current is None:
-                await self._assets.delete_prefix(keys.version_rendition(version, Rendition.TILES))
+            await self._cut_version(job.project_id, version_id)
         return len(cut.version_ids)
+
+    async def _cut_version(self, project_id: ProjectId, version_id: PageVersionId) -> None:
+        """Cut the pyramid of one version, and mark the version as cut when it is still as it was read.
+
+        :param project_id: Project owning the version.
+        :type project_id: ProjectId
+        :param version_id: The version, which is passed by when it is gone, not ready, cut already or without an image.
+        :type version_id: PageVersionId
+        """
+        version = await self._uow.read(lambda repos: repos.page_versions.find(version_id))
+        if (
+            version is None
+            or version.state is not VersionState.READY
+            or version.tiles_ready
+            or version.renditions is None
+        ):
+            return
+        keys = ProjectKeys(project_id)
+        cut_version = await self._runtime.runner.cut_tiles(keys, version)
+
+        def mark(repos: Repositories, _project: Project) -> tuple[bool, PageVersion | None]:
+            """Store the version with its pyramid cut, when it is still as it was read.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: The project as the change finds it, which the marking does not read.
+            :type _project: Project
+            :returns: Whether the version was stored, and the version as the transaction found it, which is None when
+                      it is gone.
+            :rtype: tuple[bool, PageVersion | None]
+            """
+            found = repos.page_versions.find(version_id)
+            if stored := found == version:
+                repos.page_versions.update(cut_version)
+            return stored, found
+
+        stored, current = await self._uow.change_book(project_id, mark)
+        if stored:
+            await self._runtime.publisher.publish(PageVersionReady(project_id=project_id, version=cut_version))
+        elif current is None:
+            await self._assets.delete_prefix(keys.version_rendition(version, Rendition.TILES))
 
     async def _collect(self, job: Job) -> tuple[int, int] | None:
         """Delete the versions that nothing needs, batch by batch, with their files and their rows.
@@ -413,7 +452,9 @@ class ProcessingJobs:
         :raises DomainError: If the parameters of the job are not valid.
         """
         collection = VersionCollection.from_map(job.params)
-        old = await self._uow.page_versions.collectable(job.project_id, collection.previews_older_than)
+        old = await self._uow.read(
+            lambda repos: repos.page_versions.collectable(job.project_id, collection.previews_older_than)
+        )
         clearing = VersionClearing(uow=self._uow, assets=self._assets, project_id=job.project_id)
         deleted = 0
         for group in readers_first(old):

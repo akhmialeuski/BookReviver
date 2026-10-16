@@ -3,8 +3,9 @@
 A run that takes the work of the pages away, a value set for several pages, a value set for the odd pages, the even
 pages or a group, and a carry-over of a shape write the same thing: a layer of a step on many pages, each change in the
 history with the same batch and the source that made it. A state with neither a setting nor an edit left is deleted.
-The batch opens no block and marks no stage stale. Every method writes in the ``change_book`` block of the use case
-that owns it, which marks the stages stale once the batch is flushed.
+The batch opens no transaction and marks no stage stale. It is built inside the work of ``UnitOfWork.change_book`` from
+the repositories of that work, and every method is synchronous and writes through them. The use case that owns the work
+marks the stages stale once the batch is flushed.
 """
 
 from typing import TYPE_CHECKING
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.step_values import StepValues
     from bookreviver.domain.values import MetadataMap
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories
 
 
 # The layers a page changes for a step, which a run that drops the work empties, in the order the history of the page
@@ -39,23 +40,23 @@ class PageBatch:
     :ivar batch_id: The batch every change written through this object belongs to.
     """
 
-    def __init__(self, *, uow: UnitOfWork, source: ChangeSource, moment: datetime) -> None:
-        """Write through a unit of work, as one source, at one moment.
+    def __init__(self, *, repos: Repositories, source: ChangeSource, moment: datetime) -> None:
+        """Write through the repositories of one transaction, as one source, at one moment.
 
-        :param uow: Unit of work of the use case, whose block makes the batch durable when it ends.
-        :type uow: UnitOfWork
+        :param repos: Repositories of the work of the use case, whose transaction makes the batch durable when it ends.
+        :type repos: Repositories
         :param source: What makes the changes of the batch.
         :type source: ChangeSource
         :param moment: When the layers are set, which stamps the states and the changes.
         :type moment: datetime
         """
         self.batch_id = ChangeBatchId(uuid4())
-        self._uow = uow
+        self._repos = repos
         self._source = source
         self._moment = moment
         self._changes: list[PageStepChange] = []
 
-    async def write(self, state: PageStepState, layer: StepLayer, content: MetadataMap | None) -> PageStepState:
+    def write(self, state: PageStepState, layer: StepLayer, content: MetadataMap | None) -> PageStepState:
         """Set a layer of the state of a step on a page, storing the state and keeping the change.
 
         A use case that sets several layers of one state passes each call the state the call before returned.
@@ -75,15 +76,15 @@ class PageBatch:
         if changed.layer(layer) == state.layer(layer):
             return state
         if changed.is_empty:
-            await self._uow.page_step_states.delete(state.key)
+            self._repos.page_step_states.delete(state.key)
         else:
-            await self._uow.page_step_states.save(changed)
+            self._repos.page_step_states.save(changed)
         self._changes.append(
             evolve(PageStepChange.between(state, changed, layer, self._source), batch_id=self.batch_id)
         )
         return changed
 
-    async def write_values(self, values: StepValues, params: MetadataMap, pages: Sequence[PageId]) -> StepValues:
+    def write_values(self, values: StepValues, params: MetadataMap, pages: Sequence[PageId]) -> StepValues:
         """Set the fields the odd pages, the even pages or a group change for a step, and keep the change for each page.
 
         The values are stored once, and the history of each page that takes them gets a change, so the page shows the
@@ -103,16 +104,16 @@ class PageBatch:
             return values
         changed = evolve(values, params=params, updated_at=self._moment)
         if changed.is_empty:
-            await self._uow.step_values.delete(values.key)
+            self._repos.step_values.delete(values.key)
         else:
-            await self._uow.step_values.save(changed)
+            self._repos.step_values.save(changed)
         self._changes.extend(
             evolve(PageStepChange.of_values(page_id, values, changed, self._source), batch_id=self.batch_id)
             for page_id in pages
         )
         return changed
 
-    async def clear_work(self, state: PageStepState) -> PageStepState:
+    def clear_work(self, state: PageStepState) -> PageStepState:
         """Empty the settings and the manual edit of the state, which is the work of the page for the step.
 
         :param state: The state as it is stored.
@@ -121,17 +122,17 @@ class PageBatch:
         :rtype: PageStepState
         """
         for layer in WORK_LAYERS:
-            state = await self.write(state, layer, None)
+            state = self.write(state, layer, None)
         return state
 
-    async def flush(self) -> Sequence[PageStepChange]:
+    def flush(self) -> Sequence[PageStepChange]:
         """Add the changes of the batch to the history, which numbers them, and forget them.
 
-        It writes in the block of the caller and opens none.
+        It writes in the transaction of the caller and opens none.
 
         :returns: The changes as stored, in the order they were written.
         :rtype: Sequence[PageStepChange]
         """
-        added = await self._uow.page_step_changes.add_many(self._changes)
+        added = self._repos.page_step_changes.add_many(self._changes)
         self._changes = []
         return added

@@ -39,10 +39,12 @@ from tests.helpers.builders import make_page, make_page_stage, make_page_version
 from tests.helpers.page_batches import PageValues
 from tests.helpers.processors import MEASURING_KEY, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import run_stage
+from tests.helpers.stage_reads import book_summaries, books_with_progress, stage_rows
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Page, PageVersion, Project
     from bookreviver.domain.stage_summaries import StageSummary
+    from bookreviver.ports.persistence import Repositories
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -50,6 +52,7 @@ pytestmark = pytest.mark.anyio
 # The stages the fake catalogue of the kit has a processor for, which are available with the ones done by hand
 STAGES_WITH_A_PROCESSOR: frozenset[Stage] = frozenset({Stage.PAGE_SPLIT, Stage.GEOMETRY, Stage.CLEANUP})
 PAGE_KEYS: tuple[str, ...] = ('a0', 'a1', 'a2')
+FOURTH_KEY: str = 'a3'
 FAKE_KEY: str = FakeProcessor.spec.key
 ROTATION: NewPageEdit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=1.5))
 # A strength a page sets for its step, and a far one that makes the angle of the page depart from the book
@@ -94,7 +97,8 @@ async def seed_geometry(
     :param through_step: Step the page was run through when that is short of the last step, or None.
     :type through_step: int | None
     """
-    base = (await kit.uow().page_versions.list_for_page(page.id))[0]
+    uow = kit.uow()
+    base = (await uow.read(lambda repos: repos.page_versions.list_for_page(page.id)))[0]
     version = evolve(
         make_page_version(page_id=page.id, minutes=1),
         stage=Stage.GEOMETRY,
@@ -102,11 +106,20 @@ async def seed_geometry(
         review=review,
         state=VersionState.READY,
     )
-    uow = kit.uow()
-    async with uow.change_book(page.project_id):
-        await uow.page_versions.add(version)
+
+    def work(repos: Repositories, _project: Project) -> None:
+        """Add the version and the record of the stage that names it.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :param _project: The project of the page, which the change does not read.
+        :type _project: Project
+        """
+        repos.page_versions.add(version)
         record = make_page_stage(page_id=page.id, stage=Stage.GEOMETRY, head_version_id=version.id, state=state)
-        await uow.page_stages.save(evolve(record, through_step=through_step))
+        repos.page_stages.save(evolve(record, through_step=through_step))
+
+    await uow.change_book(page.project_id, work)
 
 
 async def mark_version(kit: ProcessingKit, version: PageVersion, mark: ResultMark) -> None:
@@ -120,9 +133,8 @@ async def mark_version(kit: ProcessingKit, version: PageVersion, mark: ResultMar
     :type mark: ResultMark
     """
     uow = kit.uow()
-    project_id = (await uow.pages.get(version.page_id)).project_id
-    async with uow.change_book(project_id):
-        await uow.page_versions.update(evolve(version, mark=mark))
+    project_id = (await uow.read(lambda repos: repos.pages.get(version.page_id))).project_id
+    await uow.change_book(project_id, lambda repos, _project: repos.page_versions.update(evolve(version, mark=mark)))
 
 
 async def seed_marked_chain(kit: ProcessingKit, page: Page, *, steps: int, marked_at: int) -> None:
@@ -140,8 +152,17 @@ async def seed_marked_chain(kit: ProcessingKit, page: Page, *, steps: int, marke
     :type marked_at: int
     """
     uow = kit.uow()
-    previous = (await uow.page_versions.list_for_page(page.id))[0]
-    async with uow.change_book(page.project_id):
+    first = (await uow.read(lambda repos: repos.page_versions.list_for_page(page.id)))[0]
+
+    def work(repos: Repositories, _project: Project) -> None:
+        """Add the chain of versions and the record of the stage that names the last one.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :param _project: The project of the page, which the change does not read.
+        :type _project: Project
+        """
+        previous = first
         for index in range(steps):
             version = evolve(
                 make_page_version(page_id=page.id, minutes=index + 1),
@@ -151,11 +172,13 @@ async def seed_marked_chain(kit: ProcessingKit, page: Page, *, steps: int, marke
                 review=ReviewReason.NOT_APPLIED if index >= marked_at else None,
                 state=VersionState.READY,
             )
-            await uow.page_versions.add(version)
+            repos.page_versions.add(version)
             previous = version
-        await uow.page_stages.save(
+        repos.page_stages.save(
             make_page_stage(page_id=page.id, stage=Stage.GEOMETRY, head_version_id=previous.id, state=StageState.FRESH)
         )
+
+    await uow.change_book(page.project_id, work)
 
 
 async def summaries_of(kit: ProcessingKit, project: Project) -> dict[Stage, StageSummary]:
@@ -168,8 +191,7 @@ async def summaries_of(kit: ProcessingKit, project: Project) -> dict[Stage, Stag
     :returns: The summary of each stage.
     :rtype: dict[Stage, StageSummary]
     """
-    overview = await kit.uow().projects.overview(project)
-    return {summary.stage: summary for summary in await kit.stages().of_book(overview)}
+    return {summary.stage: summary for summary in await book_summaries(kit, project)}
 
 
 class TestOfBook:
@@ -182,8 +204,7 @@ class TestOfBook:
         :type fx_kit: ProcessingKit
         """
         _, project, _ = await seed_book(fx_kit)
-        overview = await fx_kit.uow().projects.overview(project)
-        summaries = await fx_kit.stages().of_book(overview)
+        summaries = await book_summaries(fx_kit, project)
         expect([summary.stage for summary in summaries] == list(Stage))
         expect(
             {summary.stage for summary in summaries if summary.available}
@@ -275,13 +296,22 @@ class TestOfBook:
         """
         actor, project, pages = await seed_book(fx_kit)
         uow = fx_kit.uow()
-        async with uow.change_book(project.id):
-            await uow.pages.update(evolve(pages[1], kind=PageKind.PLATE))
-            await uow.pages.update(evolve(pages[2], kind=PageKind.BLANK))
-        await fx_kit.seed_scan_page(project, order_key='a3', kind=PageKind.TEXT)
+
+        def retype(repos: Repositories, _project: Project) -> None:
+            """Turn the second page into a plate and the third into a blank page.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: The project, which the change does not read.
+            :type _project: Project
+            """
+            repos.pages.update(evolve(pages[1], kind=PageKind.PLATE))
+            repos.pages.update(evolve(pages[2], kind=PageKind.BLANK))
+
+        await uow.change_book(project.id, retype)
+        await fx_kit.seed_scan_page(project, order_key=FOURTH_KEY, kind=PageKind.TEXT)
         placeholder = make_page(project_id=project.id, order_key='a4')
-        async with uow.change_book(project.id):
-            await uow.pages.add(placeholder)
+        await uow.change_book(project.id, lambda repos, _project: repos.pages.add(placeholder))
         before = (await summaries_of(fx_kit, project))[Stage.GEOMETRY].recipes
         recipes = {
             recipe.kind: recipe
@@ -315,7 +345,7 @@ class TestRows:
         _, project, pages = await seed_book(fx_kit)
         await seed_geometry(fx_kit, pages[0], StageState.FRESH, ReviewReason.NOT_APPLIED)
         await seed_geometry(fx_kit, pages[2], StageState.FAILED)
-        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
+        rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest())
         expect([row.page_id for row in rows.items] == [page.id for page in pages])
         expect(
             [row.status for row in rows.items]
@@ -335,7 +365,7 @@ class TestRows:
         _, project, pages = await seed_book(fx_kit)
         await seed_geometry(fx_kit, pages[0], StageState.FRESH, through_step=1)
         await seed_geometry(fx_kit, pages[1], StageState.FRESH)
-        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
+        rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest())
         assert [row.through_step for row in rows.items] == [1, None, None]
 
     async def test_a_marked_row_names_the_processor_of_the_step_that_marked_it(self, fx_kit: ProcessingKit) -> None:
@@ -348,7 +378,7 @@ class TestRows:
         await seed_marked_chain(fx_kit, pages[0], steps=3, marked_at=1)
         await seed_marked_chain(fx_kit, pages[1], steps=3, marked_at=3)
         await seed_geometry(fx_kit, pages[2], StageState.FRESH, ReviewReason.LOW_CONFIDENCE)
-        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
+        rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest())
         expect([row.review is not None for row in rows.items] == [True, False, True])
         expect(rows.items[0].review_processor == 'geometry.step1')
         expect(rows.items[1].review_processor is None)
@@ -364,17 +394,26 @@ class TestRows:
         _, project, pages = await seed_book(fx_kit)
         for page in pages:
             await seed_geometry(fx_kit, page, StageState.FRESH)
-        heads = [
-            next(
-                version
-                for version in await fx_kit.uow().page_versions.list_for_page(page.id)
-                if version.stage is Stage.GEOMETRY
-            )
-            for page in pages
-        ]
+
+        def geometry_heads(repos: Repositories) -> list[PageVersion]:
+            """Read the geometry version of every page, in the order of the pages.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The geometry version of each page.
+            :rtype: list[PageVersion]
+            """
+            return [
+                next(
+                    version for version in repos.page_versions.list_for_page(page.id) if version.stage is Stage.GEOMETRY
+                )
+                for page in pages
+            ]
+
+        heads = await fx_kit.uow().read(geometry_heads)
         await mark_version(fx_kit, heads[0], ResultMark.BAD)
         await mark_version(fx_kit, heads[1], ResultMark.GOOD)
-        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
+        rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest())
         assert [row.marked_bad for row in rows.items] == [True, False, False]
 
     async def test_a_mark_an_earlier_stage_made_names_no_step(self, fx_kit: ProcessingKit) -> None:
@@ -384,14 +423,12 @@ class TestRows:
         :type fx_kit: ProcessingKit
         """
         _, project, pages = await seed_book(fx_kit)
-        marked_base = evolve(
-            (await fx_kit.uow().page_versions.list_for_page(pages[0].id))[0], review=ReviewReason.UNSURE_GUTTER
-        )
         uow = fx_kit.uow()
-        async with uow.change_book(project.id):
-            await uow.page_versions.update(marked_base)
+        base = (await uow.read(lambda repos: repos.page_versions.list_for_page(pages[0].id)))[0]
+        marked_base = evolve(base, review=ReviewReason.UNSURE_GUTTER)
+        await uow.change_book(project.id, lambda repos, _project: repos.page_versions.update(marked_base))
         await seed_marked_chain(fx_kit, pages[0], steps=2, marked_at=0)
-        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
+        rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest())
         assert (rows.items[0].review is not None, rows.items[0].review_processor) == (True, None)
 
     async def test_only_the_records_of_the_asked_stage_count(self, fx_kit: ProcessingKit) -> None:
@@ -401,7 +438,7 @@ class TestRows:
         :type fx_kit: ProcessingKit
         """
         _, project, _ = await seed_book(fx_kit)
-        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
+        rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest())
         assert {row.status for row in rows.items} == {PageStageStatus.NOT_RUN}
 
     async def test_a_window_holds_its_pages_and_the_total_is_the_whole_book(self, fx_kit: ProcessingKit) -> None:
@@ -411,7 +448,7 @@ class TestRows:
         :type fx_kit: ProcessingKit
         """
         _, project, pages = await seed_book(fx_kit)
-        window = await fx_kit.stages().rows(project, Stage.PAGE_SPLIT, SliceRequest(offset=1, limit=1))
+        window = await stage_rows(fx_kit, project, Stage.PAGE_SPLIT, SliceRequest(offset=1, limit=1))
         expect([row.page_id for row in window.items] == [pages[1].id])
         expect(window.total == len(pages))
         assert_expectations()
@@ -427,8 +464,7 @@ class TestWithProgress:
         :type fx_kit: ProcessingKit
         """
         _, project, _ = await seed_book(fx_kit)
-        overview = await fx_kit.uow().projects.overview(project)
-        [with_progress] = await fx_kit.stages().with_progress([overview])
+        [with_progress] = await books_with_progress(fx_kit, project)
         assert with_progress.progress is not None
         statuses = {one.stage: one.status for one in with_progress.progress.stages}
         expect(with_progress.progress.next_stage is Stage.GEOMETRY)
@@ -447,8 +483,7 @@ class TestWithProgress:
         actor, project, _ = await seed_book(fx_kit)
         _, other = await fx_kit.seed_project()
         await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        overviews = [await fx_kit.uow().projects.overview(owned) for owned in (project, other)]
-        mine, theirs = await fx_kit.stages().with_progress(overviews)
+        mine, theirs = await books_with_progress(fx_kit, project, other)
         assert mine.progress is not None
         assert theirs.progress is not None
         expect({one.stage: one.status for one in mine.progress.stages}[Stage.GEOMETRY] is StageStatus.RUNNING)
@@ -461,7 +496,7 @@ class TestWithProgress:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        assert await fx_kit.stages().with_progress([]) == []
+        assert await books_with_progress(fx_kit) == []
 
 
 async def seed_text_and_leaf(kit: ProcessingKit) -> tuple[Actor, Project, Page, Page]:
@@ -478,9 +513,7 @@ async def seed_text_and_leaf(kit: ProcessingKit) -> tuple[Actor, Project, Page, 
     text, _ = await kit.seed_scan_page(project, order_key='a0')
     scanned, _ = await kit.seed_scan_page(project, order_key='a1')
     leaf = evolve(scanned, origin=PageOrigin.BLANK, scan_id=None)
-    uow = kit.uow()
-    async with uow.change_book(project.id):
-        await uow.pages.update(leaf)
+    await kit.uow().change_book(project.id, lambda repos, _project: repos.pages.update(leaf))
     for page in (text, leaf):
         await kit.seed_base_version(page)
     steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)]
@@ -499,11 +532,8 @@ async def step_ids_of(kit: ProcessingKit, project: Project) -> list[StepId]:
     :returns: The identifiers of the steps.
     :rtype: list[StepId]
     """
-    recipe = next(
-        recipe
-        for recipe in await kit.uow().recipes.list_for_stage(project.id, Stage.GEOMETRY)
-        if recipe.kind is RecipeKind.TEXT
-    )
+    stored = await kit.uow().read(lambda repos: repos.recipes.list_for_stage(project.id, Stage.GEOMETRY))
+    recipe = next(recipe for recipe in stored if recipe.kind is RecipeKind.TEXT)
     return [step.step_id for step in recipe.steps]
 
 
@@ -520,7 +550,7 @@ class TestStepRows:
         """
         _, project, _, _ = await seed_text_and_leaf(fx_kit)
         first, _ = await step_ids_of(fx_kit, project)
-        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
+        rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), first)
         assert [(row.step.state, row.step.version) for row in rows.items if row.step is not None] == [
             (FigureState.DEFAULT, None),
             (FigureState.DEFAULT, None),
@@ -533,7 +563,7 @@ class TestStepRows:
         :type fx_kit: ProcessingKit
         """
         _, project, _, _ = await seed_text_and_leaf(fx_kit)
-        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
+        rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest())
         assert [row.step for row in rows.items] == [None, None]
 
     async def test_a_page_has_found_the_shape_of_the_step_that_ran_on_it_and_a_leaf_skipped_it(
@@ -547,8 +577,8 @@ class TestStepRows:
         actor, project, _, _ = await seed_text_and_leaf(fx_kit)
         first, second = await step_ids_of(fx_kit, project)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        by_first = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
-        by_second = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), second)
+        by_first = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), first)
+        by_second = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), second)
         expect([row.step.state for row in by_first.items if row.step] == [FigureState.FOUND, FigureState.SKIPPED])
         expect([row.step.state for row in by_second.items if row.step] == [FigureState.FOUND, FigureState.SKIPPED])
         assert_expectations()
@@ -563,10 +593,10 @@ class TestStepRows:
         """
         actor, project, text, _ = await seed_text_and_leaf(fx_kit)
         first, second = await step_ids_of(fx_kit, project)
-        base = (await fx_kit.uow().page_versions.list_for_page(text.id))[0]
+        base = (await fx_kit.uow().read(lambda repos: repos.page_versions.list_for_page(text.id)))[0]
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        by_first = (await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)).items[0].step
-        by_second = (await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), second)).items[0].step
+        by_first = (await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), first)).items[0].step
+        by_second = (await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), second)).items[0].step
         assert by_first is not None
         assert by_second is not None
         assert by_first.input_version is not None
@@ -585,8 +615,8 @@ class TestStepRows:
         actor, project, text, _ = await seed_text_and_leaf(fx_kit)
         first, second = await step_ids_of(fx_kit, project)
         await fx_kit.edits().save(actor, project.id, PageStepKey(text.id, Stage.GEOMETRY, first), ROTATION, None)
-        by_first = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
-        by_second = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), second)
+        by_first = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), first)
+        by_second = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), second)
         expect([row.step.state for row in by_first.items if row.step] == [FigureState.BY_HAND, FigureState.DEFAULT])
         expect([row.step.state for row in by_second.items if row.step] == [FigureState.DEFAULT, FigureState.DEFAULT])
         assert_expectations()
@@ -600,14 +630,14 @@ class TestStepRows:
         actor, project, _, _ = await seed_text_and_leaf(fx_kit)
         first, second = await step_ids_of(fx_kit, project)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        at_first = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
+        at_first = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), first)
         made = at_first.items[0].step
         assert made is not None
         assert made.version is not None
         await mark_version(fx_kit, made.version, ResultMark.BAD)
-        by_first = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
-        by_second = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), second)
-        of_stage = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest())
+        by_first = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), first)
+        by_second = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), second)
+        of_stage = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest())
         expect([row.marked_bad for row in by_first.items] == [True, False])
         expect([row.marked_bad for row in by_second.items] == [False, False])
         expect([row.marked_bad for row in of_stage.items] == [False, False])
@@ -621,7 +651,7 @@ class TestStepRows:
         """
         _, project, _, _ = await seed_text_and_leaf(fx_kit)
         with pytest.raises(NotFoundError):
-            await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), StepId(uuid4()))
+            await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), StepId(uuid4()))
 
     async def test_a_page_with_a_setting_of_its_own_for_the_step_is_set_by_hand_and_keeps_its_shape(
         self, fx_kit: ProcessingKit
@@ -635,7 +665,7 @@ class TestStepRows:
         first, _ = await step_ids_of(fx_kit, project)
         key = PageStepKey(text.id, Stage.GEOMETRY, first)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
+        rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), first)
         steps = [row.step for row in rows.items]
         assert [(step.state, step.flags) for step in steps if step] == [
             (FigureState.DEFAULT, (StepFlag.BY_HAND,)),
@@ -651,7 +681,7 @@ class TestStepRows:
         actor, project, _, _ = await seed_text_and_leaf(fx_kit)
         first, _ = await step_ids_of(fx_kit, project)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
+        rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), first)
         assert [row.step.flags for row in rows.items if row.step] == [(), (StepFlag.SKIPPED,)]
 
 
@@ -668,7 +698,7 @@ async def seed_measured_book(kit: ProcessingKit) -> tuple[Project, StepId]:
     """
     actor, project = await kit.seed_project()
     pages: list[Page] = []
-    for key in (*PAGE_KEYS, 'a3'):
+    for key in (*PAGE_KEYS, FOURTH_KEY):
         page, _ = await kit.seed_scan_page(project, order_key=key)
         await kit.seed_base_version(page)
         pages.append(page)
@@ -699,7 +729,7 @@ class TestUnusualPages:
         :type fx_measuring_kit: ProcessingKit
         """
         project, step_id = await seed_measured_book(fx_measuring_kit)
-        rows = await fx_measuring_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), step_id)
+        rows = await stage_rows(fx_measuring_kit, project, Stage.GEOMETRY, SliceRequest(), step_id)
         assert [row.step.flags for row in rows.items if row.step] == [
             (),
             (),
@@ -714,7 +744,7 @@ class TestUnusualPages:
         :type fx_measuring_kit: ProcessingKit
         """
         project, step_id = await seed_measured_book(fx_measuring_kit)
-        window = await fx_measuring_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(offset=3, limit=1), step_id)
+        window = await stage_rows(fx_measuring_kit, project, Stage.GEOMETRY, SliceRequest(offset=3, limit=1), step_id)
         assert [row.step.flags for row in window.items if row.step] == [(StepFlag.UNUSUAL, StepFlag.BY_HAND)]
 
     async def test_a_step_with_nothing_to_compare_marks_no_page_unusual(self, fx_kit: ProcessingKit) -> None:
@@ -726,5 +756,5 @@ class TestUnusualPages:
         actor, project, _, _ = await seed_text_and_leaf(fx_kit)
         first, _ = await step_ids_of(fx_kit, project)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        rows = await fx_kit.stages().rows(project, Stage.GEOMETRY, SliceRequest(), first)
+        rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), first)
         assert all(StepFlag.UNUSUAL not in row.step.flags for row in rows.items if row.step)

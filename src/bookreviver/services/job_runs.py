@@ -5,8 +5,8 @@ leaves it in a final state. Every write is guarded by the state of the job, beca
 any moment: the write that records a step finds the job cancelled and changes nothing, which is how a running job learns
 to stop before its next step, and the write that concludes it leaves a cancelled job cancelled.
 
-Each write is a ``change`` block of its own, so a job reads as it is, and the tracker publishes ``JobChanged`` after
-the block has committed. Every method opens its own block and is called only outside one.
+Each write is a ``change`` of its own, so a job reads as it is, and the tracker publishes ``JobChanged`` after the
+transaction has committed. Every method opens its own transaction and is called only outside the work of another.
 """
 
 from typing import TYPE_CHECKING
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Job
     from bookreviver.domain.ids import JobId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher
 
     type HandOff = Callable[[Job, Job | None], Awaitable[None]]
@@ -36,7 +36,7 @@ class JobTracker:
     ) -> None:
         """Track jobs through the unit of work of the worker.
 
-        :param uow: Unit of work of the job, whose ``change`` block holds each write.
+        :param uow: Unit of work of the job, whose ``change`` holds each write.
         :type uow: UnitOfWork
         :param publisher: Publisher of the job events the browser follows.
         :type publisher: EventPublisher
@@ -54,7 +54,7 @@ class JobTracker:
     async def start(self, job_id: JobId) -> Job | None:
         """Move a queued job to running, or pick up a job found running, which is a delivery repeated after a crash.
 
-        Opens its own ``change`` block, so it is called outside any block.
+        Opens its own ``change``, so it is called outside the work of any transaction.
 
         :param job_id: Identifier of the job.
         :type job_id: JobId
@@ -63,22 +63,33 @@ class JobTracker:
         :rtype: Job | None
         :raises NotFoundError: If there is no such job.
         """
-        async with self._uow.change():
-            job = await self._uow.jobs.get(job_id)
+
+        def work(repos: Repositories) -> Job | None:
+            """Read the job and move it to running when it is queued.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The running job, or None when the job has finished already or left the queue since it was read.
+            :rtype: Job | None
+            :raises NotFoundError: If there is no such job.
+            """
+            job = repos.jobs.get(job_id)
             if job.state.is_final:
                 return None
             if job.state is JobState.QUEUED:
                 started = evolve(job, state=JobState.RUNNING, started_at=self._clock.now())
-                if (running := await self._uow.jobs.update_if_state(started, expected=(JobState.QUEUED,))) is None:
-                    return None
-                job = running
+                return repos.jobs.update_if_state(started, expected=(JobState.QUEUED,))
+            return job
+
+        if (job := await self._uow.change(work)) is None:
+            return None
         await self._publisher.publish(JobChanged(project_id=job.project_id, job=job))
         return job
 
     async def advance(self, job: Job, *, done: int, total: int) -> Job | None:
         """Record how far the job has come, which also tells whether it was cancelled.
 
-        Opens its own ``change`` block, so it is called outside any block.
+        Opens its own ``change``, so it is called outside the work of any transaction.
 
         :param job: The running job as last stored.
         :type job: Job
@@ -89,10 +100,11 @@ class JobTracker:
         :returns: The job as stored, or None when it was cancelled, which stops it before its next step.
         :rtype: Job | None
         """
-        async with self._uow.change():
-            saved = await self._uow.jobs.update_if_state(
+        saved = await self._uow.change(
+            lambda repos: repos.jobs.update_if_state(
                 evolve(job, progress=Progress(done=done, total=total)), expected=(JobState.RUNNING,)
             )
+        )
         if saved is None:
             await self._pass_on(job, None)
             return None
@@ -121,11 +133,11 @@ class JobTracker:
     ) -> None:
         """Store the final state of a running job, unless it was cancelled meanwhile, and announce it.
 
-        Opens its own ``change`` block, so it is called outside any block. A follow-up job is stored in the same block
-        as the final state, so the project is never seen free between the two, and a client that reacts to the end of
-        the job finds the project busy with the follow-up. The follow-up is left out when another processing job of the
-        project is queued or running already, which then is the one the project waits for. After the block the hand-off
-        queues to a worker the follow-up, or else the job that waited for this one to end.
+        Opens its own ``change``, so it is called outside the work of any transaction. A follow-up job is stored in the
+        same transaction as the final state, so the project is never seen free between the two, and a client that
+        reacts to the end of the job finds the project busy with the follow-up. The follow-up is left out when another
+        processing job of the project is queued or running already, which then is the one the project waits for. After
+        the transaction the hand-off queues to a worker the follow-up, or else the job that waited for this one to end.
 
         :param job: The job as last stored by this run.
         :type job: Job
@@ -141,13 +153,25 @@ class JobTracker:
         """
         progress = job.progress if total is None else Progress(done=total, total=total)
         final = evolve(job, state=state, error=error, progress=progress, finished_at=self._clock.now())
-        queued: Job | None = None
-        async with self._uow.change():
-            stored = await self._uow.jobs.update_if_state(final, expected=(JobState.RUNNING,))
-            if follow_up is not None:
-                active = await self._uow.jobs.list_for_project(job.project_id, JobState.active())
-                if not any(other.kind in JobKind.processing() for other in active):
-                    queued = await self._uow.jobs.add(follow_up)
+
+        def work(repos: Repositories) -> tuple[Job | None, Job | None]:
+            """Store the final state of the job and, unless the project is busy, the follow-up.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The job as stored, or None when it was cancelled meanwhile, and the follow-up as stored, or None
+                      when there is none or the project is busy with another processing job.
+            :rtype: tuple[Job | None, Job | None]
+            """
+            stored = repos.jobs.update_if_state(final, expected=(JobState.RUNNING,))
+            if follow_up is None:
+                return stored, None
+            active = repos.jobs.list_for_project(job.project_id, JobState.active())
+            if any(other.kind in JobKind.processing() for other in active):
+                return stored, None
+            return stored, repos.jobs.add(follow_up)
+
+        stored, queued = await self._uow.change(work)
         if stored is not None:
             await self._publisher.publish(JobChanged(project_id=stored.project_id, job=stored))
         await self._pass_on(job, queued)

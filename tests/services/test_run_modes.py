@@ -16,13 +16,17 @@ from tests.helpers.page_batches import PageValues, run_impact
 from tests.helpers.processors import STRENGTH_PARAMETER, FakeProcessor
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Page, PageVersion, Project
+    from collections.abc import Sequence
+
+    from bookreviver.domain.entities import Page, PageStepChange, PageStepState, PageVersion, Project
     from bookreviver.domain.values import PageStepKey
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 
 FAKE_KEY: str = FakeProcessor.spec.key
+# The name of the mode, as the test argument and as the key of the parameters of a run job
+MODE_KEY: str = 'mode'
 STRONGER: int = 2
 ROTATION: NewPageEdit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=1.5))
 WORKED_PAGES: int = 2
@@ -76,16 +80,55 @@ async def head_of(kit: ProcessingKit, page: Page) -> PageVersion:
     :returns: The version the stage record names.
     :rtype: PageVersion
     """
-    record = await kit.uow().page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+    record = await kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)))
     assert record.head_version_id is not None
     return await kit.stored_version(record.head_version_id)
+
+
+async def state_of(kit: ProcessingKit, key: PageStepKey) -> PageStepState:
+    """Read the state of a step on a page as committed.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param key: The page, the stage and the step.
+    :type key: PageStepKey
+    :returns: The state.
+    :rtype: PageStepState
+    """
+    return await kit.uow().read(lambda repos: repos.page_step_states.get(key))
+
+
+async def states_of(kit: ProcessingKit, keys: Sequence[PageStepKey]) -> list[PageStepState | None]:
+    """Read the states of some steps as committed, with None for a step that has neither a setting nor an edit.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param keys: The pages, the stages and the steps.
+    :type keys: Sequence[PageStepKey]
+    :returns: The state found for each key, in order.
+    :rtype: list[PageStepState | None]
+    """
+    return await kit.uow().read(lambda repos: [repos.page_step_states.find(key) for key in keys])
+
+
+async def histories(kit: ProcessingKit, pages: Sequence[Page]) -> list[Sequence[PageStepChange]]:
+    """Read the history of the steps of each page as committed.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param pages: The pages.
+    :type pages: Sequence[Page]
+    :returns: The changes of each page, in order.
+    :rtype: list[Sequence[PageStepChange]]
+    """
+    return await kit.uow().read(lambda repos: [repos.page_step_changes.list_for_page(page.id) for page in pages])
 
 
 class TestRunImpact:
     """Tests for the count of the pages a mode of a run takes work from."""
 
     @pytest.mark.parametrize(
-        ('mode', 'affected'),
+        (MODE_KEY, 'affected'),
         [(RunMode.KEEP, 0), (RunMode.SKIP_OWN, 0), (RunMode.DROP_OWN, WORKED_PAGES)],
         ids=['keep', 'skip-own', 'drop-own'],
     )
@@ -163,11 +206,11 @@ class TestKeep:
         :type fx_kit: ProcessingKit
         """
         actor, project, pages, keys = await worked_book(fx_kit)
-        before = [await fx_kit.uow().page_step_changes.list_for_page(page.id) for page in pages]
+        before = await histories(fx_kit, pages)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        first = await fx_kit.uow().page_step_states.get(keys[0])
-        second = await fx_kit.uow().page_step_states.get(keys[1])
-        after = [await fx_kit.uow().page_step_changes.list_for_page(page.id) for page in pages]
+        first = await state_of(fx_kit, keys[0])
+        second = await state_of(fx_kit, keys[1])
+        after = await histories(fx_kit, pages)
         expect(first.params == {STRENGTH_PARAMETER: STRONGER} and first.edit is not None)
         expect(second.params == {STRENGTH_PARAMETER: STRONGER})
         expect(after == before)
@@ -199,7 +242,7 @@ class TestConfirmation:
         with pytest.raises(ConflictError, match=r'takes the work of \d+ pages away'):
             await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, run)
         expect(len(fx_kit.recording.enqueued) == 0)
-        expect(await fx_kit.uow().page_step_states.find(keys[0]) is not None)
+        expect(await states_of(fx_kit, keys[:1]) != [None])
         assert_expectations()
 
     async def test_a_mode_that_takes_nothing_needs_no_confirmation(self, fx_kit: ProcessingKit) -> None:
@@ -214,7 +257,7 @@ class TestConfirmation:
         job = await fx_kit.service().start_run(
             actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY, mode=RunMode.DROP_OWN)
         )
-        assert job.params['mode'] == RunMode.DROP_OWN.value
+        assert job.params[MODE_KEY] == RunMode.DROP_OWN.value
 
 
 class TestDropOwn:
@@ -229,7 +272,7 @@ class TestDropOwn:
         actor, project, pages, keys = await worked_book(fx_kit)
         run = StageRun(stage=Stage.GEOMETRY, mode=RunMode.DROP_OWN, confirm_overwrite=True)
         await run_stage(fx_kit, actor, project, run)
-        states = [await fx_kit.uow().page_step_states.find(key) for key in keys[:WORKED_PAGES]]
+        states = await states_of(fx_kit, keys[:WORKED_PAGES])
         heads = [await head_of(fx_kit, page) for page in pages[:WORKED_PAGES]]
         expect(states == [None] * WORKED_PAGES)
         expect(all(head.edit_hash == '' for head in heads))
@@ -243,7 +286,7 @@ class TestDropOwn:
         :type fx_kit: ProcessingKit
         """
         actor, project, pages, keys = await worked_book(fx_kit)
-        before = (await fx_kit.uow().page_step_states.get(keys[0])).edit
+        before = (await state_of(fx_kit, keys[0])).edit
         run = StageRun(stage=Stage.GEOMETRY, mode=RunMode.DROP_OWN, confirm_overwrite=True)
         await run_stage(fx_kit, actor, project, run)
         removals = [
@@ -253,7 +296,7 @@ class TestDropOwn:
             if change.source is ChangeSource.RUN
         ]
         undone = await fx_kit.page_history().undo(actor, project.id, keys[1], None)
-        restored = [(await fx_kit.uow().page_step_states.get(key)) for key in keys[:WORKED_PAGES]]
+        restored = [await state_of(fx_kit, key) for key in keys[:WORKED_PAGES]]
         expect(len({removal.batch_id for removal in removals}) == 1 and removals[0].batch_id is not None)
         expect({removal.layer for removal in removals} == {StepLayer.HAND, StepLayer.SETTINGS})
         expect({undo.page_id for undo in undone} == {page.id for page in pages[:WORKED_PAGES]})
@@ -276,8 +319,10 @@ class TestSkipOwn:
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, run)
         await fx_kit.jobs().run_stage(job.id)
         await fx_kit.work_queue()
-        first = await fx_kit.uow().page_step_states.get(keys[0])
-        records = [await fx_kit.uow().page_stages.find(PageStageKey(page.id, Stage.GEOMETRY)) for page in pages]
+        first = await state_of(fx_kit, keys[0])
+        records = await fx_kit.uow().read(
+            lambda repos: [repos.page_stages.find(PageStageKey(page.id, Stage.GEOMETRY)) for page in pages]
+        )
         expect(first.edit is not None and first.params == {STRENGTH_PARAMETER: STRONGER})
         expect(
             [record is not None and record.head_version_id is not None for record in records] == [False, False, True]
@@ -286,15 +331,15 @@ class TestSkipOwn:
 
 
 class TestApplyModeBlock:
-    """Tests for the block that takes the work away, which reads the states of the steps inside it."""
+    """Tests for the change that takes the work away, which reads the states of the steps inside it."""
 
     async def test_the_work_of_a_page_deleted_after_the_plan_was_made_is_not_taken_and_not_written_about(
         self, fx_kit: ProcessingKit
     ) -> None:
-        """Verify a page that went away between the plan and the block has no state left, so no change is written.
+        """Verify a page that went away between the plan and the change has no state left, so no change is written.
 
-        The plan chooses the pages and their recipes outside the block, as a job does when it starts, and the states
-        are read inside the block, so a page deleted in between is not counted, and the other pages lose their work.
+        The plan chooses the pages and their recipes before the change, as a job does when it starts, and the states
+        are read inside the change, so a page deleted in between is not counted, and the other pages lose their work.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -304,11 +349,11 @@ class TestApplyModeBlock:
         run = StageRun(stage=Stage.GEOMETRY, mode=RunMode.DROP_OWN)
         plan = RunPlan(uow=uow, recipes=fx_kit.parts(uow).recipes, clock=fx_kit.clock, project_id=project.id, run=run)
         await plan.recipes()
-        other = fx_kit.uow()
-        async with other.change_book(project.id):
-            await other.pages.delete(pages[1].id)
+        await fx_kit.uow().change_book(project.id, lambda repos, _project: repos.pages.delete(pages[1].id))
         written = await plan.apply_mode()
-        remaining = await fx_kit.uow().page_step_states.list_for_step([pages[0].id], Stage.GEOMETRY, keys[0].step_id)
+        remaining = await fx_kit.uow().read(
+            lambda repos: repos.page_step_states.list_for_step([pages[0].id], Stage.GEOMETRY, keys[0].step_id)
+        )
         expect(len(written) > 0)
         expect({change.page_id for change in written} == {pages[0].id})
         expect(all(state.is_empty for state in remaining))
@@ -330,7 +375,7 @@ class TestApplyModeBlock:
             run=StageRun(stage=Stage.GEOMETRY, mode=RunMode.KEEP),
         )
         written = await plan.apply_mode()
-        state = await fx_kit.uow().page_step_states.get(keys[0])
+        state = await state_of(fx_kit, keys[0])
         expect(written == ())
         expect(state.edit is not None and state.params == {STRENGTH_PARAMETER: STRONGER})
         assert_expectations()

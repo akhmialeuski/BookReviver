@@ -65,7 +65,7 @@ describe('CompareCanvas', () => {
     pairs: ComparePair = { before: BEFORE, after: AFTER },
     editor: Pick<
       React.ComponentProps<typeof CompareCanvas>,
-      'overlay' | 'roomShare' | 'reach' | 'placement'
+      'overlay' | 'roomShare' | 'reach' | 'placement' | 'placementPending'
     > = {},
   ): void {
     act(() =>
@@ -142,6 +142,35 @@ describe('CompareCanvas', () => {
 
     render(CompareMode.Swipe, undefined, { placement: { ...place, left: 0.2 } });
     expect(stage.show).toHaveBeenCalledTimes(2);
+  });
+
+  it('loads no picture and is not ready while the place of the pictures is still read, then shows them at it once', async () => {
+    const place: PairPlacement = {
+      base: Side.Before,
+      left: -0.02,
+      top: 0.01,
+      width: 0.7,
+      height: 0.95,
+    };
+    render(CompareMode.Swipe, undefined, { placement: null, placementPending: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // A picture drawn now would stand at the origin, and a reader of the state would take that place for the real one
+    expect(stage.show).not.toHaveBeenCalled();
+    expect(
+      container.querySelector('[data-testid="viewer-canvas"]')?.getAttribute('data-state'),
+    ).toBe('loading');
+
+    render(CompareMode.Swipe, undefined, { placement: place, placementPending: false });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(stage.show).toHaveBeenCalledTimes(1);
+    expect(stage.show).toHaveBeenCalledWith(BEFORE, AFTER, 'p1', place);
+    expect(
+      container.querySelector('[data-testid="viewer-canvas"]')?.getAttribute('data-state'),
+    ).toBe('ready');
   });
 
   it('draws an editor over the picture once it is loaded, with the viewer and the picture it lies on', async () => {

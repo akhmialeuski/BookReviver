@@ -1,4 +1,4 @@
-"""Tests for the deletion of a batch of versions, which reads the versions again in the block that marks them."""
+"""Tests for the deletion of a batch of versions, which reads the versions again in the change that marks them."""
 
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.storage import LocalAssetStore
 
 pytestmark = pytest.mark.anyio
+
+KEPT_COMMENT: str = 'keep'
 
 
 class TestClear:
@@ -39,9 +41,9 @@ class TestClear:
             evolve(make_page_version(page_id=page.id, minutes=n), state=VersionState.READY) for n in (1, 2)
         )
         await commit_project(fx_database, project, page, versions=[kept, deleted])
-        uow = InMemoryUnitOfWork(fx_database)
-        async with uow.change_book(project.id):
-            await uow.page_versions.delete_many([deleted.id])
+        await InMemoryUnitOfWork(fx_database).change_book(
+            project.id, lambda repos, _project: repos.page_versions.delete_many([deleted.id])
+        )
         clearing = VersionClearing(uow=InMemoryUnitOfWork(fx_database), assets=fx_asset_store, project_id=project.id)
 
         await clearing.clear([kept, deleted])
@@ -52,7 +54,7 @@ class TestClear:
     async def test_the_mark_of_the_user_written_after_the_collection_chose_the_version_is_kept_on_the_marked_row(
         self, fx_database: InMemoryDatabase, fx_asset_store: LocalAssetStore, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Verify the version is marked from the row the block reads, so a comment written meanwhile is not lost.
+        """Verify the version is marked from the row the change reads, so a comment written meanwhile is not lost.
 
         The directory cannot be removed in this test, so the version stays and its marked row can be read.
 
@@ -67,9 +69,9 @@ class TestClear:
         page = make_page(project_id=project.id)
         chosen = evolve(make_page_version(page_id=page.id), state=VersionState.READY)
         await commit_project(fx_database, project, page, versions=[chosen])
-        uow = InMemoryUnitOfWork(fx_database)
-        async with uow.change_book(project.id):
-            await uow.page_versions.update(evolve(chosen, comment='keep'))
+        await InMemoryUnitOfWork(fx_database).change_book(
+            project.id, lambda repos, _project: repos.page_versions.update(evolve(chosen, comment=KEPT_COMMENT))
+        )
 
         monkeypatch.setattr(fx_asset_store, 'delete_prefix', AsyncMock(side_effect=OSError))
         clearing = VersionClearing(uow=InMemoryUnitOfWork(fx_database), assets=fx_asset_store, project_id=project.id)
@@ -77,6 +79,6 @@ class TestClear:
         await clearing.clear([chosen])
 
         stored = fx_database.tables.page_versions[chosen.id]
-        expect((stored.state, stored.comment) == (VersionState.FAILED, 'keep'))
+        expect((stored.state, stored.comment) == (VersionState.FAILED, KEPT_COMMENT))
         expect(stored.data[VersionData.ERROR] == BEING_COLLECTED)
         assert_expectations()

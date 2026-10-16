@@ -8,7 +8,8 @@ written when a stage runs.
 
 A stage is available when it is done by hand or a processor of it is installed, so a stage turns from soon to
 available the day the first plugin of it is installed, with no change here. The class does not check who owns a
-project: the service of the projects does that and hands over projects that are the actor's.
+project: the service of the projects does that and hands over projects that are the actor's. Every method reads,
+synchronously, through the repositories of the transaction its caller runs in, which is the work of ``UnitOfWork.read``.
 """
 
 from collections import defaultdict
@@ -30,48 +31,49 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import PageVersionId, ProjectId, StepId
     from bookreviver.domain.stage_summaries import StageTally, StepTally
     from bookreviver.domain.values import SliceRequest
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import Repositories
     from bookreviver.ports.processing import ProcessorCatalog
 
 
 class StageSummaries:
     """Sums the stages of books over their pages, from the records of the page stages."""
 
-    def __init__(self, *, uow: UnitOfWork, catalogue: ProcessorCatalog) -> None:
+    def __init__(self, *, catalogue: ProcessorCatalog) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, which is only read.
-        :type uow: UnitOfWork
         :param catalogue: The processors the application can run, which say which stages are available.
         :type catalogue: ProcessorCatalog
         """
-        self._uow = uow
         self._catalogue = catalogue
 
-    async def of_book(self, overview: ProjectOverview) -> list[StageSummary]:
+    def of_book(self, repos: Repositories, overview: ProjectOverview) -> list[StageSummary]:
         """Sum every stage of a book, in the order of the pipeline.
 
+        :param repos: Repositories of the transaction the caller runs in, which are only read.
+        :type repos: Repositories
         :param overview: The book with the number of its pages that have an image.
         :type overview: ProjectOverview
         :returns: One summary for each stage, with the recipe of each kind of page when the stage has them.
         :rtype: list[StageSummary]
         """
         project_id = overview.project.id
-        tallies = {tally.stage: tally for tally in await self._uow.page_stages.tally({project_id})}
+        tallies = {tally.stage: tally for tally in repos.page_stages.tally({project_id})}
         recipes: defaultdict[Stage, list[Recipe]] = defaultdict(list)
-        for recipe in await self._uow.recipes.list_for_project(project_id):
+        for recipe in repos.recipes.list_for_project(project_id):
             recipes[recipe.stage].append(recipe)
-        kinds = await self._uow.pages.kind_tally(project_id)
+        kinds = repos.pages.kind_tally(project_id)
         stopped: defaultdict[Stage, list[StepTally]] = defaultdict(list)
-        for step_tally in await self._uow.page_stages.step_tally(project_id):
+        for step_tally in repos.page_stages.step_tally(project_id):
             stopped[step_tally.stage].append(step_tally)
         return self._summarize(overview, tallies, recipes, kinds, stopped)
 
-    async def rows(
-        self, project: Project, stage: Stage, request: SliceRequest, step_id: StepId | None = None
+    def rows(
+        self, repos: Repositories, project: Project, stage: Stage, request: SliceRequest, step_id: StepId | None = None
     ) -> Slice[StageRow]:
         """Give a window of the pages of a book, in book order, with where each stands in a stage.
 
+        :param repos: Repositories of the transaction the caller runs in, which are only read.
+        :type repos: Repositories
         :param project: The book.
         :type project: Project
         :param stage: The stage.
@@ -87,23 +89,23 @@ class StageSummaries:
         :rtype: Slice[StageRow]
         :raises NotFoundError: If no recipe of the stage has the step.
         """
-        pages = await self._uow.pages.list_for_project(project.id, request)
+        pages = repos.pages.list_for_project(project.id, request)
         records = {
             record.page_id: record
-            for record in await self._uow.page_stages.list_for_pages([page.id for page in pages.items])
+            for record in repos.page_stages.list_for_pages([page.id for page in pages.items])
             if record.stage is stage
         }
         head_ids = {record.head_version_id for record in records.values() if record.head_version_id is not None}
-        heads = {version.id: version for version in await self._uow.page_versions.list_by_ids(head_ids)}
-        markers = await self._markers(heads.values())
+        heads = {version.id: version for version in repos.page_versions.list_by_ids(head_ids)}
+        markers = self._markers(repos, heads.values())
         steps = (
             {}
             if step_id is None
-            else await StepRows(uow=self._uow, catalogue=self._catalogue, stage=stage, step_id=step_id).of(
-                pages.items, records, heads
+            else StepRows(catalogue=self._catalogue, stage=stage, step_id=step_id).of(
+                repos, pages.items, records, heads
             )
         )
-        reads = await StageInputs(uow=self._uow).of([page.id for page in pages.items], stage)
+        reads = StageInputs.of(repos, [page.id for page in pages.items], stage)
         rows: list[StageRow] = []
         for page in pages.items:
             record = records.get(page.id)
@@ -130,13 +132,16 @@ class StageSummaries:
             )
         return Slice(items=rows, total=pages.total)
 
-    async def _markers(self, heads: Collection[PageVersion]) -> dict[PageVersionId, str]:
+    @staticmethod
+    def _markers(repos: Repositories, heads: Collection[PageVersion]) -> dict[PageVersionId, str]:
         """Find the processor of the first step of a stage that marked each page that carries a review mark.
 
         A step keeps the mark of the step before it, so the mark of a current version is walked back through the
         versions it was read from, a level at a time for all the pages together, to the first that has it. A mark that
         an earlier stage made leads out of the stage and names no step.
 
+        :param repos: Repositories of the transaction the caller runs in, which are only read.
+        :type repos: Repositories
         :param heads: The current versions of the stage over a window of pages.
         :type heads: Collection[PageVersion]
         :returns: The key of the processor of the marking step, by the identifier of the current version. A version
@@ -148,7 +153,7 @@ class StageSummaries:
         while walking:
             inputs = {
                 version.id: version
-                for version in await self._uow.page_versions.list_by_ids(
+                for version in repos.page_versions.list_by_ids(
                     {origin.input_id for origin in walking.values() if origin.input_id is not None}
                 )
                 if version.review is not None
@@ -163,11 +168,13 @@ class StageSummaries:
             walking = ahead
         return markers
 
-    async def with_progress(self, overviews: Sequence[ProjectOverview]) -> list[ProjectOverview]:
+    def with_progress(self, repos: Repositories, overviews: Sequence[ProjectOverview]) -> list[ProjectOverview]:
         """Add the progress of each book to its overview, with the same number of queries for any number of books.
 
         A stage is running while a job that runs it is queued or running, which is read for all the books at once.
 
+        :param repos: Repositories of the transaction the caller runs in, which are only read.
+        :type repos: Repositories
         :param overviews: The books of a window of a list, or one book.
         :type overviews: Sequence[ProjectOverview]
         :returns: The overviews with their progress, in the same order.
@@ -175,10 +182,10 @@ class StageSummaries:
         """
         project_ids = {overview.project.id for overview in overviews}
         tallies: defaultdict[ProjectId, dict[Stage, StageTally]] = defaultdict(dict)
-        for tally in await self._uow.page_stages.tally(project_ids):
+        for tally in repos.page_stages.tally(project_ids):
             tallies[tally.project_id][tally.stage] = tally
         running: defaultdict[ProjectId, set[Stage]] = defaultdict(set)
-        for job in await self._uow.jobs.list_for_projects(project_ids, JobState.active()):
+        for job in repos.jobs.list_for_projects(project_ids, JobState.active()):
             if job.stage is not None:
                 running[job.project_id].add(job.stage)
         return [

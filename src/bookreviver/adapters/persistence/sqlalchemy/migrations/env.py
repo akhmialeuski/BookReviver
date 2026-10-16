@@ -1,33 +1,30 @@
-"""The Alembic environment of the schema, from advanced-alchemy's asynchronous template.
+"""The Alembic environment of the schema, from advanced-alchemy's synchronous template.
 
 Alembic runs this module for every command that touches the database or compares it with the tables. The engine and
 the version table come from ``SqlDatabase.config`` through advanced-alchemy's ``AlembicCommandConfig``, so a
-migration runs on the application's own engine, with no ``alembic.ini`` and no second connection setting. The
-options of autogenerate are set here, where Alembic reads them: advanced-alchemy 1.11.0 builds its
-``AlembicCommandConfig`` without the ``compare_type`` and ``render_as_batch`` of ``AlembicAsyncConfig``, so the
+migration runs on the application's own engine of the writer, with no ``alembic.ini`` and no second connection
+setting. The options of autogenerate are set here, where Alembic reads them: advanced-alchemy 1.11.0 builds its
+``AlembicCommandConfig`` without the ``compare_type`` and ``render_as_batch`` of ``AlembicSyncConfig``, so the
 config always carries the class defaults, and ``compare_type`` would be off whatever the application configured.
 
 Every command runs its revisions in one transaction together with the row of the version table, so a migration
-applies whole or not at all. On SQLite it also runs with foreign keys off. The engine turns them on for every
-connection, and batch mode changes a table by copying it, dropping the old one and renaming the copy, so dropping the
-old ``projects`` with keys on would cascade and delete every source, scan, page and job of every book. SQLite ignores
-the pragma inside a transaction, so it is set before the transaction begins, and ``PRAGMA foreign_key_check`` runs in
-the transaction before its commit: a migration that left a row whose key points nowhere is rolled back and fails the
-command. See https://alembic.sqlalchemy.org/en/latest/batch.html. PostgreSQL changes tables in place, has
-transactional DDL, and needs neither pragma.
+applies whole or not at all. The transaction begins with ``BEGIN IMMEDIATE``, as every transaction of that engine does,
+and the driver commits or rolls it back. A migration also runs with foreign keys off. The engine turns them on for
+every connection, and batch mode changes a table by copying it, dropping the old one and renaming the copy, so
+dropping the old ``projects`` with keys on would cascade and delete every source, scan, page and job of every book.
+SQLite ignores the pragma inside a transaction, so it is set on the driver connection before the transaction begins,
+and ``PRAGMA foreign_key_check`` runs in the transaction before its commit: a migration that left a row whose key
+points nowhere is rolled back and fails the command. See https://alembic.sqlalchemy.org/en/latest/batch.html.
 """
 
-import asyncio
+from contextlib import closing
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import sqlalchemy
 from alembic import context
 from alembic.autogenerate import rewriter
-from sqlalchemy import pool
 from sqlalchemy.dialects.sqlite.base import SQLiteDialect
-from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from bookreviver.adapters.persistence.sqlalchemy.database import SQLITE_DIALECT
 from bookreviver.adapters.persistence.sqlalchemy.tables import ProjectRow
 
 if TYPE_CHECKING:
@@ -35,11 +32,17 @@ if TYPE_CHECKING:
     from alembic.autogenerate.api import AutogenContext
     from alembic.runtime.migration import MigrationContext
     from sqlalchemy import Column, MetaData
-    from sqlalchemy.engine import Connection
-    from sqlalchemy.ext.asyncio import AsyncEngine
+    from sqlalchemy.engine import Connection, Engine
     from sqlalchemy.types import TypeEngine
 
-__all__ = ('compare_type', 'do_run_migrations', 'render_item', 'run_migrations_offline', 'run_migrations_online')
+__all__ = (
+    'compare_type',
+    'do_run_migrations',
+    'render_item',
+    'run_migrations_offline',
+    'run_migrations_online',
+    'set_foreign_keys',
+)
 
 # SQLite's rules for the affinity of a declared type, applied in order, see
 # https://www.sqlite.org/datatype3.html#determination_of_column_affinity; a type matching none is NUMERIC
@@ -155,23 +158,34 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection: Connection) -> None:
-    """Run the migrations on ``connection`` in one transaction, on SQLite with foreign keys off and checked in it.
+def set_foreign_keys(connection: Connection, *, enabled: bool) -> None:
+    """Turn the enforcement of foreign keys on or off on the driver connection, outside any transaction.
+
+    SQLite ignores the pragma inside a transaction, and SQLAlchemy begins one with the first statement it runs, so the
+    pragma goes to the driver connection directly.
 
     :param connection: Connection of the application's engine, not yet in a transaction.
     :type connection: Connection
-    :raises RuntimeError: When a migration on SQLite left rows whose foreign key refers to no row, after the
-        transaction holding the migrations and their version row is rolled back.
+    :param enabled: Whether the keys are enforced.
+    :type enabled: bool
     """
-    on_sqlite = connection.dialect.name == SQLITE_DIALECT
-    if on_sqlite:
-        connection.exec_driver_sql('PRAGMA foreign_keys=OFF')
-        connection.commit()
-        # The engine connects to SQLite in autocommit mode, so the driver begins no transaction and every CREATE, DROP
-        # and ALTER of a migration would commit on its own. An explicit BEGIN puts all of them in one transaction, which
-        # the commit and rollback listeners of the engine end with COMMIT and ROLLBACK; Alembic, which takes SQLite for
-        # a database without transactional DDL, then leaves the commit to this function
-        connection.exec_driver_sql('BEGIN')
+    with closing(connection.connection.cursor()) as cursor:
+        cursor.execute(f'PRAGMA foreign_keys={"ON" if enabled else "OFF"}')
+
+
+def do_run_migrations(connection: Connection) -> None:
+    """Run the migrations on ``connection`` in one transaction, with foreign keys off and checked in it.
+
+    :param connection: Connection of the application's engine, not yet in a transaction.
+    :type connection: Connection
+    :raises RuntimeError: When a migration left rows whose foreign key refers to no row, after the transaction holding
+        the migrations and their version row is rolled back.
+    """
+    set_foreign_keys(connection, enabled=False)
+    # The engine begins its transactions with BEGIN IMMEDIATE, so every CREATE, DROP and ALTER of a migration runs in
+    # one transaction; Alembic, which takes SQLite for a database without transactional DDL, then leaves the commit
+    # to this function
+    connection.begin()
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
@@ -186,45 +200,28 @@ def do_run_migrations(connection: Connection) -> None:
     try:
         with context.begin_transaction():
             context.run_migrations()
-        if on_sqlite:
-            if violations := connection.exec_driver_sql('PRAGMA foreign_key_check').fetchall():
-                err_msg = (
-                    'The migration left rows with a foreign key to no row, as (table, rowid, parent, key): '
-                    f'{violations}. Nothing was changed.'
-                )
-                raise RuntimeError(err_msg)
-            connection.commit()
+        if violations := connection.exec_driver_sql('PRAGMA foreign_key_check').fetchall():
+            err_msg = (
+                'The migration left rows with a foreign key to no row, as (table, rowid, parent, key): '
+                f'{violations}. Nothing was changed.'
+            )
+            raise RuntimeError(err_msg)
+        connection.commit()
     finally:
-        if on_sqlite:
-            # Undoes the migrations when they or the check failed, and does nothing after the commit
-            connection.rollback()
-            connection.exec_driver_sql('PRAGMA foreign_keys=ON')
-            connection.commit()
+        # Undoes the migrations when they or the check failed, and does nothing after the commit
+        connection.rollback()
+        set_foreign_keys(connection, enabled=True)
 
 
-async def run_migrations_online() -> None:
-    """Run the migrations on a connection of the application's engine, and close its connections afterwards."""
-    configuration = config.get_section(config.config_ini_section) or {}
-    configuration['sqlalchemy.url'] = config.db_url
-
-    connectable = cast(
-        'AsyncEngine',
-        config.engine
-        or async_engine_from_config(
-            configuration,
-            prefix='sqlalchemy.',
-            poolclass=pool.NullPool,
-            future=True,
-        ),
-    )
-
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-
-    await connectable.dispose()
+def run_migrations_online() -> None:
+    """Run the migrations on a connection of the application's engine of the writer, and close its connections."""
+    connectable = cast('Engine', config.engine)
+    with connectable.connect() as connection:
+        do_run_migrations(connection)
+    connectable.dispose()
 
 
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    asyncio.run(run_migrations_online())
+    run_migrations_online()

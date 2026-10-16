@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.domain.entities import Actor, Page, Project
+    from bookreviver.ports.persistence import Repositories
     from bookreviver.services.pages import PageService
     from tests.helpers.fakes_jobs import RecordingEventBus
 
@@ -130,16 +131,25 @@ async def _commit_book(database: InMemoryDatabase, actor: Actor, valued: tuple[V
     project = make_project(owner_id=actor.account_id)
     pages = [make_page(project_id=project.id, order_key=f'a{number}') for number in range(PAGE_COUNT)]
     await commit_project(database, project, *pages)
-    uow = InMemoryUnitOfWork(database)
-    async with uow.change_book(project.id):
+
+    def save_records(repos: Repositories, _project: Project) -> None:
+        """Save a record for every checked stage of every page, and the value of the part of the pages when given.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :param _project: The project as the change finds it, which the work does not need.
+        :type _project: Project
+        """
         for page in pages:
             for stage in CHECKED_STAGES:
-                await uow.page_stages.save(make_page_stage(page_id=page.id, stage=stage))
+                repos.page_stages.save(make_page_stage(page_id=page.id, stage=stage))
         if valued is not None:
             scope, stage = valued
             group_label = GROUP if scope is ValueScope.GROUP else ''
             values = make_step_values(project_id=project.id, scope=scope, group_label=group_label)
-            await uow.step_values.save(evolve(values, stage=stage))
+            repos.step_values.save(evolve(values, stage=stage))
+
+    await InMemoryUnitOfWork(database).change_book(project.id, save_records)
     return Book(project=project, pages=pages)
 
 
@@ -154,7 +164,7 @@ async def _stale(database: InMemoryDatabase, book: Book) -> set[tuple[int, Stage
     :rtype: set[tuple[int, Stage]]
     """
     index = {page.id: place for place, page in enumerate(book.pages)}
-    records = await InMemoryUnitOfWork(database).page_stages.list_for_pages(list(index))
+    records = await InMemoryUnitOfWork(database).read(lambda repos: repos.page_stages.list_for_pages(list(index)))
     return {(index[record.page_id], record.stage) for record in records if record.state is StageState.STALE}
 
 

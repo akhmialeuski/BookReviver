@@ -343,10 +343,13 @@ export function StageScreen({
     editor?.active && (!editor.focused || compareMode === CompareMode.Off) ? editor : null;
   // A step that moves and scales its input, such as the margins, makes a picture that stands inside the other, or the other
   // way round
-  const placement =
-    editing !== null || openStep === null || compareMode === CompareMode.Off
-      ? null
-      : placementOf(workspace.page?.version, workspace.page?.input_version);
+  const placesPictures = editing === null && openStep !== null && compareMode !== CompareMode.Off;
+  const placement = placesPictures
+    ? placementOf(workspace.page?.version, workspace.page?.input_version)
+    : null;
+  // The place comes from the rows of the open step, and until they are read the canvas waits rather than draw both
+  // pictures as tall as each other and move them once the rows arrive
+  const placementPending = placesPictures && workspace.rows === null;
   const stepLabels = MESSAGES.workspace.steps.canvas;
   const stageName = MESSAGES.stages.names[stage];
   const stageBeforeThis = stageBefore(stage);
@@ -393,6 +396,7 @@ export function StageScreen({
             roomShare={editing === null ? 0 : EDITOR_ROOM_SHARE}
             reach={editing?.reach ?? null}
             placement={placement}
+            placementPending={placementPending}
           />
         ) : (
           <PageCanvas view={view} around={around} fitMode={FitMode.Page} handle={canvas} />

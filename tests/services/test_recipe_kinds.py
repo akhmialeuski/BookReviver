@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, PageStage, Project, Recipe
     from bookreviver.domain.ids import PageId
+    from bookreviver.ports.persistence import Repositories
 
 pytestmark = pytest.mark.anyio
 
@@ -33,6 +34,7 @@ STRENGTHS: dict[RecipeKind, int] = {
 }
 RECIPE_STAGES: tuple[Stage, ...] = (Stage.PAGE_SPLIT, Stage.GEOMETRY, Stage.CLEANUP)
 TEMPLATE_STRENGTH: int = 7
+PROFILE_NAME: str = 'Own'
 
 
 async def seed_book(kit: ProcessingKit, kinds: list[PageKind]) -> tuple[Actor, Project, list[PageId]]:
@@ -68,9 +70,7 @@ async def add_page(kit: ProcessingKit, project: Project, kind: PageKind, *, orde
     """
     page, _ = await kit.seed_scan_page(project, order_key=order_key)
     await kit.seed_base_version(page)
-    uow = kit.uow()
-    async with uow.change_book(project.id):
-        await uow.pages.update(evolve(page, kind=kind))
+    await kit.uow().change_book(project.id, lambda repos, _project: repos.pages.update(evolve(page, kind=kind)))
     return page.id
 
 
@@ -122,7 +122,7 @@ async def record_of(kit: ProcessingKit, page_id: PageId) -> PageStage:
     :returns: The record as committed.
     :rtype: PageStage
     """
-    return await kit.uow().page_stages.get(PageStageKey(page_id, Stage.GEOMETRY))
+    return await kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(page_id, Stage.GEOMETRY)))
 
 
 class TestRecipesOfAStage:
@@ -172,7 +172,9 @@ class TestRecipesOfAStage:
         profile = await fx_kit.profiles().save(
             actor,
             Stage.GEOMETRY,
-            ProfileDraft(name='Own', steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAM: TEMPLATE_STRENGTH})]),
+            ProfileDraft(
+                name=PROFILE_NAME, steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAM: TEMPLATE_STRENGTH})]
+            ),
         )
         await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
         found = (await fx_kit.service().recipes(actor, project.id, Stage.GEOMETRY, SliceRequest(limit=10))).items
@@ -196,9 +198,12 @@ class TestRecipeOfAPage:
         actor, project, (text, plate, blank, found) = await seed_book(
             fx_kit, [PageKind.TEXT, PageKind.PLATE, PageKind.BLANK, PageKind.TEXT]
         )
-        uow = fx_kit.uow()
-        async with uow.change_book(project.id):
-            await uow.pages.update(evolve(await uow.pages.get(found), content_type=ContentType.BW_PICTURE))
+        await fx_kit.uow().change_book(
+            project.id,
+            lambda repos, _project: repos.pages.update(
+                evolve(repos.pages.get(found), content_type=ContentType.BW_PICTURE)
+            ),
+        )
         recipes = await tune_recipes(fx_kit, actor, project)
 
         await run_all(fx_kit, actor, project)
@@ -218,10 +223,19 @@ class TestRecipeOfAPage:
         :type fx_kit: ProcessingKit
         """
         actor, project, (by_hand, plate_as_text) = await seed_book(fx_kit, [PageKind.TEXT, PageKind.PLATE])
-        uow = fx_kit.uow()
-        async with uow.change_book(project.id):
+
+        def set_by_hand(repos: Repositories, _project: Project) -> None:
+            """Give the first page a picture and the second text as their content, both set by hand.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: The project of the book, which the work does not use.
+            :type _project: Project
+            """
             for page_id, content in ((by_hand, ContentType.COLOR_PICTURE), (plate_as_text, ContentType.TEXT)):
-                await uow.pages.update(evolve(await uow.pages.get(page_id), content_type=content, content_by_hand=True))
+                repos.pages.update(evolve(repos.pages.get(page_id), content_type=content, content_by_hand=True))
+
+        await fx_kit.uow().change_book(project.id, set_by_hand)
         recipes = await tune_recipes(fx_kit, actor, project)
 
         await run_all(fx_kit, actor, project)
@@ -337,7 +351,9 @@ class TestResetToTheDefaultSteps:
         profile = await fx_kit.profiles().save(
             actor,
             Stage.GEOMETRY,
-            ProfileDraft(name='Own', steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAM: TEMPLATE_STRENGTH})]),
+            ProfileDraft(
+                name=PROFILE_NAME, steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAM: TEMPLATE_STRENGTH})]
+            ),
         )
         await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
         found = (await fx_kit.service().recipes(actor, project.id, Stage.GEOMETRY, SliceRequest(limit=10))).items

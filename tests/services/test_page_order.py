@@ -552,9 +552,9 @@ class TestMoveSource:
         """
         book = await _commit_book(fx_database, fx_actor)
         bare = make_source(project_id=book.project.id, name='bare.pdf')
-        uow = InMemoryUnitOfWork(fx_database)
-        async with uow.change_book(book.project.id):
-            await uow.sources.add(bare)
+        await InMemoryUnitOfWork(fx_database).change_book(
+            book.project.id, lambda repos, _project: repos.sources.add(bare)
+        )
 
         await fx_service().move_source(
             fx_actor, book.project.id, bare.id, PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)

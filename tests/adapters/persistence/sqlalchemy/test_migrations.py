@@ -1,13 +1,15 @@
 """Tests for the migrations, and for the application's refusal to start on a database they were not applied to.
 
 The baseline builds the schema of the models, a migration keeps the rows of a book, and the application starts only
-on a database at the head revision. Alembic runs every command in an event loop of its own, which ``env.py`` starts with ``asyncio.run``, so the tests
-run commands in a worker thread through ``_migrate``.
+on a database at the head revision. Alembic runs its commands on the synchronous engine of the writer, so the tests
+run them in a worker thread through ``_migrate``, and set rows up and read them back with plain SQL in sessions of that
+engine, which they close before a command runs, since the pool of the writer holds one connection.
 """
 
 import json
 import re
 import shutil
+from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
@@ -21,6 +23,7 @@ from anyio import to_thread
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from sqlalchemy import func, inspect, select, text
+from sqlalchemy.orm import Session
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccessTokenTable, AccountTable
 from bookreviver.adapters.persistence.sqlalchemy.database import MIGRATIONS_DIR, SqlDatabase
@@ -59,7 +62,7 @@ from tests.helpers.builders import (
 from tests.helpers.seeding import commit_account, store_project
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Sequence
+    from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 
     from advanced_alchemy.base import CommonTableAttributes
     from dishka import AsyncContainer
@@ -290,8 +293,24 @@ async def fx_empty_database(fx_settings: Settings) -> AsyncIterator[SqlDatabase]
     await database.dispose()
 
 
+@contextmanager
+def _session(database: SqlDatabase) -> Iterator[Session]:
+    """Open a session of the writer's engine, for a test that sets rows up or reads them with plain SQL.
+
+    The test commits what it writes. Leaving the block closes the session, which rolls back what is not committed and
+    gives the one connection of the writer back, so a migration command may take it next.
+
+    :param database: Database whose engine of the writer the session is bound to.
+    :type database: SqlDatabase
+    :returns: Iterator yielding the session.
+    :rtype: Iterator[Session]
+    """
+    with Session(database.engine) as session:
+        yield session
+
+
 async def _migrate(database: SqlDatabase, command: Callable[..., None], *args: str) -> None:
-    """Run an Alembic command in a worker thread, after closing the connections the test's event loop opened.
+    """Run an Alembic command in a worker thread, after closing the connections the test opened.
 
     :param database: Database the command runs on, whose pool is emptied first.
     :type database: SqlDatabase
@@ -316,19 +335,21 @@ async def _commit_book(database: SqlDatabase) -> ProjectId:
     source = make_source(project_id=project.id)
     scan = make_scan(source=source, number=0)
     page = make_page(project_id=project.id, scan=scan)
-    async with database.sessions() as session:
-        uow = SqlAlchemyUnitOfWork(session)
-        await store_project(
-            uow,
-            project,
-            page,
-            sources=[source],
-            scans=[scan],
-            versions=[make_page_version(page_id=page.id)],
+    uow = SqlAlchemyUnitOfWork(database)
+    await store_project(
+        uow,
+        project,
+        page,
+        sources=[source],
+        scans=[scan],
+        versions=[make_page_version(page_id=page.id)],
+    )
+    await uow.change(
+        lambda repos: (
+            repos.jobs.add(make_job(project_id=project.id)),
+            repos.projects.update(evolve(project, cover_page_id=page.id)),
         )
-        async with uow.change():
-            await uow.jobs.add(make_job(project_id=project.id))
-            await uow.projects.update(evolve(project, cover_page_id=page.id))
+    )
     return project.id
 
 
@@ -377,8 +398,8 @@ class TestBaseline:
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
         await _migrate(fx_empty_database, migrations.check)
         await _migrate(fx_empty_database, migrations.downgrade, 'base')
-        async with fx_empty_database.engine.connect() as connection:
-            left = await connection.run_sync(lambda sync_connection: inspect(sync_connection).get_table_names())
+        with fx_empty_database.engine.connect() as connection:
+            left = inspect(connection).get_table_names()
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
         await _migrate(fx_empty_database, migrations.check)
         assert left == [fx_empty_database.config.alembic_config.version_table_name]
@@ -408,21 +429,20 @@ class TestRecordFullFormatRevision:
         page = make_page(project_id=project.id, scan=scan)
         with_image = evolve(make_page_version(page_id=page.id), renditions=png)
         without_image = evolve(make_page_version(page_id=page.id, minutes=1), renditions=None)
-        async with fx_empty_database.sessions() as session:
-            await store_project(
-                SqlAlchemyUnitOfWork(session),
-                project,
-                page,
-                sources=[source],
-                scans=[scan],
-                versions=[with_image, without_image],
-            )
+        await store_project(
+            SqlAlchemyUnitOfWork(fx_empty_database),
+            project,
+            page,
+            sources=[source],
+            scans=[scan],
+            versions=[with_image, without_image],
+        )
 
         await _migrate(fx_empty_database, migrations.downgrade, PREVIOUS_REVISION)
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
-        async with fx_empty_database.sessions() as session:
-            scans = (await session.execute(select(ScanRow.renditions_full))).scalars().all()
-            rows = (await session.execute(select(PageVersionRow.id, PageVersionRow.renditions_full))).all()
+        with _session(fx_empty_database) as session:
+            scans = session.execute(select(ScanRow.renditions_full)).scalars().all()
+            rows = session.execute(select(PageVersionRow.id, PageVersionRow.renditions_full)).all()
         versions = {row.id: row.renditions_full for row in rows}
 
         expect(scans == [Rendition.FULL_JPEG])
@@ -450,13 +470,12 @@ class TestPaginationSectionsRevision:
         typed = evolve(make_page(project_id=project.id, order_key='a0'), label=TYPED_LABEL)
         bracketed = evolve(make_page(project_id=project.id, order_key='a1'), label=BRACKETED_LABEL)
         bare = make_page(project_id=project.id, order_key='a2')
-        async with fx_empty_database.sessions() as session:
-            await store_project(SqlAlchemyUnitOfWork(session), project, typed, bracketed, bare)
+        await store_project(SqlAlchemyUnitOfWork(fx_empty_database), project, typed, bracketed, bare)
 
         await _migrate(fx_empty_database, migrations.downgrade, BEFORE_SECTIONS_REVISION)
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
-        async with fx_empty_database.sessions() as session:
-            rows = (await session.execute(select(PageRow.id, PageRow.label, PageRow.label_manual))).all()
+        with _session(fx_empty_database) as session:
+            rows = session.execute(select(PageRow.id, PageRow.label, PageRow.label_manual)).all()
 
         stored = {row.id: (row.label, row.label_manual) for row in rows}
         expect(
@@ -501,17 +520,15 @@ class TestStepIdentityRevision:
             'run': (DESKEW, CROP),
             'fresh': (DESKEW, 'geometry.gone'),
         }
-        async with database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            async with uow.change():
-                await uow.projects.add(project)
+        await SqlAlchemyUnitOfWork(database).change(lambda repos: repos.projects.add(project))
+        with _session(database) as session:
             # Plain SQL, since the pages of the ORM have columns that later revisions added
             for name, page in pages.items():
-                await session.execute(
+                session.execute(
                     text(INSERT_PAGE), {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': name}
                 )
             for name, recipe_id in recipes.items():
-                await session.execute(
+                session.execute(
                     text(INSERT_RECIPE),
                     {
                         'id': recipe_id.bytes,
@@ -521,13 +538,13 @@ class TestStepIdentityRevision:
                         'active': name == 'Text',
                     },
                 )
-            await session.execute(
+            session.execute(
                 text(INSERT_STAGE), {'page_id': pages['run'].id.bytes, 'recipe_id': recipes['Deskew only'].bytes}
             )
             for name, keys in edits.items():
                 for key in keys:
-                    await session.execute(text(INSERT_EDIT), {'page_id': pages[name].id.bytes, 'key': key})
-            await session.commit()
+                    session.execute(text(INSERT_EDIT), {'page_id': pages[name].id.bytes, 'key': key})
+            session.commit()
         return {name: str(recipe_id) for name, recipe_id in recipes.items()}, {
             name: page.id.bytes for name, page in pages.items()
         }
@@ -547,12 +564,11 @@ class TestStepIdentityRevision:
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_STEPS_REVISION)
         _, pages = await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_STATES_REVISION)
-        async with fx_empty_database.sessions() as session:
+        with _session(fx_empty_database) as session:
             recipes = {
-                row.name: json.loads(row.steps)
-                for row in (await session.execute(text('SELECT name, steps FROM recipes')))
+                row.name: json.loads(row.steps) for row in session.execute(text('SELECT name, steps FROM recipes'))
             }
-            edits = (await session.execute(text('SELECT page_id, step_id FROM page_edits'))).all()
+            edits = session.execute(text('SELECT page_id, step_id FROM page_edits')).all()
         step_ids = {name: {step[PROCESSOR]: step['step_id'] for step in steps} for name, steps in recipes.items()}
         moved = sorted((edit.page_id, str(UUID(bytes=edit.step_id))) for edit in edits)
         expect(all(step['applies_to'] == 'all' for steps in recipes.values() for step in steps))
@@ -583,9 +599,9 @@ class TestStepIdentityRevision:
         await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_STATES_REVISION)
         await _migrate(fx_empty_database, migrations.downgrade, BEFORE_STEPS_REVISION)
-        async with fx_empty_database.sessions() as session:
-            keys: Sequence[Any] = (await session.execute(text('SELECT processor_key FROM page_edits'))).scalars().all()
-            steps: Sequence[Any] = (await session.execute(text('SELECT steps FROM recipes'))).scalars().all()
+        with _session(fx_empty_database) as session:
+            keys: Sequence[Any] = session.execute(text('SELECT processor_key FROM page_edits')).scalars().all()
+            steps: Sequence[Any] = session.execute(text('SELECT steps FROM recipes')).scalars().all()
         expect(sorted(keys) == sorted([DESKEW, CROP, DESKEW, DESKEW]))
         expect(
             all('step_id' not in step and 'applies_to' not in step for stored in steps for step in json.loads(stored))
@@ -608,15 +624,13 @@ class TestStepStateRevision:
         project = make_project(owner_id=await commit_account(database))
         page = make_page(project_id=project.id)
         rotation, mask = uuid4().bytes, uuid4().bytes
-        async with database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            async with uow.change():
-                await uow.projects.add(project)
+        await SqlAlchemyUnitOfWork(database).change(lambda repos: repos.projects.add(project))
+        with _session(database) as session:
             # Plain SQL, since the pages of the ORM have columns that later revisions added
-            await session.execute(
+            session.execute(
                 text(INSERT_PAGE), {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': page.order_key}
             )
-            await session.execute(
+            session.execute(
                 text(INSERT_STATE_EDIT),
                 {
                     'page_id': page.id.bytes,
@@ -627,7 +641,7 @@ class TestStepStateRevision:
                     'edit_hash': 'abc',
                 },
             )
-            await session.execute(
+            session.execute(
                 text(INSERT_STATE_EDIT),
                 {
                     'page_id': page.id.bytes,
@@ -638,7 +652,7 @@ class TestStepStateRevision:
                     'edit_hash': 'def',
                 },
             )
-            await session.commit()
+            session.commit()
         return page.id.bytes, rotation, mask
 
     async def test_edits_move_into_states_with_no_settings(self, fx_empty_database: SqlDatabase) -> None:
@@ -651,12 +665,10 @@ class TestStepStateRevision:
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_STATES_REVISION)
         page, rotation, mask = await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
-        async with fx_empty_database.sessions() as session:
-            states = {
-                row.step_id.bytes: row for row in (await session.execute(select(PageStepStateRow))).scalars().all()
-            }
-        async with fx_empty_database.engine.connect() as connection:
-            tables = await connection.run_sync(lambda sync: inspect(sync).get_table_names())
+        with _session(fx_empty_database) as session:
+            states = {row.step_id.bytes: row for row in session.execute(select(PageStepStateRow)).scalars().all()}
+        with fx_empty_database.engine.connect() as connection:
+            tables = inspect(connection).get_table_names()
         expect(sorted(states) == sorted([rotation, mask]))
         expect(all(state.page_id.bytes == page and state.params == {} for state in states.values()))
         expect(states[rotation].kind == EditorKind.ROTATION)
@@ -681,16 +693,16 @@ class TestStepStateRevision:
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_STATES_REVISION)
         page, *_ = await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
-        async with fx_empty_database.sessions() as session:
-            await session.execute(
+        with _session(fx_empty_database) as session:
+            session.execute(
                 text(INSERT_SETTINGS_ONLY), {'page_id': page, 'step_id': uuid4().bytes, 'params': '{"method": "otsu"}'}
             )
-            await session.commit()
+            session.commit()
         await _migrate(fx_empty_database, migrations.downgrade, BEFORE_STATES_REVISION)
-        async with fx_empty_database.sessions() as session:
-            edits = (await session.execute(text('SELECT kind, edit_hash FROM page_edits ORDER BY edit_hash'))).all()
-        async with fx_empty_database.engine.connect() as connection:
-            tables = await connection.run_sync(lambda sync: inspect(sync).get_table_names())
+        with _session(fx_empty_database) as session:
+            edits = session.execute(text('SELECT kind, edit_hash FROM page_edits ORDER BY edit_hash')).all()
+        with fx_empty_database.engine.connect() as connection:
+            tables = inspect(connection).get_table_names()
         expect([tuple(edit) for edit in edits] == [('rotation', 'abc'), ('brush-mask', 'def')])
         expect('page_step_states' not in tables and 'page_step_changes' not in tables)
         assert_expectations()
@@ -711,28 +723,22 @@ class TestUndoRevision:
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_UNDO_REVISION)
         project = make_project(owner_id=await commit_account(fx_empty_database))
         page = make_page(project_id=project.id)
-        async with fx_empty_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            async with uow.change():
-                await uow.projects.add(project)
+        await SqlAlchemyUnitOfWork(fx_empty_database).change(lambda repos: repos.projects.add(project))
+        with _session(fx_empty_database) as session:
             # Plain SQL, since the page of the ORM has the columns later revisions add
-            await session.execute(
+            session.execute(
                 text(INSERT_PAGE), {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': page.order_key}
             )
-            await session.execute(
+            session.execute(
                 text(INSERT_CHANGE), {'id': uuid4().bytes, 'page_id': page.id.bytes, 'step_id': uuid4().bytes}
             )
-            await session.commit()
+            session.commit()
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
-        async with fx_empty_database.sessions() as session:
-            undoes: Sequence[Any] = (
-                (await session.execute(text('SELECT undoes_id FROM page_step_changes'))).scalars().all()
-            )
+        with _session(fx_empty_database) as session:
+            undoes: Sequence[Any] = session.execute(text('SELECT undoes_id FROM page_step_changes')).scalars().all()
         await _migrate(fx_empty_database, migrations.downgrade, BEFORE_UNDO_REVISION)
-        async with fx_empty_database.engine.connect() as connection:
-            columns = await connection.run_sync(
-                lambda sync: [column['name'] for column in inspect(sync).get_columns('page_step_changes')]
-            )
+        with fx_empty_database.engine.connect() as connection:
+            columns = [column['name'] for column in inspect(connection).get_columns('page_step_changes')]
         expect(undoes == [None])
         expect('undoes_id' not in columns and 'batch_id' in columns)
         assert_expectations()
@@ -756,19 +762,17 @@ class TestProfileLinkRevision:
         steps = json.dumps(
             [{PROCESSOR: DESKEW, 'params': {}, 'enabled': True, 'step_id': str(uuid4()), 'applies_to': 'all'}]
         )
-        async with database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            async with uow.change():
-                await uow.projects.add(project)
-            await session.execute(
+        await SqlAlchemyUnitOfWork(database).change(lambda repos: repos.projects.add(project))
+        with _session(database) as session:
+            session.execute(
                 text(INSERT_RECIPE),
                 {'id': recipe_id.bytes, 'project_id': project.id.bytes, 'name': 'Text', 'steps': steps, 'active': True},
             )
-            await session.execute(
+            session.execute(
                 text(INSERT_PROFILE),
                 {'id': profile_id.bytes, 'account_id': account_id.bytes, 'name': 'Photographed book', 'steps': steps},
             )
-            await session.commit()
+            session.commit()
         return recipe_id.bytes, profile_id.bytes
 
     async def test_the_recipes_stay_unlinked_and_the_profiles_start_in_the_usual_order(
@@ -783,9 +787,9 @@ class TestProfileLinkRevision:
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_LINK_REVISION)
         await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
-        async with fx_empty_database.sessions() as session:
-            recipe = (await session.execute(select(RecipeRow).where(RecipeRow.kind == RecipeKind.TEXT))).scalar_one()
-            profile = (await session.execute(select(RecipeProfileRow))).scalar_one()
+        with _session(fx_empty_database) as session:
+            recipe = session.execute(select(RecipeRow).where(RecipeRow.kind == RecipeKind.TEXT)).scalar_one()
+            profile = session.execute(select(RecipeProfileRow)).scalar_one()
         expect((recipe.kind, recipe.profile_id) == (RecipeKind.TEXT, None))
         expect((profile.name, profile.order) == ('Photographed book', OrderMode.USUAL))
         assert_expectations()
@@ -802,17 +806,17 @@ class TestProfileLinkRevision:
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_LINK_REVISION)
         recipe_id, profile_id = await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
-        async with fx_empty_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            recipe = await uow.recipes.get(RecipeId(UUID(bytes=recipe_id)))
-            async with uow.change_book(recipe.project_id):
-                await uow.recipes.update(evolve(recipe, profile_id=RecipeProfileId(UUID(bytes=profile_id))))
-        async with fx_empty_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            async with uow.change():
-                await uow.recipe_profiles.delete(RecipeProfileId(UUID(bytes=profile_id)))
-        async with fx_empty_database.sessions() as session:
-            row = (await session.execute(select(RecipeRow).where(RecipeRow.kind == RecipeKind.TEXT))).scalar_one()
+        uow = SqlAlchemyUnitOfWork(fx_empty_database)
+        recipe = await uow.read(lambda repos: repos.recipes.get(RecipeId(UUID(bytes=recipe_id))))
+        await uow.change_book(
+            recipe.project_id,
+            lambda repos, _project: repos.recipes.update(
+                evolve(recipe, profile_id=RecipeProfileId(UUID(bytes=profile_id)))
+            ),
+        )
+        await uow.change(lambda repos: repos.recipe_profiles.delete(RecipeProfileId(UUID(bytes=profile_id))))
+        with _session(fx_empty_database) as session:
+            row = session.execute(select(RecipeRow).where(RecipeRow.kind == RecipeKind.TEXT)).scalar_one()
         assert (row.kind, row.profile_id) == (RecipeKind.TEXT, None)
 
     async def test_downgrade_drops_the_link_and_the_order_and_keeps_the_rows(
@@ -828,18 +832,10 @@ class TestProfileLinkRevision:
         await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
         await _migrate(fx_empty_database, migrations.downgrade, BEFORE_LINK_REVISION)
-        async with fx_empty_database.engine.connect() as connection:
-            recipe_columns = await connection.run_sync(
-                lambda sync_connection: {column['name'] for column in inspect(sync_connection).get_columns('recipes')}
-            )
-            profile_columns = await connection.run_sync(
-                lambda sync_connection: {
-                    column['name'] for column in inspect(sync_connection).get_columns('recipe_profiles')
-                }
-            )
-            names = (
-                await connection.execute(text('SELECT name FROM recipes UNION SELECT name FROM recipe_profiles'))
-            ).all()
+        with fx_empty_database.engine.connect() as connection:
+            recipe_columns = {column['name'] for column in inspect(connection).get_columns('recipes')}
+            profile_columns = {column['name'] for column in inspect(connection).get_columns('recipe_profiles')}
+            names = connection.execute(text('SELECT name FROM recipes UNION SELECT name FROM recipe_profiles')).all()
         expect('profile_id' not in recipe_columns)
         expect('order' not in profile_columns)
         expect(
@@ -862,20 +858,21 @@ class TestResultMarksRevision:
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_MARKS_REVISION)
         project = make_project(owner_id=await commit_account(fx_empty_database))
         page = make_page(project_id=project.id)
-        async with fx_empty_database.sessions() as session:
-            await store_project(SqlAlchemyUnitOfWork(session), project, page)
+        uow = SqlAlchemyUnitOfWork(fx_empty_database)
+        await store_project(uow, project, page)
+        with _session(fx_empty_database) as session:
             # Plain SQL, since the version of the ORM has the columns this revision adds
-            await session.execute(text(INSERT_VERSION), {'id': OLD_VERSION_ID, 'page_id': page.id.bytes})
-            await session.commit()
+            session.execute(text(INSERT_VERSION), {'id': OLD_VERSION_ID, 'page_id': page.id.bytes})
+            session.commit()
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
-        async with fx_empty_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            version = await uow.page_versions.get(OLD_VERSION_ID)
-            async with uow.change_book(project.id):
-                await uow.result_mark_changes.add(
-                    make_result_mark_change(version_id=version.id, mark_after=ResultMark.BAD, comment_after='soft')
-                )
-            log = await uow.result_mark_changes.list_for_version(version.id)
+        version = await uow.read(lambda repos: repos.page_versions.get(OLD_VERSION_ID))
+        await uow.change_book(
+            project.id,
+            lambda repos, _project: repos.result_mark_changes.add(
+                make_result_mark_change(version_id=version.id, mark_after=ResultMark.BAD, comment_after='soft')
+            ),
+        )
+        log = await uow.read(lambda repos: repos.result_mark_changes.list_for_version(version.id))
         assert ((version.mark, version.comment), [(c.mark_after, c.sequence) for c in log]) == (
             (None, ''),
             [(ResultMark.BAD, 1)],
@@ -891,12 +888,10 @@ class TestResultMarksRevision:
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
         await _commit_book(fx_empty_database)
         await _migrate(fx_empty_database, migrations.downgrade, BEFORE_MARKS_REVISION)
-        async with fx_empty_database.engine.connect() as connection:
-            tables = await connection.run_sync(lambda sync: inspect(sync).get_table_names())
-            columns = await connection.run_sync(
-                lambda sync: [column['name'] for column in inspect(sync).get_columns('page_versions')]
-            )
-            versions = (await connection.execute(select(func.count()).select_from(text('page_versions')))).scalar_one()
+        with fx_empty_database.engine.connect() as connection:
+            tables = inspect(connection).get_table_names()
+            columns = [column['name'] for column in inspect(connection).get_columns('page_versions')]
+            versions = connection.execute(select(func.count()).select_from(text('page_versions'))).scalar_one()
         expect('result_mark_changes' not in tables)
         expect('mark' not in columns and 'comment' not in columns)
         expect(versions == 1)
@@ -992,10 +987,10 @@ class TestEnv:
         project_id = await _commit_book(fx_empty_database)
         migrations = _migrations_with_revision(fx_empty_database, tmp_path / 'migrations', REBUILD_PROJECTS)
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
-        async with fx_empty_database.sessions() as session:
+        with _session(fx_empty_database) as session:
             for table in BOOK_TABLES:
-                expect(await session.scalar(select(func.count()).select_from(table)) == 1, table.__tablename__)
-            cover_page_id = await session.scalar(select(ProjectRow.cover_page_id).where(ProjectRow.id == project_id))
+                expect(session.scalar(select(func.count()).select_from(table)) == 1, table.__tablename__)
+            cover_page_id = session.scalar(select(ProjectRow.cover_page_id).where(ProjectRow.id == project_id))
         expect(cover_page_id is not None)
         assert_expectations()
 
@@ -1018,11 +1013,11 @@ class TestEnv:
         migrations = _migrations_with_revision(fx_empty_database, tmp_path / 'migrations', ORPHAN_THE_BOOK)
         with pytest.raises(RuntimeError, match='foreign key to no row'):
             await _migrate(fx_empty_database, migrations.upgrade, 'head')
-        async with fx_empty_database.sessions() as session:
+        with _session(fx_empty_database) as session:
             for table in BOOK_TABLES:
-                expect(await session.scalar(select(func.count()).select_from(table)) == 1, table.__tablename__)
-        async with fx_empty_database.engine.connect() as connection:
-            columns = await connection.run_sync(lambda sync: inspect(sync).get_columns(ProjectRow.__tablename__))
+                expect(session.scalar(select(func.count()).select_from(table)) == 1, table.__tablename__)
+        with fx_empty_database.engine.connect() as connection:
+            columns = inspect(connection).get_columns(ProjectRow.__tablename__)
         expect(REBUILT_COLUMN not in {column['name'] for column in columns})
         expect((await fx_empty_database.schema_revisions()).database == baseline.database)
         assert_expectations()
@@ -1159,23 +1154,23 @@ class TestDescriptionRevision:
         previous = ScriptDirectory(str(MIGRATIONS_DIR)).get_revision(DESCRIPTION_REVISION).down_revision
         await _migrate(fx_empty_database, migrations.upgrade, str(previous))
         owner_id = await commit_account(fx_empty_database)
-        async with fx_empty_database.sessions() as session:
+        with _session(fx_empty_database) as session:
             for old in OLD_PROJECTS:
-                await session.execute(
+                session.execute(
                     INSERT_OLD_PROJECT,
                     {'id': uuid4().bytes, 'owner_id': owner_id.bytes, 'moment': EPOCH, **old._asdict()},
                 )
-            await session.commit()
+            session.commit()
 
         await _migrate(fx_empty_database, migrations.upgrade, DESCRIPTION_REVISION)
-        async with fx_empty_database.sessions() as session:
+        with _session(fx_empty_database) as session:
             upgraded = [
                 NewProject(title, json.loads(contributors), json.loads(languages), notes)
-                for title, contributors, languages, notes in await session.execute(SELECT_NEW_PROJECTS)
+                for title, contributors, languages, notes in session.execute(SELECT_NEW_PROJECTS)
             ]
         await _migrate(fx_empty_database, migrations.downgrade, str(previous))
-        async with fx_empty_database.sessions() as session:
-            downgraded = [tuple(row) for row in await session.execute(SELECT_OLD_PROJECTS)]
+        with _session(fx_empty_database) as session:
+            downgraded = [tuple(row) for row in session.execute(SELECT_OLD_PROJECTS)]
 
         expect(upgraded == NEW_PROJECTS)
         expect(
@@ -1204,18 +1199,14 @@ class TestDescriptionRevision:
         previous = ScriptDirectory(str(MIGRATIONS_DIR)).get_revision(DESCRIPTION_REVISION).down_revision
         await _migrate(fx_empty_database, migrations.upgrade, str(previous))
         project_id = uuid4().bytes
-        async with fx_empty_database.sessions() as session:
-            await session.execute(
+        owner_id = await commit_account(fx_empty_database)
+        with _session(fx_empty_database) as session:
+            session.execute(
                 INSERT_OLD_PROJECT,
-                {
-                    'id': project_id,
-                    'owner_id': (await commit_account(fx_empty_database)).bytes,
-                    'moment': EPOCH,
-                    **OLD_PROJECTS[0]._asdict(),
-                },
+                {'id': project_id, 'owner_id': owner_id.bytes, 'moment': EPOCH, **OLD_PROJECTS[0]._asdict()},
             )
             for position, suggestion in enumerate(OLD_SUGGESTIONS):
-                await session.execute(
+                session.execute(
                     INSERT_OLD_SOURCE,
                     {
                         'id': uuid4().bytes,
@@ -1226,14 +1217,14 @@ class TestDescriptionRevision:
                         'suggestion': json.dumps(suggestion),
                     },
                 )
-            await session.commit()
+            session.commit()
 
         await _migrate(fx_empty_database, migrations.upgrade, DESCRIPTION_REVISION)
-        async with fx_empty_database.sessions() as session:
-            upgraded = [json.loads(row[0]) for row in await session.execute(SELECT_SUGGESTIONS)]
+        with _session(fx_empty_database) as session:
+            upgraded = [json.loads(row[0]) for row in session.execute(SELECT_SUGGESTIONS)]
         await _migrate(fx_empty_database, migrations.downgrade, str(previous))
-        async with fx_empty_database.sessions() as session:
-            downgraded = [json.loads(row[0]) for row in await session.execute(SELECT_SUGGESTIONS)]
+        with _session(fx_empty_database) as session:
+            downgraded = [json.loads(row[0]) for row in session.execute(SELECT_SUGGESTIONS)]
 
         expect(upgraded == NEW_SUGGESTIONS)
         expect(downgraded == OLD_SUGGESTIONS_AFTER_DOWNGRADE)
@@ -1271,26 +1262,24 @@ class TestContentBoxRevision:
             ]
         )
         frames = [(pages[0], margins, '{}'), (pages[1], margins, '{"margin_top": 5}'), (pages[2], crop, '{}')]
-        async with database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            async with uow.change():
-                await uow.projects.add(project)
-            await session.execute(
+        await SqlAlchemyUnitOfWork(database).change(lambda repos: repos.projects.add(project))
+        with _session(database) as session:
+            session.execute(
                 text(INSERT_RECIPE),
                 {'id': uuid4().bytes, 'project_id': project.id.bytes, 'name': 'Text', 'steps': steps, 'active': True},
             )
             for page in pages:
-                await session.execute(
+                session.execute(
                     text(INSERT_PAGE),
                     {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': page.order_key},
                 )
             for page, step_id, params in frames:
-                await session.execute(
+                session.execute(
                     text(INSERT_EDIT_STATE),
                     {'page_id': page.id.bytes, 'step_id': step_id, 'params': params, 'kind': 'rect', 'geometry': FRAME},
                 )
             for sequence, layer in enumerate(('hand', 'settings'), start=1):
-                await session.execute(
+                session.execute(
                     text(INSERT_LAYER_CHANGE),
                     {
                         'id': uuid4().bytes,
@@ -1300,7 +1289,7 @@ class TestContentBoxRevision:
                         'sequence': sequence,
                     },
                 )
-            await session.commit()
+            session.commit()
         return [page.id.bytes for page in pages], margins, crop
 
     async def test_the_frames_of_margins_go_with_their_history_and_the_rest_stays(
@@ -1315,12 +1304,12 @@ class TestContentBoxRevision:
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_CONTENT_BOX_REVISION)
         pages, margins, crop = await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, CONTENT_BOX_REVISION)
-        async with fx_empty_database.sessions() as session:
+        with _session(fx_empty_database) as session:
             states = {
                 (row.page_id.bytes, row.step_id.bytes): row
-                for row in (await session.execute(select(PageStepStateRow))).scalars().all()
+                for row in session.execute(select(PageStepStateRow)).scalars().all()
             }
-            layers: Sequence[Any] = (await session.execute(text('SELECT layer FROM page_step_changes'))).scalars().all()
+            layers: Sequence[Any] = session.execute(text('SELECT layer FROM page_step_changes')).scalars().all()
         expect(sorted(states) == sorted([(pages[1], margins), (pages[2], crop)]))
         expect((states[pages[1], margins].kind, states[pages[1], margins].params) == (None, {'margin_top': 5}))
         expect(states[pages[1], margins].geometry is None and states[pages[1], margins].edit_hash is None)
@@ -1341,10 +1330,10 @@ class TestContentBoxRevision:
         await _migrate(fx_empty_database, migrations.upgrade, BEFORE_CONTENT_BOX_REVISION)
         pages, margins, _crop = await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, CONTENT_BOX_REVISION)
-        async with fx_empty_database.sessions() as session:
+        with _session(fx_empty_database) as session:
             for page, params in ((pages[0], '{}'), (pages[1], '{"margin_top": 5}')):
-                await session.execute(text('DELETE FROM page_step_states WHERE page_id = :page_id'), {'page_id': page})
-                await session.execute(
+                session.execute(text('DELETE FROM page_step_states WHERE page_id = :page_id'), {'page_id': page})
+                session.execute(
                     text(INSERT_EDIT_STATE),
                     {
                         'page_id': page,
@@ -1354,10 +1343,10 @@ class TestContentBoxRevision:
                         'geometry': FRAME,
                     },
                 )
-            await session.commit()
+            session.commit()
         await _migrate(fx_empty_database, migrations.downgrade, BEFORE_CONTENT_BOX_REVISION)
-        async with fx_empty_database.sessions() as session:
-            rows = (await session.execute(text('SELECT page_id, kind, params FROM page_step_states'))).all()
+        with _session(fx_empty_database) as session:
+            rows = session.execute(text('SELECT page_id, kind, params FROM page_step_states')).all()
         expect(
             sorted((row[0], row[1], json.loads(row[2])) for row in rows)
             == sorted([(pages[1], None, {'margin_top': 5}), (pages[2], 'rect', {})])
@@ -1419,23 +1408,19 @@ class TestMillimetresRevision:
         steps = self._steps(margins)
         other = UUID(json.loads(steps)[1]['step_id']).bytes
         pixels = json.dumps({'margin_inner': 118})
-        async with database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            async with uow.change():
-                await uow.projects.add(project)
-            await session.execute(
+        await SqlAlchemyUnitOfWork(database).change(lambda repos: repos.projects.add(project))
+        with _session(database) as session:
+            session.execute(
                 text(INSERT_RECIPE),
                 {'id': uuid4().bytes, 'project_id': project.id.bytes, 'name': 'Text', 'steps': steps, 'active': True},
             )
-            await session.execute(
+            session.execute(
                 text(INSERT_PROFILE),
                 {'id': uuid4().bytes, 'account_id': account.bytes, 'name': 'Mine', 'steps': self._steps(None)},
             )
-            await session.execute(
-                text(INSERT_PAGE), {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': 'a0'}
-            )
+            session.execute(text(INSERT_PAGE), {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': 'a0'})
             for step_id in (margins, other):
-                await session.execute(
+                session.execute(
                     text(INSERT_SETTINGS_ONLY), {'page_id': page.id.bytes, 'step_id': step_id, 'params': pixels}
                 )
             changes = [
@@ -1445,7 +1430,7 @@ class TestMillimetresRevision:
                 (other, 'settings', None, pixels),
             ]
             for sequence, (step_id, layer, before, after) in enumerate(changes, start=1):
-                await session.execute(
+                session.execute(
                     text(INSERT_MARGIN_CHANGE),
                     {
                         'id': uuid4().bytes,
@@ -1457,11 +1442,11 @@ class TestMillimetresRevision:
                         'sequence': sequence,
                     },
                 )
-            await session.commit()
+            session.commit()
         return page.id.bytes, margins, other
 
     @staticmethod
-    async def _stored(database: SqlDatabase) -> dict[str, Any]:
+    def _stored(database: SqlDatabase) -> dict[str, Any]:
         """Read every place the margins are stored in, with the identifiers left out.
 
         :param database: Database to read.
@@ -1469,20 +1454,17 @@ class TestMillimetresRevision:
         :returns: The recipe steps, the profile steps, the settings of the page by step and the settings changes in order.
         :rtype: dict[str, Any]
         """
-        async with database.sessions() as session:
+        with _session(database) as session:
             return {
-                'recipe': (await session.execute(select(RecipeRow.steps))).scalars().one(),
-                'profile': (await session.execute(select(RecipeProfileRow.steps))).scalars().one(),
+                'recipe': session.execute(select(RecipeRow.steps)).scalars().one(),
+                'profile': session.execute(select(RecipeProfileRow.steps)).scalars().one(),
                 'states': {
-                    row.step_id.bytes: row.params
-                    for row in (await session.execute(select(PageStepStateRow))).scalars().all()
+                    row.step_id.bytes: row.params for row in session.execute(select(PageStepStateRow)).scalars().all()
                 },
                 'changes': [
                     (row[0], row[1], json.loads(row[2]) if row[2] else None, json.loads(row[3]) if row[3] else None)
-                    for row in (
-                        await session.execute(
-                            text('SELECT step_id, layer, before, after FROM page_step_changes ORDER BY sequence')
-                        )
+                    for row in session.execute(
+                        text('SELECT step_id, layer, before, after FROM page_step_changes ORDER BY sequence')
                     ).all()
                 ],
             }
@@ -1501,7 +1483,7 @@ class TestMillimetresRevision:
         await _migrate(fx_empty_database, migrations.upgrade, CONTENT_BOX_REVISION)
         _page, margins, other = await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, MILLIMETRES_REVISION)
-        stored = await self._stored(fx_empty_database)
+        stored = self._stored(fx_empty_database)
         expect(stored['recipe'][0]['params'] == self.MILLIMETRES)
         expect(stored['profile'][0]['params'] == self.MILLIMETRES)
         expect(stored['recipe'][1]['params'] == {'margin_top': 150} == stored['profile'][1]['params'])
@@ -1526,10 +1508,10 @@ class TestMillimetresRevision:
         migrations = fx_empty_database.migrations
         await _migrate(fx_empty_database, migrations.upgrade, CONTENT_BOX_REVISION)
         await self._seed(fx_empty_database)
-        before = await self._stored(fx_empty_database)
+        before = self._stored(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, MILLIMETRES_REVISION)
         await _migrate(fx_empty_database, migrations.downgrade, CONTENT_BOX_REVISION)
-        expect(await self._stored(fx_empty_database) == before)
+        expect(self._stored(fx_empty_database) == before)
         assert_expectations()
 
     async def test_a_margin_beyond_the_bound_is_held_at_it(self, fx_empty_database: SqlDatabase) -> None:
@@ -1544,18 +1526,16 @@ class TestMillimetresRevision:
         steps = json.dumps(
             [{PROCESSOR: NORMALIZE, 'params': {'margin_top': 9000}, 'enabled': True, 'step_id': str(uuid4())}]
         )
-        async with fx_empty_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            async with uow.change():
-                await uow.projects.add(project)
-            await session.execute(
+        await SqlAlchemyUnitOfWork(fx_empty_database).change(lambda repos: repos.projects.add(project))
+        with _session(fx_empty_database) as session:
+            session.execute(
                 text(INSERT_RECIPE),
                 {'id': uuid4().bytes, 'project_id': project.id.bytes, 'name': 'Text', 'steps': steps, 'active': True},
             )
-            await session.commit()
+            session.commit()
         await _migrate(fx_empty_database, migrations.upgrade, MILLIMETRES_REVISION)
-        async with fx_empty_database.sessions() as session:
-            recipes: Sequence[list[dict[str, Any]]] = (await session.execute(select(RecipeRow.steps))).scalars().all()
+        with _session(fx_empty_database) as session:
+            recipes: Sequence[list[dict[str, Any]]] = session.execute(select(RecipeRow.steps)).scalars().all()
         [recipe] = recipes
         expect(recipe[0]['params'] == {'margin_top': 50.0})
         assert_expectations()
@@ -1582,16 +1562,14 @@ class TestRecipeKindsRevision:
         ids = {name: uuid4().bytes for name in ('text', 'plates', 'cleanup', 'profile')}
         step = {PROCESSOR: DESKEW, 'params': {}, 'enabled': True, 'step_id': str(uuid4()), 'applies_to': 'text'}
         pages = {name: make_page(project_id=project.id, order_key=name) for name in ('text', 'plate')}
-        async with database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            async with uow.change():
-                await uow.projects.add(project)
+        await SqlAlchemyUnitOfWork(database).change(lambda repos: repos.projects.add(project))
+        with _session(database) as session:
             for name, stage, active in (
                 ('text', 'geometry', True),
                 ('plates', 'geometry', False),
                 ('cleanup', 'cleanup', True),
             ):
-                await session.execute(
+                session.execute(
                     text(INSERT_KIND_RECIPE),
                     {
                         'id': ids[name],
@@ -1602,22 +1580,22 @@ class TestRecipeKindsRevision:
                         'active': active,
                     },
                 )
-            await session.execute(
+            session.execute(
                 text(INSERT_PROFILE),
                 {'id': ids['profile'], 'account_id': account_id.bytes, 'name': 'Own', 'steps': json.dumps([step])},
             )
-            await session.execute(
+            session.execute(
                 text(INSERT_RULE), {'id': uuid4().bytes, 'project_id': project.id.bytes, 'recipe_id': ids['plates']}
             )
             for name, page in pages.items():
-                await session.execute(
+                session.execute(
                     text(INSERT_PAGE), {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': name}
                 )
-                await session.execute(
+                session.execute(
                     text(INSERT_KIND_STAGE),
                     {'page_id': page.id.bytes, 'recipe_id': ids['text' if name == 'text' else 'plates']},
                 )
-            await session.commit()
+            session.commit()
         return {**ids, **{f'page-{name}': page.id.bytes for name, page in pages.items()}}
 
     async def test_the_active_recipe_becomes_text_and_the_other_kinds_are_copies_of_it(
@@ -1632,10 +1610,8 @@ class TestRecipeKindsRevision:
         await _migrate(fx_empty_database, migrations.upgrade, MILLIMETRES_REVISION)
         ids = await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, KINDS_REVISION)
-        async with fx_empty_database.sessions() as session:
-            rows = (
-                await session.execute(text('SELECT id, stage, kind, steps FROM recipes ORDER BY stage, created_at'))
-            ).all()
+        with _session(fx_empty_database) as session:
+            rows = session.execute(text('SELECT id, stage, kind, steps FROM recipes ORDER BY stage, created_at')).all()
         by_stage: dict[str, list[Any]] = {}
         for row in rows:
             by_stage.setdefault(row.stage, []).append(row)
@@ -1661,8 +1637,8 @@ class TestRecipeKindsRevision:
         await _migrate(fx_empty_database, migrations.upgrade, MILLIMETRES_REVISION)
         ids = await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, KINDS_REVISION)
-        async with fx_empty_database.sessions() as session:
-            rows = (await session.execute(text('SELECT page_id, recipe_id, state FROM page_stages'))).all()
+        with _session(fx_empty_database) as session:
+            rows = session.execute(text('SELECT page_id, recipe_id, state FROM page_stages')).all()
         stored = {row.page_id: (row.recipe_id, row.state) for row in rows}
         expect(stored[ids['page-text']] == (ids['text'], 'fresh'))
         expect(stored[ids['page-plate']] == (None, 'stale'))
@@ -1680,17 +1656,11 @@ class TestRecipeKindsRevision:
         await _migrate(fx_empty_database, migrations.upgrade, MILLIMETRES_REVISION)
         await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, KINDS_REVISION)
-        async with fx_empty_database.engine.connect() as connection:
-            tables = await connection.run_sync(lambda sync: inspect(sync).get_table_names())
-            stage_columns = await connection.run_sync(
-                lambda sync: {column['name'] for column in inspect(sync).get_columns('page_stages')}
-            )
-            recipe_columns = await connection.run_sync(
-                lambda sync: {column['name'] for column in inspect(sync).get_columns('recipes')}
-            )
-            profile_steps = json.loads(
-                (await connection.execute(text('SELECT steps FROM recipe_profiles'))).scalar_one()
-            )
+        with fx_empty_database.engine.connect() as connection:
+            tables = inspect(connection).get_table_names()
+            stage_columns = {column['name'] for column in inspect(connection).get_columns('page_stages')}
+            recipe_columns = {column['name'] for column in inspect(connection).get_columns('recipes')}
+            profile_steps = json.loads(connection.execute(text('SELECT steps FROM recipe_profiles')).scalar_one())
         expect('recipe_rules' not in tables)
         expect('pinned' not in stage_columns)
         expect({'kind'} <= recipe_columns and not {'name', 'active'} & recipe_columns)
@@ -1706,14 +1676,13 @@ class TestRecipeKindsRevision:
         migrations = fx_empty_database.migrations
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
         project = make_project(owner_id=await commit_account(fx_empty_database))
-        async with fx_empty_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            await store_project(uow, project)
-            async with uow.change_book(project.id):
-                await uow.recipes.add(make_recipe(project_id=project.id))
-            with pytest.raises(ConflictError):
-                async with uow.change_book(project.id):
-                    await uow.recipes.add(make_recipe(project_id=project.id, minutes=1))
+        uow = SqlAlchemyUnitOfWork(fx_empty_database)
+        await store_project(uow, project)
+        await uow.change_book(project.id, lambda repos, _project: repos.recipes.add(make_recipe(project_id=project.id)))
+        with pytest.raises(ConflictError):
+            await uow.change_book(
+                project.id, lambda repos, _project: repos.recipes.add(make_recipe(project_id=project.id, minutes=1))
+            )
 
     async def test_a_downgrade_makes_the_text_recipe_active_and_names_the_others_by_their_kind(
         self, fx_empty_database: SqlDatabase
@@ -1728,16 +1697,12 @@ class TestRecipeKindsRevision:
         await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, KINDS_REVISION)
         await _migrate(fx_empty_database, migrations.downgrade, MILLIMETRES_REVISION)
-        async with fx_empty_database.engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    text("SELECT name, active FROM recipes WHERE stage = 'geometry' ORDER BY created_at")
-                )
+        with fx_empty_database.engine.connect() as connection:
+            rows = connection.execute(
+                text("SELECT name, active FROM recipes WHERE stage = 'geometry' ORDER BY created_at")
             ).all()
-            tables = await connection.run_sync(lambda sync: inspect(sync).get_table_names())
-            stage_columns = await connection.run_sync(
-                lambda sync: {column['name'] for column in inspect(sync).get_columns('page_stages')}
-            )
+            tables = inspect(connection).get_table_names()
+            stage_columns = {column['name'] for column in inspect(connection).get_columns('page_stages')}
         expect(
             [(row.name, bool(row.active)) for row in rows]
             == [(label, kind == 'text') for kind, label in RECIPE_KIND_LABELS]
@@ -1761,21 +1726,21 @@ class TestStepValuesRevision:
         await _migrate(fx_empty_database, migrations.upgrade, KINDS_REVISION)
         project = make_project(owner_id=await commit_account(fx_empty_database))
         page = make_page(project_id=project.id)
-        async with fx_empty_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            async with uow.change():
-                await uow.projects.add(project)
-            await session.execute(
+        await SqlAlchemyUnitOfWork(fx_empty_database).change(lambda repos: repos.projects.add(project))
+        with _session(fx_empty_database) as session:
+            session.execute(
                 text(INSERT_PAGE), {'id': page.id.bytes, 'project_id': project.id.bytes, 'order_key': page.order_key}
             )
-            await session.execute(
+            session.execute(
                 text(INSERT_RESET_CHANGE), {'id': uuid4().bytes, 'page_id': page.id.bytes, 'step_id': uuid4().bytes}
             )
-            await session.commit()
+            session.commit()
         await _migrate(fx_empty_database, migrations.upgrade, VALUES_REVISION)
-        async with fx_empty_database.sessions() as session:
-            change = (await session.execute(text('SELECT scope, group_label, source FROM page_step_changes'))).one()
-            stored = await SqlAlchemyUnitOfWork(session).step_values.list_for_project(project.id)
+        with _session(fx_empty_database) as session:
+            change = session.execute(text('SELECT scope, group_label, source FROM page_step_changes')).one()
+        stored = await SqlAlchemyUnitOfWork(fx_empty_database).read(
+            lambda repos: repos.step_values.list_for_project(project.id)
+        )
         expect(tuple(change) == ('pages', '', 'user'))
         expect(stored == [])
         assert_expectations()
@@ -1791,11 +1756,9 @@ class TestStepValuesRevision:
         migrations = fx_empty_database.migrations
         await _migrate(fx_empty_database, migrations.upgrade, VALUES_REVISION)
         await _migrate(fx_empty_database, migrations.downgrade, KINDS_REVISION)
-        async with fx_empty_database.engine.connect() as connection:
-            tables = await connection.run_sync(lambda sync: inspect(sync).get_table_names())
-            columns = await connection.run_sync(
-                lambda sync: [column['name'] for column in inspect(sync).get_columns('page_step_changes')]
-            )
+        with fx_empty_database.engine.connect() as connection:
+            tables = inspect(connection).get_table_names()
+            columns = [column['name'] for column in inspect(connection).get_columns('page_step_changes')]
         expect('step_values' not in tables and 'page_step_changes' in tables)
         expect('scope' not in columns and 'group_label' not in columns and 'batch_id' in columns)
         assert_expectations()
@@ -1816,17 +1779,17 @@ class TestKeyedValuesRevision:
         project = make_project(owner_id=await commit_account(database))
         recipes = {kind: make_recipe(project_id=project.id, kind=kind) for kind in RecipeKind}
         pages = {name: uuid4().bytes for name in ('text', *TYPED_PAGES)}
-        async with database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            await store_project(uow, project)
-            async with uow.change_book(project.id):
-                for recipe in recipes.values():
-                    await uow.recipes.add(recipe)
-            await session.execute(
+        uow = SqlAlchemyUnitOfWork(database)
+        await store_project(uow, project)
+        await uow.change_book(
+            project.id, lambda repos, _project: [repos.recipes.add(recipe) for recipe in recipes.values()]
+        )
+        with _session(database) as session:
+            session.execute(
                 text(INSERT_PAGE), {'id': pages['text'], 'project_id': project.id.bytes, 'order_key': 'text'}
             )
             for name, (page_kind, content_type, _) in TYPED_PAGES.items():
-                await session.execute(
+                session.execute(
                     text(INSERT_TYPED_PAGE),
                     {
                         'id': pages[name],
@@ -1837,17 +1800,17 @@ class TestKeyedValuesRevision:
                     },
                 )
             for page_id in pages.values():
-                await session.execute(
+                session.execute(
                     text(INSERT_STAGE), {'page_id': page_id, 'recipe_id': recipes[RecipeKind.TEXT].id.bytes}
                 )
-            await session.commit()
+            session.commit()
         return {
             **{f'recipe-{kind.value}': recipe.id.bytes for kind, recipe in recipes.items()},
             **{f'page-{name}': page_id for name, page_id in pages.items()},
         }
 
     @staticmethod
-    async def _stages(database: SqlDatabase) -> dict[bytes, tuple[bytes, str]]:
+    def _stages(database: SqlDatabase) -> dict[bytes, tuple[bytes, str]]:
         """Read the recipe and the state of every stage record of the pages.
 
         :param database: Database to read from.
@@ -1855,8 +1818,8 @@ class TestKeyedValuesRevision:
         :returns: The recipe and the state of each page, by the identifier of the page.
         :rtype: dict[bytes, tuple[bytes, str]]
         """
-        async with database.sessions() as session:
-            rows = (await session.execute(text('SELECT page_id, recipe_id, state FROM page_stages'))).all()
+        with _session(database) as session:
+            rows = session.execute(text('SELECT page_id, recipe_id, state FROM page_stages')).all()
         return {row.page_id: (row.recipe_id, row.state) for row in rows}
 
     async def test_pages_move_to_the_recipe_of_their_kind_and_stay_fresh(self, fx_empty_database: SqlDatabase) -> None:
@@ -1873,7 +1836,7 @@ class TestKeyedValuesRevision:
         await _migrate(fx_empty_database, migrations.upgrade, VALUES_REVISION)
         ids = await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, KEYED_REVISION)
-        stages = await self._stages(fx_empty_database)
+        stages = self._stages(fx_empty_database)
         expect(stages[ids['page-text']] == (ids[f'recipe-{RecipeKind.TEXT.value}'], 'fresh'))
         for name, (_, _, recipe_kind) in TYPED_PAGES.items():
             expect(stages[ids[f'page-{name}']] == (ids[f'recipe-{recipe_kind}'], 'fresh'))
@@ -1886,8 +1849,8 @@ class TestKeyedValuesRevision:
         :type fx_empty_database: SqlDatabase
         """
         await _migrate(fx_empty_database, fx_empty_database.migrations.upgrade, KEYED_REVISION)
-        async with fx_empty_database.engine.connect() as connection:
-            key = await connection.run_sync(lambda sync: inspect(sync).get_pk_constraint('step_values'))
+        with fx_empty_database.engine.connect() as connection:
+            key = inspect(connection).get_pk_constraint('step_values')
         assert key['constrained_columns'] == ['project_id', 'step_id', 'scope', 'group_label']
 
     async def test_downgrade_restores_the_key_and_the_recipe_of_text(self, fx_empty_database: SqlDatabase) -> None:
@@ -1901,9 +1864,9 @@ class TestKeyedValuesRevision:
         ids = await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, KEYED_REVISION)
         await _migrate(fx_empty_database, migrations.downgrade, VALUES_REVISION)
-        stages = await self._stages(fx_empty_database)
-        async with fx_empty_database.engine.connect() as connection:
-            key = await connection.run_sync(lambda sync: inspect(sync).get_pk_constraint('step_values'))
+        stages = self._stages(fx_empty_database)
+        with fx_empty_database.engine.connect() as connection:
+            key = inspect(connection).get_pk_constraint('step_values')
         expect(key['constrained_columns'] == ['step_id', 'scope', 'group_label'])
         expect(
             all(
@@ -1917,7 +1880,7 @@ class TestKeyedValuesRevision:
 class TestFilesRemovedRevision:
     """Tests for the revision that drops the time a collection removed the files of a page version."""
 
-    async def _columns(self, database: SqlDatabase) -> list[str]:
+    def _columns(self, database: SqlDatabase) -> list[str]:
         """Read the names of the columns of ``page_versions``.
 
         :param database: Migrated database.
@@ -1925,10 +1888,8 @@ class TestFilesRemovedRevision:
         :returns: The column names.
         :rtype: list[str]
         """
-        async with database.engine.connect() as connection:
-            return await connection.run_sync(
-                lambda sync: [column['name'] for column in inspect(sync).get_columns('page_versions')]
-            )
+        with database.engine.connect() as connection:
+            return [column['name'] for column in inspect(connection).get_columns('page_versions')]
 
     async def test_the_column_goes_and_the_row_of_a_version_stays_for_the_next_collection(
         self, fx_empty_database: SqlDatabase
@@ -1942,16 +1903,17 @@ class TestFilesRemovedRevision:
         await _migrate(fx_empty_database, migrations.upgrade, KEYED_REVISION)
         project = make_project(owner_id=await commit_account(fx_empty_database))
         page = make_page(project_id=project.id)
-        async with fx_empty_database.sessions() as session:
-            await store_project(SqlAlchemyUnitOfWork(session), project, page)
+        await store_project(SqlAlchemyUnitOfWork(fx_empty_database), project, page)
+        with _session(fx_empty_database) as session:
             # Plain SQL, since the model of the version no longer has the column this revision drops
-            await session.execute(text(INSERT_VERSION), {'id': OLD_VERSION_ID, 'page_id': page.id.bytes})
-            await session.execute(text(MARK_FILES_REMOVED))
-            await session.commit()
+            session.execute(text(INSERT_VERSION), {'id': OLD_VERSION_ID, 'page_id': page.id.bytes})
+            session.execute(text(MARK_FILES_REMOVED))
+            session.commit()
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
-        async with fx_empty_database.sessions() as session:
-            stored = await SqlAlchemyUnitOfWork(session).page_versions.get(OLD_VERSION_ID)
-        expect(FILES_REMOVED_COLUMN not in await self._columns(fx_empty_database))
+        stored = await SqlAlchemyUnitOfWork(fx_empty_database).read(
+            lambda repos: repos.page_versions.get(OLD_VERSION_ID)
+        )
+        expect(FILES_REMOVED_COLUMN not in self._columns(fx_empty_database))
         expect(stored.id == OLD_VERSION_ID)
         assert_expectations()
 
@@ -1965,11 +1927,11 @@ class TestFilesRemovedRevision:
         await _migrate(fx_empty_database, migrations.upgrade, 'head')
         await _commit_book(fx_empty_database)
         await _migrate(fx_empty_database, migrations.downgrade, KEYED_REVISION)
-        async with fx_empty_database.engine.connect() as connection:
+        with fx_empty_database.engine.connect() as connection:
             stored: Sequence[Any] = (
-                (await connection.execute(text('SELECT files_removed_at FROM page_versions'))).scalars().all()
+                connection.execute(text('SELECT files_removed_at FROM page_versions')).scalars().all()
             )
-        expect(FILES_REMOVED_COLUMN in await self._columns(fx_empty_database))
+        expect(FILES_REMOVED_COLUMN in self._columns(fx_empty_database))
         expect(stored == [None])
         assert_expectations()
 
@@ -2046,14 +2008,14 @@ class TestAccountTypesRevision:
                 },
             ),
         )
-        async with database.sessions() as session:
+        with _session(database) as session:
             for statement, values in rows:
-                await session.execute(statement, values)
-            await session.commit()
+                session.execute(statement, values)
+            session.commit()
         return old
 
     @classmethod
-    async def _stored(cls, database: SqlDatabase) -> StoredAccounts:
+    def _stored(cls, database: SqlDatabase) -> StoredAccounts:
         """Read every column the revision touches as SQLite stores it, with the storage class of each value.
 
         :param database: Migrated database.
@@ -2061,9 +2023,9 @@ class TestAccountTypesRevision:
         :returns: The rows of each statement of ``STORED``, as tuples.
         :rtype: StoredAccounts
         """
-        async with database.engine.connect() as connection:
+        with database.engine.connect() as connection:
             return StoredAccounts(
-                *[[tuple(row) for row in (await connection.execute(text(statement))).all()] for statement in cls.STORED]
+                *[[tuple(row) for row in connection.execute(text(statement)).all()] for statement in cls.STORED]
             )
 
     async def test_every_identifier_is_read_back_through_the_new_tables(self, fx_empty_database: SqlDatabase) -> None:
@@ -2080,12 +2042,12 @@ class TestAccountTypesRevision:
         await _migrate(fx_empty_database, migrations.upgrade, FILES_REMOVED_REVISION)
         old = await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, ACCOUNT_TYPES_REVISION)
-        async with fx_empty_database.sessions() as session:
-            user = (await session.execute(select(AccountTable))).unique().scalar_one()
-            token = await session.scalar(select(AccessTokenTable))
-            owner_id = await session.scalar(select(ProjectRow.owner_id))
-            account_id = await session.scalar(select(RecipeProfileRow.account_id))
-        stored = await self._stored(fx_empty_database)
+        with _session(fx_empty_database) as session:
+            user = session.execute(select(AccountTable)).unique().scalar_one()
+            token = session.scalar(select(AccessTokenTable))
+            owner_id = session.scalar(select(ProjectRow.owner_id))
+            account_id = session.scalar(select(RecipeProfileRow.account_id))
+        stored = self._stored(fx_empty_database)
         expect(user.id == old.user)
         expect([link.id for link in user.oauth_accounts] == [old.oauth])
         expect([link.user_id for link in user.oauth_accounts] == [old.user])
@@ -2109,7 +2071,7 @@ class TestAccountTypesRevision:
         await _migrate(fx_empty_database, migrations.upgrade, FILES_REMOVED_REVISION)
         old = await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, ACCOUNT_TYPES_REVISION)
-        [(kind, _user, time_kind, created_at)] = (await self._stored(fx_empty_database)).token
+        [(kind, _user, time_kind, created_at)] = self._stored(fx_empty_database).token
         expect((kind, time_kind, created_at) == (self.BLOB, self.TEXT, old.created_at))
         assert_expectations()
 
@@ -2122,10 +2084,10 @@ class TestAccountTypesRevision:
         migrations = fx_empty_database.migrations
         await _migrate(fx_empty_database, migrations.upgrade, FILES_REMOVED_REVISION)
         old = await self._seed(fx_empty_database)
-        before = await self._stored(fx_empty_database)
+        before = self._stored(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, ACCOUNT_TYPES_REVISION)
         await _migrate(fx_empty_database, migrations.downgrade, FILES_REMOVED_REVISION)
-        expect(await self._stored(fx_empty_database) == before)
+        expect(self._stored(fx_empty_database) == before)
         expect(before.user == [(self.TEXT, str(old.user))])
         assert_expectations()
 
@@ -2139,7 +2101,7 @@ class TestAccountTypesRevision:
         await _migrate(fx_empty_database, migrations.upgrade, FILES_REMOVED_REVISION)
         account = await commit_account(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, ACCOUNT_TYPES_REVISION)
-        expect((await self._stored(fx_empty_database)).user == [(self.BLOB, account.bytes)])
+        expect(self._stored(fx_empty_database).user == [(self.BLOB, account.bytes)])
         assert_expectations()
 
     async def test_a_project_of_no_account_rolls_the_migration_back(self, fx_empty_database: SqlDatabase) -> None:
@@ -2151,17 +2113,19 @@ class TestAccountTypesRevision:
         migrations = fx_empty_database.migrations
         await _migrate(fx_empty_database, migrations.upgrade, FILES_REMOVED_REVISION)
         await self._seed(fx_empty_database)
-        async with fx_empty_database.engine.connect() as connection:
-            # Keys are on in every connection of the application, so the stray owner is written with them off
-            await connection.exec_driver_sql('PRAGMA foreign_keys=OFF')
-            await connection.execute(
+        with fx_empty_database.engine.connect() as connection:
+            # Keys are on in every connection of the application, so the stray owner is written with them off, on the
+            # driver connection, which SQLite accepts only outside a transaction
+            with closing(connection.connection.cursor()) as cursor:
+                cursor.execute('PRAGMA foreign_keys=OFF')
+            connection.execute(
                 INSERT_OLD_ACCOUNT_PROJECT, {'id': uuid4().bytes, 'owner_id': str(uuid4()), 'moment': EPOCH}
             )
-            await connection.commit()
-        before = await self._stored(fx_empty_database)
+            connection.commit()
+        before = self._stored(fx_empty_database)
         with pytest.raises(RuntimeError, match='foreign key to no row'):
             await _migrate(fx_empty_database, migrations.upgrade, ACCOUNT_TYPES_REVISION)
-        expect(await self._stored(fx_empty_database) == before)
+        expect(self._stored(fx_empty_database) == before)
         assert_expectations()
 
 
@@ -2177,16 +2141,16 @@ class TestPageRevisionRemovedRevision:
         """
         project = make_project(owner_id=await commit_account(database))
         page = make_page(project_id=project.id)
-        async with database.sessions() as session:
-            await store_project(
-                SqlAlchemyUnitOfWork(session), project, page, versions=[make_page_version(page_id=page.id)]
-            )
+        await store_project(
+            SqlAlchemyUnitOfWork(database), project, page, versions=[make_page_version(page_id=page.id)]
+        )
+        with _session(database) as session:
             # Plain SQL, since the model of the page no longer has the column this revision drops
-            await session.execute(text('UPDATE pages SET revision = :revision'), {'revision': COUNTED_REVISION})
-            await session.commit()
+            session.execute(text('UPDATE pages SET revision = :revision'), {'revision': COUNTED_REVISION})
+            session.commit()
 
     @staticmethod
-    async def _pages(database: SqlDatabase) -> list[dict[str, Any]]:
+    def _pages(database: SqlDatabase) -> list[dict[str, Any]]:
         """Read every column of every page row as the database stores it.
 
         :param database: Migrated database.
@@ -2194,11 +2158,11 @@ class TestPageRevisionRemovedRevision:
         :returns: One mapping of column name to stored value per page.
         :rtype: list[dict[str, Any]]
         """
-        async with database.engine.connect() as connection:
-            return [dict(row) for row in (await connection.execute(text('SELECT * FROM pages'))).mappings()]
+        with database.engine.connect() as connection:
+            return [dict(row) for row in connection.execute(text('SELECT * FROM pages')).mappings()]
 
     @staticmethod
-    async def _versions(database: SqlDatabase) -> list[tuple[Any, ...]]:
+    def _versions(database: SqlDatabase) -> list[tuple[Any, ...]]:
         """Read the versions of the pages, which a rebuild of the table of the pages must not take with it.
 
         :param database: Migrated database.
@@ -2206,11 +2170,11 @@ class TestPageRevisionRemovedRevision:
         :returns: The identifier and the page of every version.
         :rtype: list[tuple[Any, ...]]
         """
-        async with database.engine.connect() as connection:
-            return [tuple(row) for row in await connection.execute(text('SELECT id, page_id FROM page_versions'))]
+        with database.engine.connect() as connection:
+            return [tuple(row) for row in connection.execute(text('SELECT id, page_id FROM page_versions'))]
 
     @staticmethod
-    async def _columns(database: SqlDatabase) -> list[str]:
+    def _columns(database: SqlDatabase) -> list[str]:
         """Read the names of the columns of ``pages``.
 
         :param database: Migrated database.
@@ -2218,10 +2182,8 @@ class TestPageRevisionRemovedRevision:
         :returns: The column names.
         :rtype: list[str]
         """
-        async with database.engine.connect() as connection:
-            return await connection.run_sync(
-                lambda sync: [column['name'] for column in inspect(sync).get_columns(PageRow.__tablename__)]
-            )
+        with database.engine.connect() as connection:
+            return [column['name'] for column in inspect(connection).get_columns(PageRow.__tablename__)]
 
     async def test_the_column_goes_and_every_other_column_of_a_page_stays(self, fx_empty_database: SqlDatabase) -> None:
         """Verify the upgrade drops the counter, and a page keeps every other column and the versions it owns.
@@ -2232,15 +2194,15 @@ class TestPageRevisionRemovedRevision:
         migrations = fx_empty_database.migrations
         await _migrate(fx_empty_database, migrations.upgrade, ACCOUNT_TYPES_REVISION)
         await self._seed(fx_empty_database)
-        before, versions = await self._pages(fx_empty_database), await self._versions(fx_empty_database)
+        before, versions = self._pages(fx_empty_database), self._versions(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, PAGE_REVISION_REMOVED_REVISION)
         expect([page[PAGE_REVISION_COLUMN] for page in before] == [COUNTED_REVISION])
-        expect(PAGE_REVISION_COLUMN not in await self._columns(fx_empty_database))
+        expect(PAGE_REVISION_COLUMN not in self._columns(fx_empty_database))
         expect(
-            await self._pages(fx_empty_database)
+            self._pages(fx_empty_database)
             == [{name: value for name, value in page.items() if name != PAGE_REVISION_COLUMN} for page in before]
         )
-        expect(await self._versions(fx_empty_database) == versions)
+        expect(self._versions(fx_empty_database) == versions)
         assert_expectations()
 
     async def test_downgrade_brings_the_column_back_at_zero_and_keeps_every_other_column(
@@ -2255,13 +2217,13 @@ class TestPageRevisionRemovedRevision:
         await _migrate(fx_empty_database, migrations.upgrade, ACCOUNT_TYPES_REVISION)
         await self._seed(fx_empty_database)
         await _migrate(fx_empty_database, migrations.upgrade, PAGE_REVISION_REMOVED_REVISION)
-        kept, versions = await self._pages(fx_empty_database), await self._versions(fx_empty_database)
+        kept, versions = self._pages(fx_empty_database), self._versions(fx_empty_database)
         await _migrate(fx_empty_database, migrations.downgrade, ACCOUNT_TYPES_REVISION)
-        restored = await self._pages(fx_empty_database)
-        expect(PAGE_REVISION_COLUMN in await self._columns(fx_empty_database))
+        restored = self._pages(fx_empty_database)
+        expect(PAGE_REVISION_COLUMN in self._columns(fx_empty_database))
         expect([page[PAGE_REVISION_COLUMN] for page in restored] == [0])
         expect(
             [{name: value for name, value in page.items() if name != PAGE_REVISION_COLUMN} for page in restored] == kept
         )
-        expect(await self._versions(fx_empty_database) == versions)
+        expect(self._versions(fx_empty_database) == versions)
         assert_expectations()

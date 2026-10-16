@@ -1,6 +1,5 @@
-"""Tests for the end of a run, which stores its final state and the collection it queues in one block."""
+"""Tests for the end of a run, which stores its final state and the collection it queues in one change."""
 
-from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
@@ -19,15 +18,17 @@ from bookreviver.domain.events import JobChanged
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.values import StageRun, TileCut
 from bookreviver.services.processing_parts import NOT_QUEUED
+from tests.helpers.book_gate import hold_book
 from tests.helpers.builders import EPOCH
 from tests.helpers.fakes_imports import TickingClock
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Collection, Sequence
+    from collections.abc import Callable
 
     from bookreviver.domain.entities import Actor, Job, Project
     from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.values import MetadataMap
+    from bookreviver.ports.persistence import Repositories
     from bookreviver.services.processing_parts import JobStarter
     from tests.helpers.processing import ProcessingKit
 
@@ -65,7 +66,7 @@ async def processing_kinds(kit: ProcessingKit, project_id: ProjectId) -> list[Jo
     :returns: The kinds of the queued or running processing jobs, newest first.
     :rtype: list[JobKind]
     """
-    active = await kit.uow().jobs.list_for_project(project_id, JobState.active())
+    active = await kit.uow().read(lambda repos: repos.jobs.list_for_project(project_id, JobState.active()))
     return [job.kind for job in active if job.kind in JobKind.processing()]
 
 
@@ -75,11 +76,11 @@ class TestRunHandOff:
     async def test_project_is_never_free_between_the_run_and_its_collection(
         self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Verify every block of the worker leaves a processing job active, down to the one that ends the run.
+        """Verify every ``change`` of the worker leaves a processing job active, down to the one that ends the run.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param monkeypatch: Fixture patching the unit of work to read the database after each block.
+        :param monkeypatch: Fixture patching the unit of work to read the database after each change.
         :type monkeypatch: pytest.MonkeyPatch
         """
         actor, project = await prepared_page(fx_kit)
@@ -87,23 +88,24 @@ class TestRunHandOff:
         seen: list[list[JobKind]] = []
         changed = InMemoryUnitOfWork.change
 
-        @asynccontextmanager
-        async def change_and_look(self: InMemoryUnitOfWork) -> AsyncIterator[None]:
-            """Open a ``change`` block, then record which processing jobs the database shows as active once it ended.
+        async def change_and_look[T](self: InMemoryUnitOfWork, work: Callable[[Repositories], T]) -> T:
+            """Run a ``change``, then record which processing jobs the database shows as active once it committed.
 
-            :param self: The unit of work that opens the block.
+            :param self: The unit of work that runs the change.
             :type self: InMemoryUnitOfWork
-            :returns: Iterator yielding once the block is open.
-            :rtype: AsyncIterator[None]
+            :param work: Function over the repositories of the transaction.
+            :type work: Callable[[Repositories], T]
+            :returns: What the work returns.
+            :rtype: T
             """
-            async with changed(self):
-                yield
+            result = await changed(self, work)
             seen.append(await processing_kinds(fx_kit, project.id))
+            return result
 
         monkeypatch.setattr(InMemoryUnitOfWork, 'change', change_and_look)
         await fx_kit.jobs().run_stage(job.id)
 
-        stored = await fx_kit.uow().jobs.get(job.id)
+        stored = await fx_kit.uow().read(lambda repos: repos.jobs.get(job.id))
         expect(stored.state is JobState.SUCCEEDED)
         expect(seen and all(kinds for kinds in seen))
         expect(seen[-1] == [JobKind.COLLECT_VERSIONS])
@@ -195,7 +197,7 @@ class TestRunHandOff:
         with patch.object(RecordingJobQueue, 'enqueue', new=AsyncMock(side_effect=ConnectionError)):
             await fx_kit.jobs().run_stage(job.id)
 
-        jobs = await fx_kit.uow().jobs.list_for_project(project.id, set(JobState))
+        jobs = await fx_kit.uow().read(lambda repos: repos.jobs.list_for_project(project.id, set(JobState)))
         states = {stored.kind: (stored.state, stored.error) for stored in jobs}
         expect(states[JobKind.RUN_STAGE][0] is JobState.SUCCEEDED)
         expect(states[JobKind.COLLECT_VERSIONS] == (JobState.FAILED, NOT_QUEUED))
@@ -214,10 +216,8 @@ class TestRunHandOff:
         running = await parts.tracker.start(job.id)
         assert running is not None
         # The account holder cancels the run, and a new run of another stage takes the project before the worker ends
-        canceller = fx_kit.uow()
         cancelled = evolve(running, state=JobState.CANCELLED, finished_at=fx_kit.clock.now())
-        async with canceller.change():
-            await canceller.jobs.update_if_state(cancelled, expected=(JobState.RUNNING,))
+        await fx_kit.uow().change(lambda repos: repos.jobs.update_if_state(cancelled, expected=(JobState.RUNNING,)))
         fx_kit.clock.moment += timedelta(seconds=1)
         replacement = await fx_kit.service().start_run(actor, project.id, Stage.CLEANUP, StageRun(stage=Stage.CLEANUP))
 
@@ -247,7 +247,7 @@ class TestRunTakesTheProjectFromAPreview:
         preview = await starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
         asked = await starter.enqueue(project.id, requested, StageRun(stage=Stage.GEOMETRY).to_map())
 
-        stored = await fx_kit.uow().jobs.get(preview.id)
+        stored = await fx_kit.uow().read(lambda repos: repos.jobs.get(preview.id))
         expect((stored.state, stored.finished_at) == (JobState.CANCELLED, fx_kit.clock.now()))
         expect(asked.state is JobState.QUEUED)
         expect(fx_kit.recording.enqueued == [preview, asked])
@@ -279,7 +279,7 @@ class TestRunTakesTheProjectFromAPreview:
         asked = await parts.starter.enqueue(project.id, requested, StageRun(stage=Stage.GEOMETRY).to_map())
         await parts.tracker.finish(running, JobState.SUCCEEDED, total=1)
 
-        stored = await fx_kit.uow().jobs.get(preview.id)
+        stored = await fx_kit.uow().read(lambda repos: repos.jobs.get(preview.id))
         expect(stored.state is JobState.CANCELLED)
         expect(fx_kit.recording.enqueued == [preview, asked])
         expect(await processing_kinds(fx_kit, project.id) == [requested])
@@ -302,7 +302,7 @@ class TestRunTakesTheProjectFromAPreview:
 
         await fx_kit.jobs().cut_tiles(tiles.id)
         expect(fx_kit.recording.enqueued == [tiles, run])
-        expect((await fx_kit.uow().jobs.get(preview.id)).state is JobState.CANCELLED)
+        expect((await fx_kit.uow().read(lambda repos: repos.jobs.get(preview.id))).state is JobState.CANCELLED)
         assert_expectations()
 
     async def test_cancelled_preview_is_announced(self, fx_kit: ProcessingKit) -> None:
@@ -395,22 +395,21 @@ def params_of(starter: JobStarter, project_id: ProjectId, kind: JobKind) -> Meta
 class TestConcurrentRequests:
     """Tests for two requests of one project that meet at the check of the active jobs.
 
-    The first request is held inside its block after it read the active jobs, the second request is let in, and the test
-    proves the second one waits for the first to commit before it reads anything, so the check and the insert of the
-    first cannot be split by the second.
+    The check and the insert of a request are the one work of a ``change``, which returns to the event loop only when it
+    has committed, so the second request cannot split them. The test holds the lock of the changes while both requests
+    ask, so both wait for it with nothing stored, and proves that the first to ask is served first and the second then
+    reads the job the first stored.
     """
 
-    async def ask_while_the_first_waits(
-        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch, first: JobKind, second: JobKind
+    async def ask_while_the_changes_are_held(
+        self, fx_kit: ProcessingKit, first: JobKind, second: JobKind
     ) -> tuple[Project, list[Job | ConflictError | None]]:
-        """Let two requests meet at the check, the first held after its read, and give what each of them got.
+        """Let two requests wait at the lock of the changes, the first asking before the second, and give what each got.
 
         What they got is given by the order of the requests, since both may ask for the same kind of job.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param monkeypatch: Fixture holding the first request after it read the active jobs.
-        :type monkeypatch: pytest.MonkeyPatch
         :param first: The kind of job the first request asks for.
         :type first: JobKind
         :param second: The kind of job the second request asks for.
@@ -419,29 +418,8 @@ class TestConcurrentRequests:
         :rtype: tuple[Project, list[Job | ConflictError | None]]
         """
         _, project = await prepared_page(fx_kit)
-        first_uow = fx_kit.uow()
-        first_starter = fx_kit.parts(first_uow).starter
+        first_starter = fx_kit.parts(fx_kit.uow()).starter
         second_starter = fx_kit.parts(fx_kit.uow()).starter
-        listed = anyio.Event()
-        resume = anyio.Event()
-        listing = first_uow.jobs.list_for_project
-
-        async def list_then_wait(project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
-            """List the active jobs as they are, then hold the first request until the test lets it go.
-
-            :param project_id: Project whose jobs are listed.
-            :type project_id: ProjectId
-            :param states: States a listed job may be in.
-            :type states: Collection[JobState]
-            :returns: The jobs found.
-            :rtype: Sequence[Job]
-            """
-            found = await listing(project_id, states)
-            listed.set()
-            await resume.wait()
-            return found
-
-        monkeypatch.setattr(first_uow.jobs, 'list_for_project', list_then_wait)
         outcomes: list[Job | ConflictError | None] = [None, None]
 
         async def ask(starter: JobStarter, kind: JobKind, order: int) -> None:
@@ -459,14 +437,14 @@ class TestConcurrentRequests:
             except ConflictError as error:
                 outcomes[order] = error
 
-        async with anyio.create_task_group() as group:
+        # The lock is let go first when the statement ends, and then the group waits for the two requests
+        async with anyio.create_task_group() as group, hold_book(fx_kit.database):
             group.start_soon(ask, first_starter, first, 0)
-            await listed.wait()
+            await anyio.wait_all_tasks_blocked()
             group.start_soon(ask, second_starter, second, 1)
             await anyio.wait_all_tasks_blocked()
-            expect(await fx_kit.uow().jobs.list_for_project(project.id, set(JobState)) == [])
-            expect(outcomes[1] is None)
-            resume.set()
+            stored = await fx_kit.uow().read(lambda repos: repos.jobs.list_for_project(project.id, set(JobState)))
+            expect((stored, outcomes) == ([], [None, None]))
         return project, outcomes
 
     @pytest.mark.parametrize(
@@ -481,20 +459,18 @@ class TestConcurrentRequests:
         ],
     )
     async def test_second_request_for_a_group_the_first_took_is_refused(
-        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch, first: JobKind, second: JobKind
+        self, fx_kit: ProcessingKit, first: JobKind, second: JobKind
     ) -> None:
         """Verify the second request waits for the first, reads its job, and is refused as busy, storing nothing.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param monkeypatch: Fixture holding the first request after it read the active jobs.
-        :type monkeypatch: pytest.MonkeyPatch
         :param first: The kind of job the first request asks for.
         :type first: JobKind
         :param second: The kind of job the second request asks for, whose group the first took.
         :type second: JobKind
         """
-        project, (won, lost) = await self.ask_while_the_first_waits(fx_kit, monkeypatch, first, second)
+        project, (won, lost) = await self.ask_while_the_changes_are_held(fx_kit, first, second)
         expect(won is not None and not isinstance(won, ConflictError))
         expect(isinstance(lost, ConflictError))
         expect(await processing_kinds(fx_kit, project.id) == [first])
@@ -502,25 +478,21 @@ class TestConcurrentRequests:
 
     @pytest.mark.parametrize(REQUESTED_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
     async def test_run_that_waited_for_a_preview_of_a_rival_request_cancels_it(
-        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch, requested: JobKind
+        self, fx_kit: ProcessingKit, requested: JobKind
     ) -> None:
         """Verify a run or a measure that finds the preview of a rival request in its way cancels it and is queued.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param monkeypatch: Fixture holding the preview request after it read the active jobs.
-        :type monkeypatch: pytest.MonkeyPatch
         :param requested: The kind of job the second request asks for.
         :type requested: JobKind
         """
-        project, (preview, asked) = await self.ask_while_the_first_waits(
-            fx_kit, monkeypatch, JobKind.PREVIEW_STEP, requested
-        )
+        project, (preview, asked) = await self.ask_while_the_changes_are_held(fx_kit, JobKind.PREVIEW_STEP, requested)
         assert preview is not None
         assert not isinstance(preview, ConflictError)
         assert asked is not None
         assert not isinstance(asked, ConflictError)
-        expect((await fx_kit.uow().jobs.get(preview.id)).state is JobState.CANCELLED)
+        expect((await fx_kit.uow().read(lambda repos: repos.jobs.get(preview.id))).state is JobState.CANCELLED)
         expect(asked.state is JobState.QUEUED)
         expect(fx_kit.recording.enqueued == [preview, asked])
         expect(await processing_kinds(fx_kit, project.id) == [requested])

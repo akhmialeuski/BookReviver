@@ -7,6 +7,7 @@ no image library is needed to tell which files a version has and in which format
 """
 
 from datetime import timedelta
+from functools import partial
 from typing import TYPE_CHECKING
 
 from attrs import evolve
@@ -31,7 +32,7 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import PageStepKey, RecipeKey, Renditions, SliceRequest
+from bookreviver.domain.values import PageStageKey, PageStepKey, RecipeKey, Renditions, SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog, StepExecutor
 from bookreviver.services.edits import EditService
@@ -65,11 +66,12 @@ from tests.helpers.page_services import FakeTiler
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
-    from bookreviver.domain.entities import Page, PageVersion, Project, Recipe, Scan
-    from bookreviver.domain.ids import PageVersionId
-    from bookreviver.domain.values import MetadataMap, RecipeDraft
+    from bookreviver.domain.entities import Job, Page, PageVersion, Project, Recipe, ResultMarkChange, Scan
+    from bookreviver.domain.ids import JobId, PageVersionId
+    from bookreviver.domain.values import MetadataMap, RecipeDraft, Slice
+    from bookreviver.ports.persistence import PageVersionRepository, Repositories
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobQueue
     from bookreviver.ports.storage import AssetStore
@@ -77,6 +79,8 @@ if TYPE_CHECKING:
 IMAGE_CONTENT: bytes = b'image'
 PREVIEW_RETENTION_HOURS: int = 24
 PREVIEW_LONG_SIDE_PX: int = 2048
+# How many versions of one stage of a page the helper that reads them returns, which is more than any test makes
+VERSIONS_WINDOW: int = 100
 DEFAULTS: DefaultRecipes = DefaultRecipes(
     {
         Stage.PAGE_SPLIT: dict.fromkeys(RecipeKind, RecipeTemplate(processor_keys=(SPLIT_NONE.key,))),
@@ -222,12 +226,12 @@ class ProcessingKit:
         return await self.service().save_recipe(actor, project.id, RecipeKey(stage, recipe.id), draft)
 
     def stages(self) -> StageSummaries:
-        """Build the sums of the stages of books over a new unit of work.
+        """Build the sums of the stages of books, which read through the repositories their caller hands them.
 
         :returns: The stage summaries, which offer the processors of the kit.
         :rtype: StageSummaries
         """
-        return StageSummaries(uow=InMemoryUnitOfWork(self.database), catalogue=self.catalogue)
+        return StageSummaries(catalogue=self.catalogue)
 
     def jobs(self) -> ProcessingJobs:
         """Build the work of the processing jobs over a new unit of work.
@@ -261,8 +265,21 @@ class ProcessingKit:
             JobKind.MEASURE_BOOK: 'measure_book',
             JobKind.DETECT_CONTENT: 'detect_content',
         }
+
+        def is_final(job_id: JobId, repos: Repositories) -> bool:
+            """Tell whether a job has finished, as committed.
+
+            :param job_id: Identifier of the job.
+            :type job_id: JobId
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: Whether the job is in a final state.
+            :rtype: bool
+            """
+            return repos.jobs.get(job_id).state.is_final
+
         for queued in list(self.recording.enqueued):
-            if not (await self.uow().jobs.get(queued.id)).state.is_final:
+            if not await self.uow().read(partial(is_final, queued.id)):
                 await getattr(self.jobs(), methods[queued.kind])(queued.id)
 
     def edits(self) -> EditService:
@@ -331,9 +348,7 @@ class ProcessingKit:
         """
         owner = new_account_id()
         project = evolve(make_project(owner_id=owner), image_policy=image_policy)
-        uow = self.uow()
-        async with uow.change():
-            await uow.projects.add(project)
+        await self.uow().change(lambda repos: repos.projects.add(project))
         return Actor(account_id=owner), project
 
     async def seed_scan_page(
@@ -355,11 +370,20 @@ class ProcessingKit:
         source = make_source(project_id=project.id, name=f'{order_key}.pdf')
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
         page = make_page(project_id=project.id, order_key=order_key, scan=scan, kind=kind)
-        uow = self.uow()
-        async with uow.change_book(project.id):
-            await uow.sources.add(source)
-            await uow.scans.add(scan)
-            await uow.pages.add(page)
+
+        def add_scan_page(repos: Repositories, _project: Project) -> None:
+            """Add the source, its scan and the page that shows the scan.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: Project of the book, which the work does not need.
+            :type _project: Project
+            """
+            repos.sources.add(source)
+            repos.scans.add(scan)
+            repos.pages.add(page)
+
+        await self.uow().change_book(project.id, add_scan_page)
         keys = ProjectKeys(project.id)
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
             async with self.assets.writable(keys.scan_rendition(scan, rendition)) as target:
@@ -388,10 +412,17 @@ class ProcessingKit:
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
             async with self.assets.writable(keys.version_rendition(version, rendition)) as target:
                 target.write_bytes(image)
-        uow = self.uow()
-        async with uow.change_book(page.project_id):
-            await uow.page_versions.add(version)
-            await uow.page_stages.save(
+
+        def add_base_version(repos: Repositories, _project: Project) -> None:
+            """Add the version and the record of the page split stage that names it as current.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: Project of the book, which the work does not need.
+            :type _project: Project
+            """
+            repos.page_versions.add(version)
+            repos.page_stages.save(
                 PageStage(
                     page_id=page.id,
                     stage=Stage.PAGE_SPLIT,
@@ -400,6 +431,8 @@ class ProcessingKit:
                     updated_at=EPOCH,
                 )
             )
+
+        await self.uow().change_book(page.project_id, add_base_version)
         return version
 
     async def store_files(self, version: PageVersion) -> None:
@@ -408,8 +441,8 @@ class ProcessingKit:
         :param version: Version whose files are written.
         :type version: PageVersion
         """
-        project_id = (await self.uow().pages.get(version.page_id)).project_id
-        keys = ProjectKeys(project_id)
+        page = await self.uow().read(lambda repos: repos.pages.get(version.page_id))
+        keys = ProjectKeys(page.project_id)
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
             async with self.assets.writable(keys.version_rendition(version, rendition)) as target:
                 target.write_bytes(IMAGE_CONTENT)
@@ -422,7 +455,7 @@ class ProcessingKit:
         :returns: The version as the database holds it now.
         :rtype: PageVersion
         """
-        return await self.uow().page_versions.get(version_id)
+        return await self.uow().read(lambda repos: repos.page_versions.get(version_id))
 
     @staticmethod
     def params(**values: object) -> MetadataMap:
@@ -434,6 +467,93 @@ class ProcessingKit:
         :rtype: MetadataMap
         """
         return dict(values)
+
+
+async def stored_job(kit: ProcessingKit, job_id: JobId) -> Job:
+    """Read a job back as committed.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param job_id: Identifier of the job.
+    :type job_id: JobId
+    :returns: The job as the database holds it now.
+    :rtype: Job
+    """
+    return await kit.uow().read(lambda repos: repos.jobs.get(job_id))
+
+
+async def change_versions(
+    kit: ProcessingKit, version: PageVersion, work: Callable[[PageVersionRepository], object]
+) -> None:
+    """Change the versions of the book of a version in a change of its own, as another request would.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param version: A version of the book, which tells the book to change.
+    :type version: PageVersion
+    :param work: What is done to the version repository of the change.
+    :type work: Callable[[PageVersionRepository], object]
+    """
+    page = await kit.uow().read(lambda repos: repos.pages.get(version.page_id))
+    await kit.uow().change_book(page.project_id, lambda repos, _project: work(repos.page_versions))
+
+
+async def found_version(kit: ProcessingKit, version_id: PageVersionId) -> PageVersion | None:
+    """Read a version as committed, which is None for a version that is not stored.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param version_id: Identifier of the version.
+    :type version_id: PageVersionId
+    :returns: The version, or None.
+    :rtype: PageVersion | None
+    """
+    return await kit.uow().read(lambda repos: repos.page_versions.find(version_id))
+
+
+async def mark_log(kit: ProcessingKit, version: PageVersion) -> Sequence[ResultMarkChange]:
+    """Read the log of the marks and comments of a version as committed.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param version: The version.
+    :type version: PageVersion
+    :returns: The changes of the version, by sequence.
+    :rtype: Sequence[ResultMarkChange]
+    """
+    return await kit.uow().read(lambda repos: repos.result_mark_changes.list_for_version(version.id))
+
+
+async def found_stage(kit: ProcessingKit, page: Page, stage: Stage) -> PageStage | None:
+    """Read the record of a stage of a page as committed, which is None for a stage that has not run on the page.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param page: The page.
+    :type page: Page
+    :param stage: The stage.
+    :type stage: Stage
+    :returns: The record, or None.
+    :rtype: PageStage | None
+    """
+    return await kit.uow().read(lambda repos: repos.page_stages.find(PageStageKey(page.id, stage)))
+
+
+async def stage_versions(kit: ProcessingKit, page: Page, stage: Stage | None) -> Slice[PageVersion]:
+    """Read the versions a page has made in a stage or in all, as committed, the earliest first.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param page: The page.
+    :type page: Page
+    :param stage: The stage, or None for every stage.
+    :type stage: Stage | None
+    :returns: The versions of every scale and mark, and their number.
+    :rtype: Slice[PageVersion]
+    """
+    return await kit.uow().read(
+        lambda repos: repos.page_versions.list_for_stage(page.id, stage, None, SliceRequest(limit=VERSIONS_WINDOW))
+    )
 
 
 class ProcessingFakesProvider(Provider):

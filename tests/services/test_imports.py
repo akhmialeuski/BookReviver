@@ -1,10 +1,9 @@
 """Tests for the import service: receiving an upload, and running the job it becomes, source by source."""
 
-from contextlib import asynccontextmanager
 from functools import partial
 from operator import attrgetter, itemgetter
 from typing import TYPE_CHECKING, NamedTuple
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import anyio
 import pytest
@@ -45,7 +44,7 @@ from bookreviver.domain.events import (
     SourceImported,
 )
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import Contributor, SliceRequest, StageRun
+from bookreviver.domain.values import Contributor, StageRun
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.services.base_versions import SPLIT_NONE
 from bookreviver.services.imports import (
@@ -86,28 +85,28 @@ from tests.helpers.fakes_imports import (
     djvu_uploads,
     image_upload,
     pdf_upload,
+    stored_book,
 )
 from tests.helpers.processors import AutoSplitProcessor
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping, Sequence
+    from collections.abc import Awaitable, Callable, Collection, Mapping
     from pathlib import Path
     from typing import Any
 
     from fastapi import UploadFile
 
-    from bookreviver.domain.entities import Job, Page, PaginationSection, Project, Scan, Source
-    from bookreviver.domain.ids import ProjectId, StorageKey
+    from bookreviver.domain.entities import Job, Page, PageVersion, PaginationSection, Project, Scan, Source
+    from bookreviver.domain.ids import PageId, ProjectId, StorageKey
+    from bookreviver.ports.persistence import Repositories
     from bookreviver.ports.storage import AssetStore
-    from bookreviver.services.imports import ImportService
-    from tests.helpers.book_gate import BookGate
 
 pytestmark = pytest.mark.anyio
 
-# The read of the active jobs that an upload makes in the block that stores its job, after its early check
-IN_BLOCK_READ: int = 2
 RACING_UPLOADS: tuple[str, str] = ('first.jpg', 'second.jpg')
+# The method of the unit of work that a test wraps to learn that an upload is about to wait for the lock
+CHANGE_METHOD: str = 'change'
 INCOMING_UPLOADS: str = 'incoming/*'
 FILES_ARG: str = 'files'
 AUTO_SPLIT: str = 'split.auto'
@@ -129,7 +128,6 @@ DJVU_FULL_IMAGES: dict[tuple[ImagePolicy, ColorMode], tuple[str, str]] = {
     (ImagePolicy.LOSSLESS, ColorMode.GRAY): (PNG, GRAY_MODE),
     (ImagePolicy.LOSSLESS, ColorMode.BILEVEL): (PNG, BILEVEL_MODE),
 }
-EVERY_SLICE: SliceRequest = SliceRequest(limit=1000)
 # Pages of the sample PDFs, and the scans they and the one image make in all
 FIRST_PART_PAGES: int = 2
 SECOND_PART_PAGES: int = 3
@@ -304,7 +302,7 @@ async def _sources(rig: ImportRig, project_id: ProjectId) -> list[Source]:
     :returns: The sources.
     :rtype: list[Source]
     """
-    return list(await rig.open_uow().sources.list_for_project(project_id))
+    return (await stored_book(rig.open_uow(), project_id)).sources
 
 
 async def _scans(rig: ImportRig, project_id: ProjectId) -> list[Scan]:
@@ -317,7 +315,7 @@ async def _scans(rig: ImportRig, project_id: ProjectId) -> list[Scan]:
     :returns: The scans.
     :rtype: list[Scan]
     """
-    return list((await rig.open_uow().scans.list_for_project(project_id, EVERY_SLICE)).items)
+    return (await stored_book(rig.open_uow(), project_id)).scans
 
 
 async def _pages(rig: ImportRig, project_id: ProjectId) -> list[Page]:
@@ -330,7 +328,7 @@ async def _pages(rig: ImportRig, project_id: ProjectId) -> list[Page]:
     :returns: The pages.
     :rtype: list[Page]
     """
-    return list((await rig.open_uow().pages.list_for_project(project_id, EVERY_SLICE)).items)
+    return (await stored_book(rig.open_uow(), project_id)).pages
 
 
 async def _sections(rig: ImportRig, project_id: ProjectId) -> list[PaginationSection]:
@@ -343,7 +341,50 @@ async def _sections(rig: ImportRig, project_id: ProjectId) -> list[PaginationSec
     :returns: The sections.
     :rtype: list[PaginationSection]
     """
-    return list(await rig.open_uow().pagination_sections.list_for_project(project_id))
+    return (await stored_book(rig.open_uow(), project_id)).sections
+
+
+async def _jobs(rig: ImportRig, project_id: ProjectId, states: Collection[JobState] = tuple(JobState)) -> list[Job]:
+    """Read the jobs of a project in some states as committed, the newest first.
+
+    :param rig: Adapters of the import.
+    :type rig: ImportRig
+    :param project_id: Project owning the jobs.
+    :type project_id: ProjectId
+    :param states: States a returned job may be in, every state by default.
+    :type states: Collection[JobState]
+    :returns: The jobs.
+    :rtype: list[Job]
+    """
+    return list(await rig.open_uow().read(lambda repos: repos.jobs.list_for_project(project_id, states)))
+
+
+async def _versions(rig: ImportRig, page_ids: Collection[PageId]) -> list[PageVersion]:
+    """Read the versions of some pages as committed, page by page in the order the versions were created.
+
+    :param rig: Adapters of the import.
+    :type rig: ImportRig
+    :param page_ids: Pages owning the versions.
+    :type page_ids: Collection[PageId]
+    :returns: The versions.
+    :rtype: list[PageVersion]
+    """
+    return await rig.open_uow().read(
+        lambda repos: [version for page_id in page_ids for version in repos.page_versions.list_for_page(page_id)]
+    )
+
+
+async def _project(rig: ImportRig, project_id: ProjectId) -> Project:
+    """Read a project as committed.
+
+    :param rig: Adapters of the import.
+    :type rig: ImportRig
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :returns: The project.
+    :rtype: Project
+    """
+    return await rig.open_uow().read(lambda repos: repos.projects.get(project_id))
 
 
 async def _is_stored(assets: AssetStore, key: StorageKey) -> bool:
@@ -632,7 +673,7 @@ class TestStartImport:
             )
 
         expect(refusal.value.problem is case.problem)
-        expect(await fx_rig.open_uow().jobs.list_for_project(fx_project.id, set(JobState)) == [])
+        expect(await _jobs(fx_rig, fx_project.id) == [])
         expect(fx_rig.queue.enqueued == [])
         assert_expectations()
 
@@ -656,7 +697,7 @@ class TestStartImport:
         with pytest.raises(ConnectionError):
             await fx_rig.service().start_import(fx_owner, fx_project.id, [image_upload(fx_samples, IMAGE_NAME)])
 
-        [job] = await fx_rig.open_uow().jobs.list_for_project(fx_project.id, set(JobState))
+        [job] = await _jobs(fx_rig, fx_project.id)
         expect((job.state, job.error) == (JobState.FAILED, NOT_QUEUED))
         expect(job.finished_at is not None)
         expect(not [path async for path in anyio.Path(fx_storage_root).rglob(IMAGE_NAME)])
@@ -680,7 +721,7 @@ class TestAuthorizeUpload:
         """
         await fx_rig.service().authorize_upload(fx_owner, fx_project.id)
 
-        expect(await fx_rig.open_uow().jobs.list_for_project(fx_project.id, set(JobState)) == [])
+        expect(await _jobs(fx_rig, fx_project.id) == [])
         expect(fx_rig.queue.enqueued == [])
         assert_expectations()
 
@@ -1018,7 +1059,7 @@ class TestRunImport:
         """
         await _import(fx_rig, fx_owner, fx_project.id, fx_book_files)
 
-        keys, uow = ProjectKeys(fx_project.id), fx_rig.open_uow()
+        keys = ProjectKeys(fx_project.id)
         scans, pages = await _scans(fx_rig, fx_project.id), await _pages(fx_rig, fx_project.id)
         missing: list[StorageKey] = []
         for scan in scans:
@@ -1027,7 +1068,7 @@ class TestRunImport:
                 for rendition in (scan.renditions.full, *DERIVED)
                 if not await _is_stored(fx_rig.assets, key := keys.scan_rendition(scan, rendition))
             ]
-        versions = [version for page in pages for version in await uow.page_versions.list_for_page(page.id)]
+        versions = await _versions(fx_rig, [page.id for page in pages])
         for version in versions:
             missing += [
                 key
@@ -1065,10 +1106,10 @@ class TestRunImport:
         """
         await _import(fx_rig, fx_owner, fx_project.id, [image_upload(fx_samples, COVER_NAME)])
 
-        keys, uow = ProjectKeys(fx_project.id), fx_rig.open_uow()
+        keys = ProjectKeys(fx_project.id)
         [scan] = await _scans(fx_rig, fx_project.id)
         [page] = await _pages(fx_rig, fx_project.id)
-        [version] = await uow.page_versions.list_for_page(page.id)
+        [version] = await _versions(fx_rig, [page.id])
         assert sorted(fx_rig.tiler.resource_ids) == sorted(
             [
                 f'{IIIF_ROOT}/{keys.scan_rendition(scan, Rendition.TILES)}',
@@ -1190,7 +1231,7 @@ class TestRunImportFullFormat:
         keys = ProjectKeys(project.id)
         [scan] = await _scans(fx_rig, project.id)
         [page] = await _pages(fx_rig, project.id)
-        [version] = await fx_rig.open_uow().page_versions.list_for_page(page.id)
+        [version] = await _versions(fx_rig, [page.id])
         other = Rendition.FULL_JPEG if case.expected is Rendition.FULL_PNG else Rendition.FULL_PNG
         expect(fx_rig.rasterizer.formats == [case.expected])
         expect(scan.renditions.full is case.expected)
@@ -1219,9 +1260,10 @@ class TestRunImportFullFormat:
         project = await _project_with(fx_rig, fx_owner, ImagePolicy.COMPACT)
         await _import(fx_rig, fx_owner, project.id, [image_upload(fx_samples, 'first.jpg')])
         [first] = await _scans(fx_rig, project.id)
-        uow = fx_rig.open_uow()
-        async with uow.change_book(project.id):
-            await uow.projects.update(evolve(project, image_policy=ImagePolicy.LOSSLESS))
+        await fx_rig.open_uow().change_book(
+            project.id,
+            lambda repos, _project: repos.projects.update(evolve(project, image_policy=ImagePolicy.LOSSLESS)),
+        )
 
         second = image_upload(fx_samples, 'second.jpg', width_px=SECOND_PART_WIDTH_PX)
         await _import(fx_rig, fx_owner, project.id, [second])
@@ -1263,7 +1305,7 @@ class TestRunImportDjvu:
 
         job = await _import(fx_rig, fx_owner, project.id, djvu_uploads([bundle]))
 
-        keys, uow = ProjectKeys(project.id), fx_rig.open_uow()
+        keys = ProjectKeys(project.id)
         scans = await _scans(fx_rig, project.id)
         expect(job.state is JobState.SUCCEEDED)
         expect(sorted(scan.facts.color_mode for scan in scans) == sorted(page.mode for page in DJVU_PAGES))
@@ -1271,7 +1313,7 @@ class TestRunImportDjvu:
             wanted = DJVU_FULL_IMAGES[policy, scan.facts.color_mode]
             expect(await _stored_image(fx_rig, keys.scan_rendition(scan, scan.renditions.full)) == wanted)
         for page in await _pages(fx_rig, project.id):
-            [version] = await uow.page_versions.list_for_page(page.id)
+            [version] = await _versions(fx_rig, [page.id])
             scan = next(scan for scan in scans if scan.id == page.scan_id)
             wanted = DJVU_FULL_IMAGES[policy, scan.facts.color_mode]
             expect(version.renditions is not None and version.renditions.full is scan.renditions.full)
@@ -1552,7 +1594,7 @@ class TestRunImportChecks:
             ],
         )
 
-        project = await fx_rig.open_uow().projects.get(fx_project.id)
+        project = await _project(fx_rig, fx_project.id)
         expect(project.details.title == fx_project.details.title)
         expect(project.details.contributors == (Contributor(name=FIRST_AUTHOR, role=ContributorRole.AUTHOR),))
         expect(len(_events_of(fx_rig, ProjectChanged)) == 1)
@@ -1582,7 +1624,7 @@ class TestRunImportChecks:
 
         await _import(fx_rig, fx_owner, fx_project.id, [upload(PDF_NAME, content=path.read_bytes())])
 
-        details = (await fx_rig.open_uow().projects.get(fx_project.id)).details
+        details = (await _project(fx_rig, fx_project.id)).details
         expect((details.languages, details.subjects) == (('bel',), ('Folklore',)))
         expect([item.value for item in details.identifiers] == ['0306406152'])
         expect(len(_events_of(fx_rig, ProjectChanged)) == 1)
@@ -1610,7 +1652,7 @@ class TestRunImportChecks:
             [pdf_upload(fx_samples, PDF_NAME, pages=1, metadata={AUTHOR_KEY: 'Document Author'})],
         )
 
-        expect((await fx_rig.open_uow().projects.get(project.id)).details == described.details)
+        expect((await _project(fx_rig, project.id)).details == described.details)
         expect(_events_of(fx_rig, ProjectChanged) == [])
         assert_expectations()
 
@@ -1623,8 +1665,8 @@ class TestRunImportLifecycle:
     ) -> None:
         """Verify the scans are cut in parallel, never more than ``parallel_scans`` at once, and every one is counted.
 
-        The writes of the files overlap, so the cutters ask for their blocks together. A progress one of them read
-        before another stored would count a scan less, and a block opened inside another would fail the job.
+        The writes of the files overlap, so the cutters ask for their changes together. A progress one of them read
+        before another stored would count a scan less.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
@@ -1895,7 +1937,7 @@ class TestRunImportLifecycle:
         job = await _import(fx_rig, fx_owner, fx_project.id, [image_upload(fx_samples, IMAGE_NAME)])
 
         expect((job.state, job.error) == (JobState.FAILED, UNEXPECTED_FAILURE))
-        expect((await fx_rig.open_uow().jobs.list_for_project(fx_project.id, JobState.active())) == [])
+        expect(await _jobs(fx_rig, fx_project.id, JobState.active()) == [])
         assert_expectations()
 
 
@@ -1907,9 +1949,9 @@ class TestRunImportFailures:
     ) -> None:
         """Verify a job cancelled while the worker waits to start it leaves no upload behind.
 
-        The cancellation holds its block open, so the worker waits at the start instead of reading the job queued.
-        Nothing delivers a cancelled job again, so the run that found it cancelled is the only one that can remove the
-        files the job received.
+        The lock of the changes is held while the cancellation and then the worker ask for it, so the worker waits at
+        the start behind the cancellation instead of reading the job queued. Nothing delivers a cancelled job again, so
+        the run that found it cancelled is the only one that can remove the files the job received.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
@@ -1924,29 +1966,29 @@ class TestRunImportFailures:
         """
         job = await fx_rig.service().start_import(fx_owner, fx_project.id, [image_upload(fx_samples, IMAGE_NAME)])
         canceller = fx_rig.open_uow()
-        cancelling = anyio.Event()
-        resume = anyio.Event()
 
-        async def cancel_and_hold() -> None:
-            """Cancel the job in a block that stays open until the test lets it commit."""
-            async with canceller.change():
-                queued = await canceller.jobs.get(job.id)
-                await canceller.jobs.update_if_state(
-                    evolve(queued, state=JobState.CANCELLED, finished_at=fx_rig.fakes.clock.now()),
-                    expected=JobState.active(),
-                )
-                cancelling.set()
-                await resume.wait()
+        def cancel_queued(repos: Repositories) -> Job | None:
+            """Cancel the job, which the account holder does while it is queued.
 
-        async with anyio.create_task_group() as group:
-            group.start_soon(cancel_and_hold)
-            await cancelling.wait()
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The job as stored in the cancelled state.
+            :rtype: Job | None
+            """
+            queued = repos.jobs.get(job.id)
+            return repos.jobs.update_if_state(
+                evolve(queued, state=JobState.CANCELLED, finished_at=fx_rig.fakes.clock.now()),
+                expected=JobState.active(),
+            )
+
+        async with anyio.create_task_group() as group, hold_book(fx_rig.database):
+            group.start_soon(canceller.change, cancel_queued)
+            await anyio.wait_all_tasks_blocked()
             group.start_soon(fx_rig.service().run_import, job.id)
             await anyio.wait_all_tasks_blocked()
-            # The worker waits for the cancellation to commit, so it has not removed the upload yet
+            # The worker waits behind the cancellation, so it has not removed the upload yet
             async with fx_rig.sources.staged_files(fx_project.id, job.id) as staged:
                 expect(list(staged) == [IMAGE_NAME])
-            resume.set()
 
         expect((await fx_rig.stored_job(job)).state is JobState.CANCELLED)
         expect(await _sources(fx_rig, fx_project.id) == [])
@@ -1998,10 +2040,10 @@ class TestRunImportFailures:
         :type fx_samples: Path
         """
         failure = UnsupportedSourceError(REFUSED_SCANS_ERROR)
-        with patch.object(InMemoryScanRepository, 'add_many', AsyncMock(side_effect=failure)):
+        with patch.object(InMemoryScanRepository, 'add_many', Mock(side_effect=failure)):
             job = await _import(fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, PDF_NAME, pages=THREE_PAGES)])
 
-        stored = await fx_rig.open_uow().jobs.get(job.id)
+        stored = await fx_rig.stored_job(job)
         expect((job.state, job.error) == (JobState.FAILED, REFUSED_SCANS_ERROR))
         expect((job.progress.done, job.progress.total) == (0, 0))
         expect(stored.progress == job.progress)
@@ -2010,16 +2052,16 @@ class TestRunImportFailures:
 
 
 class TestRunImportQueue:
-    """Tests for the scans cut at once, whose blocks queue in front of the one unit of work of the job."""
+    """Tests for the scans cut at once, whose changes of the book queue in front of one unit of work of the job."""
 
     async def test_job_cancelled_while_scans_are_cut_stops_every_cutter_and_keeps_the_scans_written(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
     ) -> None:
         """Verify a cancellation stops both cutters and the next scans, and leaves the scan that was stored stored.
 
-        The second scan of the first pair waits outside any block until the job is cancelled, so its write finds the
-        job cancelled and rolls back, while the first scan was committed before. The cutter of the first scan finds
-        the job cancelled at the block of the third, which is never started.
+        The second scan of the first pair waits outside any transaction until the job is cancelled, so its write finds
+        the job cancelled and rolls back, while the first scan was committed before. The cutter of the first scan finds
+        the job cancelled at the change of the third, which is never started.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
@@ -2036,7 +2078,7 @@ class TestRunImportQueue:
         cancelled = anyio.Event()
 
         async def hold_second_scan(number: int) -> None:
-            """Keep the second scan outside its blocks until the job has been cancelled.
+            """Keep the second scan outside its transactions until the job has been cancelled.
 
             :param number: Number of the scan about to be written.
             :type number: int
@@ -2071,19 +2113,14 @@ class TestRunImportQueue:
         expect(len(await _pages(fx_rig, fx_project.id)) == FOUR_PAGES)
         assert_expectations()
 
-    async def test_cutter_that_finds_the_unit_of_work_in_a_block_waits_for_it(
-        self,
-        fx_rig: ImportRig,
-        fx_owner: Actor,
-        fx_project: Project,
-        fx_samples: Path,
-        monkeypatch: pytest.MonkeyPatch,
+    async def test_cutters_that_find_the_book_held_wait_for_it_and_count_every_scan(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
     ) -> None:
-        """Verify the second cutter queues behind the block of the first on their one unit of work and does not fail.
+        """Verify two cutters that ask for the held book wait for it together and do not fail, and both scans count.
 
-        The first cutter to start holds the block of its first write open. The second one starts only once the first
-        is inside it, and asks for a block of the same unit of work, which it would be refused as nested if nothing
-        queued it. The step is patched, as the other tests of this class do, to tell the cutters apart.
+        Both cutters have written their image when the book is held, so each asks for the change that stores its scan
+        and waits for the book. Neither has stored anything meanwhile. When the book is let go they store their scans
+        in turn, each counting its own scan on top of the progress the other committed.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
@@ -2093,46 +2130,40 @@ class TestRunImportQueue:
         :type fx_project: Project
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
-        :param monkeypatch: Fixture that restores the patched method after the test.
-        :type monkeypatch: pytest.MonkeyPatch
         """
         job = await fx_rig.service().start_import(
             fx_owner, fx_project.id, [pdf_upload(fx_samples, QUEUE_PDF, pages=PARALLEL_SCANS)]
         )
-        uow = fx_rig.open_uow()
-        gates: list[BookGate] = []
-        armed = anyio.Event()
-        cut = ImportRun._cut
+        extracting: list[int] = []
+        both_extracting = anyio.Event()
+        proceed = anyio.Event()
 
-        async def hold_the_first_cutter(run: ImportRun, source: Source, scan: Scan) -> None:
-            """Hold the first block of the first cutter, and start the second only once that block is open.
+        async def wait_for_both(number: int) -> None:
+            """Keep each scan before its write until both cutters have come, and the test lets them go.
 
-            :param run: Run cutting the scan.
-            :type run: ImportRun
-            :param source: Source holding the scan.
-            :type source: Source
-            :param scan: The scan to cut.
-            :type scan: Scan
+            :param number: Number of the scan about to be written.
+            :type number: int
             """
-            if not gates:
-                gates.append(hold_book(uow, monkeypatch))
-                armed.set()
-            else:
-                await gates[0].entered.wait()
-            await cut(run, source, scan)
+            extracting.append(number)
+            if len(extracting) == PARALLEL_SCANS:
+                both_extracting.set()
+            await proceed.wait()
 
-        with patch.object(ImportRun, CUT_STEP, hold_the_first_cutter), anyio.fail_after(IMPORT_TIMEOUT_SECONDS):
+        fx_rig.rasterizer.before_extract = wait_for_both
+
+        with anyio.fail_after(IMPORT_TIMEOUT_SECONDS):
             async with anyio.create_task_group() as group:
-                group.start_soon(fx_rig.service(uow=uow, parallel_scans=PARALLEL_SCANS).run_import, job.id)
-                await armed.wait()
-                await gates[0].entered.wait()
-                # The first cutter waits in its block and the second at the queue in front of it, with nothing written
-                await anyio.wait_all_tasks_blocked()
-                expect(fx_rig.rasterizer.extracted == [])
-                gates[0].proceed.set()
+                group.start_soon(fx_rig.service(parallel_scans=PARALLEL_SCANS).run_import, job.id)
+                await both_extracting.wait()
+                async with hold_book(fx_rig.database, fx_project.id):
+                    proceed.set()
+                    await anyio.wait_all_tasks_blocked()
+                    expect((await fx_rig.stored_job(job)).progress.done == 0)
+                    expect(not _events_of(fx_rig, ScanReady))
 
         stored = await fx_rig.stored_job(job)
         expect((stored.state, stored.error) == (JobState.SUCCEEDED, ''))
+        expect(fx_rig.rasterizer.peak == PARALLEL_SCANS)
         expect(all(scan.renditions.ready for scan in await _scans(fx_rig, fx_project.id)))
         expect((stored.progress.done, stored.progress.total) == (PARALLEL_SCANS, PARALLEL_SCANS))
         assert_expectations()
@@ -2285,9 +2316,11 @@ class TestRunImportSplit:
         recipes = self._recipes(AUTO_SPLIT)
         await self._run_import(fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, PDF_NAME, pages=2)], recipes)
         first_run = next(job for job in fx_rig.queue.enqueued if job.kind is JobKind.RUN_STAGE)
-        uow = fx_rig.open_uow()
-        async with uow.change():
-            await uow.jobs.update_if_state(evolve(first_run, state=JobState.SUCCEEDED), expected=(JobState.QUEUED,))
+        await fx_rig.open_uow().change(
+            lambda repos: repos.jobs.update_if_state(
+                evolve(first_run, state=JobState.SUCCEEDED), expected=(JobState.QUEUED,)
+            )
+        )
         await self._run_import(
             fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, SECOND_PDF_NAME, pages=1, width_px=210)], recipes
         )
@@ -2332,11 +2365,8 @@ class TestRunImportSplit:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        uow = fx_rig.open_uow()
-        async with uow.change():
-            await uow.jobs.add(
-                evolve(make_job(project_id=fx_project.id, state=JobState.RUNNING), kind=JobKind.COLLECT_VERSIONS)
-            )
+        busy = evolve(make_job(project_id=fx_project.id, state=JobState.RUNNING), kind=JobKind.COLLECT_VERSIONS)
+        await fx_rig.open_uow().change(lambda repos: repos.jobs.add(busy))
 
         job = await self._run_import(
             fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, PDF_NAME, pages=1)], self._recipes(AUTO_SPLIT)
@@ -2348,7 +2378,7 @@ class TestRunImportSplit:
 
 
 async def delete_the_page(rig: ImportRig, project: Project) -> None:
-    """Delete the only page of the project in a block of its own, as the user would while its scan is cut.
+    """Delete the only page of the project in a change of its own, as the user would while its scan is cut.
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
@@ -2356,13 +2386,11 @@ async def delete_the_page(rig: ImportRig, project: Project) -> None:
     :type project: Project
     """
     [page] = await _pages(rig, project.id)
-    uow = rig.open_uow()
-    async with uow.change_book(project.id):
-        await uow.pages.delete(page.id)
+    await rig.open_uow().change_book(project.id, lambda repos, _project: repos.pages.delete(page.id))
 
 
 async def delete_the_source(rig: ImportRig, project: Project) -> None:
-    """Delete the only source of the project, with its scan, in a block of its own.
+    """Delete the only source of the project, with its scan, in a change of its own.
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
@@ -2370,13 +2398,11 @@ async def delete_the_source(rig: ImportRig, project: Project) -> None:
     :type project: Project
     """
     [source] = await _sources(rig, project.id)
-    uow = rig.open_uow()
-    async with uow.change_book(project.id):
-        await uow.sources.delete(source.id)
+    await rig.open_uow().change_book(project.id, lambda repos, _project: repos.sources.delete(source.id))
 
 
 async def make_the_scan_ready(rig: ImportRig, project: Project) -> None:
-    """Mark the only scan of the project ready in a block of its own, as another run would have.
+    """Mark the only scan of the project ready in a change of its own, as another run would have.
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
@@ -2384,13 +2410,12 @@ async def make_the_scan_ready(rig: ImportRig, project: Project) -> None:
     :type project: Project
     """
     [scan] = await _scans(rig, project.id)
-    uow = rig.open_uow()
-    async with uow.change_book(project.id):
-        await uow.scans.update(evolve(scan, renditions=evolve(scan.renditions, ready=True)))
+    ready = evolve(scan, renditions=evolve(scan.renditions, ready=True))
+    await rig.open_uow().change_book(project.id, lambda repos, _project: repos.scans.update(ready))
 
 
 class TestRunImportApplyStep:
-    """Tests for the block that stores a cut scan, which reads the scan and its pages again."""
+    """Tests for the change that stores a cut scan, which reads the scan and its pages again."""
 
     @pytest.mark.parametrize(
         CASE_ARG,
@@ -2410,8 +2435,8 @@ class TestRunImportApplyStep:
     ) -> None:
         """Verify a scan whose book changed after the cut writes no version and announces nothing, and the job ends well.
 
-        The change is made right before the image of the scan is written, so the block that stores the scan finds
-        the book as the change left it. The scan counts one less to cut, and its files are removed.
+        The change is made right before the image of the scan is written, so the change that stores the scan finds
+        the book as the other one left it. The scan counts one less to cut, and its files are removed.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
@@ -2441,7 +2466,9 @@ class TestRunImportApplyStep:
         job = await _import(fx_rig, fx_owner, fx_project.id, [image_upload(fx_samples, IMAGE_NAME)])
 
         pages = await _pages(fx_rig, fx_project.id)
-        versions = await fx_rig.open_uow().page_versions.list_base_versions([page.id for page in pages])
+        versions = await fx_rig.open_uow().read(
+            lambda repos: repos.page_versions.list_base_versions([page.id for page in pages])
+        )
         expect((job.state, job.progress.done, job.progress.total) == (JobState.SUCCEEDED, 0, 0))
         expect(not _events_of(fx_rig, ScanReady))
         expect(not versions)
@@ -2455,10 +2482,12 @@ class TestStartImportConcurrently:
     async def test_second_upload_waits_for_the_first_and_is_refused(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path, fx_storage_root: Path
     ) -> None:
-        """Verify the second upload waits for the block of the first, reads its job, and is refused with its upload gone.
+        """Verify the second upload queues behind the first, reads its job, and is refused with its upload gone.
 
-        The first upload is held inside its block after it read the active jobs. The second one is let in, receives its
-        files, and waits at the start of its own block, so the check and the insert of the first cannot be split.
+        The lock of the changes is held while both uploads pass their early check and receive their files, so both
+        wait for the change that stores the job, the first one ahead of the second. When the lock is let go the first
+        stores its job, and the second finds it in the same check the change repeats, since the check and the insert of
+        one change cannot be split by the other.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
@@ -2472,73 +2501,59 @@ class TestStartImportConcurrently:
         :type fx_storage_root: Path
         """
         first_name, second_name = RACING_UPLOADS
-        first_uow = fx_rig.open_uow()
-        listing = first_uow.jobs.list_for_project
-        reads: list[None] = []
-        checked = anyio.Event()
-        resume = anyio.Event()
-
-        async def list_then_wait(project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
-            """List the jobs as they are, and hold the first upload once it is inside its block, after the early check.
-
-            :param project_id: Project whose jobs are listed.
-            :type project_id: ProjectId
-            :param states: States a listed job may be in.
-            :type states: Collection[JobState]
-            :returns: The jobs found.
-            :rtype: Sequence[Job]
-            """
-            found = await listing(project_id, states)
-            reads.append(None)
-            if len(reads) == IN_BLOCK_READ:
-                checked.set()
-                await resume.wait()
-            return found
-
-        second_uow = fx_rig.open_uow()
-        change = second_uow.change
-        waiting = anyio.Event()
-
-        @asynccontextmanager
-        async def change_after_saying_so() -> AsyncIterator[None]:
-            """Open the block of the second upload, which says so first, since it then waits for the first.
-
-            :returns: Iterator yielding once the block is open.
-            :rtype: AsyncIterator[None]
-            """
-            waiting.set()
-            async with change():
-                yield
-
+        uows = {name: fx_rig.open_uow() for name in RACING_UPLOADS}
+        asking = {name: anyio.Event() for name in RACING_UPLOADS}
         outcomes: dict[str, Job | ConflictError] = {}
 
-        async def upload(name: str, service: ImportService) -> None:
-            """Upload one file and keep the job, or the refusal.
+        def announce_the_change(name: str) -> Callable[[Callable[[Repositories], Job]], Awaitable[Job]]:
+            """Wrap the ``change`` of the unit of work of an upload, so that it says so before it waits for the lock.
+
+            :param name: Name of the file the upload sends.
+            :type name: str
+            :returns: The method that replaces ``change``.
+            :rtype: Callable[[Callable[[Repositories], Job]], Awaitable[Job]]
+            """
+            change = uows[name].change
+
+            async def announced(work: Callable[[Repositories], Job]) -> Job:
+                """Say the upload is about to ask for the lock, then ask for it.
+
+                :param work: Function over the repositories of the transaction.
+                :type work: Callable[[Repositories], Job]
+                :returns: What the work returns.
+                :rtype: Job
+                """
+                asking[name].set()
+                return await change(work)
+
+            return announced
+
+        async def upload(name: str) -> None:
+            """Upload one file through a service of its own and keep the job, or the refusal.
 
             :param name: Name of the uploaded file.
             :type name: str
-            :param service: Service the upload goes through.
-            :type service: ImportService
             """
             try:
-                outcomes[name] = await service.start_import(fx_owner, fx_project.id, [image_upload(fx_samples, name)])
+                outcomes[name] = await fx_rig.service(uow=uows[name]).start_import(
+                    fx_owner, fx_project.id, [image_upload(fx_samples, name)]
+                )
             except ConflictError as error:
                 outcomes[name] = error
 
         with (
-            patch.object(first_uow.jobs, 'list_for_project', list_then_wait),
-            patch.object(second_uow, 'change', change_after_saying_so),
+            patch.object(uows[first_name], CHANGE_METHOD, announce_the_change(first_name)),
+            patch.object(uows[second_name], CHANGE_METHOD, announce_the_change(second_name)),
+            anyio.fail_after(IMPORT_TIMEOUT_SECONDS),
         ):
-            async with anyio.create_task_group() as group:
-                group.start_soon(upload, first_name, fx_rig.service(uow=first_uow))
-                await checked.wait()
-                group.start_soon(upload, second_name, fx_rig.service(uow=second_uow))
-                await waiting.wait()
-                await anyio.wait_all_tasks_blocked()
-                expect(await fx_rig.open_uow().jobs.list_for_project(fx_project.id, set(JobState)) == [])
-                resume.set()
+            async with anyio.create_task_group() as group, hold_book(fx_rig.database):
+                for name in RACING_UPLOADS:
+                    group.start_soon(upload, name)
+                    await asking[name].wait()
+                    await anyio.wait_all_tasks_blocked()
+                expect(await _jobs(fx_rig, fx_project.id) == [])
 
-        stored = await fx_rig.open_uow().jobs.list_for_project(fx_project.id, set(JobState))
+        stored = await _jobs(fx_rig, fx_project.id)
         winner = outcomes[first_name]
         assert not isinstance(winner, ConflictError)
         expect([job.id for job in stored] == [winner.id])

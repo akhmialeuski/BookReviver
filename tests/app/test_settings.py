@@ -1,13 +1,11 @@
 """Tests for the settings groups that switch the measurements of the backend on and size the pool of the steps."""
 
-import re
 from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import ValidationError
 
 from bookreviver.app.settings import (
-    REQUEST_WAIT_NOT_SHORTER_THAN_JOB_WAIT,
     STEP_PROCESSES_NEED_PREVIEW_SHARE,
     TRACING_NEEDS_PATH,
     TRACING_PATH_WITHOUT_TRACING,
@@ -33,11 +31,9 @@ JOB_SECONDS_VARIABLE: str = 'BOOKREVIVER_CHANGE_WAIT__JOB_SECONDS'
 # The limits the settings document: 3 seconds for a request and 30 for every other unit of work
 DEFAULT_REQUEST_SECONDS: float = 3.0
 DEFAULT_JOB_SECONDS: float = 30.0
-# The names of the two limits, and a shorter and a longer value for them
+# The names of the two limits
 REQUEST_SECONDS_FIELD: str = 'request_seconds'
 JOB_SECONDS_FIELD: str = 'job_seconds'
-SHORTER_SECONDS: float = 5.0
-LONGER_SECONDS: float = 10.0
 # The id of a case whose two values are equal
 EQUAL_ID: str = 'equal'
 # Where the default number of processes reads the cores, which a test replaces
@@ -208,20 +204,3 @@ class TestChangeWaitSettings:
         with pytest.raises(ValidationError) as refused:
             ChangeWaitSettings.model_validate({field: seconds})
         assert [error['loc'] for error in refused.value.errors()] == [(field,)]
-
-    @pytest.mark.parametrize('request_seconds', [SHORTER_SECONDS, LONGER_SECONDS], ids=[EQUAL_ID, 'longer'])
-    def test_a_request_limit_not_shorter_than_the_job_limit_is_refused(self, request_seconds: float) -> None:
-        """Verify a request limit equal to the job limit or longer is refused.
-
-        Every connection opens with the job limit as its busy timeout, and the adapter caps the lock wait of a block only
-        when its limit is shorter than that. A request whose limit equals the job limit would wait for the queue and then
-        for the whole busy timeout, which is up to twice its limit.
-
-        :param request_seconds: The request limit, against a job limit of ``SHORTER_SECONDS``.
-        :type request_seconds: float
-        """
-        message = REQUEST_WAIT_NOT_SHORTER_THAN_JOB_WAIT.format(
-            request_seconds=request_seconds, job_seconds=SHORTER_SECONDS
-        )
-        with pytest.raises(ValidationError, match=re.escape(message)):
-            ChangeWaitSettings(request_seconds=request_seconds, job_seconds=SHORTER_SECONDS)

@@ -28,8 +28,10 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.adapters.storage import LocalAssetStore
-    from bookreviver.domain.entities import Actor, Project
+    from bookreviver.domain.entities import Actor, Page, Project, ProjectOverview
     from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.values import Slice
+    from bookreviver.ports.persistence import Repositories
 
 pytestmark = pytest.mark.anyio
 
@@ -51,7 +53,7 @@ def _service(database: InMemoryDatabase, sources: LocalSourceStore, assets: Loca
     :rtype: ProjectService
     """
     uow = InMemoryUnitOfWork(database)
-    stages = StageSummaries(uow=uow, catalogue=FakeCatalogue([]))
+    stages = StageSummaries(catalogue=FakeCatalogue([]))
     return ProjectService(uow=uow, clock=FixedClock(NOW), sources=sources, assets=assets, stages=stages)
 
 
@@ -132,7 +134,7 @@ async def _stored(database: InMemoryDatabase, project: Project) -> Project:
     :returns: The project as committed.
     :rtype: Project
     """
-    return await InMemoryUnitOfWork(database).projects.get(project.id)
+    return await InMemoryUnitOfWork(database).read(lambda repos: repos.projects.get(project.id))
 
 
 @pytest.fixture
@@ -384,10 +386,22 @@ class TestDelete:
 
         await fx_service().delete(fx_actor, doomed.id)
 
-        uow = InMemoryUnitOfWork(fx_database)
-        remaining = await uow.projects.list_for_owner(fx_actor.account_id, SliceRequest())
+        def read_book(repos: Repositories) -> tuple[Slice[ProjectOverview], Slice[Page]]:
+            """Read the projects the actor has left and the pages of the deleted project.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The remaining projects of the actor, and the pages of the deleted project.
+            :rtype: tuple[Slice[ProjectOverview], Slice[Page]]
+            """
+            return (
+                repos.projects.list_for_owner(fx_actor.account_id, SliceRequest()),
+                repos.pages.list_for_project(doomed.id, SliceRequest()),
+            )
+
+        remaining, doomed_pages = await InMemoryUnitOfWork(fx_database).read(read_book)
         expect([item.project.id for item in remaining.items] == [kept.id])
-        expect((await uow.pages.list_for_project(doomed.id, SliceRequest())).total == 0)
+        expect(doomed_pages.total == 0)
         expect(fx_files.gone(doomed.id))
         expect(fx_files.kept(kept_page))
         assert_expectations()
@@ -487,7 +501,9 @@ class TestDeleteAll:
 
         await fx_service().delete_all(fx_actor)
 
-        remaining = await InMemoryUnitOfWork(fx_database).projects.list_for_owner(fx_actor.account_id, SliceRequest())
+        remaining = await InMemoryUnitOfWork(fx_database).read(
+            lambda repos: repos.projects.list_for_owner(fx_actor.account_id, SliceRequest())
+        )
         expect(remaining.total == 0)
         expect(all(fx_files.gone(project.id) for project in owned))
         expect(await _stored(fx_database, kept) == kept)
@@ -536,10 +552,10 @@ class SourceStoreWaiting(LocalSourceStore):
         await super().delete_project(project_id)
 
 
-class TestDeleteHoldsNoBlockOverTheFiles:
-    """Tests for the deletion of a project, whose files go outside any block and whose row goes in one."""
+class TestDeleteHoldsNoTransactionOverTheFiles:
+    """Tests for the deletion of a project, whose files go outside any transaction and whose row goes in one."""
 
-    async def test_a_block_of_the_book_opens_while_its_files_are_being_removed(
+    async def test_a_change_of_the_book_opens_while_its_files_are_being_removed(
         self, fx_database: InMemoryDatabase, fx_asset_store: LocalAssetStore, fx_storage_root: Path, fx_actor: Actor
     ) -> None:
         """Verify a change of the book is not kept waiting by a slow store, and the deletion ends the row after it.
@@ -558,17 +574,25 @@ class TestDeleteHoldsNoBlockOverTheFiles:
         sources = SourceStoreWaiting(root=fx_storage_root)
         opened = False
 
-        async def open_a_block() -> None:
-            """Open and leave a block of the book of the project, which has to be granted at once."""
+        def mark_opened(_repos: Repositories, _project: Project) -> None:
+            """Note that the change of the book was granted.
+
+            :param _repos: Repositories of the transaction, which the work does not use.
+            :type _repos: Repositories
+            :param _project: The project of the book, which the work does not use.
+            :type _project: Project
+            """
             nonlocal opened
-            uow = InMemoryUnitOfWork(fx_database)
-            async with uow.change_book(project.id):
-                opened = True
+            opened = True
+
+        async def open_a_change() -> None:
+            """Open and leave a change of the book of the project, which has to be granted at once."""
+            await InMemoryUnitOfWork(fx_database).change_book(project.id, mark_opened)
 
         async with anyio.create_task_group() as group:
             group.start_soon(_service(fx_database, sources, fx_asset_store).delete, fx_actor, project.id)
             await sources.reached.wait()
-            group.start_soon(open_a_block)
+            group.start_soon(open_a_change)
             await anyio.wait_all_tasks_blocked()
             expect(opened)
             sources.proceed.set()

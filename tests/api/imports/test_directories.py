@@ -13,9 +13,8 @@ from PIL import Image
 
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.enums import JobState, RejectionReason, UploadProblem
-from bookreviver.domain.values import SliceRequest
 from tests.adapters.imaging.samples import TiffFrame, write_tiff
-from tests.helpers.fakes_imports import image_upload, pdf_upload
+from tests.helpers.fakes_imports import image_upload, pdf_upload, stored_book
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -34,7 +33,6 @@ FILES_FIELD: str = 'files'
 OCTET_STREAM: str = 'application/octet-stream'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
-EVERY_SLICE: SliceRequest = SliceRequest(limit=5000)
 # Cuts the images of the scans, the one step that takes seconds for hundreds of scans and has tests of its own
 CUT_SCANS_TARGET: str = 'bookreviver.services.imports.ImportRun._cut_scans'
 # More than the 1000 files Starlette's multipart parser takes unless it is told otherwise
@@ -149,10 +147,9 @@ class TestUploadDirectories:
         response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
         finished = await _finished_job(fx_client, fx_broker, response.json()['id'])
 
-        uow = InMemoryUnitOfWork(fx_fakes.database)
-        sources = await uow.sources.list_for_project(fx_project.id)
-        scans = {scan.id: scan for scan in (await uow.scans.list_for_project(fx_project.id, EVERY_SLICE)).items}
-        pages = (await uow.pages.list_for_project(fx_project.id, EVERY_SLICE)).items
+        book = await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)
+        sources, pages = book.sources, book.pages
+        scans = {scan.id: scan for scan in book.scans}
         expect(response.status_code == HTTPStatus.ACCEPTED)
         expect(finished['state'] == JobState.SUCCEEDED)
         expect([source.file_name for source in sources] == ['kniga/part10.pdf', 'kniga/part2.pdf', 'kniga/part1.pdf'])
@@ -205,10 +202,9 @@ class TestUploadDirectories:
         response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
         finished = await _finished_job(fx_client, fx_broker, response.json()['id'])
 
-        uow = InMemoryUnitOfWork(fx_fakes.database)
-        sources = await uow.sources.list_for_project(fx_project.id)
-        scans = {scan.id: scan for scan in (await uow.scans.list_for_project(fx_project.id, EVERY_SLICE)).items}
-        pages = (await uow.pages.list_for_project(fx_project.id, EVERY_SLICE)).items
+        book = await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)
+        sources, pages = book.sources, book.pages
+        scans = {scan.id: scan for scan in book.scans}
         expect(response.status_code == HTTPStatus.ACCEPTED)
         expect(finished['state'] == JobState.SUCCEEDED)
         expect(finished['progress']['total'] == DIRECTORY_SCANS)
@@ -246,7 +242,7 @@ class TestUploadDirectories:
         )
         finished = await _finished_job(fx_client, fx_broker, response.json()['id'])
 
-        sources = await InMemoryUnitOfWork(fx_fakes.database).sources.list_for_project(fx_project.id)
+        sources = (await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)).sources
         expect(response.status_code == HTTPStatus.ACCEPTED)
         expect(finished['state'] == JobState.SUCCEEDED)
         expect([(source.file_name, source.scan_count) for source in sources] == [('cover.jpg', 1)])
@@ -282,10 +278,9 @@ class TestUploadDirectories:
         )
         finished = await _finished_job(fx_client, fx_broker, response.json()['id'])
 
-        uow = InMemoryUnitOfWork(fx_fakes.database)
-        [source] = await uow.sources.list_for_project(fx_project.id)
-        scans = {scan.id: scan for scan in (await uow.scans.list_for_project(fx_project.id, EVERY_SLICE)).items}
-        pages = (await uow.pages.list_for_project(fx_project.id, EVERY_SLICE)).items
+        stored = await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)
+        [source], pages = stored.sources, stored.pages
+        scans = {scan.id: scan for scan in stored.scans}
         expect(finished['state'] == JobState.SUCCEEDED)
         expect((source.file_name, source.scan_count) == ('book.tif', len(widths)))
         expect(
@@ -322,7 +317,7 @@ class TestUploadDirectories:
         response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
         finished = await _finished_job(fx_client, fx_broker, response.json()['id'])
 
-        sources = await InMemoryUnitOfWork(fx_fakes.database).sources.list_for_project(fx_project.id)
+        sources = (await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)).sources
         expect(response.status_code == HTTPStatus.ACCEPTED)
         expect(finished['state'] == JobState.SUCCEEDED)
         expect([source.file_name for source in sources] == ['vol1/001.tif', 'vol2/001.tif'])
@@ -360,9 +355,10 @@ class TestUploadDirectories:
         response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
 
         uow = InMemoryUnitOfWork(fx_fakes.database)
+        jobs = await uow.read(lambda repos: repos.jobs.list_for_project(fx_project.id, set(JobState)))
         expect(response.status_code == HTTPStatus.BAD_REQUEST)
         expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
         expect(response.json()['detail'] == case.problem.label)
-        expect(await uow.jobs.list_for_project(fx_project.id, set(JobState)) == [])
-        expect(await uow.sources.list_for_project(fx_project.id) == [])
+        expect(jobs == [])
+        expect((await stored_book(uow, fx_project.id)).sources == [])
         assert_expectations()

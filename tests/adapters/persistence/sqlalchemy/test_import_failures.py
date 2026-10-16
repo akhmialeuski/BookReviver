@@ -47,25 +47,26 @@ class TestFailedImportOnSqlAlchemy:
         samples = tmp_path / 'samples'
         samples.mkdir()
         project = make_project(owner_id=fx_owner_id)
-        async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            async with uow.change():
-                await uow.projects.add(project)
-        async with fx_database.sessions() as session:
-            job = await rig.service(uow=SqlAlchemyUnitOfWork(session)).start_import(
-                Actor(account_id=fx_owner_id), project.id, [pdf_upload(samples, 'a.pdf', pages=PAGES)]
-            )
+        uow = SqlAlchemyUnitOfWork(fx_database)
+        await uow.change(lambda repos: repos.projects.add(project))
+        job = await rig.service(uow=uow).start_import(
+            Actor(account_id=fx_owner_id), project.id, [pdf_upload(samples, 'a.pdf', pages=PAGES)]
+        )
         rig.sources.fail_on_promote = OSError('disk full')
 
-        async with fx_database.sessions() as session:
-            await rig.service(uow=SqlAlchemyUnitOfWork(session)).run_import(job.id)
+        await rig.service(uow=uow).run_import(job.id)
 
-        async with fx_database.sessions() as session:
-            uow = SqlAlchemyUnitOfWork(session)
-            stored = await uow.jobs.get(job.id)
-            expect(await uow.sources.list_for_project(project.id) == [])
-            expect((await uow.scans.list_for_project(project.id, EVERY_SLICE)).total == 0)
-            expect((await uow.pages.list_for_project(project.id, EVERY_SLICE)).total == 0)
-            expect((stored.state, stored.error) == (JobState.FAILED, UNEXPECTED_FAILURE))
-            expect((stored.progress.done, stored.progress.total) == (0, 0))
+        stored, sources, scans, pages = await uow.read(
+            lambda repos: (
+                repos.jobs.get(job.id),
+                repos.sources.list_for_project(project.id),
+                repos.scans.list_for_project(project.id, EVERY_SLICE),
+                repos.pages.list_for_project(project.id, EVERY_SLICE),
+            )
+        )
+        expect(sources == [])
+        expect(scans.total == 0)
+        expect(pages.total == 0)
+        expect((stored.state, stored.error) == (JobState.FAILED, UNEXPECTED_FAILURE))
+        expect((stored.progress.done, stored.progress.total) == (0, 0))
         assert_expectations()

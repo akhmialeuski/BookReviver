@@ -3,6 +3,7 @@
 Every test runs against each adapter registered in the conftest, the in-memory one and the SQL one.
 """
 
+from functools import partial
 from typing import TYPE_CHECKING
 
 import pytest
@@ -21,7 +22,11 @@ from tests.helpers.builders import (
 from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from bookreviver.domain.entities import Project, ResultMarkChange
     from bookreviver.domain.ids import PageId, ProjectId
+    from bookreviver.ports.persistence import Repositories
     from tests.contracts.conftest import OwnerFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
@@ -32,7 +37,7 @@ COMMENT: str = 'Too tight on the left.\nTry the other method.'
 async def _store_version(
     uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory
 ) -> tuple[ProjectId, PageId, PageVersionId]:
-    """Store a project with one page and one version of it, each in the block that owns it.
+    """Store a project with one page and one version of it, each in the change that owns it.
 
     :param uow_factory: Function opening a new unit of work of the backend under test.
     :type uow_factory: UnitOfWorkFactory
@@ -44,7 +49,7 @@ async def _store_version(
     project = make_project(owner_id=await new_owner())
     page = make_page(project_id=project.id)
     version = make_page_version(page_id=page.id)
-    await store_project(await uow_factory(), project, page, versions=[version])
+    await store_project(uow_factory(), project, page, versions=[version])
     return project.id, page.id, version.id
 
 
@@ -62,7 +67,7 @@ class TestResultMarkColumns:
         :type fx_new_owner: OwnerFactory
         """
         _, _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
-        version = await (await fx_uow_factory()).page_versions.get(version_id)
+        version = await fx_uow_factory().read(lambda repos: repos.page_versions.get(version_id))
         assert (version.mark, version.comment) == (None, '')
 
     async def test_mark_and_comment_survive_an_update_and_can_be_taken_off(
@@ -76,15 +81,18 @@ class TestResultMarkColumns:
         :type fx_new_owner: OwnerFactory
         """
         project_id, _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
-        uow = await fx_uow_factory()
-        version = await uow.page_versions.get(version_id)
-        async with uow.change_book(project_id):
-            await uow.page_versions.update(evolve(version, mark=ResultMark.BAD, comment=COMMENT))
-        uow = await fx_uow_factory()
-        marked = await uow.page_versions.get(version_id)
-        async with uow.change_book(project_id):
-            await uow.page_versions.update(evolve(marked, mark=None, comment=''))
-        cleared = await (await fx_uow_factory()).page_versions.get(version_id)
+        uow = fx_uow_factory()
+        version = await uow.read(lambda repos: repos.page_versions.get(version_id))
+        await uow.change_book(
+            project_id,
+            lambda repos, _project: repos.page_versions.update(evolve(version, mark=ResultMark.BAD, comment=COMMENT)),
+        )
+        marked = await fx_uow_factory().read(lambda repos: repos.page_versions.get(version_id))
+        await fx_uow_factory().change_book(
+            project_id,
+            lambda repos, _project: repos.page_versions.update(evolve(marked, mark=None, comment='')),
+        )
+        cleared = await fx_uow_factory().read(lambda repos: repos.page_versions.get(version_id))
         assert ((marked.mark, marked.comment), (cleared.mark, cleared.comment)) == (
             (ResultMark.BAD, COMMENT),
             (None, ''),
@@ -111,13 +119,11 @@ class TestResultMarkChangeRepository:
             mark_after=None,
             comment_after=COMMENT,
         )
-        uow = await fx_uow_factory()
-        async with uow.change_book(project_id):
-            stored = await uow.result_mark_changes.add(change)
-        assert (await (await fx_uow_factory()).result_mark_changes.get(change.id), stored) == (
-            stored,
-            evolve(change, sequence=1),
+        stored = await fx_uow_factory().change_book(
+            project_id, lambda repos, _project: repos.result_mark_changes.add(change)
         )
+        read = await fx_uow_factory().read(lambda repos: repos.result_mark_changes.get(change.id))
+        assert (read, stored) == (stored, evolve(change, sequence=1))
 
     async def test_changes_made_at_the_same_instant_list_in_the_order_they_were_written(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -131,15 +137,23 @@ class TestResultMarkChangeRepository:
         """
         project_id, _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
         written = [make_result_mark_change(version_id=version_id, created_at=EPOCH) for _ in range(5)]
-        uow = await fx_uow_factory()
-        async with uow.change_book(project_id):
-            for change in written[:2]:
-                await uow.result_mark_changes.add(change)
-        uow = await fx_uow_factory()
-        async with uow.change_book(project_id):
-            for change in written[2:]:
-                await uow.result_mark_changes.add(change)
-        listed = await (await fx_uow_factory()).result_mark_changes.list_for_version(version_id)
+
+        def add_all(changes: Sequence[ResultMarkChange], repos: Repositories, _project: Project) -> None:
+            """Add the changes one by one, as separate writes of the log.
+
+            :param changes: The changes to add, in the order to write them.
+            :type changes: Sequence[ResultMarkChange]
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: Project of the book, which the work does not need.
+            :type _project: Project
+            """
+            for change in changes:
+                repos.result_mark_changes.add(change)
+
+        await fx_uow_factory().change_book(project_id, partial(add_all, written[:2]))
+        await fx_uow_factory().change_book(project_id, partial(add_all, written[2:]))
+        listed = await fx_uow_factory().read(lambda repos: repos.result_mark_changes.list_for_version(version_id))
         assert ([change.id for change in listed], [change.sequence for change in listed]) == (
             [change.id for change in written],
             [1, 2, 3, 4, 5],
@@ -156,15 +170,25 @@ class TestResultMarkChangeRepository:
         :type fx_new_owner: OwnerFactory
         """
         project_id, page_id, first_id = await _store_version(fx_uow_factory, fx_new_owner)
-        uow = await fx_uow_factory()
+        uow = fx_uow_factory()
         second = make_page_version(page_id=page_id, minutes=1)
         first_change = make_result_mark_change(version_id=first_id)
         second_change = make_result_mark_change(version_id=second.id)
-        async with uow.change_book(project_id):
-            await uow.page_versions.add(second)
-            await uow.result_mark_changes.add(first_change)
-            await uow.result_mark_changes.add(second_change)
-        listed = await uow.result_mark_changes.list_for_version(second.id)
+
+        def add_versions_and_changes(repos: Repositories, _project: Project) -> None:
+            """Add the second version and one change of each version.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: Project of the book, which the work does not need.
+            :type _project: Project
+            """
+            repos.page_versions.add(second)
+            repos.result_mark_changes.add(first_change)
+            repos.result_mark_changes.add(second_change)
+
+        await uow.change_book(project_id, add_versions_and_changes)
+        listed = await uow.read(lambda repos: repos.result_mark_changes.list_for_version(second.id))
         assert [(change.id, change.sequence) for change in listed] == [(second_change.id, 1)]
 
     async def test_change_of_a_missing_version_is_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
@@ -173,10 +197,9 @@ class TestResultMarkChangeRepository:
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
         """
-        uow = await fx_uow_factory()
+        change = make_result_mark_change(version_id=PageVersionId('0' * 16))
         with pytest.raises(NotFoundError):
-            async with uow.change():
-                await uow.result_mark_changes.add(make_result_mark_change(version_id=PageVersionId('0' * 16)))
+            await fx_uow_factory().change(lambda repos: repos.result_mark_changes.add(change))
 
     async def test_change_is_stored_once(self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
         """Verify a change with an identifier that is stored already is a conflict.
@@ -188,13 +211,11 @@ class TestResultMarkChangeRepository:
         """
         project_id, _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
         change = make_result_mark_change(version_id=version_id)
-        uow = await fx_uow_factory()
-        async with uow.change_book(project_id):
-            await uow.result_mark_changes.add(change)
-        again = await fx_uow_factory()
+        await fx_uow_factory().change_book(project_id, lambda repos, _project: repos.result_mark_changes.add(change))
         with pytest.raises(ConflictError):
-            async with again.change_book(project_id):
-                await again.result_mark_changes.add(change)
+            await fx_uow_factory().change_book(
+                project_id, lambda repos, _project: repos.result_mark_changes.add(change)
+            )
 
     async def test_deleting_the_version_deletes_its_log(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -207,13 +228,13 @@ class TestResultMarkChangeRepository:
         :type fx_new_owner: OwnerFactory
         """
         project_id, _, version_id = await _store_version(fx_uow_factory, fx_new_owner)
-        uow = await fx_uow_factory()
-        async with uow.change_book(project_id):
-            await uow.result_mark_changes.add(make_result_mark_change(version_id=version_id))
-        uow = await fx_uow_factory()
-        async with uow.change_book(project_id):
-            await uow.page_versions.delete_many([version_id])
-        assert await (await fx_uow_factory()).result_mark_changes.list_for_version(version_id) == []
+        change = make_result_mark_change(version_id=version_id)
+        await fx_uow_factory().change_book(project_id, lambda repos, _project: repos.result_mark_changes.add(change))
+        await fx_uow_factory().change_book(
+            project_id, lambda repos, _project: repos.page_versions.delete_many([version_id])
+        )
+        listed = await fx_uow_factory().read(lambda repos: repos.result_mark_changes.list_for_version(version_id))
+        assert listed == []
 
     async def test_deleting_the_page_deletes_the_log_of_its_versions(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -226,10 +247,8 @@ class TestResultMarkChangeRepository:
         :type fx_new_owner: OwnerFactory
         """
         project_id, page_id, version_id = await _store_version(fx_uow_factory, fx_new_owner)
-        uow = await fx_uow_factory()
-        async with uow.change_book(project_id):
-            await uow.result_mark_changes.add(make_result_mark_change(version_id=version_id))
-        uow = await fx_uow_factory()
-        async with uow.change_book(project_id):
-            await uow.pages.delete(page_id)
-        assert await (await fx_uow_factory()).result_mark_changes.list_for_version(version_id) == []
+        change = make_result_mark_change(version_id=version_id)
+        await fx_uow_factory().change_book(project_id, lambda repos, _project: repos.result_mark_changes.add(change))
+        await fx_uow_factory().change_book(project_id, lambda repos, _project: repos.pages.delete(page_id))
+        listed = await fx_uow_factory().read(lambda repos: repos.result_mark_changes.list_for_version(version_id))
+        assert listed == []

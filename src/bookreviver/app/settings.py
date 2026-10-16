@@ -20,11 +20,6 @@ STEP_PROCESSES_NEED_PREVIEW_SHARE: str = (
     'processing.preview_step_processes must be smaller than processing.step_processes, '
     'so that full runs keep at least one process.'
 )
-REQUEST_WAIT_NOT_SHORTER_THAN_JOB_WAIT: str = (
-    'change_wait.request_seconds ({request_seconds}) must be shorter than change_wait.job_seconds ({job_seconds}), '
-    'because every connection opens with the job limit as its busy timeout, and a block whose limit is not shorter '
-    'than that waits for the queue and then for the whole busy timeout.'
-)
 
 # The share of the cores the processes of the steps take by default, two thirds, and the fewest they are
 STEP_PROCESSES_CORES_NUMERATOR: int = 2
@@ -208,34 +203,20 @@ class TracingSettings(BaseModel):
 
 
 class ChangeWaitSettings(BaseModel):
-    """How long a block of the persistence port waits for the write lock before it gives up as busy.
+    """How long a change of the persistence port waits for the writer before it gives up as busy.
+
+    The limit covers only the wait for the turn of the writer, never the work of the change itself. The database
+    also opens every connection with the job limit as the busy timeout of SQLite, which matters only when a process
+    other than the application, such as a migration run by hand, holds the write lock of the file.
 
     :ivar request_seconds: Limit of a unit of work that serves an HTTP request, 3 seconds by default, so an interface
                            never hangs for the long wait of a job and is told at once to try again.
     :ivar job_seconds: Limit of every other unit of work, the background jobs and the work of the startup, 30 seconds by
-                       default, so a job does not lose its work to a short wait. It is the longest limit, since every
-                       connection opens with it as its busy timeout, so the request limit must be shorter: the adapter
-                       caps the lock wait of a block only when its limit is shorter than that busy timeout.
+                       default, so a job does not lose its work to a short wait.
     """
 
     request_seconds: PositiveFloat = 3.0
     job_seconds: PositiveFloat = DEFAULT_CHANGE_WAIT_SECONDS
-
-    @model_validator(mode='after')
-    def _require_request_limit_shorter_than_job_limit(self) -> Self:
-        """Check that the limit of a request is shorter than the limit of a job.
-
-        :returns: The settings, once checked.
-        :rtype: Self
-        :raises ValueError: If the request limit is equal to the job limit or longer.
-        """
-        if self.request_seconds >= self.job_seconds:
-            raise ValueError(
-                REQUEST_WAIT_NOT_SHORTER_THAN_JOB_WAIT.format(
-                    request_seconds=self.request_seconds, job_seconds=self.job_seconds
-                )
-            )
-        return self
 
 
 class Settings(BaseSettings):
@@ -245,7 +226,7 @@ class Settings(BaseSettings):
     :ivar data_dir: Directory holding the SQLite database and the storage root.
     :ivar frontend_dir: Directory of the built frontend, served at ``/`` when it exists; ``npm --prefix frontend run
                         build`` writes it.
-    :ivar database_url: SQLAlchemy async database URL, or empty for an SQLite file in ``data_dir``.
+    :ivar database_url: SQLAlchemy URL of an SQLite database, or empty for an SQLite file in ``data_dir``.
     :ivar persistence: Persistence backend the container builds.
     :ivar storage: Storage backend the container builds for sources and derived files.
     :ivar job_broker: Taskiq broker that runs background jobs.
@@ -253,7 +234,7 @@ class Settings(BaseSettings):
     :ivar max_upload_bytes: Largest total size of one upload, 4 GiB by default.
     :ivar max_upload_files: Largest number of files in one upload, 10000 by default.
     :ivar event_queue_size: Undelivered events each event subscriber keeps before dropping the oldest.
-    :ivar change_wait: How long a block of a unit of work waits for the write lock, one limit for the units of work of
+    :ivar change_wait: How long a change of a unit of work waits for the writer, one limit for the units of work of
                        HTTP requests and one for those of jobs, before it is refused as busy.
     :ivar auth: Accounts, sessions and social sign-in; required, since it holds the signing secret.
     :ivar mail: Outgoing mail.
@@ -290,7 +271,7 @@ class Settings(BaseSettings):
     @cached_property
     def resolved_database_url(self) -> str:
         """The configured database URL, or an SQLite file inside the data directory."""
-        return self.database_url or f'sqlite+aiosqlite:///{self.data_dir.resolve() / "bookreviver.db"}'
+        return self.database_url or f'sqlite:///{self.data_dir.resolve() / "bookreviver.db"}'
 
     @cached_property
     def storage_root(self) -> Path:

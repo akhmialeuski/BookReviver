@@ -16,7 +16,6 @@ from fastapi_users.jwt import decode_jwt, generate_jwt
 from fastapi_users.password import PasswordHelper, PasswordHelperProtocol
 from httpx_oauth.clients.facebook import FacebookOAuth2
 from httpx_oauth.clients.google import GoogleOAuth2
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from bookreviver.adapters.mail.log import LogMailer
 from bookreviver.adapters.mail.smtp import SmtpMailer, SmtpServer
@@ -207,7 +206,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
     ) -> None:
         """Build the manager over ``user_db``, signing tokens with the accounts secret.
 
-        :param user_db: Users of the current request's session.
+        :param user_db: Users of the current request.
         :type user_db: AccountDatabase
         :param hasher: Hasher of the application, whose helper also generates the passwords nobody knows.
         :type hasher: PasswordHasher
@@ -603,17 +602,15 @@ class AccountsProvider(Provider):
         return PasswordHasher(helper, limiter=CapacityLimiter(settings.auth.password_hash_concurrency))
 
     @provide(scope=Scope.REQUEST)
-    def account_database(self, session: AsyncSession, uow: SqlAlchemyUnitOfWork) -> AccountDatabase:
-        """Build the users of the request's session, written in the blocks of the unit of work that guards it.
+    def account_database(self, uow: SqlAlchemyUnitOfWork) -> AccountDatabase:
+        """Build the users of the request, read and written through its unit of work.
 
-        :param session: Database session of the request.
-        :type session: AsyncSession
-        :param uow: Unit of work of that session, whose blocks the account writes run in.
+        :param uow: Unit of work of the request, whose transactions the account reads and writes run in.
         :type uow: SqlAlchemyUnitOfWork
         :returns: The users of the request.
         :rtype: AccountDatabase
         """
-        return AccountDatabase(session, uow)
+        return AccountDatabase(uow)
 
     @provide(scope=Scope.REQUEST)
     def user_manager(
@@ -626,7 +623,7 @@ class AccountsProvider(Provider):
     ) -> UserManager:
         """Build the user manager over the users of the request.
 
-        :param user_db: Users of the request's session.
+        :param user_db: Users of the request.
         :type user_db: AccountDatabase
         :param hasher: Hasher of the application, shared by every request.
         :type hasher: PasswordHasher
@@ -642,21 +639,17 @@ class AccountsProvider(Provider):
         return UserManager(user_db, hasher=hasher, mailer=mailer, projects=projects, settings=settings)
 
     @provide(scope=Scope.REQUEST)
-    def session_strategy(self, session: AsyncSession, uow: SqlAlchemyUnitOfWork, settings: Settings) -> SessionStrategy:
+    def session_strategy(self, uow: SqlAlchemyUnitOfWork, settings: Settings) -> SessionStrategy:
         """Build the strategy that keeps session tokens in the database, so signing out revokes them.
 
-        :param session: Database session of the request.
-        :type session: AsyncSession
-        :param uow: Unit of work of that session, whose blocks the token writes run in.
+        :param uow: Unit of work of the request, whose transactions the token reads and writes run in.
         :type uow: SqlAlchemyUnitOfWork
         :param settings: Application settings holding the session lifetime.
         :type settings: Settings
         :returns: The session strategy of the request.
         :rtype: SessionStrategy
         """
-        return DatabaseStrategy(
-            AccessTokenDatabase(session, uow), lifetime_seconds=settings.auth.session_lifetime_seconds
-        )
+        return DatabaseStrategy(AccessTokenDatabase(uow), lifetime_seconds=settings.auth.session_lifetime_seconds)
 
 
 @inject

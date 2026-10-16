@@ -414,9 +414,9 @@ class TestListIncludedPages:
         :param fx_database: In-memory database of the application.
         :type fx_database: InMemoryDatabase
         """
-        uow = InMemoryUnitOfWork(fx_database)
-        async with uow.change_book(fx_book.project.id):
-            await uow.pages.update(evolve(fx_book.pages[1], included=False))
+        await InMemoryUnitOfWork(fx_database).change_book(
+            fx_book.project.id, lambda repos, _project: repos.pages.update(evolve(fx_book.pages[1], included=False))
+        )
 
         everything = await _manifest(fx_client, fx_book)
         included = await _manifest(fx_client, fx_book, included='true')

@@ -4,10 +4,13 @@ The tables ``user``, ``oauth_account`` and ``accesstoken`` are the ones fastapi-
 it expects, and their identifiers and times have the types of every other table of the adapter. The foreign keys of
 the books refer to ``user.id`` by name.
 
-Reads go through the session of the request. Every write runs in the ``change`` block of the request's unit of work,
-which takes the same write lock of SQLite as every other write, and commits and rolls back for the caller, so no
-account write commits by itself. The tables derive from :class:`AccountRow`, which is a ``DefaultBase`` and so is
-covered by the write guard of the unit of work, and which the unit of work leaves loaded when a block opens.
+The databases of fastapi-users run over the unit of work and nothing else: every read is a ``read_session`` and every
+write a ``change_session`` of :class:`~bookreviver.adapters.persistence.sqlalchemy.unit_of_work.SqlAlchemyUnitOfWork`,
+so an account write takes the same writer as every other write, and commits and rolls back for the caller. The session
+of such a transaction is closed when it ends, and fastapi-users reads the rows after that, so every row is handed over
+fully loaded, with its linked provider accounts, and detached. A row handed back to a database for an update is attached
+to the session of that transaction again, and the sessions do not expire rows on commit, so the same object stays
+usable.
 """
 
 from datetime import UTC, datetime
@@ -24,9 +27,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 if TYPE_CHECKING:
     from fastapi_users.models import OAP
     from sqlalchemy import Select
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import Session
 
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 
 # The column the keys of the other account tables refer to
 USER_ID: str = 'user.id'
@@ -36,17 +39,7 @@ CASCADE: str = 'cascade'
 LINKED_ACCOUNT_CASCADE: str = 'all, delete'
 
 
-class AccountRow(DefaultBase):
-    """Base of the account tables, which a block of the unit of work does not expire.
-
-    fastapi-users loads the account of a request before the route runs and reads it again after the route, and a lazy
-    load of an expired row is impossible in an async session.
-    """
-
-    __abstract__ = True
-
-
-class OAuthAccountTable(AccountRow):
+class OAuthAccountTable(DefaultBase):
     """An account at a social sign-in provider linked to a user."""
 
     __tablename__ = 'oauth_account'
@@ -72,7 +65,7 @@ class OAuthAccountTable(AccountRow):
         account_email: Mapped[str] = mapped_column(String(length=320))
 
 
-class AccountTable(AccountRow):
+class AccountTable(DefaultBase):
     """A user who signs in with a password or a social provider."""
 
     __tablename__ = 'user'
@@ -100,7 +93,7 @@ class AccountTable(AccountRow):
         )
 
 
-class AccessTokenTable(AccountRow):
+class AccessTokenTable(DefaultBase):
     """An opaque session token, stored so that signing out revokes it."""
 
     __tablename__ = 'accesstoken'
@@ -122,22 +115,42 @@ OAUTH_ACCOUNTS = OAuthAccountTable.__table__.c
 ACCESS_TOKENS = AccessTokenTable.__table__.c
 
 
-class AccountDatabase(BaseUserDatabase[AccountTable, UUID]):
-    """Users and their linked provider accounts, read in the session of the request and written in its ``change``.
+def _store_row[RowT](session: Session, row: RowT, values: dict[str, Any]) -> RowT:
+    """Set columns on an account row, write it in the transaction of the session, and load it again.
 
-    :ivar session: Session of the current request, which every read goes through.
-    :ivar uow: Unit of work of that session, whose ``change`` block every write runs in.
+    A new row is added, and a row that an earlier transaction handed over, which is detached, is attached again, so the
+    flush writes only the columns whose value changed. The row is read back, so it carries its defaults and, for a
+    user, the current list of linked provider accounts.
+
+    :param session: Session of a transaction that writes.
+    :type session: Session
+    :param row: A new row, or a loaded row of an earlier transaction.
+    :type row: RowT
+    :param values: New values by column, which may be empty.
+    :type values: dict[str, Any]
+    :returns: The same row, flushed and loaded.
+    :rtype: RowT
+    """
+    for key, value in values.items():
+        setattr(row, key, value)
+    session.add(row)
+    session.flush()
+    session.refresh(row)
+    return row
+
+
+class AccountDatabase(BaseUserDatabase[AccountTable, UUID]):
+    """Users and their linked provider accounts, read and written through the unit of work.
+
+    :ivar uow: Unit of work whose sessions every read and every write of the users runs on.
     """
 
-    def __init__(self, session: AsyncSession, uow: UnitOfWork) -> None:
-        """Read through ``session`` and write in the blocks of ``uow``.
+    def __init__(self, uow: SqlAlchemyUnitOfWork) -> None:
+        """Read and write through ``uow``.
 
-        :param session: Session of the current request, the one ``uow`` guards.
-        :type session: AsyncSession
-        :param uow: Unit of work of that session, whose ``change`` block every write runs in.
-        :type uow: UnitOfWork
+        :param uow: Unit of work whose ``read_session`` and ``change_session`` run the transactions of the users.
+        :type uow: SqlAlchemyUnitOfWork
         """
-        self.session = session
         self.uow = uow
 
     async def _one(self, statement: Select[AccountTable]) -> AccountTable | None:
@@ -149,7 +162,7 @@ class AccountDatabase(BaseUserDatabase[AccountTable, UUID]):
         :rtype: AccountTable | None
         """
         # The joined load of the provider accounts repeats the user once per account, which unique() folds
-        return (await self.session.execute(statement)).unique().scalar_one_or_none()
+        return await self.uow.read_session(lambda session: session.execute(statement).unique().scalar_one_or_none())
 
     @override
     async def get(self, id: UUID) -> AccountTable | None:
@@ -200,39 +213,29 @@ class AccountDatabase(BaseUserDatabase[AccountTable, UUID]):
         :returns: The stored user, with its defaults and its empty list of provider accounts loaded.
         :rtype: AccountTable
         """
-        user = AccountTable(**create_dict)
-        async with self.uow.change():
-            self.session.add(user)
-        await self.session.refresh(user)
-        return user
+        return await self.uow.change_session(partial(_store_row, row=AccountTable(**create_dict), values={}))
 
     @override
     async def update(self, user: AccountTable, update_dict: dict[str, Any]) -> AccountTable:
         """Change columns of a stored user.
 
-        :param user: User to change.
+        :param user: User to change, as an earlier read returned it.
         :type user: AccountTable
         :param update_dict: New values by column.
         :type update_dict: dict[str, Any]
         :returns: The user as stored.
         :rtype: AccountTable
         """
-        async with self.uow.change():
-            for key, value in update_dict.items():
-                setattr(user, key, value)
-            self.session.add(user)
-        await self.session.refresh(user)
-        return user
+        return await self.uow.change_session(partial(_store_row, row=user, values=update_dict))
 
     @override
     async def delete(self, user: AccountTable) -> None:
         """Remove a user with its provider accounts and session tokens.
 
-        :param user: User to remove.
+        :param user: User to remove, as an earlier read returned it.
         :type user: AccountTable
         """
-        async with self.uow.change():
-            await self.session.delete(user)
+        await self.uow.change_session(lambda session: session.delete(user))
 
     # fastapi-users 15.0.5 declares ``UserOAuthProtocol`` with ``Generic`` instead of ``Protocol`` in its bases
     # (fastapi_users/models.py:33), so by PEP 544 it is a plain class, and ``UOAP``, which it bounds, accepts only its
@@ -242,18 +245,32 @@ class AccountDatabase(BaseUserDatabase[AccountTable, UUID]):
     async def add_oauth_account(self, user: AccountTable, create_dict: dict[str, Any]) -> AccountTable:  # ty: ignore[invalid-method-override]
         """Link a provider account to a user.
 
-        :param user: User to link it to.
+        :param user: User to link it to, as an earlier read returned it.
         :type user: AccountTable
         :param create_dict: Columns of the provider account.
         :type create_dict: dict[str, Any]
         :returns: The user, whose ``oauth_accounts`` holds the new link.
         :rtype: AccountTable
         """
-        async with self.uow.change():
-            self.session.add(OAuthAccountTable(user_id=user.id, **create_dict))
-        # Loads the list of the user's provider accounts again, now with the new one
-        await self.session.refresh(user)
-        return user
+        link = OAuthAccountTable(user_id=user.id, **create_dict)
+        return await self.uow.change_session(partial(self._link, user=user, link=link))
+
+    @staticmethod
+    def _link(session: Session, *, user: AccountTable, link: OAuthAccountTable) -> AccountTable:
+        """Store a provider account and load the list of provider accounts of its user again, with the new one.
+
+        :param session: Session of a transaction that writes.
+        :type session: Session
+        :param user: User the provider account is linked to.
+        :type user: AccountTable
+        :param link: New provider account of the user.
+        :type link: OAuthAccountTable
+        :returns: The user, whose ``oauth_accounts`` holds the link.
+        :rtype: AccountTable
+        """
+        _store_row(session, link, {})
+        # The user is stored without a change, which loads it again with its list of provider accounts
+        return _store_row(session, user, {})
 
     @override
     async def update_oauth_account(  # ty: ignore[invalid-method-override]
@@ -263,36 +280,29 @@ class AccountDatabase(BaseUserDatabase[AccountTable, UUID]):
 
         :param user: User the provider account is linked to.
         :type user: AccountTable
-        :param oauth_account: Provider account to change.
+        :param oauth_account: Provider account to change, as an earlier read returned it.
         :type oauth_account: OAP
         :param update_dict: New values by column.
         :type update_dict: dict[str, Any]
         :returns: The user.
         :rtype: AccountTable
         """
-        async with self.uow.change():
-            for key, value in update_dict.items():
-                setattr(oauth_account, key, value)
-            self.session.add(oauth_account)
+        await self.uow.change_session(partial(_store_row, row=oauth_account, values=update_dict))
         return user
 
 
 class AccessTokenDatabase(AccessTokenDatabaseProtocol[AccessTokenTable]):
-    """Session tokens, read in the session of the request and written in its ``change``.
+    """Session tokens, read and written through the unit of work.
 
-    :ivar session: Session of the current request, which every read goes through.
-    :ivar uow: Unit of work of that session, whose ``change`` block every write runs in.
+    :ivar uow: Unit of work whose sessions every read and every write of the tokens runs on.
     """
 
-    def __init__(self, session: AsyncSession, uow: UnitOfWork) -> None:
-        """Read through ``session`` and write in the blocks of ``uow``.
+    def __init__(self, uow: SqlAlchemyUnitOfWork) -> None:
+        """Read and write through ``uow``.
 
-        :param session: Session of the current request, the one ``uow`` guards.
-        :type session: AsyncSession
-        :param uow: Unit of work of that session, whose ``change`` block every write runs in.
-        :type uow: UnitOfWork
+        :param uow: Unit of work whose ``read_session`` and ``change_session`` run the transactions of the tokens.
+        :type uow: SqlAlchemyUnitOfWork
         """
-        self.session = session
         self.uow = uow
 
     @override
@@ -309,7 +319,7 @@ class AccessTokenDatabase(AccessTokenDatabaseProtocol[AccessTokenTable]):
         statement = select(AccessTokenTable).where(ACCESS_TOKENS.token == token)
         if max_age is not None:
             statement = statement.where(ACCESS_TOKENS.created_at >= max_age)
-        return await self.session.scalar(statement)
+        return await self.uow.read_session(lambda session: session.scalar(statement))
 
     @override
     async def create(self, create_dict: dict[str, Any]) -> AccessTokenTable:
@@ -320,36 +330,26 @@ class AccessTokenDatabase(AccessTokenDatabaseProtocol[AccessTokenTable]):
         :returns: The stored token.
         :rtype: AccessTokenTable
         """
-        access_token = AccessTokenTable(**create_dict)
-        async with self.uow.change():
-            self.session.add(access_token)
-        await self.session.refresh(access_token)
-        return access_token
+        return await self.uow.change_session(partial(_store_row, row=AccessTokenTable(**create_dict), values={}))
 
     @override
     async def update(self, access_token: AccessTokenTable, update_dict: dict[str, Any]) -> AccessTokenTable:
         """Change columns of a stored token.
 
-        :param access_token: Token to change.
+        :param access_token: Token to change, as an earlier read returned it.
         :type access_token: AccessTokenTable
         :param update_dict: New values by column.
         :type update_dict: dict[str, Any]
         :returns: The token as stored.
         :rtype: AccessTokenTable
         """
-        async with self.uow.change():
-            for key, value in update_dict.items():
-                setattr(access_token, key, value)
-            self.session.add(access_token)
-        await self.session.refresh(access_token)
-        return access_token
+        return await self.uow.change_session(partial(_store_row, row=access_token, values=update_dict))
 
     @override
     async def delete(self, access_token: AccessTokenTable) -> None:
         """Remove a token, which signs its session out.
 
-        :param access_token: Token to remove.
+        :param access_token: Token to remove, as an earlier read returned it.
         :type access_token: AccessTokenTable
         """
-        async with self.uow.change():
-            await self.session.delete(access_token)
+        await self.uow.change_session(lambda session: session.delete(access_token))

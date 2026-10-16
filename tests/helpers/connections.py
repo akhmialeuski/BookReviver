@@ -9,13 +9,13 @@ if TYPE_CHECKING:
 
 
 def checked_out_connections(database: SqlDatabase) -> int:
-    """Count the connections that a session or a block took from the pool of the database and has not given back.
+    """Count the connections that a transaction took from the pools of the database and has not given back.
 
-    :param database: SQL database over a file, whose engine keeps a queue pool.
+    :param database: SQL database over a file, whose engines keep a queue pool each.
     :type database: SqlDatabase
-    :returns: Number of connections in use at this moment.
+    :returns: Number of connections in use at this moment, in the pool of the writer and the pool of the readers.
     :rtype: int
     """
-    pool = database.engine.sync_engine.pool
-    assert isinstance(pool, QueuePool)
-    return pool.checkedout()
+    pools = [database.engine.pool, database.read_engine.pool]
+    assert all(isinstance(pool, QueuePool) for pool in pools)
+    return sum(pool.checkedout() for pool in pools if isinstance(pool, QueuePool))
