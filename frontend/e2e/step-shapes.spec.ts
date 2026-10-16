@@ -20,8 +20,8 @@ import { runPages } from './support/page-work';
  * A step that is open has its shape on the page from the start: the grey dashed default before the step has run, the green
  * line it found after a run of all pages, and the orange line the reader set, which the later runs keep. The angle of the
  * Deskew step is set with the field, the slider and the arrow keys, and all three states are still there when the open
- * step changes and comes back. The grid is a choice of the book that every step of Geometry shares, and the key G switches
- * it.
+ * step changes and comes back. The grid is a choice of the book that every step of Geometry shares, which is off until the
+ * reader makes it, and the key G switches it. `grid-geometry-steps.spec.ts` walks every step with the grid on.
  *
  * The pages are plain squares, so the steps find nothing on their own and the shapes they find are the ones they start
  * from. Exact values come from the field and from the keys and never from a drag, so no screen distance depends on the
@@ -89,17 +89,20 @@ test('the shape of a step is on the page in its three states, they survive a cha
     await snap(page, 'deskew-default-shape');
   });
 
-  await test.step('the grid is on at Deskew until the reader chooses, and the key G and the button switch it', async () => {
+  await test.step('the grid is off at Deskew until the reader chooses, and the key G and the button switch it', async () => {
+    await expect(grid).toHaveCount(0);
+    await expect(gridButton).toHaveAttribute('aria-pressed', 'false');
+    await snap(page, 'deskew-grid-off');
+
+    await page.keyboard.press('g');
     await expect(grid).toBeVisible();
     await expect(gridButton).toHaveAttribute('aria-pressed', 'true');
     await snap(page, 'deskew-grid-on');
-
-    await page.keyboard.press('g');
-    await expect(grid).toHaveCount(0);
-    await expect(gridButton).toHaveAttribute('aria-pressed', 'false');
     await page.keyboard.press('Shift+G');
-    await expect(grid).toBeVisible();
+    await expect(grid).toHaveCount(0);
 
+    await gridButton.click();
+    await expect(grid).toBeVisible();
     await gridButton.click();
     await expect(grid).toHaveCount(0);
   });

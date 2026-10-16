@@ -7,9 +7,10 @@ import { browserStorage, type WorkspaceStorage } from '@/features/workspace/stor
  * that switches it.
  *
  * The grid is a way to see whether the lines of text and the edges of the block lie level, so it stays where the reader
- * left it for the whole book, from one step to the next and from one visit to the next. Until the reader chooses, the
- * step decides: the Deskew step shows it, since levelling the lines is what that step is for, and the others do not. The
- * choice lives in the browser, a convenience that is the same as nothing when the browser forbids storage.
+ * left it for the whole book, on every step of Geometry and on the result of the stage, from one step to the next and
+ * from one visit to the next. Until the reader chooses, the grid is off everywhere, so nothing appears or goes away by
+ * itself when the step changes. The choice lives in the browser, a convenience that is the same as nothing when the
+ * browser forbids storage.
  */
 
 /** The key the choice of a book is kept under. */
@@ -51,17 +52,17 @@ export function writeGrid(
  * Read whether the grid is shown over the page, and switch it.
  *
  * @param projectId The book, whose choice is kept.
- * @param fallback Whether the grid is shown while the reader has not chosen.
- * @returns Whether the grid is on, and the function that switches it and keeps the choice.
+ * @returns Whether the grid is on, which it is not until the reader has chosen, and the function that switches it and
+ * keeps the choice.
  */
-export function useGrid(projectId: string, fallback: boolean): [boolean, () => void] {
+export function useGrid(projectId: string): [boolean, () => void] {
   const [picked, setPicked] = useState<{ projectId: string; on: boolean | null }>(() => ({
     projectId,
     on: readGrid(projectId),
   }));
   // A choice belongs to one book, so the one of another book is read again
   const choice = picked.projectId === projectId ? picked.on : readGrid(projectId);
-  const on = choice ?? fallback;
+  const on = choice ?? false;
   const toggle = (): void => {
     writeGrid(projectId, !on);
     setPicked({ projectId, on: !on });

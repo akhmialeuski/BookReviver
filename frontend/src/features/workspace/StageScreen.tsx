@@ -76,8 +76,6 @@ const NO_PAGES: readonly PageSchema[] = [];
 const NO_ROWS: readonly StagePageSchema[] = [];
 const NOTHING_SELECTED: SelectionState = { selected: new Set(), anchorId: null };
 const NO_SCANS: readonly ScanSchema[] = [];
-/** The processor whose step shows the grid before the reader has chosen. */
-const DESKEW_KEY = 'geometry.deskew';
 
 /** The place of the open page in the book as the toolbar writes it, such as `p. 14 · 18 of 126`. */
 function captionOf(shown: readonly StripItem[], count: number): string {
@@ -292,10 +290,10 @@ export function StageScreen({
     serverFigure: workspace.page?.state ?? null,
   });
 
-  // The grid over the page of the steps of Geometry, which the Deskew step shows until the reader chooses; it is not the
-  // grid of pages, which is a way to lay out the strip
+  // The grid over the page of every step of Geometry and of the result of the stage, one choice for the book that is off
+  // until the reader makes it; it is not the grid of pages, which is a way to lay out the strip
   const hasLevelGrid = stage === 'geometry';
-  const [levelGridOn, toggleLevelGrid] = useGrid(projectId, openStep?.processorKey === DESKEW_KEY);
+  const [levelGridOn, toggleLevelGrid] = useGrid(projectId);
   useGridKey(toggleLevelGrid, hasLevelGrid && !grid);
 
   const select = (pageId: string, modifiers: ClickModifiers): void =>
