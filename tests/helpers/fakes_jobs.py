@@ -17,6 +17,7 @@ from bookreviver.adapters.events.broadcast import InProcessEventBus
 from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
 from bookreviver.ports.runtime import Clock, EventPublisher, EventStream
 from bookreviver.services.jobs import JobService
+from tests.helpers.book_gate import BookGate, GatedUnitOfWork
 from tests.helpers.builders import EPOCH
 
 if TYPE_CHECKING:
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Job, Project
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import ProjectId
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
 
 EVENT_QUEUE_SIZE: int = 16
 
@@ -94,11 +95,21 @@ class JobFakes:
     :ivar database: In-memory database every unit of work opens over.
     :ivar events: Event bus serving both publishers and subscribers.
     :ivar clock: Clock stopped at ``EPOCH``.
+    :ivar gate: Gate a test holds a book with, which the units of work from ``gated_uow`` wait at.
     """
 
     database: InMemoryDatabase = field(factory=InMemoryDatabase)
     events: RecordingEventBus = field(factory=RecordingEventBus)
     clock: FixedClock = field(factory=lambda: FixedClock(EPOCH))
+    gate: BookGate = field(factory=BookGate)
+
+    def gated_uow(self) -> UnitOfWork:
+        """Open a unit of work over the database whose changes wait at the gate, as a new request or job would get.
+
+        :returns: A new unit of work.
+        :rtype: UnitOfWork
+        """
+        return GatedUnitOfWork(InMemoryUnitOfWork(self.database), self.gate)
 
     def job_service(self) -> JobService:
         """Build a job service over a new unit of work, as a new request would get.

@@ -21,12 +21,10 @@ transaction isolation:
   tables when the work returns and is dropped when it raises, and ``read`` hands its work the committed tables with
   every write refused. The work is a synchronous function that never returns to the event loop, so no other
   transaction commits while it runs, and its copy is the state it would find at its commit.
-- Locks: the database holds one single-holder semaphore for each book and one for the changes outside a book. A change
-  of the port takes its semaphore in its turn under the wait limit, as :mod:`bookreviver.adapters.persistence.turns`
-  describes, and copies the tables once it holds it, so it reads what the previous change of the book committed. A read
-  takes no lock. The work of a change is synchronous, so a change holds its semaphore without yielding to the event loop
-  and two changes never contend for it in use. The semaphores stay because a test holds one to queue use cases behind a
-  busy book (``tests/helpers/book_gate.py``).
+- Locks: the adapter has none. The work of a change is synchronous and runs between two awaits, so no other change
+  commits while it runs, and a change copies the tables when it starts, so it reads what the previous change committed.
+  A read takes no lock either. A test that needs changes to queue behind a busy book gates the unit of work itself
+  (``tests/helpers/book_gate.py``).
 
 Each repository states its table's keys in two hooks of the generic repository, ``_check`` before a row is stored and
 ``_cascade`` after one is removed, so the generic operations stay in one place.
@@ -37,10 +35,8 @@ from functools import partial
 from operator import attrgetter
 from typing import TYPE_CHECKING, override
 
-import anyio
 from attrs import define, evolve, field, fields
 
-from bookreviver.adapters.persistence.turns import hold_in_turn
 from bookreviver.domain.entities import (
     BookPlace,
     Job,
@@ -89,7 +85,6 @@ from bookreviver.domain.step_values import StepValues, StepValuesKey
 from bookreviver.domain.values import BookPlaceKey, PageSize, PageStageKey, PageStepKey, Slice, SliceRequest
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
-    DEFAULT_CHANGE_WAIT_SECONDS,
     BookPlaceRepository,
     JobRepository,
     KeyedRepository,
@@ -212,25 +207,12 @@ class InMemoryTables:
 
 @define
 class InMemoryDatabase:
-    """The committed state shared by every unit of work, like a database server, and the locks of its changes.
+    """The committed state shared by every unit of work, like a database server.
 
     :ivar tables: Committed rows of every table.
-    :ivar change_lock: Single-holder semaphore of the changes outside the content of a book.
     """
 
     tables: InMemoryTables = field(factory=InMemoryTables)
-    change_lock: anyio.Semaphore = field(factory=lambda: anyio.Semaphore(1), init=False)
-    _book_locks: dict[ProjectId, anyio.Semaphore] = field(factory=dict, init=False)
-
-    def book_lock(self, project_id: ProjectId) -> anyio.Semaphore:
-        """Return the single-holder semaphore of one book, made when the book is first changed.
-
-        :param project_id: Project whose book is changed.
-        :type project_id: ProjectId
-        :returns: The semaphore every change of that book takes.
-        :rtype: anyio.Semaphore
-        """
-        return self._book_locks.setdefault(project_id, anyio.Semaphore(1))
 
 
 def require[KeyT](rows: Mapping[KeyT, object], key: KeyT | None) -> None:
@@ -2040,23 +2022,19 @@ class InMemoryUnitOfWork(UnitOfWork):
     The unit of work keeps no state between calls: every call builds the repositories of its own transaction.
     """
 
-    def __init__(self, database: InMemoryDatabase, *, wait_seconds: float = DEFAULT_CHANGE_WAIT_SECONDS) -> None:
+    def __init__(self, database: InMemoryDatabase) -> None:
         """Run the work of its calls on ``database``.
 
         :param database: Committed state shared with every other unit of work.
         :type database: InMemoryDatabase
-        :param wait_seconds: How long a change of this unit of work waits for its lock before it gives up with
-                             ``BookBusyError``.
-        :type wait_seconds: float
         """
         self._database = database
-        self._wait_seconds = wait_seconds
 
     @override
     async def read[T](self, work: Callable[[Repositories], T]) -> T:
         """Run ``work`` on the committed tables, which its repositories refuse to write.
 
-        Nothing commits while the work runs, so every read of it sees the same state, and a read takes no lock.
+        Nothing commits while the work runs, so every read of it sees the same state.
 
         :param work: Function over the repositories of the transaction.
         :type work: Callable[[Repositories], T]
@@ -2068,20 +2046,18 @@ class InMemoryUnitOfWork(UnitOfWork):
 
     @override
     async def change[T](self, work: Callable[[Repositories], T]) -> T:
-        """Run ``work`` on a copy of the tables under the lock of the changes outside the content of a book.
+        """Run ``work`` on a copy of the tables, as a change outside the content of a book.
 
         :param work: Function over the repositories of the transaction.
         :type work: Callable[[Repositories], T]
         :returns: What the work returns.
         :rtype: T
-        :raises BookBusyError: If the lock was not free within the wait limit.
         """
-        async with hold_in_turn(self._database.change_lock, wait_seconds=self._wait_seconds):
-            return self._run(work)
+        return self._run(work)
 
     @override
     async def change_book[T](self, project_id: ProjectId, work: Callable[[Repositories, Project], T]) -> T:
-        """Run ``work`` on a copy of the tables under the lock of the book, with the project read from that copy.
+        """Run ``work`` on a copy of the tables, with the project of the book read from that copy.
 
         :param project_id: Project whose book is changed.
         :type project_id: ProjectId
@@ -2090,17 +2066,15 @@ class InMemoryUnitOfWork(UnitOfWork):
         :returns: What the work returns.
         :rtype: T
         :raises NotFoundError: If the project is not stored.
-        :raises BookBusyError: If the lock of the book was not free within the wait limit.
         """
-        async with hold_in_turn(self._database.book_lock(project_id), wait_seconds=self._wait_seconds):
-            return self._run(lambda repositories: work(repositories, repositories.projects.get(project_id)))
+        return self._run(lambda repositories: work(repositories, repositories.projects.get(project_id)))
 
     def _run[T](self, work: Callable[[Repositories], T]) -> T:
         """Run ``work`` on a copy of the committed tables, which replaces them when the work returns.
 
-        The copy is taken after the lock is held, so the work reads what the change that held the lock before it
-        committed. The work never returns to the event loop, so nothing commits between the copy and the replacement.
-        When the work raises, the copy is dropped and the exception goes on.
+        The copy is taken when the change starts, so the work reads what the previous change committed. The work never
+        returns to the event loop, so nothing commits between the copy and the replacement. When the work raises, the
+        copy is dropped and the exception goes on.
 
         :param work: Function over the repositories of the transaction.
         :type work: Callable[[Repositories], T]

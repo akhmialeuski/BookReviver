@@ -11,7 +11,6 @@ from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.events import JobChanged
 from bookreviver.services.job_runs import JobTracker
-from tests.helpers.book_gate import hold_book
 from tests.helpers.builders import make_job, make_project, new_account_id
 from tests.helpers.fakes_jobs import JobFakes
 
@@ -47,14 +46,14 @@ def fx_project() -> Project:
 
 
 def tracker_of(fakes: JobFakes) -> JobTracker:
-    """Build a tracker over a unit of work of its own, as a worker has.
+    """Build a tracker over a unit of work of its own, as a worker has, whose changes wait at the gate of the fakes.
 
     :param fakes: Adapters of the test.
     :type fakes: JobFakes
     :returns: The tracker.
     :rtype: JobTracker
     """
-    return JobTracker(uow=InMemoryUnitOfWork(fakes.database), publisher=fakes.events, clock=fakes.clock)
+    return JobTracker(uow=fakes.gated_uow(), publisher=fakes.events, clock=fakes.clock)
 
 
 async def advance(tracker: JobTracker, job: Job) -> Job | None:
@@ -110,7 +109,7 @@ class TestTrackerWaitsForACancellation:
         """
         job = make_job(project_id=fx_project.id, state=JobState.RUNNING, kind=JobKind.RUN_STAGE)
         await fx_fakes.store(fx_project, job)
-        canceller = InMemoryUnitOfWork(fx_fakes.database)
+        canceller = fx_fakes.gated_uow()
         done = anyio.Event()
 
         async def cancel() -> None:
@@ -127,7 +126,7 @@ class TestTrackerWaitsForACancellation:
             await action(tracker_of(fx_fakes), job)
             done.set()
 
-        async with anyio.create_task_group() as group, hold_book(fx_fakes.database):
+        async with anyio.create_task_group() as group, fx_fakes.gate.hold():
             group.start_soon(cancel)
             await anyio.wait_all_tasks_blocked()
             group.start_soon(work)

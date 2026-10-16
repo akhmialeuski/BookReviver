@@ -8,14 +8,12 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.enums import ContentType, PageChange, PageKind, Side
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.events import PagesChanged
 from bookreviver.domain.values import PageAnchor
 from bookreviver.services.projects import book_pages
-from tests.helpers.book_gate import hold_book
 from tests.helpers.builders import EPOCH, make_page, make_project, new_account_id
 from tests.helpers.page_services import make_page_service
 from tests.helpers.seeding import commit_project
@@ -33,6 +31,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.services.pages import PageService
+    from tests.helpers.book_gate import GatedUnitOfWork
     from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
@@ -236,6 +235,7 @@ class TestConcurrentWrites:
     async def test_a_job_writing_a_moved_page_after_a_group_move_keeps_both_changes(
         self,
         fx_database: InMemoryDatabase,
+        fx_gated_uow: Callable[[], GatedUnitOfWork],
         fx_asset_store: LocalAssetStore,
         fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
         fx_actor: Actor,
@@ -248,6 +248,8 @@ class TestConcurrentWrites:
 
         :param fx_database: In-memory database of the test.
         :type fx_database: InMemoryDatabase
+        :param fx_gated_uow: Function opening a unit of work whose changes wait at the gate the test holds the book with.
+        :type fx_gated_uow: Callable[[], GatedUnitOfWork]
         :param fx_asset_store: Local asset store of the test.
         :type fx_asset_store: LocalAssetStore
         :param fx_runtime: The recording bus, the clock and the queue the service reports through.
@@ -271,11 +273,11 @@ class TestConcurrentWrites:
             seen_by_job.extend(page.id for page in book_pages(repos.pages, project.id))
             repos.pages.update(evolve(repos.pages.get(moved[1]), content_type=ContentType.COLOR_PICTURE))
 
-        mover = make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime)
-        async with anyio.create_task_group() as group, hold_book(fx_database, project.id):
+        mover = make_page_service(fx_gated_uow(), fx_asset_store, fx_runtime)
+        async with anyio.create_task_group() as group, fx_gated_uow().gate.hold(project.id):
             group.start_soon(mover.move_group, fx_actor, project.id, moved, anchor)
             await anyio.wait_all_tasks_blocked()
-            group.start_soon(InMemoryUnitOfWork(fx_database).change_book, project.id, job_writes_content)
+            group.start_soon(fx_gated_uow().change_book, project.id, job_writes_content)
             await anyio.wait_all_tasks_blocked()
             expect(not seen_by_job)
 
@@ -291,6 +293,7 @@ class TestConcurrentWrites:
         self,
         write: Callable[[PageService, Actor, ProjectId, list[PageId]], Coroutine[Any, Any, None]],
         fx_database: InMemoryDatabase,
+        fx_gated_uow: Callable[[], GatedUnitOfWork],
         fx_service_over: Callable[[UnitOfWork], PageService],
         fx_actor: Actor,
     ) -> None:
@@ -303,6 +306,8 @@ class TestConcurrentWrites:
         :type write: Callable[[PageService, Actor, ProjectId, list[PageId]], Coroutine[Any, Any, None]]
         :param fx_database: In-memory database of the test.
         :type fx_database: InMemoryDatabase
+        :param fx_gated_uow: Function opening a unit of work whose changes wait at the gate the test holds the book with.
+        :type fx_gated_uow: Callable[[], GatedUnitOfWork]
         :param fx_service_over: Function building the page service over a unit of work.
         :type fx_service_over: Callable[[UnitOfWork], PageService]
         :param fx_actor: Account the service acts for.
@@ -312,16 +317,16 @@ class TestConcurrentWrites:
         ids = [page.id for page in pages]
         before = dict(fx_database.tables.pages)
 
-        async with anyio.create_task_group() as group, hold_book(fx_database, project.id):
+        async with anyio.create_task_group() as group, fx_gated_uow().gate.hold(project.id):
             group.start_soon(
-                fx_service_over(InMemoryUnitOfWork(fx_database)).move,
+                fx_service_over(fx_gated_uow()).move,
                 fx_actor,
                 project.id,
                 ids[0],
                 PageAnchor(page_id=ids[3], side=Side.AFTER),
             )
             await anyio.wait_all_tasks_blocked()
-            group.start_soon(write, fx_service_over(InMemoryUnitOfWork(fx_database)), fx_actor, project.id, ids)
+            group.start_soon(write, fx_service_over(fx_gated_uow()), fx_actor, project.id, ids)
             await anyio.wait_all_tasks_blocked()
             expect(_written(fx_database, before) == set())
 

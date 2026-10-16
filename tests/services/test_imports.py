@@ -70,7 +70,6 @@ from tests.adapters.imaging.samples import (
     write_pdf,
     xmp_packet,
 )
-from tests.helpers.book_gate import hold_book
 from tests.helpers.builders import make_job, make_project, new_account_id
 from tests.helpers.fakes_imports import (
     DEFAULT_PARALLEL_SCANS,
@@ -1981,7 +1980,7 @@ class TestRunImportFailures:
                 expected=JobState.active(),
             )
 
-        async with anyio.create_task_group() as group, hold_book(fx_rig.database):
+        async with anyio.create_task_group() as group, fx_rig.fakes.gate.hold():
             group.start_soon(canceller.change, cancel_queued)
             await anyio.wait_all_tasks_blocked()
             group.start_soon(fx_rig.service().run_import, job.id)
@@ -2155,7 +2154,7 @@ class TestRunImportQueue:
             async with anyio.create_task_group() as group:
                 group.start_soon(fx_rig.service(parallel_scans=PARALLEL_SCANS).run_import, job.id)
                 await both_extracting.wait()
-                async with hold_book(fx_rig.database, fx_project.id):
+                async with fx_rig.fakes.gate.hold(fx_project.id):
                     proceed.set()
                     await anyio.wait_all_tasks_blocked()
                     expect((await fx_rig.stored_job(job)).progress.done == 0)
@@ -2546,7 +2545,7 @@ class TestStartImportConcurrently:
             patch.object(uows[second_name], CHANGE_METHOD, announce_the_change(second_name)),
             anyio.fail_after(IMPORT_TIMEOUT_SECONDS),
         ):
-            async with anyio.create_task_group() as group, hold_book(fx_rig.database):
+            async with anyio.create_task_group() as group, fx_rig.fakes.gate.hold():
                 for name in RACING_UPLOADS:
                     group.start_soon(upload, name)
                     await asking[name].wait()

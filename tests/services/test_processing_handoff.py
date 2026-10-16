@@ -18,7 +18,6 @@ from bookreviver.domain.events import JobChanged
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.values import StageRun, TileCut
 from bookreviver.services.processing_parts import NOT_QUEUED
-from tests.helpers.book_gate import hold_book
 from tests.helpers.builders import EPOCH
 from tests.helpers.fakes_imports import TickingClock
 
@@ -438,7 +437,7 @@ class TestConcurrentRequests:
                 outcomes[order] = error
 
         # The lock is let go first when the statement ends, and then the group waits for the two requests
-        async with anyio.create_task_group() as group, hold_book(fx_kit.database):
+        async with anyio.create_task_group() as group, fx_kit.gate.hold():
             group.start_soon(ask, first_starter, first, 0)
             await anyio.wait_all_tasks_blocked()
             group.start_soon(ask, second_starter, second, 1)

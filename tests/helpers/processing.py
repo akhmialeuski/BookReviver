@@ -46,6 +46,7 @@ from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from bookreviver.services.stage_runs import StageRuntime
 from bookreviver.services.stage_summaries import StageSummaries
 from bookreviver.services.steps import StepRunner
+from tests.helpers.book_gate import BookGate, GatedUnitOfWork
 from tests.helpers.builders import (
     EPOCH,
     SPLIT_NONE,
@@ -97,6 +98,7 @@ class ProcessingKit:
     """What the processing services of one test share, and a builder of the services over a new unit of work.
 
     :ivar database: In-memory database every unit of work opens over.
+    :ivar gate: Gate a test holds a book with, which the changes of every unit of work of the kit wait at.
     :ivar assets: Asset store over a temporary directory.
     :ivar events: Event bus recording what is published.
     :ivar clock: Clock stopped at the epoch, which a test moves.
@@ -131,6 +133,7 @@ class ProcessingKit:
         """
         self._defaults = defaults
         self.database = InMemoryDatabase()
+        self.gate = BookGate()
         self.assets = assets
         self.events = RecordingEventBus()
         self.clock = FixedClock(EPOCH)
@@ -174,7 +177,7 @@ class ProcessingKit:
         :rtype: ProcessingService
         """
         if uow is None:
-            uow = InMemoryUnitOfWork(self.database)
+            uow = self.uow()
         return ProcessingService(uow=uow, assets=self.assets, catalogue=self.catalogue, parts=self.parts(uow))
 
     def profiles(self) -> RecipeProfiles:
@@ -183,7 +186,7 @@ class ProcessingKit:
         :returns: The service, which applies a profile through a processing service of the same unit of work.
         :rtype: RecipeProfiles
         """
-        uow = InMemoryUnitOfWork(self.database)
+        uow = self.uow()
         parts = self.parts(uow)
         processing = ProcessingService(uow=uow, assets=self.assets, catalogue=self.catalogue, parts=parts)
         return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing, clock=self.clock)
@@ -242,7 +245,7 @@ class ProcessingKit:
         :returns: The jobs.
         :rtype: ProcessingJobs
         """
-        uow = InMemoryUnitOfWork(self.database)
+        uow = self.uow()
         runtime = StageRuntime(
             runner=self._runner,
             catalogue=self.catalogue,
@@ -291,7 +294,7 @@ class ProcessingKit:
         :returns: The service.
         :rtype: EditService
         """
-        uow = InMemoryUnitOfWork(self.database)
+        uow = self.uow()
         return EditService(
             uow=uow, assets=self.assets, catalogue=self.catalogue, records=self.parts(uow).records, clock=self.clock
         )
@@ -302,7 +305,7 @@ class ProcessingKit:
         :returns: The service.
         :rtype: PageSettingsService
         """
-        uow = InMemoryUnitOfWork(self.database)
+        uow = self.uow()
         return PageSettingsService(uow=uow, catalogue=self.catalogue, records=self.parts(uow).records, clock=self.clock)
 
     def page_history(self) -> PageHistoryService:
@@ -311,7 +314,7 @@ class ProcessingKit:
         :returns: The service.
         :rtype: PageHistoryService
         """
-        uow = InMemoryUnitOfWork(self.database)
+        uow = self.uow()
         parts = self.parts(uow)
         return PageHistoryService(
             uow=uow, records=parts.records, starter=parts.starter, assets=self.assets, clock=self.clock
@@ -333,13 +336,13 @@ class ProcessingKit:
         step = next(step for step in recipe.steps if step.processor_key == processor_key)
         return PageStepKey(page.id, stage, step.step_id)
 
-    def uow(self) -> InMemoryUnitOfWork:
-        """Open a unit of work to read what was committed.
+    def uow(self) -> UnitOfWork:
+        """Open a unit of work over the kit's database, whose changes wait at the gate of the kit.
 
         :returns: A new unit of work.
-        :rtype: InMemoryUnitOfWork
+        :rtype: UnitOfWork
         """
-        return InMemoryUnitOfWork(self.database)
+        return GatedUnitOfWork(InMemoryUnitOfWork(self.database), self.gate)
 
     async def seed_project(self, *, image_policy: ImagePolicy = ImagePolicy.COMPACT) -> tuple[Actor, Project]:
         """Commit a project of a new account.

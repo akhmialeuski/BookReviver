@@ -9,7 +9,6 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.enums import (
     JobKind,
     JobState,
@@ -28,6 +27,7 @@ from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.margins import MM_PER_INCH
 from bookreviver.domain.values import PageStageKey, ProcessorRef, RecipeDraft, StageRun, Step
 from bookreviver.services.book_measure import MEASURE_OUTDATED
+from tests.helpers.book_gate import GatedUnitOfWork
 from tests.helpers.builders import EPOCH, make_page_stage, make_page_version
 
 if TYPE_CHECKING:
@@ -678,16 +678,17 @@ class TestMeasureApplyStep:
         recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(300, 600, 30))
         before = {each: await normalize_params(fx_cv_kit, actor, project, each) for each in RecipeKind}
-        change_book = InMemoryUnitOfWork.change_book
+        # The save goes in before the gate of the kit, which the save itself passes, as the measure's change does
+        change_book = GatedUnitOfWork.change_book
         saved = False
 
         async def save_then_change_book[T](
-            uow: InMemoryUnitOfWork, project_id: ProjectId, work: Callable[[Repositories, Project], T]
+            uow: GatedUnitOfWork, project_id: ProjectId, work: Callable[[Repositories, Project], T]
         ) -> T:
             """Save the recipe of a kind through the form's use case before the first change of a book, then change.
 
             :param uow: The unit of work that changes the book.
-            :type uow: InMemoryUnitOfWork
+            :type uow: GatedUnitOfWork
             :param project_id: Project whose book is changed.
             :type project_id: ProjectId
             :param work: Function over the repositories of the transaction and the project.
@@ -704,7 +705,7 @@ class TestMeasureApplyStep:
                 )
             return await change_book(uow, project_id, work)
 
-        monkeypatch.setattr(InMemoryUnitOfWork, 'change_book', save_then_change_book)
+        monkeypatch.setattr(GatedUnitOfWork, 'change_book', save_then_change_book)
         job = await measure(fx_cv_kit, actor, project)
         after = {each: await normalize_params(fx_cv_kit, actor, project, each) for each in RecipeKind}
         written_by_hand = {**before[kind], NormalizeParam.LINE_HEIGHT: HAND_LINE_HEIGHT}

@@ -3,7 +3,8 @@
 ``change_book`` and ``change`` run their work on one transaction, commit it when the work returns, roll it back when the
 work raises, and wait for any other change of the same book. ``read`` runs its work on one committed state and refuses
 every write. Concurrency is real: tasks of an ``anyio`` task group, ordered by a held book, by events and by
-``anyio.wait_all_tasks_blocked`` and never by a sleep.
+``anyio.wait_all_tasks_blocked`` and never by a sleep. A book can be held only on the SQL backend, so the tests of
+waiting run against it alone, as ``TestChangeWait`` explains.
 """
 
 from datetime import timedelta
@@ -15,7 +16,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.app.settings import ChangeWaitSettings
+from bookreviver.app.settings import ChangeWaitSettings, PersistenceBackend
 from bookreviver.domain.enums import ImagePolicy, JobState, Stage, ValueScope
 from bookreviver.domain.errors import BookBusyError, DomainError, NotFoundError
 from bookreviver.domain.values import PageStepKey
@@ -605,7 +606,21 @@ class TestRead:
 
 
 class TestChangeWait:
-    """Contract of what a change waits for: any other change of the same book, for as long as the limit."""
+    """Contract of what a change waits for: any other change of the same book, for as long as the limit.
+
+    The in-memory adapter runs the work of a change between two awaits, so it has no lock and a change of it never
+    waits. Holding a book needs a work that blocks its thread, which only the SQL adapter runs, so this class runs
+    against the SQL backend alone.
+    """
+
+    @pytest.fixture
+    def fx_persistence_backend(self) -> PersistenceBackend:
+        """Select the SQL backend alone for every test of the class.
+
+        :returns: The SQL backend, in place of the backends the contract suite runs each test against.
+        :rtype: PersistenceBackend
+        """
+        return PersistenceBackend.SQLALCHEMY
 
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)
     async def test_change_waits_until_the_book_is_free(

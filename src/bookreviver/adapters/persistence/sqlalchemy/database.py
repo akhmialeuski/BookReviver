@@ -37,9 +37,9 @@ memory, which holds for one machine and not for a network file system. ``migrati
 off for the length of a migration.
 
 The write queue is the ``anyio.Semaphore`` of one that :meth:`SqlDatabase.write` takes before it starts the thread.
-anyio wakes the waiters of a semaphore in the order they asked, which :mod:`bookreviver.adapters.persistence.turns`
-explains, so a write that came early is never overtaken by one that came later, and the busy timeout of SQLite, whose
-waiting connection sleeps and tries again, is never the queue. The wait
+anyio wakes the waiters of a semaphore in the order they asked, which :func:`hold_in_turn` explains, so a write that
+came early is never overtaken by one that came later, and the busy timeout of SQLite, whose waiting connection sleeps
+and tries again, is never the queue. The wait
 limit of the unit of work bounds only the wait for the queue and never the work, and a running work is never
 cancelled, since ``to_thread.run_sync`` shields it, so a transaction is not abandoned half way. The readers share a
 capacity limiter of their own that is as large as the reader pool, which a read waits for without a limit.
@@ -66,6 +66,7 @@ The schema is created and changed only by the revisions in ``migrations/``, appl
 one read of the version table.
 """
 
+from contextlib import AsyncExitStack, asynccontextmanager
 from functools import partial
 from pathlib import Path
 from sqlite3 import OperationalError as SqliteOperationalError
@@ -83,13 +84,12 @@ from sqlalchemy import event
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 
-from bookreviver.adapters.persistence.turns import hold_in_turn
 from bookreviver.domain.enums import BlockOutcome, SpanAttribute, SpanName
 from bookreviver.domain.errors import BookBusyError
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS, NoChangeOpenError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import AsyncIterator, Callable
     from sqlite3 import Connection as DriverConnection
 
     from sqlalchemy.engine import Connection, Engine
@@ -244,6 +244,32 @@ def _refuse_statement(state: ORMExecuteState) -> None:
     """
     if state.is_insert or state.is_update or state.is_delete:
         raise NoChangeOpenError
+
+
+@asynccontextmanager
+async def hold_in_turn(lock: anyio.Semaphore, *, wait_seconds: float) -> AsyncIterator[None]:
+    """Wait for a single-holder lock in the order asked, and hold it until the block ends.
+
+    ``anyio.Semaphore`` wakes its waiters first in, first out, because it keeps them in a deque, which anyio 4.15 shows
+    in ``anyio/_backends/_asyncio.py``. An ``anyio.Lock`` is no choice here: a lock belongs to the task that took it and
+    refuses that task a second time at once, while the holder of the semaphore is the unit of work, as a database holds
+    its lock for a connection. Only the wait is limited, never the holding.
+
+    :param lock: Semaphore of one token, which the block takes.
+    :type lock: anyio.Semaphore
+    :param wait_seconds: How long the block waits for the lock before it gives up.
+    :type wait_seconds: float
+    :returns: Iterator yielding once the lock is held, and releasing it when the block ends.
+    :rtype: AsyncIterator[None]
+    :raises BookBusyError: If the lock was not given within the wait limit.
+    """
+    async with AsyncExitStack() as held:
+        try:
+            with anyio.fail_after(wait_seconds):
+                await held.enter_async_context(lock)
+        except TimeoutError as error:
+            raise BookBusyError from error
+        yield
 
 
 class SqlDatabase:

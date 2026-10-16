@@ -21,7 +21,6 @@ from bookreviver.domain.values import (
     PaginationSectionDraft,
     SliceRequest,
 )
-from tests.helpers.book_gate import hold_book
 from tests.helpers.builders import make_page, make_project, new_account_id
 from tests.helpers.seeding import commit_project
 
@@ -31,9 +30,10 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.domain.entities import Actor, Page, PaginationSection, Project
     from bookreviver.domain.ids import PageId
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from bookreviver.services.pagination import PaginationService
+    from tests.helpers.book_gate import GatedUnitOfWork
     from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
@@ -817,19 +817,22 @@ class TestNumberPages:
     async def test_a_numbering_asked_after_a_page_is_labelled_waits_and_numbers_the_result(
         self,
         fx_database: InMemoryDatabase,
-        fx_pagination: Callable[[], PaginationService],
+        fx_gated_uow: Callable[[], GatedUnitOfWork],
+        fx_pagination_over: Callable[[UnitOfWork], PaginationService],
         fx_actor: Actor,
     ) -> None:
         """Verify a numbering asked behind the change of a page label waits for it, and then reads the label written.
 
         The book is held, the change of the label of the fifth page asks for it first and the numbering second. The
-        numbering waits at the lock of the book, so it cannot read the old label, and it numbers the page it finds
+        numbering waits for the held book, so it cannot read the old label, and it numbers the page it finds
         afterwards.
 
         :param fx_database: In-memory database of the test.
         :type fx_database: InMemoryDatabase
-        :param fx_pagination: Function building the pagination service for one request.
-        :type fx_pagination: Callable[[], PaginationService]
+        :param fx_gated_uow: Function opening a unit of work whose changes wait at the gate the test holds the book with.
+        :type fx_gated_uow: Callable[[], GatedUnitOfWork]
+        :param fx_pagination_over: Function building the pagination service over a unit of work.
+        :type fx_pagination_over: Callable[[UnitOfWork], PaginationService]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
@@ -847,10 +850,10 @@ class TestNumberPages:
             """
             repos.pages.update(evolve(repos.pages.get(pages[4].id), label=HAND_WRITTEN, label_manual=True))
 
-        async with anyio.create_task_group() as group, hold_book(fx_database, project.id):
-            group.start_soon(InMemoryUnitOfWork(fx_database).change_book, project.id, label_a_page)
+        async with anyio.create_task_group() as group, fx_gated_uow().gate.hold(project.id):
+            group.start_soon(fx_gated_uow().change_book, project.id, label_a_page)
             await anyio.wait_all_tasks_blocked()
-            group.start_soon(fx_pagination().number, fx_actor, project.id, numbering)
+            group.start_soon(fx_pagination_over(fx_gated_uow()).number, fx_actor, project.id, numbering)
             await anyio.wait_all_tasks_blocked()
             expect(_written(fx_database, before) == set())
 

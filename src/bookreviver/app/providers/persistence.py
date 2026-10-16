@@ -61,17 +61,15 @@ class MemoryPersistenceProvider(Provider):
         return InMemoryDatabase()
 
     @provide(scope=Scope.REQUEST)
-    def unit_of_work(self, database: InMemoryDatabase, wait_seconds: ChangeWaitSeconds) -> UnitOfWork:
+    def unit_of_work(self, database: InMemoryDatabase) -> UnitOfWork:
         """Open a unit of work over the application's in-memory database.
 
         :param database: The application's in-memory database.
         :type database: InMemoryDatabase
-        :param wait_seconds: How long a block of the unit of work waits for its lock, by the scope it lives in.
-        :type wait_seconds: ChangeWaitSeconds
         :returns: Unit of work over a private copy of the database.
         :rtype: UnitOfWork
         """
-        return InMemoryUnitOfWork(database, wait_seconds=wait_seconds)
+        return InMemoryUnitOfWork(database)
 
 
 class SqlAlchemyPersistenceProvider(Provider):
