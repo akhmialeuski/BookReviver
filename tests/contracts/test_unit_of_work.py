@@ -82,6 +82,7 @@ WRITE_METHODS: tuple[str, ...] = (
     'delete_for_step',
     'update_if_state',
     'save',
+    'save_many',
 )
 
 type Run[T] = Callable[[UnitOfWork, Project, Callable[[Repositories], T]], Coroutine[Any, Any, T]]
@@ -174,6 +175,7 @@ WRITES: dict[str, Callable[[Any, Row], object]] = {
     ),
     'update_if_state': lambda repository, row: repository.update_if_state(row.changed, expected=JobState.active()),
     'save': lambda repository, row: repository.save(row.changed),
+    'save_many': lambda repository, row: repository.save_many([row.changed]),
 }
 # Each repository of the port with each write method it has, which the port's own declaration lists
 WRITE_PARAMS: list[Any] = [

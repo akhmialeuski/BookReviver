@@ -307,7 +307,7 @@ class StageRecords:
         )
 
     def _stale(self, repos: Repositories, records: Iterable[PageStage]) -> list[PageStage]:
-        """Write the up-to-date ones of some records as stale, and leave the stale and the failed ones as they are.
+        """Write the up-to-date ones of some records as stale in one statement, and leave the others as they are.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: Repositories
@@ -321,8 +321,7 @@ class StageRecords:
             for record in records
             if record.state is StageState.FRESH
         ]
-        for record in stale:
-            repos.page_stages.save(record)
+        repos.page_stages.save_many(stale)
         return stale
 
 

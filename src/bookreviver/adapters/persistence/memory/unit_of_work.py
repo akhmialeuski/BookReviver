@@ -24,7 +24,9 @@ transaction isolation:
 - Locks: the database holds one single-holder semaphore for each book and one for the changes outside a book. A change
   of the port takes its semaphore in its turn under the wait limit, as :mod:`bookreviver.adapters.persistence.turns`
   describes, and copies the tables once it holds it, so it reads what the previous change of the book committed. A read
-  takes no lock.
+  takes no lock. The work of a change is synchronous, so a change holds its semaphore without yielding to the event loop
+  and two changes never contend for it in use. The semaphores stay because a test holds one to queue use cases behind a
+  busy book (``tests/helpers/book_gate.py``).
 
 Each repository states its table's keys in two hooks of the generic repository, ``_check`` before a row is stored and
 ``_cascade`` after one is removed, so the generic operations stay in one place.
@@ -90,6 +92,7 @@ from bookreviver.ports.persistence import (
     DEFAULT_CHANGE_WAIT_SECONDS,
     BookPlaceRepository,
     JobRepository,
+    KeyedRepository,
     NoChangeOpenError,
     PageRepository,
     PageStageRepository,
@@ -393,6 +396,54 @@ class InMemoryRepository[EntityT, IdT](Repository[EntityT, IdT]):
         taken, entity_id = value(entity), self._identify(entity)
         if any(value(row) == taken for key, row in self._rows.items() if key != entity_id):
             raise ConflictError(taken)
+
+
+class InMemoryKeyedRepository[EntityT, KeyT](InMemoryRepository[EntityT, KeyT], KeyedRepository[EntityT, KeyT]):
+    """Generic repository over a table whose entities are stored under the ``key`` they carry."""
+
+    def __init__(self, rows: dict[KeyT, EntityT], tables: InMemoryTables, *, writable: bool) -> None:
+        """Work on one table of the transaction's tables, addressing its entities by their key.
+
+        :param rows: Table of the transaction's tables, changed in place.
+        :type rows: dict[KeyT, EntityT]
+        :param tables: Every table of the transaction, which the keys of this table refer to.
+        :type tables: InMemoryTables
+        :param writable: Whether the transaction may write, which every write requires.
+        :type writable: bool
+        """
+        super().__init__(rows, tables, writable=writable)
+        self._identify = attrgetter(KEY_ATTRIBUTE)
+
+    @override
+    def save_many(self, entities: Sequence[EntityT]) -> Sequence[EntityT]:
+        """Store several entities, each replacing the one under its key, all of them or none.
+
+        Every entity is checked before the first is stored, so an entity that fails leaves the table as it was.
+
+        :param entities: Entities to store.
+        :type entities: Sequence[EntityT]
+        :returns: The entities as stored, in the given order.
+        :rtype: Sequence[EntityT]
+        :raises NoChangeOpenError: If the transaction only reads.
+        :raises NotFoundError: If an entity one of them refers to is not stored.
+        """
+        self._require_writable()
+        for entity in entities:
+            self._check(entity)
+        for entity in entities:
+            self._rows[self._identify(entity)] = entity
+        return list(entities)
+
+    @override
+    def find(self, key: KeyT) -> EntityT | None:
+        """Return the entity stored under the key.
+
+        :param key: Key of the entity.
+        :type key: KeyT
+        :returns: The entity, or None.
+        :rtype: EntityT | None
+        """
+        return self._rows.get(key)
 
 
 class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectRepository):
@@ -733,26 +784,6 @@ class InMemoryPageRepository(InMemoryRepository[Page, PageId], PageRepository):
         if missing := wanted - {page.id for page in pages}:
             raise NotFoundError(*missing)
         return self._in_book_order(pages)
-
-    @override
-    def list_range(self, project_id: ProjectId, first_key: str, last_key: str) -> Sequence[Page]:
-        """Return the pages whose order keys lie between the two keys in byte order, both included.
-
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
-        :param first_key: Smallest order key of the range.
-        :type first_key: str
-        :param last_key: Greatest order key of the range.
-        :type last_key: str
-        :returns: The pages of the range in book order.
-        :rtype: Sequence[Page]
-        """
-        lower, upper = first_key.encode(), last_key.encode()
-        return self._in_book_order(
-            page
-            for page in self._rows.values()
-            if page.project_id == project_id and lower <= page.order_key.encode() <= upper
-        )
 
     @override
     def list_for_source(self, project_id: ProjectId, source_id: SourceId) -> Sequence[Page]:
@@ -1142,7 +1173,7 @@ class InMemoryPageVersionRepository(InMemoryRepository[PageVersion, PageVersionI
                 self.delete(version_id)
 
 
-class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], PageStageRepository):
+class InMemoryPageStageRepository(InMemoryKeyedRepository[PageStage, PageStageKey], PageStageRepository):
     """The current version of each stage of each page."""
 
     def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
@@ -1154,7 +1185,6 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         :type writable: bool
         """
         super().__init__(tables.page_stages, tables, writable=writable)
-        self._identify = attrgetter(KEY_ATTRIBUTE)
 
     @override
     def _check(self, entity: PageStage) -> None:
@@ -1167,33 +1197,6 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         require(self._tables.pages, entity.page_id)
         require(self._tables.page_versions, entity.head_version_id)
         require(self._tables.recipes, entity.recipe_id)
-
-    @override
-    def save(self, stage: PageStage) -> PageStage:
-        """Store the record, replacing the one of the same page and stage.
-
-        :param stage: Record to store.
-        :type stage: PageStage
-        :returns: The record as stored.
-        :rtype: PageStage
-        :raises NoChangeOpenError: If the transaction only reads.
-        :raises NotFoundError: If the page, the head version or the recipe is not stored.
-        """
-        self._require_writable()
-        self._check(stage)
-        self._rows[stage.key] = stage
-        return stage
-
-    @override
-    def find(self, key: PageStageKey) -> PageStage | None:
-        """Return the record of a stage of a page.
-
-        :param key: Page and stage.
-        :type key: PageStageKey
-        :returns: The record, or None.
-        :rtype: PageStage | None
-        """
-        return self._rows.get(key)
 
     @override
     def list_for_page(self, page_id: PageId) -> Sequence[PageStage]:
@@ -1236,17 +1239,21 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         return sorted((stage for stage in self._rows.values() if stage.recipe_id == recipe_id), key=attrgetter(PAGE_ID))
 
     @override
-    def list_fresh(self) -> Sequence[PageStage]:
-        """Return the records in the fresh state, by page and then in the order of the stages.
+    def fresh_by_project(self) -> Mapping[ProjectId, Sequence[PageStage]]:
+        """Return the records in the fresh state, grouped by the book of their page.
 
-        :returns: Every record whose current version is up to date.
-        :rtype: Sequence[PageStage]
+        :returns: For each book that has any, its fresh records, by page and then in the order of the stages.
+        :rtype: Mapping[ProjectId, Sequence[PageStage]]
         """
         order = list(Stage)
-        return sorted(
+        fresh = sorted(
             (record for record in self._rows.values() if record.state is StageState.FRESH),
             key=lambda record: (str(record.page_id), order.index(record.stage)),
         )
+        by_project: dict[ProjectId, list[PageStage]] = {}
+        for record in fresh:
+            by_project.setdefault(self._tables.pages[record.page_id].project_id, []).append(record)
+        return by_project
 
     @override
     def list_replaced(self, stage: Stage, processor: ProcessorRef) -> Sequence[PageStage]:
@@ -1372,7 +1379,7 @@ class InMemoryPageStageRepository(InMemoryRepository[PageStage, PageStageKey], P
         ]
 
 
-class InMemoryPageStepStateRepository(InMemoryRepository[PageStepState, PageStepKey], PageStepStateRepository):
+class InMemoryPageStepStateRepository(InMemoryKeyedRepository[PageStepState, PageStepKey], PageStepStateRepository):
     """Settings and manual edits of the steps of the pages."""
 
     def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
@@ -1384,7 +1391,6 @@ class InMemoryPageStepStateRepository(InMemoryRepository[PageStepState, PageStep
         :type writable: bool
         """
         super().__init__(tables.page_step_states, tables, writable=writable)
-        self._identify = attrgetter(KEY_ATTRIBUTE)
 
     @override
     def _check(self, entity: PageStepState) -> None:
@@ -1395,33 +1401,6 @@ class InMemoryPageStepStateRepository(InMemoryRepository[PageStepState, PageStep
         :raises NotFoundError: If the page is not stored.
         """
         require(self._tables.pages, entity.page_id)
-
-    @override
-    def save(self, state: PageStepState) -> PageStepState:
-        """Store the state, replacing the one of the same page, stage and step.
-
-        :param state: State to store.
-        :type state: PageStepState
-        :returns: The state as stored.
-        :rtype: PageStepState
-        :raises NoChangeOpenError: If the transaction only reads.
-        :raises NotFoundError: If the page is not stored.
-        """
-        self._require_writable()
-        self._check(state)
-        self._rows[state.key] = state
-        return state
-
-    @override
-    def find(self, key: PageStepKey) -> PageStepState | None:
-        """Return the state of one step on one page.
-
-        :param key: Page, stage and step.
-        :type key: PageStepKey
-        :returns: The state, or None.
-        :rtype: PageStepState | None
-        """
-        return self._rows.get(key)
 
     @override
     def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepState]:
@@ -1467,7 +1446,7 @@ class InMemoryPageStepStateRepository(InMemoryRepository[PageStepState, PageStep
         )
 
 
-class InMemoryStepValuesRepository(InMemoryRepository[StepValues, StepValuesKey], StepValuesRepository):
+class InMemoryStepValuesRepository(InMemoryKeyedRepository[StepValues, StepValuesKey], StepValuesRepository):
     """The values of the steps for the odd pages, the even pages and the groups."""
 
     def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
@@ -1479,7 +1458,6 @@ class InMemoryStepValuesRepository(InMemoryRepository[StepValues, StepValuesKey]
         :type writable: bool
         """
         super().__init__(tables.step_values, tables, writable=writable)
-        self._identify = attrgetter(KEY_ATTRIBUTE)
 
     @override
     def _check(self, entity: StepValues) -> None:
@@ -1490,33 +1468,6 @@ class InMemoryStepValuesRepository(InMemoryRepository[StepValues, StepValuesKey]
         :raises NotFoundError: If the project is not stored.
         """
         require(self._tables.projects, entity.project_id)
-
-    @override
-    def save(self, values: StepValues) -> StepValues:
-        """Store the values, replacing the ones of the same step and part of the pages.
-
-        :param values: Values to store.
-        :type values: StepValues
-        :returns: The values as stored.
-        :rtype: StepValues
-        :raises NoChangeOpenError: If the transaction only reads.
-        :raises NotFoundError: If the project is not stored.
-        """
-        self._require_writable()
-        self._check(values)
-        self._rows[values.key] = values
-        return values
-
-    @override
-    def find(self, key: StepValuesKey) -> StepValues | None:
-        """Return the values one part of the pages has for one step.
-
-        :param key: The project, the step and the part of the pages.
-        :type key: StepValuesKey
-        :returns: The values, or None.
-        :rtype: StepValues | None
-        """
-        return self._rows.get(key)
 
     @override
     def list_for_step(self, project_id: ProjectId, step_id: StepId) -> Sequence[StepValues]:

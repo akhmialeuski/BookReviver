@@ -22,7 +22,7 @@ from collections import Counter
 from contextlib import contextmanager
 from itertools import batched, chain
 from operator import attrgetter
-from typing import TYPE_CHECKING, Any, ClassVar, override
+from typing import TYPE_CHECKING, Any, ClassVar, cast, override
 
 from advanced_alchemy.exceptions import DuplicateKeyError, ForeignKeyError, wrap_sqlalchemy_exception
 from advanced_alchemy.exceptions import NotFoundError as MissingRowError
@@ -118,6 +118,7 @@ from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
     BookPlaceRepository,
     JobRepository,
+    KeyedRepository,
     PageRepository,
     PageStageRepository,
     PageStepChangeRepository,
@@ -143,7 +144,7 @@ if TYPE_CHECKING:
     from advanced_alchemy.base import ModelProtocol
     from advanced_alchemy.filters import StatementFilter
     from advanced_alchemy.repository.typing import PrimaryKeyType
-    from sqlalchemy import ColumnElement, ScalarSelect
+    from sqlalchemy import ColumnElement, CursorResult, ScalarSelect
     from sqlalchemy.orm import InstrumentedAttribute, QueryableAttribute, Session
 
     from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
@@ -264,13 +265,61 @@ class RowRepository[RowT: ModelProtocol](SQLAlchemySyncRepository[RowT]):
         with self._reporting_integrity_errors([data]):
             return super().update(data, **options)
 
+    def replace_many(
+        self, rows: Sequence[RowT], *, unless_newer_by: InstrumentedAttribute[Any] | None = None
+    ) -> list[RowT]:
+        """Store the rows whole in one upsert, each replacing the stored row of its primary key.
+
+        The statement inserts every row, or on a conflict of the primary key sets every other column of the stored row
+        from the new one, and returns the rows as stored. SQLAlchemy sends them in statements of at most its
+        ``insertmanyvalues`` page size of rows and bound values, which stays under the limit of SQLite, so a long list
+        needs no chunking here. The write is a statement of the transaction, so the rows are stored whole or, on an
+        error, not at all.
+
+        :param rows: Transient rows to store, of which every column is set.
+        :type rows: Sequence[RowT]
+        :param unless_newer_by: Column that holds the time of the write, or None to replace the stored row always. A
+                                stored row whose value of the column is later than the new row's stays as it is, which
+                                the database decides against the latest committed row.
+        :type unless_newer_by: InstrumentedAttribute[Any] | None
+        :returns: The rows as stored, attached to the session and refreshed, in the order given. A row the condition
+                  refused is left out.
+        :rtype: list[RowT]
+        :raises NotFoundError: If a row that one of these refers to through a foreign key is not stored.
+        :raises ConflictError: If a unique value of a row is another row's.
+        """
+        if not rows:
+            return []
+        mapper = self.model_type.__mapper__
+        # The columns are named as their attributes, so one list serves the conflict target and the update
+        names = [attribute.key for attribute in mapper.column_attrs]
+        primary_key = [column.name for column in mapper.primary_key]
+        insertion = sqlite_insert(self.model_type)
+        where = None if unless_newer_by is None else unless_newer_by <= insertion.excluded[unless_newer_by.key]
+        statement = (
+            insertion.on_conflict_do_update(
+                index_elements=primary_key,
+                set_={name: insertion.excluded[name] for name in names if name not in primary_key},
+                where=where,
+            )
+            .returning(self.model_type)
+            # Without render_nulls the bulk insert leaves a null out of its statement, and rows that differ in which
+            # of their columns are null would be sent as several statements
+            .execution_options(populate_existing=True, render_nulls=True)
+        )
+        with self._reporting_integrity_errors(rows):
+            result = self.session.execute(statement, [{name: getattr(row, name) for name in names} for row in rows])
+            stored = {self.get_primary_key_value(row): row for row in result.scalars()}
+        return [stored[key] for row in rows if (key := self.get_primary_key_value(row)) in stored]
+
     @contextmanager
     def _reporting_integrity_errors(self, rows: Sequence[RowT]) -> Iterator[None]:
         """Report the database rejecting ``rows`` as the domain error for the constraint they broke.
 
         The database does not say which row broke the constraint, so each error names the candidate keys: the
         primary keys and the unique values of the rows for a conflict, and the distinct values of their foreign keys
-        for a missing parent.
+        for a missing parent. A statement of the session that the library did not send is wrapped the same way as one
+        it sent.
 
         :param rows: Rows being written.
         :type rows: Sequence[RowT]
@@ -280,7 +329,8 @@ class RowRepository[RowT: ModelProtocol](SQLAlchemySyncRepository[RowT]):
         :raises NotFoundError: If a row that ``rows`` refer to is not stored.
         """
         try:
-            yield
+            with wrap_sqlalchemy_exception(error_messages=DEFAULT_ERROR_MESSAGE_TEMPLATES, dialect_name=SQLITE_DIALECT):
+                yield
         except DuplicateKeyError as error:
             mapper, table = self.model_type.__mapper__, self.model_type.__table__
             # A declarative class maps one Table, the kind of FromClause that carries constraints
@@ -328,9 +378,31 @@ class ScanRows(RowRepository[ScanRow]):
 
 
 class PageRows(RowRepository[PageRow]):
-    """Rows of the ``pages`` table."""
+    """Rows of the ``pages`` table, several of which are updated by one flush."""
 
     model_type = PageRow
+
+    def update_loaded(self, rows: Sequence[PageRow]) -> None:
+        """Replace the stored state of several pages with one read and one flush.
+
+        The stored rows are read in one chunked ``IN`` query, given the columns of the new rows, and flushed once, so
+        the session sends one ``UPDATE`` for all the pages that change the same columns, where ``update`` reads and
+        sends one for each page. The rows of the session are the ones changed, so the identity map stays current.
+
+        :param rows: Transient rows holding the new state under the keys of the stored rows.
+        :type rows: Sequence[PageRow]
+        :raises NotFoundError: If a page is not stored.
+        :raises ConflictError: If the new state of a page takes a key another page has.
+        """
+        stored = {row.id: row for row in self.get_many_in(PageRow.id, [row.id for row in rows])}
+        if missing := [row.id for row in rows if row.id not in stored]:
+            raise NotFoundError(*missing)
+        names = [attribute.key for attribute in PageRow.__mapper__.column_attrs]
+        for row in rows:
+            for name in names:
+                setattr(stored[row.id], name, getattr(row, name))
+        with self._reporting_integrity_errors(rows):
+            self.session.flush()
 
 
 class PaginationSectionRows(RowRepository[PaginationSectionRow]):
@@ -383,12 +455,11 @@ class BookPlaceRows(RowRepository[BookPlaceRow]):
     def replace_unless_newer(self, row: BookPlaceRow) -> BookPlaceRow:
         """Store the row whole in one statement, unless the stored row was written later.
 
-        The statement inserts the row, or on a conflict of the primary key replaces every column of the stored row, as
-        long as that row's ``updated_at`` is not later than the new one. The database evaluates the condition against
-        the latest committed row, and the write lock of the transaction holds until it ends, so two requests writing at
-        once leave exactly one of them, whole, and never a mixture of the two. Reading the row first and updating the
-        columns that differ would do the opposite: a request that read before the other committed writes only part of
-        its columns.
+        The statement is :meth:`RowRepository.replace_many` with the condition that the stored row's ``updated_at`` is
+        not later than the new one. The database evaluates the condition against the latest committed row, and the
+        write lock of the transaction holds until it ends, so two requests writing at once leave exactly one of them,
+        whole, and never a mixture of the two. Reading the row first and updating the columns that differ would do the
+        opposite: a request that read before the other committed writes only part of its columns.
 
         :param row: Transient row to store.
         :type row: BookPlaceRow
@@ -396,27 +467,8 @@ class BookPlaceRows(RowRepository[BookPlaceRow]):
         :rtype: BookPlaceRow
         :raises NotFoundError: If the book of the place is not stored.
         """
-        mapper = inspect(BookPlaceRow)
-        values = {attribute.key: getattr(row, attribute.key) for attribute in mapper.column_attrs}
-        insertion = sqlite_insert(BookPlaceRow).values(values)
-        # The columns are named as their attributes, so one list serves the conflict target and the update
-        key = [column.name for column in mapper.primary_key]
-        statement = (
-            insertion.on_conflict_do_update(
-                index_elements=key,
-                set_={name: insertion.excluded[name] for name in values if name not in key},
-                where=BookPlaceRow.updated_at <= insertion.excluded.updated_at,
-            )
-            .returning(BookPlaceRow)
-            .execution_options(populate_existing=True)
-        )
-        with (
-            self._reporting_integrity_errors([row]),
-            wrap_sqlalchemy_exception(error_messages=DEFAULT_ERROR_MESSAGE_TEMPLATES, dialect_name=SQLITE_DIALECT),
-        ):
-            stored = self.session.execute(statement).scalar_one_or_none()
-        if stored is not None:
-            return stored
+        if stored := self.replace_many([row], unless_newer_by=BookPlaceRow.updated_at):
+            return stored[0]
         # The condition refused the write, so the row that was written later stays, reloaded into the session
         return self.get((row.account_id, row.project_id), execution_options={'populate_existing': True})
 
@@ -512,6 +564,39 @@ class SqlAlchemyRepository[EntityT, IdT, RowT: ModelProtocol](Repository[EntityT
         :raises NotFoundError: If no entity has this identifier.
         """
         self._rows.delete(entity_id)
+
+
+class SqlAlchemyKeyedRepository[EntityT, KeyT, RowT: ModelProtocol](
+    SqlAlchemyRepository[EntityT, KeyT, RowT], KeyedRepository[EntityT, KeyT]
+):
+    """The operations of a table whose entities are stored under a key, built on one upsert of the row repository."""
+
+    @override
+    def save_many(self, entities: Sequence[EntityT]) -> Sequence[EntityT]:
+        """Store several entities in one upsert, each replacing the stored one of its key, all of them or none.
+
+        :param entities: Entities to store.
+        :type entities: Sequence[EntityT]
+        :returns: The entities as stored, in the given order.
+        :rtype: Sequence[EntityT]
+        :raises NotFoundError: If an entity one of them refers to is not stored.
+        """
+        rows = self._rows.replace_many([self._mapper.to_row(entity) for entity in entities])
+        return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    def find(self, key: KeyT) -> EntityT | None:
+        """Return the entity stored under the key, read as :meth:`get` reads it.
+
+        :param key: Key of the entity.
+        :type key: KeyT
+        :returns: The entity, or None.
+        :rtype: EntityT | None
+        """
+        try:
+            return self.get(key)
+        except NotFoundError:
+            return None
 
 
 class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, ProjectRow], ProjectRepository):
@@ -761,7 +846,11 @@ class SqlAlchemyScanRepository(SqlAlchemyRepository[Scan, ScanId, ScanRow], Scan
 
 
 class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], PageRepository):
-    """Pages of the book, listed in the byte order of their order keys."""
+    """Pages of the book, listed in the byte order of their order keys.
+
+    :ivar _pages: The rows of the table as their own repository, whose update of several pages the generic rows do not
+                  have.
+    """
 
     def __init__(self, session: Session) -> None:
         """Create the repository over the ``pages`` table.
@@ -769,7 +858,9 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
         :param session: Session of the unit of work.
         :type session: Session
         """
-        super().__init__(rows=PageRows(session=session), mapper=PageMapper())
+        pages = PageRows(session=session)
+        super().__init__(rows=pages, mapper=PageMapper())
+        self._pages = pages
 
     @override
     def list_for_project(
@@ -815,24 +906,6 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
         rows = self._rows.get_many_in(PageRow.id, wanted, order=[PageRow.order_key], project_id=project_id)
         if missing := wanted - {row.id for row in rows}:
             raise NotFoundError(*missing)
-        return [self._mapper.to_entity(row) for row in rows]
-
-    @override
-    def list_range(self, project_id: ProjectId, first_key: str, last_key: str) -> Sequence[Page]:
-        """Return the pages between two order keys, both included, from the unique index of project and key.
-
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
-        :param first_key: Smallest order key of the range.
-        :type first_key: str
-        :param last_key: Greatest order key of the range.
-        :type last_key: str
-        :returns: The pages of the range in book order.
-        :rtype: Sequence[Page]
-        """
-        rows = self._rows.get_many(
-            PageRow.order_key.between(first_key, last_key), order_by=PageRow.order_key.asc(), project_id=project_id
-        )
         return [self._mapper.to_entity(row) for row in rows]
 
     @override
@@ -886,7 +959,7 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
 
     @override
     def update_many(self, pages: Sequence[Page]) -> None:
-        """Replace the stored state of several pages, one after the other in the transaction of the unit of work.
+        """Replace the stored state of several pages with one read and one flush, in the transaction of the work.
 
         The transaction makes the pages change together or not at all, as the unit of work rolls it back on an error.
 
@@ -895,8 +968,7 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
         :raises NotFoundError: If a page is not stored.
         :raises ConflictError: If the new state of a page takes a key another page has.
         """
-        for page in pages:
-            self.update(page)
+        self._pages.update_loaded([self._mapper.to_row(page) for page in pages])
 
     @override
     def list_for_scan(self, scan_id: ScanId) -> Sequence[Page]:
@@ -1192,7 +1264,9 @@ class SqlAlchemyPageVersionRepository(
             self._rows.session.execute(delete(PageVersionRow).where(PageVersionRow.id.in_(chunk)))
 
 
-class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey, PageStageRow], PageStageRepository):
+class SqlAlchemyPageStageRepository(
+    SqlAlchemyKeyedRepository[PageStage, PageStageKey, PageStageRow], PageStageRepository
+):
     """The current version of each stage of each page, addressed by the page and the stage."""
 
     def __init__(self, session: Session) -> None:
@@ -1224,32 +1298,6 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
         :raises NotFoundError: If the stage has no record on the page.
         """
         self._rows.delete((entity_id.page_id, entity_id.stage))
-
-    @override
-    def save(self, stage: PageStage) -> PageStage:
-        """Store the record, replacing the one of the same page and stage.
-
-        :param stage: Record to store.
-        :type stage: PageStage
-        :returns: The record as stored.
-        :rtype: PageStage
-        :raises NotFoundError: If the page, the head version or the recipe is not stored.
-        """
-        if self.find(stage.key) is None:
-            return self.add(stage)
-        return self.update(stage)
-
-    @override
-    def find(self, key: PageStageKey) -> PageStage | None:
-        """Return the record of a stage of a page.
-
-        :param key: Page and stage.
-        :type key: PageStageKey
-        :returns: The record, or None.
-        :rtype: PageStage | None
-        """
-        row = self._rows.get_one_or_none(page_id=key.page_id, stage=key.stage)
-        return None if row is None else self._mapper.to_entity(row)
 
     @override
     def list_for_page(self, page_id: PageId) -> Sequence[PageStage]:
@@ -1291,15 +1339,24 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
         return [self._mapper.to_entity(row) for row in rows]
 
     @override
-    def list_fresh(self) -> Sequence[PageStage]:
-        """Return the records in the fresh state in one query, by page and then in the order of the stages.
+    def fresh_by_project(self) -> Mapping[ProjectId, Sequence[PageStage]]:
+        """Return the records in the fresh state in one query that joins them with their pages, grouped by book.
 
-        :returns: Every record whose current version is up to date.
-        :rtype: Sequence[PageStage]
+        :returns: For each book that has any, its fresh records, by page and then in the order of the stages.
+        :rtype: Mapping[ProjectId, Sequence[PageStage]]
         """
+        statement = (
+            select(PageStageRow, PageRow.project_id)
+            .join(PageRow, PageStageRow.page_id == PageRow.id)
+            .where(PageStageRow.state == StageState.FRESH)
+        )
         order = list(Stage)
-        records = [self._mapper.to_entity(row) for row in self._rows.get_many(state=StageState.FRESH)]
-        return sorted(records, key=lambda record: (str(record.page_id), order.index(record.stage)))
+        by_project: dict[ProjectId, list[PageStage]] = {}
+        for row, project_id in self._rows.session.execute(statement):
+            by_project.setdefault(ProjectId(project_id), []).append(self._mapper.to_entity(row))
+        for records in by_project.values():
+            records.sort(key=lambda record: (str(record.page_id), order.index(record.stage)))
+        return by_project
 
     @override
     def list_replaced(self, stage: Stage, processor: ProcessorRef) -> Sequence[PageStage]:
@@ -1446,7 +1503,7 @@ class SqlAlchemyPageStageRepository(SqlAlchemyRepository[PageStage, PageStageKey
 
 
 class SqlAlchemyPageStepStateRepository(
-    SqlAlchemyRepository[PageStepState, PageStepKey, PageStepStateRow], PageStepStateRepository
+    SqlAlchemyKeyedRepository[PageStepState, PageStepKey, PageStepStateRow], PageStepStateRepository
 ):
     """Settings and manual edits, addressed by the page, the stage and the step."""
 
@@ -1480,32 +1537,6 @@ class SqlAlchemyPageStepStateRepository(
         :raises NotFoundError: If the page has no state for the step.
         """
         self._rows.delete((entity_id.page_id, entity_id.stage, entity_id.step_id))
-
-    @override
-    def save(self, state: PageStepState) -> PageStepState:
-        """Store a state, replacing the one of the same page, stage and step.
-
-        :param state: State to store.
-        :type state: PageStepState
-        :returns: The state as stored.
-        :rtype: PageStepState
-        :raises NotFoundError: If the page is not stored.
-        """
-        if self.find(state.key) is None:
-            return self.add(state)
-        return self.update(state)
-
-    @override
-    def find(self, key: PageStepKey) -> PageStepState | None:
-        """Return the state of one step on one page.
-
-        :param key: Page, stage and step.
-        :type key: PageStepKey
-        :returns: The state, or None.
-        :rtype: PageStepState | None
-        """
-        row = self._rows.get_one_or_none(page_id=key.page_id, stage=key.stage, step_id=key.step_id)
-        return None if row is None else self._mapper.to_entity(row)
 
     @override
     def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepState]:
@@ -1545,7 +1576,7 @@ class SqlAlchemyPageStepStateRepository(
 
 
 class SqlAlchemyStepValuesRepository(
-    SqlAlchemyRepository[StepValues, StepValuesKey, StepValuesRow], StepValuesRepository
+    SqlAlchemyKeyedRepository[StepValues, StepValuesKey, StepValuesRow], StepValuesRepository
 ):
     """The values of the steps for the odd pages, the even pages and the groups, addressed by project, step and part."""
 
@@ -1590,34 +1621,6 @@ class SqlAlchemyStepValuesRepository(
         :raises NotFoundError: If the part changes no field of the step.
         """
         self._rows.delete(self._primary_key(entity_id))
-
-    @override
-    def save(self, values: StepValues) -> StepValues:
-        """Store values, replacing the ones of the same step and part of the pages.
-
-        :param values: Values to store.
-        :type values: StepValues
-        :returns: The values as stored.
-        :rtype: StepValues
-        :raises NotFoundError: If the project is not stored.
-        """
-        if self.find(values.key) is None:
-            return self.add(values)
-        return self.update(values)
-
-    @override
-    def find(self, key: StepValuesKey) -> StepValues | None:
-        """Return the values one part of the pages has for one step.
-
-        :param key: The project, the step and the part of the pages.
-        :type key: StepValuesKey
-        :returns: The values, or None.
-        :rtype: StepValues | None
-        """
-        row = self._rows.get_one_or_none(
-            project_id=key.project_id, step_id=key.step_id, scope=key.scope, group_label=key.group_label
-        )
-        return None if row is None else self._mapper.to_entity(row)
 
     @override
     def list_for_step(self, project_id: ProjectId, step_id: StepId) -> Sequence[StepValues]:
@@ -1754,16 +1757,13 @@ class SqlAlchemyPageStepChangeRepository(
         :returns: How many changes were deleted.
         :rtype: int
         """
-        statement = (
-            delete(PageStepChangeRow)
-            .where(
-                PageStepChangeRow.page_id == key.page_id,
-                PageStepChangeRow.stage == key.stage,
-                PageStepChangeRow.step_id == key.step_id,
-            )
-            .returning(PageStepChangeRow.id)
+        statement = delete(PageStepChangeRow).where(
+            PageStepChangeRow.page_id == key.page_id,
+            PageStepChangeRow.stage == key.stage,
+            PageStepChangeRow.step_id == key.step_id,
         )
-        return len(self._rows.session.execute(statement).all())
+        # An ORM delete of a mapped class returns the cursor result, whose row count the database reports
+        return cast('CursorResult[Any]', self._rows.session.execute(statement)).rowcount
 
 
 class SqlAlchemyResultMarkChangeRepository(

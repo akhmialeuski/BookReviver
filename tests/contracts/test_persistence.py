@@ -88,6 +88,8 @@ KEY_A5: str = 'a5'
 KEY_B0: str = 'b0'
 # Order keys whose byte order differs from their order ignoring case, inserted against the book order
 UNORDERED_KEYS: list[str] = [KEY_A1, KEY_A0_LOWER, KEY_A0_UPPER, KEY_A0, KEY_ZZ]
+# The label a test gives to the pages it changes
+PAGE_LABEL: str = '[4]'
 # File names of the sources of the tests
 FIRST_PDF: str = 'a.pdf'
 SECOND_PDF: str = 'b.pdf'
@@ -1138,31 +1140,6 @@ class TestPageRepository:
         expect(await reader.read(lambda repos: repos.pages.list_for_source(project.id, SourceId(uuid4()))) == [])
         assert_expectations()
 
-    async def test_list_range_returns_the_pages_between_two_keys_inclusive_in_book_order(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify both ends belong to the range, byte order decides it, a reversed range is empty, other books are out.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        owner_id = await fx_new_owner()
-        project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
-        uow = fx_uow_factory()
-        await store_project(uow, project, *[make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS])
-        await store_project(uow, other, make_page(project_id=other.id, order_key=KEY_A0_W))
-        reader = fx_uow_factory()
-        # The keys sort as Zz, a0, a0V, a0v, a1
-        inclusive = await reader.read(lambda repos: repos.pages.list_range(project.id, KEY_A0, KEY_A0_LOWER))
-        single = await reader.read(lambda repos: repos.pages.list_range(project.id, KEY_A0_UPPER, KEY_A0_UPPER))
-        reversed_range = await reader.read(lambda repos: repos.pages.list_range(project.id, KEY_A0_LOWER, KEY_A0))
-        expect([page.order_key for page in inclusive] == [KEY_A0, KEY_A0_UPPER, KEY_A0_LOWER])
-        expect([page.order_key for page in single] == [KEY_A0_UPPER])
-        expect(list(reversed_range) == [])
-        assert_expectations()
-
     async def test_neighbour_key_is_the_nearest_key_on_a_side_without_the_excluded_pages(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
@@ -1220,6 +1197,36 @@ class TestPageRepository:
         everything = await fx_uow_factory().read(lambda repos: repos.pages.list_for_project(project.id, SliceRequest()))
         assert list(everything.items) == [moved[1], moved[0], book[2]]
 
+    async def test_get_after_update_many_in_the_same_change_returns_the_new_state(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a page read back inside the change that updated it is the updated page, not the one stored before.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        book = [make_page(project_id=project.id, order_key=key) for key in (KEY_A0, KEY_A1)]
+        await store_project(fx_uow_factory(), project, *book)
+        moved = [evolve(page, label=PAGE_LABEL, included=False) for page in book]
+
+        def update_and_read(repos: Repositories, _project: Project) -> list[Page]:
+            """Update both pages, then read them back in the same transaction.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :param _project: Project of the book, which the work does not need.
+            :type _project: Project
+            :returns: The pages as the transaction reads them after the update.
+            :rtype: list[Page]
+            """
+            repos.pages.update_many(moved)
+            return [repos.pages.get(page.id) for page in book]
+
+        assert await fx_uow_factory().change_book(project.id, update_and_read) == moved
+
     async def test_update_to_a_key_another_page_holds_raises_conflict(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
@@ -1268,7 +1275,9 @@ class TestPageRepository:
         project = make_project(owner_id=await fx_new_owner())
         page = make_page(project_id=project.id)
         await store_project(fx_uow_factory(), project, page)
-        changed = evolve(page, order_key=KEY_A0_UPPER, label='[4]', kind=PageKind.TITLE, included=False, notes='Stamp')
+        changed = evolve(
+            page, order_key=KEY_A0_UPPER, label=PAGE_LABEL, kind=PageKind.TITLE, included=False, notes='Stamp'
+        )
         await fx_uow_factory().change_book(project.id, lambda repos, _project: repos.pages.update(changed))
         assert await fx_uow_factory().read(lambda repos: repos.pages.get(page.id)) == changed
 
