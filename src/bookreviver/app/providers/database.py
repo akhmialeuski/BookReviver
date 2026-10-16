@@ -14,6 +14,7 @@ know that revision, so the message names the downgrade to run with the code that
 from collections.abc import AsyncIterator
 
 from dishka import Provider, Scope, provide
+from sqlalchemy.orm import configure_mappers
 
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
@@ -42,6 +43,10 @@ class DatabaseProvider(Provider):
     async def database(self, settings: Settings, tracer: Tracer) -> AsyncIterator[SqlDatabase]:
         """Open the configured database, check its schema revision, and close it with the application.
 
+        The mappers of the tables are configured before the database is handed out. SQLAlchemy does that on the first
+        use of the ORM otherwise, and the 239 attribute registrations it makes cost 10 to 29 ms on the event loop of
+        the first request, while the server answers nothing else and sends no event.
+
         :param settings: Application settings, of which the database URL, the data directory and the wait limit of a
                          job are read, which every connection opens with as its busy timeout.
         :type settings: Settings
@@ -56,6 +61,10 @@ class DatabaseProvider(Provider):
             settings.resolved_database_url, tracer=tracer, wait_seconds=settings.change_wait.job_seconds
         )
         settings.data_dir.mkdir(parents=True, exist_ok=True)
+        # SQLAlchemy configures the mappers lazily, on the first use of the ORM, which took 10 to 29 ms on the event
+        # loop of the first request. Every table is declared by the imports of this module, so they are configured
+        # here instead, before the application serves anything.
+        configure_mappers()
         try:
             revisions = await database.schema_revisions()
             at = REVISION_SEPARATOR.join(revisions.database) or NO_REVISION
