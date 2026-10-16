@@ -5,13 +5,15 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bookreviver.adapters.clock.system import FixedClock
-from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
+from bookreviver.domain.enums import JobKind, JobState
+from bookreviver.domain.values import JobEnd
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.services.pagination import PaginationService
 from tests.helpers.book_gate import BookGate, GatedUnitOfWork
 from tests.helpers.builders import EPOCH
+from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.page_services import make_page_service
 from tests.helpers.page_stage_writes import PageStageWrites
@@ -30,7 +32,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from bookreviver.domain.entities import Job
     from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
 
 
@@ -139,43 +143,73 @@ def fx_page_stage_writes(monkeypatch: pytest.MonkeyPatch) -> PageStageWrites:
 
 
 @pytest.fixture
-def fx_queue() -> RecordingJobQueue:
-    """Build a job queue that records what is enqueued and runs nothing.
+def fx_board(
+    fx_database: InMemoryDatabase, fx_asset_store: LocalAssetStore, fx_events: RecordingEventBus, fx_clock: FixedClock
+) -> FakeJobBoard:
+    """Build a job board that records what is put on it and runs it when a test says so.
 
-    :returns: Queue the page service hands its jobs to.
-    :rtype: RecordingJobQueue
+    A ``prepare-pages`` job runs through the page service, as the application runs it, and a job of any other kind
+    ends at once, since the page tests look at the queueing of those and not at their work.
+
+    :param fx_database: In-memory database every request of the test shares.
+    :type fx_database: InMemoryDatabase
+    :param fx_asset_store: Local asset store over the test's storage root.
+    :type fx_asset_store: LocalAssetStore
+    :param fx_events: Recording event bus.
+    :type fx_events: RecordingEventBus
+    :param fx_clock: Clock stopped at the epoch.
+    :type fx_clock: FixedClock
+    :returns: Board the page service puts its jobs on.
+    :rtype: FakeJobBoard
     """
-    return RecordingJobQueue()
+
+    async def run(job: Job, control: JobControl) -> JobEnd:
+        """Run a job the way the application would, over a page service of its own.
+
+        :param job: The job the board took from its queue.
+        :type job: Job
+        :param control: What the job reports through.
+        :type control: JobControl
+        :returns: How the job ended.
+        :rtype: JobEnd
+        """
+        if job.kind is not JobKind.PREPARE_PAGES:
+            return JobEnd(state=JobState.SUCCEEDED)
+        service = make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, (fx_events, fx_clock, board))
+        return await service.prepare_images(job, control)
+
+    board = FakeJobBoard(runner=run, publisher=fx_events, clock=fx_clock)
+    return board
 
 
 @pytest.fixture
 def fx_runtime(
-    fx_events: RecordingEventBus, fx_clock: FixedClock, fx_queue: RecordingJobQueue
-) -> tuple[RecordingEventBus, FixedClock, RecordingJobQueue]:
-    """Gather what a page service reports through: the recording bus, the stopped clock and the recording queue.
+    fx_events: RecordingEventBus, fx_clock: FixedClock, fx_board: FakeJobBoard
+) -> tuple[RecordingEventBus, FixedClock, FakeJobBoard]:
+    """Gather what a page service reports through: the recording bus, the stopped clock and the job board.
 
     :param fx_events: Recording event bus.
     :type fx_events: RecordingEventBus
     :param fx_clock: Clock stopped at the epoch.
     :type fx_clock: FixedClock
-    :param fx_queue: Recording job queue.
-    :type fx_queue: RecordingJobQueue
-    :returns: The publisher, the clock and the queue, as ``make_page_service`` takes them.
-    :rtype: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+    :param fx_board: Board that records its jobs.
+    :type fx_board: FakeJobBoard
+    :returns: The publisher, the clock and the board, as ``make_page_service`` takes them.
+    :rtype: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
     """
-    return fx_events, fx_clock, fx_queue
+    return fx_events, fx_clock, fx_board
 
 
 @pytest.fixture
 def fx_service_over(
-    fx_asset_store: LocalAssetStore, fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+    fx_asset_store: LocalAssetStore, fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
 ) -> Callable[[UnitOfWork], PageService]:
     """Return a function building the page service over a unit of work the test made, which a test may have gated.
 
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
-    :param fx_runtime: The recording bus, the stopped clock and the recording queue the service reports through.
-    :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+    :param fx_runtime: The recording bus, the stopped clock and the job board the service reports through.
+    :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
     :returns: Function building a service over the given unit of work.
     :rtype: Callable[[UnitOfWork], PageService]
     """

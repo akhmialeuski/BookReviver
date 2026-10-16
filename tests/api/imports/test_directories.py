@@ -4,7 +4,7 @@ import io
 from http import HTTPStatus
 from itertools import cycle
 from operator import attrgetter
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -20,15 +20,15 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import httpx
-    from taskiq import InMemoryBroker
 
     from bookreviver.domain.entities import Project
+    from tests.api.imports.watch import ImportWatch
     from tests.helpers.fakes_jobs import JobFakes
 
 pytestmark = pytest.mark.anyio
 
 SOURCES_PATH: str = '/api/v1/projects/{project_id}/sources'
-JOB_PATH: str = '/api/v1/jobs/{job_id}'
+JOBS_PATH: str = '/api/v1/projects/{project_id}/jobs'
 FILES_FIELD: str = 'files'
 OCTET_STREAM: str = 'application/octet-stream'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
@@ -92,29 +92,13 @@ def _scan(number: int, *, image_format: str) -> bytes:
     return buffer.getvalue()
 
 
-async def _finished_job(client: httpx.AsyncClient, broker: InMemoryBroker, job_id: str) -> dict[str, Any]:
-    """Wait until the import has run, and read the job as the API shows it.
-
-    :param client: Client of the signed-in account.
-    :type client: httpx.AsyncClient
-    :param broker: In-process broker running the import job.
-    :type broker: InMemoryBroker
-    :param job_id: Identifier of the job the upload answered with.
-    :type job_id: str
-    :returns: The job document.
-    :rtype: dict[str, Any]
-    """
-    await broker.wait_all()
-    return (await client.get(JOB_PATH.format(job_id=job_id))).json()
-
-
 class TestUploadDirectories:
     """Tests for POST /projects/{project_id}/sources with the files of a directory or a hand-picked set."""
 
     async def test_directory_of_pdf_parts_becomes_sources_and_pages_in_the_order_of_the_list(
         self,
         fx_client: httpx.AsyncClient,
-        fx_broker: InMemoryBroker,
+        fx_import: ImportWatch,
         fx_fakes: JobFakes,
         fx_project: Project,
         tmp_path: Path,
@@ -126,8 +110,8 @@ class TestUploadDirectories:
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the import job.
-        :type fx_broker: InMemoryBroker
+        :param fx_import: Reader of the imports the application runs.
+        :type fx_import: ImportWatch
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
         :param fx_project: Project of the signed-in account.
@@ -145,18 +129,19 @@ class TestUploadDirectories:
         parts.insert(1, _part('kniga/Thumbs.db', b'thumbnails'))
 
         response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
-        finished = await _finished_job(fx_client, fx_broker, response.json()['id'])
+        finished = await fx_import.finished(response.json()['id'])
 
         book = await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)
         sources, pages = book.sources, book.pages
         scans = {scan.id: scan for scan in book.scans}
+        report = await fx_import.report(fx_project.id)
         expect(response.status_code == HTTPStatus.ACCEPTED)
         expect(finished['state'] == JobState.SUCCEEDED)
         expect([source.file_name for source in sources] == ['kniga/part10.pdf', 'kniga/part2.pdf', 'kniga/part1.pdf'])
         expect([source.scan_count for source in sources] == list(PDF_PART_PAGES.values()))
         expect(
-            [file['file_name'] for file in finished['result']['rejected']] == ['kniga/Thumbs.db']
-            and [file['reason'] for file in finished['result']['rejected']] == [RejectionReason.SYSTEM_FILE]
+            [(file['file_name'], file['rejection']) for file in report]
+            == [('kniga/Thumbs.db', RejectionReason.SYSTEM_FILE)]
         )
         expect(
             [(scans[page.scan_id].source_id, scans[page.scan_id].number) for page in pages if page.scan_id]
@@ -168,7 +153,7 @@ class TestUploadDirectories:
     async def test_directory_of_1500_scans_in_several_formats_is_imported_in_the_order_of_the_list(
         self,
         fx_client: httpx.AsyncClient,
-        fx_broker: InMemoryBroker,
+        fx_import: ImportWatch,
         fx_fakes: JobFakes,
         fx_project: Project,
     ) -> None:
@@ -181,8 +166,8 @@ class TestUploadDirectories:
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the import job.
-        :type fx_broker: InMemoryBroker
+        :param fx_import: Reader of the imports the application runs.
+        :type fx_import: ImportWatch
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
         :param fx_project: Project of the signed-in account.
@@ -200,24 +185,26 @@ class TestUploadDirectories:
                 parts.append(_part(f'vol{volume + 1}/Thumbs.db', b'thumbnails'))
 
         response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
-        finished = await _finished_job(fx_client, fx_broker, response.json()['id'])
+        finished = await fx_import.finished(response.json()['id'])
 
         book = await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)
         sources, pages = book.sources, book.pages
         scans = {scan.id: scan for scan in book.scans}
+        report = await fx_import.report(fx_project.id)
         expect(response.status_code == HTTPStatus.ACCEPTED)
         expect(finished['state'] == JobState.SUCCEEDED)
-        expect(finished['progress']['total'] == DIRECTORY_SCANS)
+        # The progress counts every file dealt with, and a scan to cut for each source
+        expect(finished['progress']['total'] == len(parts) + DIRECTORY_SCANS)
         expect([source.file_name for source in sources] == names)
         expect([scans[page.scan_id].source_id for page in pages if page.scan_id] == [source.id for source in sources])
-        expect(len(finished['result']['rejected']) == len({name.split('/')[0] for name in names}))
-        expect({file['reason'] for file in finished['result']['rejected']} == {RejectionReason.SYSTEM_FILE})
+        expect(len(report) == len({name.split('/')[0] for name in names}))
+        expect({file['rejection'] for file in report} == {RejectionReason.SYSTEM_FILE})
         assert_expectations()
 
     async def test_one_chosen_file_is_one_source_named_by_its_name(
         self,
         fx_client: httpx.AsyncClient,
-        fx_broker: InMemoryBroker,
+        fx_import: ImportWatch,
         fx_fakes: JobFakes,
         fx_project: Project,
         tmp_path: Path,
@@ -226,8 +213,8 @@ class TestUploadDirectories:
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the import job.
-        :type fx_broker: InMemoryBroker
+        :param fx_import: Reader of the imports the application runs.
+        :type fx_import: ImportWatch
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
         :param fx_project: Project of the signed-in account.
@@ -240,19 +227,19 @@ class TestUploadDirectories:
         response = await fx_client.post(
             SOURCES_PATH.format(project_id=fx_project.id), files=[_part('cover.jpg', cover)]
         )
-        finished = await _finished_job(fx_client, fx_broker, response.json()['id'])
+        finished = await fx_import.finished(response.json()['id'])
 
         sources = (await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)).sources
         expect(response.status_code == HTTPStatus.ACCEPTED)
         expect(finished['state'] == JobState.SUCCEEDED)
         expect([(source.file_name, source.scan_count) for source in sources] == [('cover.jpg', 1)])
-        expect(finished['result']['rejected'] == [])
+        expect(await fx_import.report(fx_project.id) == [])
         assert_expectations()
 
     async def test_multi_page_tiff_is_one_source_whose_frames_are_the_scans_and_pages_in_frame_order(
         self,
         fx_client: httpx.AsyncClient,
-        fx_broker: InMemoryBroker,
+        fx_import: ImportWatch,
         fx_fakes: JobFakes,
         fx_project: Project,
         tmp_path: Path,
@@ -261,8 +248,8 @@ class TestUploadDirectories:
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the import job.
-        :type fx_broker: InMemoryBroker
+        :param fx_import: Reader of the imports the application runs.
+        :type fx_import: ImportWatch
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
         :param fx_project: Project of the signed-in account.
@@ -276,7 +263,7 @@ class TestUploadDirectories:
         response = await fx_client.post(
             SOURCES_PATH.format(project_id=fx_project.id), files=[_part('book.tif', book.read_bytes())]
         )
-        finished = await _finished_job(fx_client, fx_broker, response.json()['id'])
+        finished = await fx_import.finished(response.json()['id'])
 
         stored = await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)
         [source], pages = stored.sources, stored.pages
@@ -294,7 +281,7 @@ class TestUploadDirectories:
     async def test_files_of_different_folders_with_one_name_are_two_sources(
         self,
         fx_client: httpx.AsyncClient,
-        fx_broker: InMemoryBroker,
+        fx_import: ImportWatch,
         fx_fakes: JobFakes,
         fx_project: Project,
     ) -> None:
@@ -302,8 +289,8 @@ class TestUploadDirectories:
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the import job.
-        :type fx_broker: InMemoryBroker
+        :param fx_import: Reader of the imports the application runs.
+        :type fx_import: ImportWatch
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
         :param fx_project: Project of the signed-in account.
@@ -315,7 +302,7 @@ class TestUploadDirectories:
         ]
 
         response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
-        finished = await _finished_job(fx_client, fx_broker, response.json()['id'])
+        finished = await fx_import.finished(response.json()['id'])
 
         sources = (await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)).sources
         expect(response.status_code == HTTPStatus.ACCEPTED)
@@ -339,7 +326,7 @@ class TestUploadDirectories:
     async def test_path_that_leaves_its_folder_is_a_400_problem_and_imports_nothing(
         self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_project: Project, case: UnsafePathCase
     ) -> None:
-        """Verify an unsafe path refuses the whole upload with a problem, before a job is recorded.
+        """Verify an unsafe path refuses the whole upload with a problem, before a job is put on the board.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
@@ -354,11 +341,10 @@ class TestUploadDirectories:
 
         response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
 
-        uow = InMemoryUnitOfWork(fx_fakes.database)
-        jobs = await uow.read(lambda repos: repos.jobs.list_for_project(fx_project.id, set(JobState)))
+        jobs = (await fx_client.get(JOBS_PATH.format(project_id=fx_project.id))).json()
         expect(response.status_code == HTTPStatus.BAD_REQUEST)
         expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
         expect(response.json()['detail'] == case.problem.label)
-        expect(jobs == [])
-        expect((await stored_book(uow, fx_project.id)).sources == [])
+        expect(jobs['items'] == [])
+        expect((await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)).sources == [])
         assert_expectations()

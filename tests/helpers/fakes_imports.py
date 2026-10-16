@@ -25,7 +25,6 @@ from bookreviver.adapters.imaging import (
     VipsRenditionWriter,
     VipsTiler,
 )
-from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.adapters.tracing.null import NullTracer
@@ -55,9 +54,10 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import Rendition, SourceKind
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import JobId, ProjectId, SourceId
-    from bookreviver.domain.values import SourceAnalysis, UploadedSource
+    from bookreviver.domain.values import JobEnd, SourceAnalysis, UploadedSource
     from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.ports.processing import Processor
+    from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.storage import SourceStore
     from bookreviver.services.recipes import DefaultRecipes
 
@@ -428,9 +428,9 @@ class CrashingSourceStore(LocalSourceStore):
 class ImportRig:
     """Everything an import test runs on, built over one temporary storage root.
 
-    :ivar fakes: The database, the recording event bus and the clock, which the job tests share.
+    :ivar fakes: The database, the recording event bus, the clock and the board, which the job tests share. The board
+                 runs a job through the import service of the rig when a test calls ``run_queued``.
     :ivar events: The event bus of ``fakes``, seen as the hooked bus it is.
-    :ivar queue: Queue recording the jobs enqueued instead of running them.
     :ivar sources: Local source store, whose promotion can crash.
     :ivar assets: Local asset store.
     :ivar inspector: Real inspector, watched.
@@ -442,7 +442,6 @@ class ImportRig:
 
     fakes: JobFakes
     events: HookedEventBus
-    queue: RecordingJobQueue
     sources: CrashingSourceStore
     assets: LocalAssetStore
     inspector: WatchedInspector
@@ -479,16 +478,33 @@ class ImportRig:
             jpeg_quality=imaging.jpeg_quality,
         )
         events = HookedEventBus()
-        return cls(
-            fakes=JobFakes(events=events, clock=TickingClock(EPOCH)),
+        # The board needs the service of the rig to run a job, and the rig needs the board, so the rig is found when a
+        # job runs
+        built: list[ImportRig] = []
+
+        async def run(job: Job, control: JobControl) -> JobEnd:
+            """Run an import job through a service of the rig, as the application runs it.
+
+            :param job: The job the board took from its queue.
+            :type job: Job
+            :param control: What the job reports through.
+            :type control: JobControl
+            :returns: How the job ended.
+            :rtype: JobEnd
+            """
+            return await built[0].service().run_import(job, control)
+
+        rig = cls(
+            fakes=JobFakes(events=events, clock=TickingClock(EPOCH), runner=run),
             events=events,
-            queue=RecordingJobQueue(),
             sources=CrashingSourceStore(root=root),
             assets=LocalAssetStore(root=root),
             inspector=WatchedInspector(reader),
             rasterizer=WatchedRasterizer(reader),
             tiler=WatchedTiler(tiler),
         )
+        built.append(rig)
+        return rig
 
     @property
     def database(self) -> InMemoryDatabase:
@@ -551,7 +567,7 @@ class ImportRig:
             FakeCatalogue(self.processors),
             self.defaults,
             ProcessingRuntime(
-                publisher=self.fakes.events, clock=self.fakes.clock, queue=self.queue, tracer=NullTracer()
+                publisher=self.fakes.events, clock=self.fakes.clock, board=self.fakes.board, tracer=NullTracer()
             ),
             ProcessingConfig(
                 preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
@@ -571,17 +587,17 @@ class ImportRig:
                 limits=ImportLimits(
                     max_files=max_files, max_bytes=max_bytes, parallel_scans=parallel_scans, iiif_root=IIIF_ROOT
                 ),
-                queue=self.queue,
+                board=self.fakes.board,
             ),
             parts=parts,
         )
 
-    async def stored_job(self, job: Job) -> Job:
-        """Read a job back as committed.
+    def stored_job(self, job: Job) -> Job:
+        """Read a job back as the board holds it.
 
         :param job: Job to read, identified by its identifier.
         :type job: Job
-        :returns: The job as the database holds it now.
+        :returns: The job as the board holds it now.
         :rtype: Job
         """
-        return await self.fakes.stored_job(job)
+        return self.fakes.board.get(job.id)

@@ -7,7 +7,7 @@ from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.processing import ProcessorCatalog
-from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
+from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
 from bookreviver.ports.storage import AssetStore, SourceStore
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.pages import PageImaging, PageRuntime, PageService
@@ -25,15 +25,17 @@ class ProjectsProvider(Provider):
     scope = Scope.REQUEST
 
     @provide
-    def stage_summaries(self, catalogue: ProcessorCatalog) -> StageSummaries:
+    def stage_summaries(self, catalogue: ProcessorCatalog, board: JobBoard) -> StageSummaries:
         """Build the sums of the stages of books, which read through the repositories their caller passes.
 
         :param catalogue: The processors of the application, which say which stages are available.
         :type catalogue: ProcessorCatalog
+        :param board: Board holding the jobs of every book, which tells the stages that are running.
+        :type board: JobBoard
         :returns: The stage summaries of the request.
         :rtype: StageSummaries
         """
-        return StageSummaries(catalogue=catalogue)
+        return StageSummaries(catalogue=catalogue, board=board)
 
     @provide
     def projects(
@@ -58,7 +60,7 @@ class ProjectsProvider(Provider):
 
     @provide(scope=Scope.APP)
     def page_runtime(
-        self, publisher: EventPublisher, clock: Clock, order_keys: OrderKeys, queue: JobQueue
+        self, publisher: EventPublisher, clock: Clock, order_keys: OrderKeys, board: JobBoard
     ) -> PageRuntime:
         """Gather what a page use case reports through and orders by.
 
@@ -68,12 +70,12 @@ class ProjectsProvider(Provider):
         :type clock: Clock
         :param order_keys: Order keys of the application.
         :type order_keys: OrderKeys
-        :param queue: Queue handing jobs to the broker.
-        :type queue: JobQueue
+        :param board: Board holding the jobs of every book.
+        :type board: JobBoard
         :returns: The runtime of the page service.
         :rtype: PageRuntime
         """
-        return PageRuntime(publisher=publisher, clock=clock, order_keys=order_keys, queue=queue)
+        return PageRuntime(publisher=publisher, clock=clock, order_keys=order_keys, board=board)
 
     @provide(scope=Scope.APP)
     def page_imaging(self, assets: AssetStore, tiler: Tiler, runner: StepRunner) -> PageImaging:
@@ -99,7 +101,7 @@ class ProjectsProvider(Provider):
         :type uow: UnitOfWork
         :param assets: Asset store of the application.
         :type assets: AssetStore
-        :param runtime: The publisher, clock, order keys and job queue of the application.
+        :param runtime: The publisher, clock, order keys and job board of the application.
         :type runtime: PageRuntime
         :param imaging: The builder of base versions and the runner of their processors.
         :type imaging: PageImaging
@@ -137,11 +139,13 @@ class ProjectsProvider(Provider):
         return PlaceService(uow=uow, clock=clock)
 
     @provide
-    def sources(self, uow: UnitOfWork, sources: SourceStore, assets: AssetStore) -> SourceService:
+    def sources(self, uow: UnitOfWork, board: JobBoard, sources: SourceStore, assets: AssetStore) -> SourceService:
         """Build the source service over the request's unit of work.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
+        :param board: Board holding the jobs of every book.
+        :type board: JobBoard
         :param sources: Source store of the application.
         :type sources: SourceStore
         :param assets: Asset store of the application.
@@ -149,4 +153,4 @@ class ProjectsProvider(Provider):
         :returns: The source service of the request.
         :rtype: SourceService
         """
-        return SourceService(uow=uow, sources=sources, assets=assets)
+        return SourceService(uow=uow, board=board, sources=sources, assets=assets)

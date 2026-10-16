@@ -9,28 +9,43 @@ from delayed_assert import assert_expectations, expect
 from fastapi import status
 from fastapi_pagination import Page
 
+from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.api.schemas.sources import ScanSchema, SourceSchema
-from bookreviver.domain.enums import FileType, ImagePolicy, JobState, Rendition, SourceKind
+from bookreviver.domain.enums import (
+    FileType,
+    ImagePolicy,
+    JobKind,
+    RejectionReason,
+    Rendition,
+    SourceKind,
+    SourceStatus,
+)
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import Renditions
 from tests.helpers.books import IMAGE, SCANS_PER_SOURCE, commit_book, on_disk
-from tests.helpers.builders import make_job, make_project, make_scan, make_source
+from tests.helpers.builders import EPOCH, make_job, make_project, make_scan, make_source
+from tests.helpers.fake_board import FakeJobBoard
+from tests.helpers.fakes_jobs import FakeBoardProvider, RecordingEventBus
+from tests.helpers.scripted_runner import ScriptedRunner
 from tests.helpers.seeding import commit_project
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     import httpx
+    from dishka import Provider
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
-    from bookreviver.domain.entities import Actor
+    from bookreviver.domain.entities import Actor, Source
     from bookreviver.ports.storage import AssetStore, SourceStore
     from tests.helpers.books import Book
 
 pytestmark = pytest.mark.anyio
 
+STATUS_PARAM: str = 'status'
 PROJECTS_PATH: str = '/api/v1/projects'
 IIIF_PATH: str = '/api/v1/iiif'
 PAGE_SIZE_PARAM: str = 'size'
@@ -87,19 +102,58 @@ def _sources_path(book: Book) -> str:
     return f'{PROJECTS_PATH}/{book.project.id}/sources'
 
 
-async def _add_job(database: InMemoryDatabase, book: Book, state: JobState) -> None:
-    """Commit an import job of the book's project.
+@pytest.fixture
+def fx_board() -> FakeJobBoard:
+    """Build the board the application of these tests puts its jobs on, which runs none until a test says so.
+
+    :returns: A fake board with no job.
+    :rtype: FakeJobBoard
+    """
+    return FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus(), clock=FixedClock(EPOCH))
+
+
+@pytest.fixture
+def fx_extra_providers(fx_board: FakeJobBoard) -> Sequence[Provider]:
+    """Replace the application's job board with ``fx_board``, so a test can hold an import active.
+
+    :param fx_board: Board of the test.
+    :type fx_board: FakeJobBoard
+    :returns: One provider that supplies the board.
+    :rtype: Sequence[Provider]
+    """
+    return (FakeBoardProvider(fx_board),)
+
+
+async def _add_unimported(
+    database: InMemoryDatabase, book: Book, status_of: SourceStatus, name: str, *, minutes: int
+) -> Source:
+    """Commit a file of the book's project that the import rejected or skipped, which has no scan and no stored file.
 
     :param database: In-memory database of the application.
     :type database: InMemoryDatabase
     :param book: The stored book.
     :type book: Book
-    :param state: State of the job.
-    :type state: JobState
+    :param status_of: Status of the file, rejected or skipped.
+    :type status_of: SourceStatus
+    :param name: Name of the file.
+    :type name: str
+    :param minutes: Minutes after the epoch the file was recorded.
+    :type minutes: int
+    :returns: The stored source.
+    :rtype: Source
     """
-    await InMemoryUnitOfWork(database).change(
-        lambda repos: repos.jobs.add(make_job(project_id=book.project.id, state=state))
+    rejected = status_of is SourceStatus.REJECTED
+    source = evolve(
+        make_source(project_id=book.project.id, name=name, minutes=minutes),
+        kind=None,
+        file_type=None,
+        scan_count=0,
+        status=status_of,
+        rejection=RejectionReason.UNSUPPORTED_TYPE if rejected else None,
+        detail=RejectionReason.UNSUPPORTED_TYPE.label if rejected else '',
     )
+    await InMemoryUnitOfWork(database).change_book(book.project.id, lambda repos, _project: repos.sources.add(source))
+    return source
 
 
 class TestListSources:
@@ -124,8 +178,47 @@ class TestListSources:
         expect((first.kind, first.file_type, first.file_name) == (SourceKind.PDF, FileType.PDF, 'part1.pdf'))
         expect([file.name for file in first.files] == ['part1.pdf'])
         expect((first.size_bytes, first.sha256, first.scan_count) == (4096, fx_book.first.sha256, 12))
-        expect((first.metadata, first.suggestion.title, first.import_job_id) == ({}, '', None))
+        expect((first.metadata, first.suggestion.title) == ({}, ''))
+        expect((first.status, first.rejection, first.detail) == (SourceStatus.IMPORTED, None, ''))
         expect(sources.total == 2)
+        assert_expectations()
+
+    async def test_lists_the_imported_sources_alone_unless_asked_for_the_report_of_an_import(
+        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_book: Book
+    ) -> None:
+        """Verify the rejected and skipped files are listed only for their statuses, with their reasons.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        rejected = await _add_unimported(fx_database, fx_book, SourceStatus.REJECTED, 'notes.txt', minutes=5)
+        skipped = await _add_unimported(fx_database, fx_book, SourceStatus.SKIPPED, 'later.pdf', minutes=6)
+
+        default = Page[SourceSchema].model_validate_json((await fx_client.get(_sources_path(fx_book))).content)
+        report = Page[SourceSchema].model_validate_json(
+            (
+                await fx_client.get(
+                    _sources_path(fx_book),
+                    params=[(STATUS_PARAM, SourceStatus.REJECTED), (STATUS_PARAM, SourceStatus.SKIPPED)],
+                )
+            ).content
+        )
+
+        expect([item.id for item in default.items] == [fx_book.first.id, fx_book.second.id])
+        expect([item.id for item in report.items] == [rejected.id, skipped.id])
+        expect(
+            [(item.status, item.rejection) for item in report.items]
+            == [
+                (SourceStatus.REJECTED, RejectionReason.UNSUPPORTED_TYPE),
+                (SourceStatus.SKIPPED, None),
+            ]
+        )
+        expect([(item.kind, item.file_type) for item in report.items] == [(None, None), (None, None)])
+        expect(report.items[0].detail == RejectionReason.UNSUPPORTED_TYPE.label)
         assert_expectations()
 
     async def test_pages_through_the_sources(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
@@ -249,24 +342,20 @@ class TestDeleteSource:
         assert (await fx_client.delete(path)).status_code == status.HTTP_404_NOT_FOUND
 
     async def test_import_in_progress_is_a_conflict_and_removes_nothing(
-        self,
-        fx_client: httpx.AsyncClient,
-        fx_database: InMemoryDatabase,
-        fx_book: Book,
-        fx_storage_root: Path,
+        self, fx_client: httpx.AsyncClient, fx_board: FakeJobBoard, fx_book: Book, fx_storage_root: Path
     ) -> None:
         """Verify a source cannot be deleted while the project imports, and keeps its files.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_board: Board of the application.
+        :type fx_board: FakeJobBoard
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         :param fx_storage_root: Storage root of the application.
         :type fx_storage_root: Path
         """
-        await _add_job(fx_database, fx_book, JobState.RUNNING)
+        fx_board.put(make_job(project_id=fx_book.project.id, kind=JobKind.IMPORT_SOURCE))
 
         response = await fx_client.delete(f'{_sources_path(fx_book)}/{fx_book.first.id}')
 
@@ -291,6 +380,78 @@ class TestDeleteSource:
         expect(response.status_code == status.HTTP_404_NOT_FOUND)
         expect(on_disk(fx_storage_root, fx_strangers_book, fx_strangers_book.first) == (True, True))
         assert_expectations()
+
+
+class TestDeleteUnimportedSources:
+    """Tests for DELETE /projects/{project_id}/sources/unimported."""
+
+    async def test_deletes_the_report_of_the_import_and_keeps_the_imported_sources(
+        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_book: Book
+    ) -> None:
+        """Verify closing the report answers 204 and deletes the rejected and skipped files, and nothing else.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        await _add_unimported(fx_database, fx_book, SourceStatus.REJECTED, 'notes.txt', minutes=5)
+        await _add_unimported(fx_database, fx_book, SourceStatus.SKIPPED, 'later.pdf', minutes=6)
+
+        response = await fx_client.delete(f'{_sources_path(fx_book)}/unimported')
+
+        everything = Page[SourceSchema].model_validate_json(
+            (
+                await fx_client.get(
+                    _sources_path(fx_book), params=[(STATUS_PARAM, status_name) for status_name in SourceStatus]
+                )
+            ).content
+        )
+        expect(response.status_code == status.HTTP_204_NO_CONTENT)
+        expect([item.id for item in everything.items] == [fx_book.first.id, fx_book.second.id])
+        assert_expectations()
+
+    async def test_import_in_progress_is_a_conflict(
+        self, fx_client: httpx.AsyncClient, fx_board: FakeJobBoard, fx_database: InMemoryDatabase, fx_book: Book
+    ) -> None:
+        """Verify the report of an import that still runs is not closed, and its rows stay.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_board: Board of the application.
+        :type fx_board: FakeJobBoard
+        :param fx_database: In-memory database of the application.
+        :type fx_database: InMemoryDatabase
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: Book
+        """
+        kept = await _add_unimported(fx_database, fx_book, SourceStatus.REJECTED, 'notes.txt', minutes=5)
+        fx_board.put(make_job(project_id=fx_book.project.id, kind=JobKind.IMPORT_SOURCE))
+
+        response = await fx_client.delete(f'{_sources_path(fx_book)}/unimported')
+
+        report = Page[SourceSchema].model_validate_json(
+            (await fx_client.get(_sources_path(fx_book), params=[(STATUS_PARAM, SourceStatus.REJECTED)])).content
+        )
+        expect(response.status_code == status.HTTP_409_CONFLICT)
+        expect([item.id for item in report.items] == [kept.id])
+        assert_expectations()
+
+    async def test_another_accounts_project_is_not_found(
+        self, fx_client: httpx.AsyncClient, fx_strangers_book: Book
+    ) -> None:
+        """Verify the report of another account's project cannot be closed.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_strangers_book: Book of another account.
+        :type fx_strangers_book: Book
+        """
+        response = await fx_client.delete(f'{_sources_path(fx_strangers_book)}/unimported')
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 class TestListScans:

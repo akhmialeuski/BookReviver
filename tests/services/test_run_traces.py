@@ -9,6 +9,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.enums import RecipeKind, RunOutcome, SpanAttribute, SpanName, Stage, StepOutcome, VersionScale
 from bookreviver.domain.values import StageRun
 from tests.helpers.processors import FakeProcessor
+from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Page, Project
@@ -19,21 +20,6 @@ pytestmark = pytest.mark.anyio
 FAKE_KEY: str = FakeProcessor.spec.key
 ORDER_KEYS: tuple[str, ...] = ('a0', 'a1')
 UNKNOWN_PARAMETER: str = 'unknown'
-
-
-async def run_geometry(kit: ProcessingKit, actor: Actor, project: Project) -> None:
-    """Start a run of the geometry stage over every page of the project, and let the worker do it.
-
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
-    :param actor: Account owning the project.
-    :type actor: Actor
-    :param project: Project to run in.
-    :type project: Project
-    """
-    job = await kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-    await kit.jobs().run_stage(job.id)
-    await kit.work_queue()
 
 
 async def seeded_pages(kit: ProcessingKit) -> tuple[Actor, Project, list[Page]]:
@@ -63,7 +49,7 @@ class TestRunSpans:
         :type fx_kit: ProcessingKit
         """
         actor, project, pages = await seeded_pages(fx_kit)
-        await run_geometry(fx_kit, actor, project)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         page_spans = fx_kit.tracer.named(SpanName.RUN_PAGE)
         step_spans = fx_kit.tracer.named(SpanName.STEP)
         expect(sorted(span.attributes[SpanAttribute.PAGE] for span in page_spans) == sorted(str(p.id) for p in pages))
@@ -78,14 +64,17 @@ class TestRunSpans:
     async def test_every_step_of_the_first_run_ran_and_none_of_the_second_did(self, fx_kit: ProcessingKit) -> None:
         """Verify the outcome of a step is ``ran`` when the processor made the version, and ``cached`` when found.
 
+        The second run names the pages, which a run of the whole book would leave out as fresh.
+
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, _ = await seeded_pages(fx_kit)
-        await run_geometry(fx_kit, actor, project)
+        actor, project, pages = await seeded_pages(fx_kit)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         first = [span.attributes[SpanAttribute.STEP_OUTCOME] for span in fx_kit.tracer.named(SpanName.STEP)]
         fx_kit.tracer.finished.clear()
-        await run_geometry(fx_kit, actor, project)
+        named = StageRun(stage=Stage.GEOMETRY, page_ids=tuple(page.id for page in pages))
+        await run_stage(fx_kit, actor, project, named)
         second = [span.attributes[SpanAttribute.STEP_OUTCOME] for span in fx_kit.tracer.named(SpanName.STEP)]
         expect(first == [StepOutcome.RAN] * len(ORDER_KEYS))
         expect(second == [StepOutcome.CACHED] * len(ORDER_KEYS))
@@ -107,7 +96,7 @@ class TestRunSpans:
         await fx_kit.uow().change_book(
             project.id, lambda repos, _project: repos.recipes.update(evolve(recipe, steps=(refused,)))
         )
-        await run_geometry(fx_kit, actor, project)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         outcomes = [span.attributes.get(SpanAttribute.STEP_OUTCOME) for span in fx_kit.tracer.named(SpanName.STEP)]
         expect(outcomes == [StepOutcome.FAILED] * len(ORDER_KEYS))
         expect(fx_kit.fake.runs == 0)

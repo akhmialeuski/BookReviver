@@ -113,6 +113,14 @@ class SourceKind(LabeledStrEnum):
     IMAGE = 'image', 'Image file'
 
 
+class SourceStatus(LabeledStrEnum):
+    """What became of an uploaded file: it joined the book, an import refused it, or a cancelled import skipped it."""
+
+    IMPORTED = 'imported', 'Imported'
+    REJECTED = 'rejected', 'Rejected'
+    SKIPPED = 'skipped', 'Skipped'
+
+
 class DjvuDocumentKind(LabeledStrEnum):
     """How a DjVu file holds its pages, which decides how many sources it makes."""
 

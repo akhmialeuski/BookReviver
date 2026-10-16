@@ -11,12 +11,13 @@ from typing import TYPE_CHECKING, Any, Self
 
 from fastapi import Query
 from fastapi_pagination import Params
+from pydantic import Field
 
 from bookreviver.api.schemas.base import ResponseModel
 from bookreviver.api.schemas.images import ImagePathsSchema
 from bookreviver.api.schemas.projects import ContributorSchema, IdentifierSchema
-from bookreviver.domain.enums import ColorMode, FileType, SourceKind
-from bookreviver.domain.ids import JobId, ScanId, SourceId
+from bookreviver.domain.enums import ColorMode, FileType, RejectionReason, SourceKind, SourceStatus
+from bookreviver.domain.ids import ScanId, SourceId
 from bookreviver.domain.keys import ProjectKeys
 
 if TYPE_CHECKING:
@@ -70,12 +71,27 @@ class MetadataSuggestionSchema(ResponseModel):
     subjects: list[str]
 
 
+class SourceQuery(Params):
+    """The query of a list of sources: the page parameters of every list, and which files to list.
+
+    :ivar page: Number of the page of the list, from one.
+    :ivar size: Number of sources in one page.
+    :ivar status: Statuses of the files to list, which is the imported sources alone when omitted. The rejected and
+                  skipped files are the report of an import.
+    """
+
+    status: list[SourceStatus] = Field(
+        default=[SourceStatus.IMPORTED], description='List the files in these statuses; the imported sources by default'
+    )
+
+
 class SourceSchema(ResponseModel):
     """An uploaded file of a book, or the files of one indirect DjVu document, never changed after its import.
 
     :ivar id: Identifier of the source.
-    :ivar kind: Kind of the source, which selects the format that reads it.
-    :ivar file_type: Exact format of the main file.
+    :ivar kind: Kind of the source, which selects the format that reads it, or None for a rejected or skipped file of an
+                unknown type.
+    :ivar file_type: Exact format of the main file, or None for a rejected or skipped file of an unknown type.
     :ivar file_name: Name the browser sent for the main file.
     :ivar files: Stored files, the main file first; more than one only for an indirect DjVu document.
     :ivar size_bytes: Total size of the files in bytes.
@@ -83,13 +99,15 @@ class SourceSchema(ResponseModel):
     :ivar scan_count: Number of scans the source holds.
     :ivar metadata: Technical metadata of the format, whose keys depend on the kind of source.
     :ivar suggestion: Values of the book description found in the file.
-    :ivar import_job_id: Import job that created the source, or None once that job is deleted.
-    :ivar imported_at: When the source became part of the project.
+    :ivar status: Whether the file was imported, rejected by the import, or skipped by a cancelled one.
+    :ivar rejection: Why a rejected file was refused, or None for a file that was not.
+    :ivar detail: Text that says more than the reason, such as the name of the source a duplicate repeats, or empty.
+    :ivar imported_at: When the file was recorded, which for an imported source is when it became part of the project.
     """
 
     id: SourceId
-    kind: SourceKind
-    file_type: FileType
+    kind: SourceKind | None
+    file_type: FileType | None
     file_name: str
     files: list[SourceFileSchema]
     size_bytes: int
@@ -97,7 +115,9 @@ class SourceSchema(ResponseModel):
     scan_count: int
     metadata: dict[str, Any]
     suggestion: MetadataSuggestionSchema
-    import_job_id: JobId | None
+    status: SourceStatus
+    rejection: RejectionReason | None
+    detail: str
     imported_at: datetime
 
 

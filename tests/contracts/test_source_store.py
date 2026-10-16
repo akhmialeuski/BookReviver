@@ -492,6 +492,50 @@ class TestDiscard:
             await _staged(fx_source_store, JOB_ID)
 
 
+class TestDiscardAllStaged:
+    """Contract of SourceStore.discard_all_staged()."""
+
+    async def test_removes_every_staged_upload_of_every_project_and_keeps_the_sources(
+        self, fx_source_store: SourceStore
+    ) -> None:
+        """Verify the uploads of several jobs in several projects are gone and the promoted sources are untouched.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
+        await _import(fx_source_store, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
+        await _import(
+            fx_source_store, OTHER_SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT), project_id=OTHER_PROJECT_ID
+        )
+        await _stage(fx_source_store, JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
+        await _stage(fx_source_store, OTHER_JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
+        await _stage(fx_source_store, OTHER_JOB_ID, upload(NEW_NAME, content=NEW_CONTENT), project_id=OTHER_PROJECT_ID)
+
+        await fx_source_store.discard_all_staged()
+
+        for project_id, job_id in [(PROJECT_ID, JOB_ID), (PROJECT_ID, OTHER_JOB_ID), (OTHER_PROJECT_ID, OTHER_JOB_ID)]:
+            with pytest.raises(NotFoundError):
+                await _staged(fx_source_store, job_id, project_id=project_id)
+        expect(await _source(fx_source_store, SOURCE_ID) == {OLD_NAME: OLD_CONTENT})
+        expect(await _source(fx_source_store, OTHER_SOURCE_ID, project_id=OTHER_PROJECT_ID) == {OLD_NAME: OLD_CONTENT})
+        assert_expectations()
+
+    async def test_nothing_staged_is_not_an_error(self, fx_source_store: SourceStore) -> None:
+        """Verify discarding on a store that never received an upload succeeds, as the first start of the application.
+
+        :param fx_source_store: Source store of the storage backend under test.
+        :type fx_source_store: SourceStore
+        """
+        await fx_source_store.discard_all_staged()
+
+        await _stage(fx_source_store, JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
+        await fx_source_store.discard_all_staged()
+        await fx_source_store.discard_all_staged()
+
+        with pytest.raises(NotFoundError):
+            await _staged(fx_source_store, JOB_ID)
+
+
 class TestSourceFiles:
     """Contract of SourceStore.source_files()."""
 

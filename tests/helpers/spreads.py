@@ -61,7 +61,7 @@ async def use_recipe(kit: ProcessingKit, actor: Actor, project: Project, stage: 
 
 
 async def run_stage(kit: ProcessingKit, actor: Actor, project: Project, run: StageRun) -> None:
-    """Start a run of a stage and let the worker do it.
+    """Start a run of a stage and let the board run it, with the jobs it puts behind it.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
@@ -72,8 +72,7 @@ async def run_stage(kit: ProcessingKit, actor: Actor, project: Project, run: Sta
     :param run: The stage, and the recipe and pages to run it on.
     :type run: StageRun
     """
-    job = await kit.service().start_run(actor, project.id, run.stage, run)
-    await kit.jobs().run_stage(job.id)
+    await kit.service().start_run(actor, project.id, run.stage, run)
     await kit.work_queue()
 
 

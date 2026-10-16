@@ -9,12 +9,12 @@ from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.domain.entities import Actor
-from bookreviver.domain.enums import JobState
 from bookreviver.domain.values import SliceRequest
 from bookreviver.services.projects import ProjectService
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import EPOCH, make_job, make_page, make_page_stage, make_project
 from tests.helpers.fake_processing import FakeCatalogue
+from tests.helpers.fakes_jobs import JobFakes
 from tests.helpers.statements import STATEMENT_EVENT, StatementCounter
 
 if TYPE_CHECKING:
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Project
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.runtime import JobBoard
 
 pytestmark = pytest.mark.anyio
 
@@ -31,11 +32,13 @@ pytestmark = pytest.mark.anyio
 WINDOW: int = 5
 
 
-async def _commit_books(database: SqlDatabase, owner_id: AccountId, count: int) -> None:
-    """Commit books that each have a page in a stage and an active job, so every progress query returns rows.
+async def _commit_books(database: SqlDatabase, board: JobBoard, owner_id: AccountId, count: int) -> None:
+    """Commit books that each have a page in a stage and a job on the board, so every progress query returns rows.
 
     :param database: Fresh SQLite database with every table created.
     :type database: SqlDatabase
+    :param board: Board of the jobs, which holds them in memory and so sends no statement.
+    :type board: JobBoard
     :param owner_id: Committed account owning the books.
     :type owner_id: AccountId
     :param count: Number of books to commit.
@@ -43,7 +46,7 @@ async def _commit_books(database: SqlDatabase, owner_id: AccountId, count: int) 
     """
 
     def add_books(repos: Repositories) -> list[Project]:
-        """Store the projects, each with a running job.
+        """Store the projects, and put a job of each on the board.
 
         :param repos: Repositories of the transaction.
         :type repos: Repositories
@@ -53,7 +56,7 @@ async def _commit_books(database: SqlDatabase, owner_id: AccountId, count: int) 
         projects = []
         for minutes in range(count):
             project = repos.projects.add(make_project(owner_id=owner_id, minutes=minutes))
-            repos.jobs.add(make_job(project_id=project.id, state=JobState.RUNNING, minutes=minutes))
+            board.put(make_job(project_id=project.id, minutes=minutes))
             projects.append(project)
         return projects
 
@@ -73,11 +76,13 @@ async def _commit_books(database: SqlDatabase, owner_id: AccountId, count: int) 
         await uow.change_book(project.id, add_page)
 
 
-async def _statements_of_list(database: SqlDatabase, owner_id: AccountId, root: Path) -> int:
+async def _statements_of_list(database: SqlDatabase, board: JobBoard, owner_id: AccountId, root: Path) -> int:
     """List the owner's books through the project service and count the statements the request sends.
 
     :param database: SQLite database holding the owner's books.
     :type database: SqlDatabase
+    :param board: Board of the jobs of the books.
+    :type board: JobBoard
     :param owner_id: Account whose books are listed.
     :type owner_id: AccountId
     :param root: Storage root of the stores the service needs and the list does not touch.
@@ -94,7 +99,7 @@ async def _statements_of_list(database: SqlDatabase, owner_id: AccountId, root: 
             clock=FixedClock(EPOCH),
             sources=LocalSourceStore(root=root),
             assets=LocalAssetStore(root=root),
-            stages=StageSummaries(catalogue=FakeCatalogue([])),
+            stages=StageSummaries(catalogue=FakeCatalogue([]), board=board),
         )
         books = await service.list(Actor(account_id=owner_id), SliceRequest(limit=WINDOW))
     finally:
@@ -118,8 +123,9 @@ class TestProjectList:
         :param tmp_path: Directory of the stores the list does not touch.
         :type tmp_path: Path
         """
-        await _commit_books(fx_database, fx_owner_id, 1)
-        one_book = await _statements_of_list(fx_database, fx_owner_id, tmp_path)
-        await _commit_books(fx_database, fx_owner_id, WINDOW - 1)
-        full_window = await _statements_of_list(fx_database, fx_owner_id, tmp_path)
+        board = JobFakes().board
+        await _commit_books(fx_database, board, fx_owner_id, 1)
+        one_book = await _statements_of_list(fx_database, board, fx_owner_id, tmp_path)
+        await _commit_books(fx_database, board, fx_owner_id, WINDOW - 1)
+        full_window = await _statements_of_list(fx_database, board, fx_owner_id, tmp_path)
         assert full_window == one_book

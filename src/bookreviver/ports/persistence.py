@@ -14,11 +14,10 @@ of work, so changes never nest.
 """
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, NewType, override
+from typing import TYPE_CHECKING, NewType
 
 from bookreviver.domain.entities import (
     BookPlace,
-    Job,
     Page,
     PageStage,
     PageStepChange,
@@ -33,7 +32,6 @@ from bookreviver.domain.entities import (
     Source,
 )
 from bookreviver.domain.ids import (
-    JobId,
     PageId,
     PageStepChangeId,
     PageVersionId,
@@ -53,7 +51,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.domain.entities import ProjectOverview
-    from bookreviver.domain.enums import JobState, RecipeKind, ResultMark, Side, Stage, VersionScale
+    from bookreviver.domain.enums import RecipeKind, ResultMark, Side, Stage, VersionScale
     from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
     from bookreviver.domain.stage_summaries import StageTally, StepTally
     from bookreviver.domain.values import PageSize, ProcessorRef, Slice, SliceRequest
@@ -218,30 +216,52 @@ class ProjectRepository(Repository[Project, ProjectId]):
 
 
 class SourceRepository(Repository[Source, SourceId]):
-    """Sources of the projects; the pair of a project and the digest of a source's main file is unique.
+    """Sources of the projects; the pair of a project and the digest of an imported source's main file is unique.
+
+    A rejected or skipped file is a source row too, and its digest may repeat, since it is no part of the book. Only
+    the imported sources count as the project's sources, and the rejected and skipped ones are listed and deleted
+    apart, when the reader closes the report of an import.
 
     Deleting a source removes its scans, and the pages of the book made from them stay without their scan.
     """
 
     @abstractmethod
     def list_for_project(self, project_id: ProjectId) -> Sequence[Source]:
-        """Return the project's sources in the order they were imported, ties by identifier.
+        """Return the project's imported sources in the order they were imported, ties by identifier.
 
         :param project_id: Project owning the sources.
         :type project_id: ProjectId
-        :returns: Every source of the project, the earliest import first.
+        :returns: Every imported source of the project, the earliest import first.
         :rtype: Sequence[Source]
         """
 
     @abstractmethod
+    def list_unimported(self, project_id: ProjectId) -> Sequence[Source]:
+        """Return the project's rejected and skipped files in the order they were recorded, ties by identifier.
+
+        :param project_id: Project owning the sources.
+        :type project_id: ProjectId
+        :returns: Every rejected or skipped source of the project, the earliest first.
+        :rtype: Sequence[Source]
+        """
+
+    @abstractmethod
+    def delete_unimported(self, project_id: ProjectId) -> None:
+        """Delete the project's rejected and skipped sources, which hold no scan, and keep the imported ones.
+
+        :param project_id: Project owning the sources.
+        :type project_id: ProjectId
+        """
+
+    @abstractmethod
     def find_by_sha256(self, project_id: ProjectId, sha256: str) -> Source | None:
-        """Return the project's source whose main file has this digest, which refuses a second upload of the file.
+        """Return the project's imported source whose main file has this digest, which refuses a second upload.
 
         :param project_id: Project owning the sources.
         :type project_id: ProjectId
         :param sha256: SHA-256 digest of a main file as lower-case hexadecimal digits.
         :type sha256: str
-        :returns: The source with this digest, or None when the project has none.
+        :returns: The imported source with this digest, or None when the project has none.
         :rtype: Source | None
         """
 
@@ -899,68 +919,6 @@ class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
         """
 
 
-class JobRepository(Repository[Job, JobId]):
-    """Background jobs; a project has at most one import job queued or running at a time."""
-
-    @abstractmethod
-    @override
-    def add(self, entity: Job) -> Job:
-        """Store a new job of a stored project and return it as stored.
-
-        :param entity: Job to store, with its identifier already assigned.
-        :type entity: Job
-        :returns: The job as stored.
-        :rtype: Job
-        :raises ConflictError: If a job with this identifier is already stored, or the job is an import that is queued
-                               or running and the project already has one; the database enforces the second rule
-                               with a partial unique index, so two uploads that both passed a check before either
-                               committed cannot both be stored.
-        :raises NotFoundError: If the job's project is not stored.
-        """
-
-    @abstractmethod
-    def list_for_project(self, project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
-        """Return the project's jobs in one of the given states, newest first.
-
-        :param project_id: Project owning the jobs.
-        :type project_id: ProjectId
-        :param states: States a returned job may be in.
-        :type states: Collection[JobState]
-        :returns: The matching jobs, most recently created first.
-        :rtype: Sequence[Job]
-        """
-
-    @abstractmethod
-    def list_for_projects(self, project_ids: Collection[ProjectId], states: Collection[JobState]) -> Sequence[Job]:
-        """Return the jobs of several projects in one of the given states, in one query for all of them.
-
-        :param project_ids: Projects owning the jobs.
-        :type project_ids: Collection[ProjectId]
-        :param states: States a returned job may be in.
-        :type states: Collection[JobState]
-        :returns: The matching jobs of all the projects, most recently created first.
-        :rtype: Sequence[Job]
-        """
-
-    @abstractmethod
-    def update_if_state(self, entity: Job, *, expected: Collection[JobState]) -> Job | None:
-        """Replace the stored job only while its state is one of ``expected``, checking and writing as one step.
-
-        A job changes state from two places at once, a worker finishing it and an account holder cancelling it, so
-        a read followed by ``update`` could overwrite a state committed in between. Here the check reads the latest
-        committed state, as a database ``UPDATE ... WHERE`` does, and a job changed by another transaction since this
-        one read it is judged by that newer state.
-
-        :param entity: Job with its new state.
-        :type entity: Job
-        :param expected: States the stored job must be in for the replacement to happen.
-        :type expected: Collection[JobState]
-        :returns: The job as stored, or None when its stored state is not one of ``expected`` and nothing changed.
-        :rtype: Job | None
-        :raises NotFoundError: If the job is not stored.
-        """
-
-
 class BookPlaceRepository(Repository[BookPlace, BookPlaceKey]):
     """The place each account left each book at; deleting a book or an account removes its places."""
 
@@ -1008,7 +966,6 @@ class Repositories(ABC):
     :ivar result_mark_changes: Repository of the log of the marks and comments of the results, of this transaction.
     :ivar recipes: Recipe repository of this transaction.
     :ivar recipe_profiles: Repository of the recipe profiles of the accounts, of this transaction.
-    :ivar jobs: Job repository of this transaction.
     :ivar book_places: Repository of the places accounts left books at, of this transaction.
     """
 
@@ -1025,7 +982,6 @@ class Repositories(ABC):
     result_mark_changes: ResultMarkChangeRepository
     recipes: RecipeRepository
     recipe_profiles: RecipeProfileRepository
-    jobs: JobRepository
     book_places: BookPlaceRepository
 
 

@@ -15,7 +15,7 @@ from bookreviver.app.settings import PersistenceBackend, Settings
 from bookreviver.ports.storage import AssetStore, SourceStore
 from tests.helpers.book_gate import hold_book_in_thread
 from tests.helpers.builders import new_account_id
-from tests.helpers.job_queues import QueueAdapter
+from tests.helpers.job_boards import BoardAdapter
 from tests.helpers.schema import create_schema
 from tests.helpers.seeding import commit_account
 from tests.helpers.step_executors import StepExecutorAdapter
@@ -195,16 +195,16 @@ def fx_order_keys(request: pytest.FixtureRequest) -> OrderKeys:
     return ORDER_KEYS_ADAPTERS[request.param]()
 
 
-@pytest.fixture(params=list(QueueAdapter), ids=str)
-def fx_queue_adapter(request: pytest.FixtureRequest) -> QueueAdapter:
-    """Return each adapter of the JobQueue port in turn.
+@pytest.fixture(params=list(BoardAdapter), ids=str)
+def fx_board_adapter(request: pytest.FixtureRequest) -> BoardAdapter:
+    """Return each adapter of the JobBoard port in turn.
 
     :param request: Request of the parametrized fixture, whose ``param`` is the adapter.
     :type request: pytest.FixtureRequest
-    :returns: The adapter under test, set up by ``open_queue_under_test``.
-    :rtype: QueueAdapter
+    :returns: The adapter under test, set up by ``open_board_under_test``.
+    :rtype: BoardAdapter
     """
-    return QueueAdapter(request.param)
+    return BoardAdapter(request.param)
 
 
 @pytest.fixture(params=list(StepExecutorAdapter), ids=str)

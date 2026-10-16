@@ -14,6 +14,7 @@ from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from tests.helpers.page_services import make_page_service
 from tests.helpers.processing import ProcessingKit
 from tests.helpers.processors import FakeProcessor
+from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
     from bookreviver.adapters.storage import LocalAssetStore
@@ -95,7 +96,7 @@ async def tune_recipes(kit: ProcessingKit, actor: Actor, project: Project) -> di
 
 
 async def run_all(kit: ProcessingKit, actor: Actor, project: Project, run: StageRun | None = None) -> None:
-    """Run the geometry stage over the pages of the book, and let the worker do it.
+    """Run the geometry stage over the pages of the book, and let the board run it.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
@@ -106,10 +107,7 @@ async def run_all(kit: ProcessingKit, actor: Actor, project: Project, run: Stage
     :param run: What to run, or None for the whole book.
     :type run: StageRun | None
     """
-    chosen = StageRun(stage=Stage.GEOMETRY) if run is None else run
-    job = await kit.service().start_run(actor, project.id, Stage.GEOMETRY, chosen)
-    await kit.jobs().run_stage(job.id)
-    await kit.work_queue()
+    await run_stage(kit, actor, project, StageRun(stage=Stage.GEOMETRY) if run is None else run)
 
 
 async def record_of(kit: ProcessingKit, page_id: PageId) -> PageStage:
@@ -279,7 +277,7 @@ class TestRecipeOfAPage:
         recipes = await tune_recipes(fx_kit, actor, project)
         await run_all(fx_kit, actor, project)
         before = await record_of(fx_kit, page_id)
-        pages = make_page_service(fx_kit.uow(), fx_kit.assets, (fx_kit.events, fx_kit.clock, fx_kit.recording))
+        pages = make_page_service(fx_kit.uow(), fx_kit.assets, (fx_kit.events, fx_kit.clock, fx_kit.board))
 
         await pages.update(actor, project.id, page_id, PageChanges(content_type=ContentType.BW_PICTURE))
         stale = await record_of(fx_kit, page_id)
@@ -302,7 +300,7 @@ class TestRecipeOfAPage:
         actor, project, (page_id,) = await seed_book(fx_kit, [PageKind.TEXT])
         recipes = await tune_recipes(fx_kit, actor, project)
         await run_all(fx_kit, actor, project)
-        pages = make_page_service(fx_kit.uow(), fx_kit.assets, (fx_kit.events, fx_kit.clock, fx_kit.recording))
+        pages = make_page_service(fx_kit.uow(), fx_kit.assets, (fx_kit.events, fx_kit.clock, fx_kit.board))
 
         await pages.update(actor, project.id, page_id, PageChanges(kind=PageKind.BLANK))
         stale = await record_of(fx_kit, page_id)

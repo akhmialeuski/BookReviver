@@ -16,14 +16,15 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.enums import (
     BlankFill,
     ContentType,
-    JobKind,
-    JobState,
+    FileType,
     PageKind,
     PageOrigin,
     RecipeKind,
     RejectionReason,
     Rendition,
     Side,
+    SourceKind,
+    SourceStatus,
     Stage,
     VersionState,
 )
@@ -31,19 +32,14 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import PageVersionId, SourceId
 from bookreviver.domain.values import (
     BookDetails,
-    ImportRequest,
-    ImportResult,
     MetadataSuggestion,
     PageSize,
     ProcessorRef,
-    RejectedFile,
     Renditions,
     SliceRequest,
-    SourceFile,
 )
 from tests.helpers.builders import (
     FULL_DETAILS,
-    make_job,
     make_page,
     make_page_version,
     make_project,
@@ -56,7 +52,7 @@ from tests.helpers.seeding import store_project
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Job, Page, Project
+    from bookreviver.domain.entities import Page, Project, Source
     from bookreviver.domain.ids import ProjectId
     from bookreviver.ports.persistence import Repositories, UnitOfWork
     from tests.contracts.conftest import OwnerFactory, UnitOfWorkFactory
@@ -64,14 +60,8 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 PAGE_COUNT: int = 3
-# Two finished jobs and a queued one of the same kind in one project
-FINISHED_AND_QUEUED_JOBS: int = 3
-# A run, a job writing page images and an import of one project, which do not exclude each other
-THREE_JOBS: int = 3
 # Included pages, sources and scans of the book _add_book stores
 BOOK: tuple[int, int, int] = (PAGE_COUNT - 1, 1, PAGE_COUNT)
-EVERY_STATE: frozenset[JobState] = frozenset(JobState)
-FINAL_STATES: list[JobState] = [state for state in JobState if state.is_final]
 OPERATION_ARG: str = 'operation'
 # The one single-entity operation that takes the entity rather than its identifier
 UPDATE_OPERATION: str = 'update'
@@ -95,11 +85,9 @@ FIRST_PDF: str = 'a.pdf'
 SECOND_PDF: str = 'b.pdf'
 FIRST_PART_PDF: str = 'part1.pdf'
 SECOND_PART_PDF: str = 'part2.pdf'
-# Names of the parameters of the parametrized tests
-FINISHED_STATE_ARG: str = 'finished_state'
-FIRST_STATE_ARG: str = 'first_state'
-FIRST_ARG: str = 'first'
-SECOND_ARG: str = 'second'
+NOTES_TXT: str = 'notes.txt'
+# The text for the reader of a file that the import rejected
+REJECTION_DETAIL: str = 'The project already has this file as book.pdf.'
 # Keys of the recorded size of a version, and the key of the processor that draws a blank leaf
 HEIGHT_PX: str = 'height_px'
 WIDTH_PX: str = 'width_px'
@@ -139,29 +127,53 @@ async def _add_book(uow: UnitOfWork, project: Project) -> list[Page]:
     return pages
 
 
-async def _add_projects_and_jobs(uow: UnitOfWork, *, projects: Sequence[Project], jobs: Sequence[Job] = ()) -> None:
-    """Add projects and then jobs in one change outside the content of a book.
+async def _add_projects(uow: UnitOfWork, *, projects: Sequence[Project]) -> None:
+    """Add projects in one change outside the content of a book.
 
     :param uow: Unit of work to add with.
     :type uow: UnitOfWork
     :param projects: Projects to add.
     :type projects: Sequence[Project]
-    :param jobs: Jobs of those projects to add after them.
-    :type jobs: Sequence[Job]
     """
 
     def add_rows(repos: Repositories) -> None:
-        """Add the projects and then the jobs.
+        """Add the projects.
 
         :param repos: Repositories of the transaction.
         :type repos: Repositories
         """
         for project in projects:
             repos.projects.add(project)
-        for job in jobs:
-            repos.jobs.add(job)
 
     await uow.change(add_rows)
+
+
+def _unimported(project: Project, *, status: SourceStatus, name: str, minutes: int = 0, typed: bool = True) -> Source:
+    """Build a rejected or a skipped file of a project, which holds no scan and whose digest follows from its name.
+
+    :param project: Project owning the file.
+    :type project: Project
+    :param status: Rejected or skipped.
+    :type status: SourceStatus
+    :param name: Name of the uploaded file; files of different names have different digests.
+    :type name: str
+    :param minutes: Minutes after the epoch the file was recorded.
+    :type minutes: int
+    :param typed: Whether the type of the file is known; a rejected file of an unknown type is an unsupported one.
+    :type typed: bool
+    :returns: A source that is not imported, with a reason and a detail when it is rejected.
+    :rtype: Source
+    """
+    rejected = status is SourceStatus.REJECTED
+    return evolve(
+        make_source(project_id=project.id, name=name, minutes=minutes),
+        kind=SourceKind.PDF if typed else None,
+        file_type=FileType.PDF if typed else None,
+        scan_count=0,
+        status=status,
+        rejection=(RejectionReason.DUPLICATE if typed else RejectionReason.UNSUPPORTED_TYPE) if rejected else None,
+        detail=REJECTION_DETAIL if rejected else '',
+    )
 
 
 class TestProjectRepository:
@@ -276,7 +288,7 @@ class TestProjectRepository:
         older, newer = make_project(owner_id=owner_id, minutes=1), make_project(owner_id=owner_id, minutes=2)
         uow = fx_uow_factory()
         # The owners are stored before the change, because storing one is a write of its own that waits for the change
-        await _add_projects_and_jobs(uow, projects=[older, newer, make_project(owner_id=other_owner_id)])
+        await _add_projects(uow, projects=[older, newer, make_project(owner_id=other_owner_id)])
         await _add_book(uow, older)
         reader = fx_uow_factory()
         full = await reader.read(lambda repos: repos.projects.list_for_owner(owner_id, SliceRequest()))
@@ -304,7 +316,7 @@ class TestProjectRepository:
         owner_id = await fx_new_owner()
         project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
         uow = fx_uow_factory()
-        await _add_projects_and_jobs(uow, projects=[project, other])
+        await _add_projects(uow, projects=[project, other])
         for owned in (project, other):
             await _add_book(uow, owned)
         overview = await fx_uow_factory().read(lambda repos: repos.projects.overview(project))
@@ -322,7 +334,7 @@ class TestProjectRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         uow = fx_uow_factory()
-        await _add_projects_and_jobs(uow, projects=[project])
+        await _add_projects(uow, projects=[project])
         await _add_book(uow, project)
         placeholder = make_page(project_id=project.id, order_key=KEY_B0)
         await uow.change_book(project.id, lambda repos, _project: repos.pages.add(placeholder))
@@ -348,7 +360,7 @@ class TestProjectRepository:
         owner_id = await fx_new_owner()
         tied = sorted((make_project(owner_id=owner_id, minutes=1) for _ in range(PAGE_COUNT)), key=attrgetter('id'))
         # Insert against the expected order, so neither insertion nor storage order can pass for it
-        await _add_projects_and_jobs(fx_uow_factory(), projects=list(reversed(tied)))
+        await _add_projects(fx_uow_factory(), projects=list(reversed(tied)))
 
         def list_whole_and_by_page(repos: Repositories) -> tuple[list[ProjectId], list[ProjectId]]:
             """List the owner's projects in one window and then one project at a time.
@@ -424,7 +436,7 @@ class TestProjectRepository:
     async def test_delete_cascades_to_every_row_of_the_book(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify deleting a project removes its sources, scans, pages, versions and jobs, and leaves other projects.
+        """Verify deleting a project removes its sources, scans, pages and versions, and leaves other projects.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -436,14 +448,14 @@ class TestProjectRepository:
         uow = fx_uow_factory()
 
         async def seed(project: Project) -> Page:
-            """Store the project with a job, a book and a version of the first page of the book.
+            """Store the project with a book and a version of the first page of the book.
 
             :param project: Project to store.
             :type project: Project
             :returns: The first page of the book.
             :rtype: Page
             """
-            await _add_projects_and_jobs(uow, projects=[project], jobs=[make_job(project_id=project.id)])
+            await _add_projects(uow, projects=[project])
             first = (await _add_book(uow, project))[0]
             version = make_page_version(page_id=first.id)
             await uow.change_book(project.id, lambda repos, _project: repos.page_versions.add(version))
@@ -457,7 +469,7 @@ class TestProjectRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: Repositories
-            :returns: By project, the number of its sources, scans, pages, versions of its first page and jobs.
+            :returns: By project, the number of its sources, scans, pages and versions of its first page.
             :rtype: dict[ProjectId, tuple[int, ...]]
             """
             return {
@@ -466,13 +478,12 @@ class TestProjectRepository:
                     repos.scans.list_for_project(project.id, SliceRequest()).total,
                     repos.pages.list_for_project(project.id, SliceRequest()).total,
                     len(repos.page_versions.list_for_page(first_pages[project.id].id)),
-                    len(repos.jobs.list_for_project(project.id, EVERY_STATE)),
                 )
                 for project in (doomed, kept)
             }
 
         counts = await fx_uow_factory().read(count_rows)
-        assert counts == {doomed.id: (0, 0, 0, 0, 0), kept.id: (1, PAGE_COUNT, PAGE_COUNT, 1, 1)}
+        assert counts == {doomed.id: (0, 0, 0, 0), kept.id: (1, PAGE_COUNT, PAGE_COUNT, 1)}
 
 
 class TestSourceRepository:
@@ -490,17 +501,15 @@ class TestSourceRepository:
         """
         owner_id = await fx_new_owner()
         project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
-        job = make_job(project_id=project.id)
         later = make_source(project_id=project.id, name=SECOND_PART_PDF, minutes=2)
         earlier = evolve(
             make_source(project_id=project.id, name=FIRST_PART_PDF, minutes=1),
-            import_job_id=job.id,
             metadata={'pdf_version': '1.4'},
             suggestion=MetadataSuggestion(title='Book', publication_year='1887'),
         )
         foreign = make_source(project_id=other.id)
         uow = fx_uow_factory()
-        await _add_projects_and_jobs(uow, projects=[project, other], jobs=[job])
+        await _add_projects(uow, projects=[project, other])
         await uow.change_book(project.id, lambda repos, _project: repos.sources.add_many([later, earlier]))
         await uow.change_book(other.id, lambda repos, _project: repos.sources.add(foreign))
         reader = fx_uow_factory()
@@ -573,48 +582,17 @@ class TestSourceRepository:
 
         assert await fx_uow_factory().read(count_sources) == [1, 1]
 
-    async def test_source_of_a_missing_parent_raises_not_found(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify a source needs its project and the import job it names, reported by the missing identifier.
+    async def test_source_of_a_missing_project_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
+        """Verify a source needs its project, reported by the missing identifier.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
         """
-        project = make_project(owner_id=await fx_new_owner())
-        missing_job = make_job(project_id=project.id)
-        orphan = make_source(project_id=project.id)
-        uow = fx_uow_factory()
+        project_id = make_project(owner_id=new_account_id()).id
+        orphan = make_source(project_id=project_id)
         # The call is ``change``, because the project is missing and ``change_book`` would raise on entry
-        with pytest.raises(NotFoundError, match=str(project.id)):
-            await uow.change(lambda repos: repos.sources.add(orphan))
-        await uow.change(lambda repos: repos.projects.add(project))
-        with pytest.raises(NotFoundError, match=str(missing_job.id)):
-            await uow.change_book(
-                project.id, lambda repos, _project: repos.sources.add(evolve(orphan, import_job_id=missing_job.id))
-            )
-
-    async def test_deleted_import_job_leaves_its_sources(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify deleting a job keeps the sources it imported and empties their import job.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        job = make_job(project_id=project.id)
-        source = evolve(make_source(project_id=project.id), import_job_id=job.id)
-        uow = fx_uow_factory()
-        await _add_projects_and_jobs(uow, projects=[project], jobs=[job])
-        await uow.change_book(project.id, lambda repos, _project: repos.sources.add(source))
-        await fx_uow_factory().change(lambda repos: repos.jobs.delete(job.id))
-        stored = await fx_uow_factory().read(lambda repos: repos.sources.get(source.id))
-        assert stored == evolve(source, import_job_id=None)
+        with pytest.raises(NotFoundError, match=str(project_id)):
+            await fx_uow_factory().change(lambda repos: repos.sources.add(orphan))
 
     async def test_delete_cascades_to_its_scans_only(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -655,7 +633,7 @@ class TestSourceRepository:
         """
         project = make_project(owner_id=await fx_new_owner())
         uow = fx_uow_factory()
-        await _add_projects_and_jobs(uow, projects=[project])
+        await _add_projects(uow, projects=[project])
         pages = await _add_book(uow, project)
         version = make_page_version(page_id=pages[0].id)
         await uow.change_book(project.id, lambda repos, _project: repos.page_versions.add(version))
@@ -828,7 +806,7 @@ class TestScanRepository:
         project = make_project(owner_id=await fx_new_owner())
         source = make_source(project_id=project.id)
         uow = fx_uow_factory()
-        await _add_projects_and_jobs(uow, projects=[project])
+        await _add_projects(uow, projects=[project])
         expect(await uow.read(lambda repos: repos.scans.list_unready(project.id)) == [])
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
 
@@ -1697,13 +1675,13 @@ class TestPageVersionRepository:
         assert await fx_uow_factory().read(lambda repos: repos.page_versions.list_for_page(page.id)) == []
 
 
-class TestJobRepository:
-    """Contract of JobRepository."""
+class TestSourceStatus:
+    """Contract of SourceRepository for the files of an upload that the import rejected or skipped."""
 
-    async def test_list_filters_by_state_newest_first(
+    async def test_rejected_and_skipped_sources_read_back_with_their_status(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify only jobs in the asked states are listed, newest first.
+        """Verify a rejected file keeps its reason and detail and a skipped one its status, with or without a type.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -1711,89 +1689,39 @@ class TestJobRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project(owner_id=await fx_new_owner())
-        old = make_job(project_id=project.id, state=JobState.FAILED, minutes=1)
-        new = make_job(project_id=project.id, state=JobState.QUEUED, minutes=2)
-        done = make_job(project_id=project.id, state=JobState.SUCCEEDED, minutes=3)
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[project], jobs=[old, new, done])
-        listed = await fx_uow_factory().read(
-            lambda repos: repos.jobs.list_for_project(project.id, {JobState.QUEUED, JobState.FAILED})
-        )
-        assert [job.id for job in listed] == [new.id, old.id]
-
-    async def test_list_for_projects_reads_the_jobs_of_the_given_projects_in_the_given_states(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify one query returns the matching jobs of several projects, newest first, and none of another project.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        owner_id = await fx_new_owner()
-        first, second, other = (make_project(owner_id=owner_id) for _ in range(3))
-        wanted = [
-            make_job(project_id=first.id, state=JobState.RUNNING, minutes=1),
-            make_job(project_id=second.id, state=JobState.QUEUED, minutes=3),
-        ]
-        ignored = [
-            make_job(project_id=first.id, state=JobState.SUCCEEDED, minutes=2),
-            make_job(project_id=other.id, state=JobState.RUNNING, minutes=4),
-        ]
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[first, second, other], jobs=[*wanted, *ignored])
+        rejected = _unimported(project, status=SourceStatus.REJECTED, name=FIRST_PDF, minutes=1)
+        untyped = _unimported(project, status=SourceStatus.REJECTED, name=NOTES_TXT, minutes=2, typed=False)
+        skipped = _unimported(project, status=SourceStatus.SKIPPED, name=SECOND_PDF, minutes=3)
+        await store_project(fx_uow_factory(), project, sources=[rejected, untyped, skipped])
         reader = fx_uow_factory()
-        listed = await reader.read(lambda repos: repos.jobs.list_for_projects({first.id, second.id}, JobState.active()))
-        expect([job.id for job in listed] == [wanted[1].id, wanted[0].id])
-        expect(await reader.read(lambda repos: repos.jobs.list_for_projects(set(), JobState.active())) == [])
+
+        def read_all(repos: Repositories) -> list[Source]:
+            """Read the three sources by their identifiers.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: The rejected source, the rejected source without a type and the skipped one, as stored.
+            :rtype: list[Source]
+            """
+            return [repos.sources.get(source.id) for source in (rejected, untyped, skipped)]
+
+        stored = await reader.read(read_all)
+        expect(stored == [rejected, untyped, skipped])
+        expect(
+            [(source.status, source.rejection, source.detail) for source in stored]
+            == [
+                (SourceStatus.REJECTED, RejectionReason.DUPLICATE, REJECTION_DETAIL),
+                (SourceStatus.REJECTED, RejectionReason.UNSUPPORTED_TYPE, REJECTION_DETAIL),
+                (SourceStatus.SKIPPED, None, ''),
+            ]
+        )
+        expect((stored[1].kind, stored[1].file_type) == (None, None))
         assert_expectations()
 
-    @pytest.mark.parametrize(FIRST_STATE_ARG, sorted(JobState.active()), ids=str)
-    async def test_second_active_prepare_job_of_a_project_raises_conflict(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory, first_state: JobState
-    ) -> None:
-        """Verify a project stores one queued or running job writing page images, whichever state the first is in.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        :param first_state: Active state of the job already stored.
-        :type first_state: JobState
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        first = evolve(make_job(project_id=project.id, state=first_state), kind=JobKind.PREPARE_PAGES)
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[project], jobs=[first])
-        second = evolve(make_job(project_id=project.id), kind=JobKind.PREPARE_PAGES)
-        with pytest.raises(ConflictError):
-            await fx_uow_factory().change(lambda repos: repos.jobs.add(second))
-
-    @pytest.mark.parametrize(FINISHED_STATE_ARG, FINAL_STATES, ids=str)
-    async def test_finished_prepare_job_leaves_room_for_the_next_one(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory, finished_state: JobState
-    ) -> None:
-        """Verify a finished job writing page images, whatever its final state, does not keep the next from queueing.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        :param finished_state: Final state of the earlier jobs.
-        :type finished_state: JobState
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        jobs = [
-            evolve(make_job(project_id=project.id, state=finished_state, minutes=minutes), kind=JobKind.PREPARE_PAGES)
-            for minutes in (1, 2)
-        ]
-        jobs.append(evolve(make_job(project_id=project.id, minutes=3), kind=JobKind.PREPARE_PAGES))
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[project], jobs=jobs)
-        listed = await fx_uow_factory().read(lambda repos: repos.jobs.list_for_project(project.id, EVERY_STATE))
-        assert len(listed) == FINISHED_AND_QUEUED_JOBS
-
-    async def test_an_active_import_and_an_active_prepare_job_of_a_project_do_not_conflict(
+    async def test_same_file_may_be_rejected_and_skipped_beside_the_imported_one(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the two kinds of job are limited apart, so images are written while a project imports.
+        """Verify the digest is unique among the imported sources only, so a duplicate is stored as a rejected one.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -1801,76 +1729,74 @@ class TestJobRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project(owner_id=await fx_new_owner())
-        jobs = [
-            make_job(project_id=project.id, state=JobState.RUNNING),
-            evolve(make_job(project_id=project.id), kind=JobKind.PREPARE_PAGES),
+        imported = make_source(project_id=project.id)
+        repeats = [
+            evolve(_unimported(project, status=status, name=FIRST_PDF), sha256=imported.sha256)
+            for status in (SourceStatus.REJECTED, SourceStatus.REJECTED, SourceStatus.SKIPPED)
         ]
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[project], jobs=jobs)
-        listed = await fx_uow_factory().read(lambda repos: repos.jobs.list_for_project(project.id, EVERY_STATE))
-        assert sorted(job.kind for job in listed) == sorted([JobKind.IMPORT_SOURCE, JobKind.PREPARE_PAGES])
-
-    @pytest.mark.parametrize(
-        (FIRST_ARG, SECOND_ARG),
-        [(first, second) for first in sorted(JobKind.processing()) for second in sorted(JobKind.processing())],
-        ids=str,
-    )
-    async def test_a_project_stores_one_active_job_that_processes_its_versions(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory, first: JobKind, second: JobKind
-    ) -> None:
-        """Verify a project has one run, preview or measure and one tile cutting or collection, each queued or running.
-
-        A job of the other group is stored beside the running one, and waits as queued.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        :param first: Kind of the job already stored.
-        :type first: JobKind
-        :param second: Kind of the job that is queued after it.
-        :type second: JobKind
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        running = evolve(make_job(project_id=project.id, state=JobState.RUNNING), kind=first)
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[project], jobs=[running])
         uow = fx_uow_factory()
-        queued = evolve(make_job(project_id=project.id), kind=second)
-        if (first in JobKind.requested()) == (second in JobKind.requested()):
-            with pytest.raises(ConflictError):
-                await uow.change(lambda repos: repos.jobs.add(queued))
-        else:
-            await uow.change(lambda repos: repos.jobs.add(queued))
+        await store_project(uow, project, sources=[imported])
+        await uow.change_book(project.id, lambda repos, _project: repos.sources.add_many(repeats))
 
-    @pytest.mark.parametrize(
-        (FIRST_ARG, SECOND_ARG),
-        [(JobKind.RUN_STAGE, JobKind.CUT_TILES), (JobKind.COLLECT_VERSIONS, JobKind.MEASURE_BOOK)],
-        ids=str,
-    )
-    async def test_a_project_never_has_two_processing_jobs_running(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory, first: JobKind, second: JobKind
+        listed = await fx_uow_factory().read(lambda repos: repos.sources.list_unimported(project.id))
+
+        assert {source.id for source in listed} == {source.id for source in repeats}
+
+    async def test_second_imported_source_with_the_digest_raises_conflict_beside_unimported_ones(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify a request and a housekeeping job of one project are not stored as running together.
+        """Verify a rejected file with a digest does not let a second imported source with it in.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
-        :param first: Kind of the job already running.
-        :type first: JobKind
-        :param second: Kind of the job of the other group that is refused as running.
-        :type second: JobKind
         """
         project = make_project(owner_id=await fx_new_owner())
-        running = evolve(make_job(project_id=project.id, state=JobState.RUNNING), kind=first)
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[project], jobs=[running])
-        refused = evolve(make_job(project_id=project.id, state=JobState.RUNNING), kind=second)
-        with pytest.raises(ConflictError):
-            await fx_uow_factory().change(lambda repos: repos.jobs.add(refused))
+        imported = make_source(project_id=project.id)
+        rejected = evolve(_unimported(project, status=SourceStatus.REJECTED, name=FIRST_PDF), sha256=imported.sha256)
+        uow = fx_uow_factory()
+        await store_project(uow, project, sources=[imported, rejected])
+        duplicate = make_source(project_id=project.id)
 
-    async def test_processing_jobs_leave_room_for_other_jobs_of_the_project_and_for_other_projects(
+        with pytest.raises(ConflictError, match=duplicate.sha256):
+            await fx_uow_factory().change_book(project.id, lambda repos, _project: repos.sources.add(duplicate))
+
+    async def test_listing_and_digest_lookup_return_imported_sources_only(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify an active run does not keep an import or a prepare job from queueing, nor another project's run.
+        """Verify rejected and skipped files are neither listed as sources nor found by their digest.
+
+        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
+        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the backend accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project = make_project(owner_id=await fx_new_owner())
+        imported = make_source(project_id=project.id, name=FIRST_PDF)
+        rejected = _unimported(project, status=SourceStatus.REJECTED, name=SECOND_PDF)
+        skipped = _unimported(project, status=SourceStatus.SKIPPED, name=FIRST_PART_PDF)
+        await store_project(fx_uow_factory(), project, sources=[imported, rejected, skipped])
+        reader = fx_uow_factory()
+
+        def find_digests(repos: Repositories) -> list[Source | None]:
+            """Look up the digests of the rejected and the skipped files.
+
+            :param repos: Repositories of the transaction.
+            :type repos: Repositories
+            :returns: What the lookup finds for the rejected file and for the skipped one.
+            :rtype: list[Source | None]
+            """
+            return [repos.sources.find_by_sha256(project.id, source.sha256) for source in (rejected, skipped)]
+
+        expect(await reader.read(lambda repos: repos.sources.list_for_project(project.id)) == [imported])
+        expect(await reader.read(find_digests) == [None, None])
+        assert_expectations()
+
+    async def test_unimported_sources_list_in_recorded_order_inside_the_project(
+        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify the rejected and skipped files of a project list earliest first, without imported or foreign ones.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -1879,87 +1805,20 @@ class TestJobRepository:
         """
         owner_id = await fx_new_owner()
         project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
-        jobs = [
-            evolve(make_job(project_id=project.id), kind=JobKind.RUN_STAGE),
-            evolve(make_job(project_id=project.id), kind=JobKind.PREPARE_PAGES),
-            make_job(project_id=project.id),
-            evolve(make_job(project_id=other.id), kind=JobKind.RUN_STAGE),
-        ]
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[project, other], jobs=jobs)
-        listed = await fx_uow_factory().read(lambda repos: repos.jobs.list_for_project(project.id, EVERY_STATE))
-        assert len(listed) == THREE_JOBS
+        later = _unimported(project, status=SourceStatus.SKIPPED, name=SECOND_PDF, minutes=2)
+        earlier = _unimported(project, status=SourceStatus.REJECTED, name=FIRST_PDF, minutes=1)
+        uow = fx_uow_factory()
+        await store_project(uow, project, sources=[later, earlier, make_source(project_id=project.id, name=NOTES_TXT)])
+        await store_project(uow, other, sources=[_unimported(other, status=SourceStatus.REJECTED, name=FIRST_PDF)])
 
-    @pytest.mark.parametrize(FINISHED_STATE_ARG, FINAL_STATES, ids=str)
-    async def test_finished_processing_job_leaves_room_for_the_next_one(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory, finished_state: JobState
-    ) -> None:
-        """Verify a finished job that processed versions, whatever its final state, does not keep the next from queueing.
+        listed = await fx_uow_factory().read(lambda repos: repos.sources.list_unimported(project.id))
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        :param finished_state: Final state of the earlier jobs.
-        :type finished_state: JobState
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        jobs = [
-            evolve(make_job(project_id=project.id, state=finished_state, minutes=minutes), kind=JobKind.RUN_STAGE)
-            for minutes in (1, 2)
-        ]
-        jobs.append(evolve(make_job(project_id=project.id, minutes=3), kind=JobKind.COLLECT_VERSIONS))
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[project], jobs=jobs)
-        listed = await fx_uow_factory().read(lambda repos: repos.jobs.list_for_project(project.id, EVERY_STATE))
-        assert len(listed) == FINISHED_AND_QUEUED_JOBS
+        assert listed == [earlier, later]
 
-    @pytest.mark.parametrize(FIRST_STATE_ARG, sorted(JobState.active()), ids=str)
-    async def test_second_active_import_of_a_project_raises_conflict(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory, first_state: JobState
-    ) -> None:
-        """Verify a project stores one queued or running import, so two uploads that raced cannot both be kept.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        :param first_state: Active state of the import already stored.
-        :type first_state: JobState
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        first = make_job(project_id=project.id, state=first_state)
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[project], jobs=[first])
-        second = make_job(project_id=project.id, state=JobState.QUEUED)
-        with pytest.raises(ConflictError):
-            await fx_uow_factory().change(lambda repos: repos.jobs.add(second))
-
-    @pytest.mark.parametrize(FINISHED_STATE_ARG, FINAL_STATES, ids=str)
-    async def test_finished_import_leaves_room_for_the_next_one(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory, finished_state: JobState
-    ) -> None:
-        """Verify a finished import, whatever its final state, does not keep the project from importing again.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        :param finished_state: Final state of the earlier imports.
-        :type finished_state: JobState
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        # Two finished imports share the project, and an active one joins them
-        jobs = [
-            make_job(project_id=project.id, state=finished_state, minutes=1),
-            make_job(project_id=project.id, state=finished_state, minutes=2),
-            make_job(project_id=project.id, state=JobState.QUEUED, minutes=3),
-        ]
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[project], jobs=jobs)
-        active = await fx_uow_factory().read(lambda repos: repos.jobs.list_for_project(project.id, JobState.active()))
-        assert len(active) == 1
-
-    async def test_active_imports_of_different_projects_are_stored(
+    async def test_delete_unimported_keeps_imported_sources_and_other_projects(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the one-import rule is per project, so two books import at the same time.
+        """Verify closing the report of an import deletes the project's rejected and skipped files and nothing else.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
@@ -1967,129 +1826,52 @@ class TestJobRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        first, second = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
-        jobs = [make_job(project_id=project.id, state=JobState.RUNNING) for project in (first, second)]
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[first, second], jobs=jobs)
-
-        def count_active(repos: Repositories) -> list[int]:
-            """Count the active jobs of each project.
-
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :returns: The number of active jobs of the first project and of the second.
-            :rtype: list[int]
-            """
-            return [len(repos.jobs.list_for_project(project.id, JobState.active())) for project in (first, second)]
-
-        assert await fx_uow_factory().read(count_active) == [1, 1]
-
-    async def test_import_request_and_result_read_back(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify the files an import was asked for, and what it did with them, read back as they were stored.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        request = ImportRequest(files=[SourceFile(name='book.pdf', size_bytes=4096, sha256='0' * 64)])
-        result = ImportResult(
-            imported=[SourceId(uuid4())],
-            rejected=[
-                RejectedFile(file_name='again.pdf', reason=RejectionReason.DUPLICATE, detail='Same as book.pdf.')
+        project, other = make_project(owner_id=owner_id), make_project(owner_id=owner_id)
+        imported = make_source(project_id=project.id)
+        foreign = _unimported(other, status=SourceStatus.REJECTED, name=FIRST_PDF)
+        uow = fx_uow_factory()
+        await store_project(
+            uow,
+            project,
+            sources=[
+                imported,
+                _unimported(project, status=SourceStatus.REJECTED, name=FIRST_PDF),
+                _unimported(project, status=SourceStatus.SKIPPED, name=SECOND_PDF),
             ],
-            skipped=['later.pdf'],
         )
-        job = evolve(make_job(project_id=project.id, state=JobState.SUCCEEDED), request=request, result=result)
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[project], jobs=[job])
-        stored = await fx_uow_factory().read(lambda repos: repos.jobs.get(job.id))
-        expect(stored == job)
-        expect(stored.request is not None and list(stored.request.files) == list(request.files))
+        await store_project(uow, other, sources=[foreign])
+
+        await fx_uow_factory().change_book(
+            project.id, lambda repos, _project: repos.sources.delete_unimported(project.id)
+        )
+
+        reader = fx_uow_factory()
+        expect(await reader.read(lambda repos: repos.sources.list_unimported(project.id)) == [])
+        expect(await reader.read(lambda repos: repos.sources.list_for_project(project.id)) == [imported])
+        expect(await reader.read(lambda repos: repos.sources.list_unimported(other.id)) == [foreign])
         assert_expectations()
 
-    async def test_job_without_a_request_or_result_reads_back_without_them(
+    async def test_project_overview_counts_imported_sources_only(
         self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify a job that carries no request or result, such as a queued one, reads back with neither.
+        """Verify the source count of a project does not include its rejected and skipped files.
 
         :param fx_uow_factory: Function opening a new unit of work of the backend under test.
         :type fx_uow_factory: UnitOfWorkFactory
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project(owner_id=await fx_new_owner())
-        job = make_job(project_id=project.id)
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[project], jobs=[job])
-        stored = await fx_uow_factory().read(lambda repos: repos.jobs.get(job.id))
-        assert (stored.request, stored.result) == (None, None)
+        owner_id = await fx_new_owner()
+        project = make_project(owner_id=owner_id)
+        sources = [
+            make_source(project_id=project.id),
+            _unimported(project, status=SourceStatus.REJECTED, name=FIRST_PDF),
+            _unimported(project, status=SourceStatus.SKIPPED, name=SECOND_PDF),
+        ]
+        await store_project(fx_uow_factory(), project, sources=sources)
 
-    async def test_job_of_a_missing_project_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify a job cannot be stored for a project that does not exist, so no job outlives its book.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        """
-        project_id = make_project(owner_id=new_account_id()).id
-        orphan = make_job(project_id=project_id)
-        with pytest.raises(NotFoundError, match=str(project_id)):
-            await fx_uow_factory().change(lambda repos: repos.jobs.add(orphan))
-
-    async def test_guarded_update_replaces_job_in_expected_state(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify a guarded write replaces a job whose state is expected, and the change reads back after commit.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        job = make_job(project_id=project.id, state=JobState.RUNNING)
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[project], jobs=[job])
-        succeeded = evolve(job, state=JobState.SUCCEEDED)
-        replaced = await fx_uow_factory().change(
-            lambda repos: repos.jobs.update_if_state(succeeded, expected=JobState.active())
-        )
-        expect(replaced == succeeded)
-        expect(await fx_uow_factory().read(lambda repos: repos.jobs.get(job.id)) == succeeded)
+        reader = fx_uow_factory()
+        listed = await reader.read(lambda repos: repos.projects.list_for_owner(owner_id, SliceRequest()))
+        expect([item.source_count for item in listed.items] == [1])
+        expect((await reader.read(lambda repos: repos.projects.overview(project))).source_count == 1)
         assert_expectations()
-
-    async def test_guarded_update_judges_state_committed_meanwhile(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify a guarded write judges the state another unit committed after this one read the job, and keeps it.
-
-        This is a cancellation racing a worker: the canceller reads the job running, the worker commits it as
-        succeeded, and the cancellation must then leave the job succeeded.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        job = make_job(project_id=project.id, state=JobState.RUNNING)
-        await _add_projects_and_jobs(fx_uow_factory(), projects=[project], jobs=[job])
-        canceller = fx_uow_factory()
-        seen = await canceller.read(lambda repos: repos.jobs.get(job.id))
-        await fx_uow_factory().change(lambda repos: repos.jobs.update(evolve(job, state=JobState.SUCCEEDED)))
-        cancelled = evolve(seen, state=JobState.CANCELLED)
-        replaced = await canceller.change(
-            lambda repos: repos.jobs.update_if_state(cancelled, expected=JobState.active())
-        )
-        expect(replaced is None)
-        expect((await fx_uow_factory().read(lambda repos: repos.jobs.get(job.id))).state is JobState.SUCCEEDED)
-        assert_expectations()
-
-    async def test_guarded_update_of_missing_job_raises_not_found(self, fx_uow_factory: UnitOfWorkFactory) -> None:
-        """Verify a guarded write of a job that is not stored reports it missing rather than in another state.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        """
-        job = make_job(project_id=make_project(owner_id=new_account_id()).id)
-        with pytest.raises(NotFoundError, match=str(job.id)):
-            await fx_uow_factory().change(lambda repos: repos.jobs.update_if_state(job, expected=JobState.active()))

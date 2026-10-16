@@ -29,6 +29,7 @@ from bookreviver.domain.values import PageStageKey, ProcessorRef, RecipeDraft, S
 from bookreviver.services.book_measure import MEASURE_OUTDATED
 from tests.helpers.book_gate import GatedUnitOfWork
 from tests.helpers.builders import EPOCH, make_page_stage, make_page_version
+from tests.helpers.processing import stored_job
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -163,7 +164,7 @@ def block_data(width: float, height: float, line_height: float | None, dpi: floa
 
 
 async def measure(kit: ProcessingKit, actor: Actor, project: Project) -> Job:
-    """Start the measure of the book and let the worker do it.
+    """Start the measure of the book and let the board run it.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
@@ -171,12 +172,12 @@ async def measure(kit: ProcessingKit, actor: Actor, project: Project) -> Job:
     :type actor: Actor
     :param project: Project to measure.
     :type project: Project
-    :returns: The job as it stands when the worker is done.
+    :returns: The job as it stands when the board is done.
     :rtype: Job
     """
     job = await kit.service().start_measure(actor, project.id)
-    await kit.jobs().measure_book(job.id)
-    return await kit.uow().read(lambda repos: repos.jobs.get(job.id))
+    await kit.work_queue()
+    return stored_job(kit, job.id)
 
 
 async def geometry_record(kit: ProcessingKit, page: Page) -> PageStage:
@@ -260,7 +261,8 @@ class TestMeasureBook:
         job = await measure(fx_cv_kit, actor, project)
         after = await normalize_params(fx_cv_kit, actor, project)
         expect((job.kind, job.state) == (JobKind.MEASURE_BOOK, JobState.SUCCEEDED))
-        expect(job.progress.done == len(BLOCKS))
+        # The reading of the boxes of every page is one task of the job
+        expect((job.progress.done, job.progress.total) == (1, 1))
         expect(after[NormalizeParam.LINE_HEIGHT] == pytest.approx(MEDIAN_LINE_HEIGHT_PX))
         expect({name: after[name] for name in EXPECTED_PAGE} == EXPECTED_PAGE)
         # What the measure does not know is left as the user set it
@@ -460,9 +462,8 @@ class TestMeasureBook:
         await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(300, 600, 30))
         await placed_page(fx_cv_kit, project, recipe, 'a1', block_data(300, 600, None))
         await placed_page(fx_cv_kit, project, recipe, 'a2', {VersionData.SKIPPED: True, VersionData.CONFIDENCE: 0.0})
-        job = await measure(fx_cv_kit, actor, project)
+        await measure(fx_cv_kit, actor, project)
         after = await normalize_params(fx_cv_kit, actor, project)
-        expect(job.progress.done == 2)
         expect(after[NormalizeParam.LINE_HEIGHT] == pytest.approx(MEDIAN_LINE_HEIGHT_PX))
         expect(after[NormalizeParam.PAGE_WIDTH] == EXPECTED_PAGE[NormalizeParam.PAGE_WIDTH])
         assert_expectations()

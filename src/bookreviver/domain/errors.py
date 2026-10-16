@@ -12,6 +12,16 @@ class DomainError(Exception):
     """Base of every error a use case reports to its caller."""
 
 
+class JobCancelledError(BaseException):
+    """The account holder cancelled the running job, which stops at the boundary of its current task.
+
+    The job control raises it between two tasks, and it unwinds the job to the board that runs it. It derives from
+    ``BaseException`` like ``asyncio.CancelledError``, so the handlers that fail a page, ``except Exception`` and
+    ``except DomainError``, let it through: a cancellation is no fault of a page, and a page it passes must never be
+    recorded as failed.
+    """
+
+
 class InvalidIdentifierError(DomainError, ValueError):
     """A book identifier does not follow the rules of its scheme.
 
@@ -29,6 +39,17 @@ class PermissionDeniedError(DomainError):
 
 class ConflictError(DomainError):
     """The operation conflicts with the current state, for example a running import."""
+
+
+class JobFinishedError(ConflictError):
+    """A job that has ended is cancelled, which has no effect left to have.
+
+    The message is a sentence for the person cancelling the job, which the API sends as the detail of the problem.
+    """
+
+    def __init__(self) -> None:
+        """Report the conflict with its fixed sentence."""
+        super().__init__('The job has already finished.')
 
 
 class AnchorInsideMovedPagesError(ConflictError):

@@ -21,6 +21,7 @@ from bookreviver.app.settings import Settings
 from bookreviver.app.tracing import LoopLagProbe, TracingMiddleware
 from bookreviver.domain.errors import DomainError
 from bookreviver.ports.processing import StepExecutor
+from bookreviver.ports.storage import SourceStore
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.pages import PageService
@@ -29,10 +30,37 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
     from typing import Any
 
-    from dishka import Provider
+    from dishka import AsyncContainer, Provider
     from httpx_oauth.oauth2 import BaseOAuth2
 
 logger = logging.getLogger(__name__)
+
+
+async def prepare_start(container: AsyncContainer) -> None:
+    """Do what the application does once before it serves a request, which starts no job.
+
+    The container opens the database on first use, and opening it checks the schema revision, so the database is
+    opened here: a database the migrations were not applied to stops the start instead of failing a request. The pool of
+    processes that run the steps is started too, so every process has built its catalogue before the first request and
+    the first preview does not wait for it.
+
+    The board of jobs is empty when the process starts, and no job begins by itself, so what a job of the process before
+    left half done is left as it is. The upload an import was receiving or running on is removed, since no job can use
+    it any more, and its sources that were stored stay. The stages whose result a replaced version of a processor made
+    are marked stale, so the workspace never shows them as up to date, and the blank leaves among them are given a
+    pending version, which the next ``prepare-pages`` job of the book writes. The two passes run in a request scope of
+    their own, as a job does, and each writes one book at a time, in a ``change_book`` of that book.
+
+    :param container: Application container, which the passes take their services from.
+    :type container: AsyncContainer
+    :raises RuntimeError: When the database is not at the head revision of the migrations.
+    """
+    await container.get(SqlDatabase)
+    await container.get(StepExecutor)
+    await (await container.get(SourceStore)).discard_all_staged()
+    async with container() as request:
+        await (await request.get(OutdatedResults)).mark_stale()
+        await (await request.get(PageService)).remake_outdated_leaves()
 
 
 def create_app(
@@ -58,20 +86,11 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        """Open the database, mark the outdated results, run the application and close the container at shutdown.
+        """Prepare the start, run the application, and close the container at shutdown, which cancels the jobs running.
 
-        The container opens the database on first use, and opening it checks the schema revision, so the database is
-        opened here: a database the migrations were not applied to stops the start instead of failing a request.
-        Then the stages whose result a replaced version of a processor made are marked stale, before the first request,
-        so the workspace never shows them as up to date, and the blank leaves among them are made again by the job that
-        makes leaves, which leaves their page order fresh. It runs in a request scope of its own, as a job does, and
-        each of the two passes writes one book at a time, in a ``change_book`` of that book.
-
-        The container also starts the pool of processes that run the steps here, so every process has built its
-        catalogue before the first request and the first preview does not wait for it.
-
-        While the measurements are on, the probe of the event-loop lag runs in a task group around the application. It
-        is cancelled before the container closes, so its last tick is recorded before the exporter flushes the file.
+        ``prepare_start`` does what is done once before the first request. While the measurements are on, the probe of
+        the event-loop lag runs in a task group around the application. It is cancelled before the container closes, so
+        its last tick is recorded before the exporter flushes the file.
 
         :param _app: The application, required by FastAPI's lifespan signature and unused.
         :type _app: FastAPI
@@ -80,11 +99,7 @@ def create_app(
         :raises RuntimeError: When the database is not at the head revision of the migrations.
         """
         try:
-            await container.get(SqlDatabase)
-            await container.get(StepExecutor)
-            async with container() as request:
-                await (await request.get(OutdatedResults)).mark_stale()
-                await (await request.get(PageService)).remake_outdated_leaves()
+            await prepare_start(container)
             async with AsyncExitStack() as stack:
                 if resolved.tracing.enabled:
                     probe = LoopLagProbe(

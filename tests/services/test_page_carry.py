@@ -24,7 +24,7 @@ from bookreviver.domain.values import CarryRequest, NewPageEdit, StageRun
 from tests.helpers.builders import new_account_id
 from tests.helpers.page_batches import PageValues, carry_over
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
-from tests.helpers.spreads import stage_of
+from tests.helpers.spreads import run_stage, stage_of
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, Project
@@ -228,9 +228,7 @@ class TestShapeSetByHand:
         for page in pages:
             await fx_kit.seed_base_version(page)
         await fx_kit.edits().save(actor, project.id, keys[SOURCE_INDEX], SHAPE, None)
-        job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        await fx_kit.jobs().run_stage(job.id)
-        await fx_kit.work_queue()
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         await carry_over(fx_kit).carry(actor, project.id, shape_of(keys[SOURCE_INDEX]))
         states = [(await stage_of(fx_kit, page, Stage.GEOMETRY)).state for page in pages]
         assert states == [StageState.FRESH, StageState.FRESH, StageState.STALE, StageState.STALE]

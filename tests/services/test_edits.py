@@ -16,7 +16,7 @@ from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import NewPageEdit, PageStepKey, RecipeDraft, StageRun, Step
 from tests.helpers.builders import make_page_stage
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
-from tests.helpers.spreads import stage_of
+from tests.helpers.spreads import run_stage, stage_of
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
@@ -43,9 +43,7 @@ async def prepared(kit: ProcessingKit) -> tuple[Actor, Project, Page]:
     actor, project = await kit.seed_project()
     page, _ = await kit.seed_scan_page(project)
     await kit.seed_base_version(page)
-    job = await kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-    await kit.jobs().run_stage(job.id)
-    await kit.work_queue()
+    await run_stage(kit, actor, project, StageRun(stage=Stage.GEOMETRY))
     return actor, project, page
 
 
@@ -93,9 +91,7 @@ class TestSave:
             :returns: The identifier of the version the stage record names.
             :rtype: str
             """
-            job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-            await fx_kit.jobs().run_stage(job.id)
-            await fx_kit.work_queue()
+            await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
             record = await stage_of(fx_kit, page, Stage.GEOMETRY)
             assert record.head_version_id is not None
             return record.head_version_id

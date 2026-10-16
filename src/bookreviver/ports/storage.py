@@ -102,6 +102,14 @@ class SourceStore(ABC):
         """
 
     @abstractmethod
+    async def discard_all_staged(self) -> None:
+        """Remove the staged upload of every import job of every project, which no job can run any more.
+
+        The application calls it when it starts, because the board of jobs is empty then and the uploads that a
+        restart interrupted would stay for good. The sources already promoted are not touched.
+        """
+
+    @abstractmethod
     def staged_files(self, project_id: ProjectId, job_id: JobId) -> AbstractAsyncContextManager[Mapping[str, Path]]:
         """Give local paths of the files an import job has staged and not promoted, while the context is open.
 

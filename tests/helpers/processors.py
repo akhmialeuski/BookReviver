@@ -1,5 +1,6 @@
 """Fake processors for the tests of the catalogue and of the processing service, which need no image library."""
 
+import threading
 from typing import TYPE_CHECKING, override
 
 from attrs import evolve
@@ -31,12 +32,15 @@ RAN_KEY: str = 'ran'
 FAILING_PARAMETER: str = 'fail'
 STRENGTH_PARAMETER: str = 'strength'
 KNOWN_PARAMETERS: frozenset[str] = frozenset({STRENGTH_PARAMETER, FAILING_PARAMETER})
+# How long a held step waits for its release, so a test that forgets to let it go ends and does not hang
+HOLD_LIMIT_S: float = 10.0
 
 
 class FakeProcessor(Processor):
     """A processor of the geometry stage that copies its input and records that it ran.
 
     It reads the parameter ``strength``, which defaults to 1, and fails with a ``ConflictError`` when ``fail`` is true.
+    A test can hold its steps inside the worker thread that runs them, to look at the board while a task is under way.
     """
 
     spec = ProcessorSpec(
@@ -51,13 +55,40 @@ class FakeProcessor(Processor):
     )
 
     def __init__(self) -> None:
-        """Start with no run counted.
+        """Start with no run counted and no step held.
 
         :ivar runs: Steps run, by the full run.
         :ivar previews: Steps run by a preview.
+        :ivar entered: Set by the thread of a step when it begins held, which is how a test tells that it is inside.
         """
         self.runs = 0
         self.previews = 0
+        self.entered = threading.Event()
+        self._release: threading.Event | None = None
+        self._passing = 0
+
+    def hold(self, *, after: int = 0) -> threading.Event:
+        """Make the steps that begin from now on wait inside their thread until the returned event is set.
+
+        :param after: How many steps pass before the first one is held.
+        :type after: int
+        :returns: The event the steps wait for, which the test sets to let them go.
+        :rtype: threading.Event
+        """
+        self.entered.clear()
+        self._passing = after
+        self._release = threading.Event()
+        return self._release
+
+    def _begin(self) -> None:
+        """Let a step pass, or tell that it is held and wait for the release of the test."""
+        if self._release is None:
+            return
+        if self._passing > 0:
+            self._passing -= 1
+            return
+        self.entered.set()
+        self._release.wait(HOLD_LIMIT_S)
 
     @override
     def validate_params(self, raw: MetadataMap) -> MetadataMap:
@@ -84,6 +115,7 @@ class FakeProcessor(Processor):
         :rtype: StepResult
         :raises ConflictError: If the parameter ``fail`` is true.
         """
+        self._begin()
         self.runs += 1
         return self._result(step_input)
 
@@ -97,6 +129,7 @@ class FakeProcessor(Processor):
         :rtype: StepResult
         :raises ConflictError: If the parameter ``fail`` is true.
         """
+        self._begin()
         self.previews += 1
         return self._result(step_input)
 

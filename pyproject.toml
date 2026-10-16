@@ -30,7 +30,6 @@ dependencies = [
     "pyvips[binary]==3.2.0",
     "slowapi==0.1.10",
     "sqlalchemy==2.1.4",
-    "taskiq==0.13.0",
     # Dev and test dependencies
     "delayed-assert==0.4.2",
     "httpx==0.28.1",
@@ -144,7 +143,6 @@ forbidden_modules = [
     "pyvips",
     "sqlalchemy",
     "starlette",
-    "taskiq",
 ]
 
 # Type-checker configuration

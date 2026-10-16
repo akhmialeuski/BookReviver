@@ -2,20 +2,23 @@
 
 Uploading files, which creates sources, is the import route. A source is deleted here, with its files and its scans,
 and the pages of the book stay with their own images. That is also how a user gets out of an import that keeps failing
-on one scan: the job result names the failed scan, and the source is deleted by hand.
+on one scan: the source is deleted by hand.
+
+Every file of an upload is a source with a status, and the rejected and skipped ones are the report of the import. The
+list shows the imported sources unless it is asked for the others, and the report is closed by deleting them all.
 """
 
 from functools import partial
 from typing import Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
-from fastapi import APIRouter, Depends, Path, Request, status
-from fastapi_pagination import Page, Params
+from fastapi import APIRouter, Depends, Path, Query, Request, status
+from fastapi_pagination import Page
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.pages import PageAnchorBody
-from bookreviver.api.schemas.sources import ScanQuery, ScanSchema, SourceSchema
+from bookreviver.api.schemas.sources import ScanQuery, ScanSchema, SourceQuery, SourceSchema
 from bookreviver.domain.entities import Scan, Source
 from bookreviver.domain.ids import ProjectId, SourceId
 from bookreviver.services.pages import PageService
@@ -31,25 +34,49 @@ router = APIRouter(prefix='/projects', tags=['sources'], route_class=DishkaRoute
 async def list_sources(
     project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
     actor: ActorDep,
-    params: Annotated[Params, Depends()],
+    query: Annotated[SourceQuery, Query()],
     sources: FromDishka[SourceService],
 ) -> Page[SourceSchema]:
-    """List the sources of a project in the order they were imported.
+    """List the sources of a project in the order they were recorded, the imported ones unless ``status`` says more.
+
+    The rejected and skipped files are the report of an import: the files no check let through, with their reasons, and
+    the files a cancelled import never reached.
 
     \N{FORM FEED}
     :param project_id: Identifier of the project.
     :type project_id: ProjectId
     :param actor: The signed-in account.
     :type actor: Actor
-    :param params: Page number and size from the query.
-    :type params: Params
+    :param query: Page number and size, and the statuses of the files to list.
+    :type query: SourceQuery
     :param sources: Source service of the request.
     :type sources: SourceService
-    :returns: One page of the project's sources.
+    :returns: One page of the project's files in the statuses.
     :rtype: Page[SourceSchema]
     """
-    pager = Pager[Source, SourceSchema](params, SourceSchema.model_validate)
-    return pager.page(await sources.list(actor, project_id, pager.request))
+    pager = Pager[Source, SourceSchema](query, SourceSchema.model_validate)
+    return pager.page(await sources.list(actor, project_id, pager.request, statuses=query.status))
+
+
+@router.delete('/{project_id}/sources/unimported', status_code=status.HTTP_204_NO_CONTENT)
+async def delete_unimported_sources(
+    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    actor: ActorDep,
+    sources: FromDishka[SourceService],
+) -> None:
+    """Delete the rejected and skipped files of a project, which is closing the report of an import.
+
+    The imported sources stay. The project answers 409 while it imports.
+
+    \N{FORM FEED}
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param sources: Source service of the request.
+    :type sources: SourceService
+    """
+    await sources.delete_unimported(actor, project_id)
 
 
 @router.get('/{project_id}/sources/{source_id}')

@@ -24,16 +24,14 @@ from bookreviver.domain.values import (
     StepPreview,
 )
 from tests.helpers.builders import make_page_stage
-from tests.helpers.fake_processing import RefusingJobQueue
-from tests.helpers.processing import ProcessingKit
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Page, PageStage, Project, Recipe
     from bookreviver.ports.persistence import Repositories
+    from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 
@@ -374,7 +372,7 @@ class TestSaveRecipe:
         await fx_kit.service().save_recipe(actor, project.id, RecipeKey(Stage.GEOMETRY, recipe.id), draft)
         expect(await geometry_state(fx_kit, page) is StageState.STALE)
         expect(any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
-        expect(fx_kit.recording.enqueued == [])
+        expect(fx_kit.board.put_jobs == [])
         assert_expectations()
 
     async def test_only_the_pages_of_the_edited_recipe_are_marked_stale(self, fx_kit: ProcessingKit) -> None:
@@ -442,8 +440,8 @@ class TestSaveRecipe:
 class TestStartRun:
     """Tests for ProcessingService.start_run."""
 
-    async def test_job_is_recorded_with_its_parameters_and_queued(self, fx_kit: ProcessingKit) -> None:
-        """Verify a run is a stored job of kind run-stage that a worker reads its parameters from.
+    async def test_job_is_put_on_the_board_with_its_parameters(self, fx_kit: ProcessingKit) -> None:
+        """Verify a run is a job of kind run-stage that the board holds, queued, with the parameters of the run.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -452,10 +450,10 @@ class TestStartRun:
         page, _ = await fx_kit.seed_scan_page(project)
         run = StageRun(stage=Stage.GEOMETRY, page_ids=(page.id,))
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, run)
-        stored = await fx_kit.uow().read(lambda repos: repos.jobs.get(job.id))
-        expect((stored.kind, stored.state) == (JobKind.RUN_STAGE, JobState.QUEUED))
-        expect(StageRun.from_map(stored.params) == run)
-        expect(fx_kit.recording.enqueued == [job])
+        held = fx_kit.board.get(job.id)
+        expect((held.kind, held.state) == (JobKind.RUN_STAGE, JobState.QUEUED))
+        expect(StageRun.from_map(held.params) == run)
+        expect(fx_kit.board.put_jobs == [job])
         assert_expectations()
 
     async def test_second_run_while_one_is_active_is_a_conflict(self, fx_kit: ProcessingKit) -> None:
@@ -487,7 +485,7 @@ class TestStartRun:
             await fx_kit.service().start_collection(actor, project.id)
 
     async def test_run_waits_while_a_collection_is_active(self, fx_kit: ProcessingKit) -> None:
-        """Store a run asked for during a collection as queued without handing it to a worker, which starts it later.
+        """Queue a run asked for during a collection behind it, so the board starts it when the collection has ended.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -496,7 +494,7 @@ class TestStartRun:
         collection = await fx_kit.service().start_collection(actor, project.id)
         run = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         expect(run.state is JobState.QUEUED)
-        expect(fx_kit.recording.enqueued == [collection])
+        expect(fx_kit.board.put_jobs == [collection, run])
         assert_expectations()
 
     async def test_collection_that_a_run_queues_is_left_out_while_another_job_processes_the_project(
@@ -511,7 +509,7 @@ class TestStartRun:
         await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         starter = fx_kit.parts(fx_kit.uow()).starter
         expect(await starter.enqueue_collection(project.id) is None)
-        expect([job.kind for job in fx_kit.recording.enqueued] == [JobKind.RUN_STAGE])
+        expect([job.kind for job in fx_kit.board.put_jobs] == [JobKind.RUN_STAGE])
         assert_expectations()
 
     async def test_page_of_another_project_is_not_found(self, fx_kit: ProcessingKit) -> None:
@@ -524,17 +522,6 @@ class TestStartRun:
         run = StageRun(stage=Stage.GEOMETRY, page_ids=(PageId(project.id),))
         with pytest.raises(NotFoundError):
             await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, run)
-
-    async def test_job_the_queue_refuses_is_stored_as_failed(self, fx_asset_store: LocalAssetStore) -> None:
-        """Verify a queue that fails leaves the job failed and announced, and the request still answers.
-
-        :param fx_asset_store: Local asset store over the test's storage root.
-        :type fx_asset_store: LocalAssetStore
-        """
-        kit = ProcessingKit(fx_asset_store, queue=RefusingJobQueue())
-        actor, project = await kit.seed_project()
-        job = await kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        assert (await kit.uow().read(lambda repos: repos.jobs.get(job.id))).state is JobState.FAILED
 
 
 class ReadGate:

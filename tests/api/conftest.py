@@ -6,7 +6,9 @@ import pytest
 from dishka import AsyncContainer
 
 from bookreviver.adapters.persistence.memory import InMemoryDatabase
+from bookreviver.ports.runtime import EventStream, JobBoard
 from bookreviver.ports.storage import AssetStore, SourceStore
+from tests.helpers.board_idle import JobsIdle
 from tests.helpers.storage import BookFiles
 
 if TYPE_CHECKING:
@@ -29,6 +31,18 @@ def fx_container(fx_app: FastAPI) -> AsyncContainer:
     container = fx_app.state.dishka_container
     assert isinstance(container, AsyncContainer)
     return container
+
+
+@pytest.fixture
+async def fx_idle(fx_container: AsyncContainer) -> JobsIdle:
+    """Return the wait that a test calls to let the jobs of a book on the application's job board finish.
+
+    :param fx_container: Container of the running application.
+    :type fx_container: AsyncContainer
+    :returns: The wait, called with the identifier of the book.
+    :rtype: JobsIdle
+    """
+    return JobsIdle(await fx_container.get(JobBoard), await fx_container.get(EventStream))
 
 
 @pytest.fixture

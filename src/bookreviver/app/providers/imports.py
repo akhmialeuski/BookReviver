@@ -1,29 +1,28 @@
-"""Provider of the import feature: the Taskiq broker, the job queue, and the job and import services.
+"""Provider of the import feature: the job board, and the job and import services.
 
-The broker is an application-scoped generator, so it is started when first needed and stopped when the container
-closes, after the jobs running in this process have finished. Starting it in the application's lifespan instead would
-split its assembly between two places, while the provider already knows the container the tasks resolve their
-services from.
+The board is an application-scoped generator, so it is built when first needed and its tasks are cancelled when the
+container closes. It is built with the runner of ``app/jobs.py``, which knows the container the jobs resolve their
+services from, so the provider is the one place where the board and its runner meet.
 
 The import service is built once per request or job from three parts that keep no state of their own and so live as
 long as the application: the stores, the imaging ports, and the publisher, clock, order keys and limits. The limits
 come from the settings, and the IIIF root from the mount point of the IIIF routes, which only ``api`` knows. The
-import task in ``app/worker.py`` and the upload route resolve the same service.
+import entry in ``app/jobs.py`` and the upload route resolve the same service.
 """
 
 from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack
 
 from dishka import AsyncContainer, Provider, Scope, provide
-from taskiq import AsyncBroker
 
-from bookreviver.adapters.jobs.taskiq_queue import TaskiqJobQueue
+from bookreviver.adapters.jobs.board import InMemoryJobBoard
 from bookreviver.api.routing import IIIF_ROOT
+from bookreviver.app.jobs import job_runner
 from bookreviver.app.settings import Settings
-from bookreviver.app.worker import create_broker, stop_broker
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import UnitOfWork
-from bookreviver.ports.runtime import Clock, EventPublisher, EventStream, JobQueue
+from bookreviver.ports.runtime import Clock, EventPublisher, EventStream, JobBoard
 from bookreviver.ports.storage import AssetStore, SourceStore
 from bookreviver.services.imports import (
     ImportImaging,
@@ -38,54 +37,55 @@ from bookreviver.services.steps import StepRunner
 
 
 class ImportsProvider(Provider):
-    """Builds the broker and the job queue once per application, and the import and job services per request or job."""
+    """Builds the job board once per application, and the import and job services per request or job."""
 
     @provide(scope=Scope.APP)
-    async def broker(self, settings: Settings, container: AsyncContainer) -> AsyncIterator[AsyncBroker]:
-        """Start the broker the settings select, and stop it when the application closes the container.
+    async def job_board(
+        self, settings: Settings, container: AsyncContainer, publisher: EventPublisher, clock: Clock
+    ) -> AsyncIterator[JobBoard]:
+        """Open the job board, and close it, which cancels the jobs running, when the application closes the container.
 
-        :param settings: Application settings, of which ``job_broker`` is read.
+        :param settings: Application settings, of which ``jobs.kept_ended`` is read.
         :type settings: Settings
-        :param container: Application container, which opens a request scope for every task.
+        :param container: Application container, which opens a request scope for every job.
         :type container: AsyncContainer
-        :returns: Iterator yielding the started broker and stopping it afterwards.
-        :rtype: AsyncIterator[AsyncBroker]
+        :param publisher: Publisher of the application's event bus.
+        :type publisher: EventPublisher
+        :param clock: Clock of the application.
+        :type clock: Clock
+        :returns: Iterator yielding the open board and closing it afterwards.
+        :rtype: AsyncIterator[JobBoard]
         """
-        broker = create_broker(settings.job_broker, container)
-        await broker.startup()
-        # try/finally rather than a context manager around the yield, because dishka drives this generator
+        # An exit stack rather than `async with` around the yield: dishka drives this generator (ASYNC119)
+        stack = AsyncExitStack()
         try:
-            yield broker
+            yield await stack.enter_async_context(
+                InMemoryJobBoard(
+                    runner=job_runner(container),
+                    publisher=publisher,
+                    clock=clock,
+                    kept_ended=settings.jobs.kept_ended,
+                )
+            )
         finally:
-            await stop_broker(broker)
-
-    @provide(scope=Scope.APP)
-    def job_queue(self, broker: AsyncBroker) -> JobQueue:
-        """Build the queue that hands jobs to the broker.
-
-        :param broker: The started broker.
-        :type broker: AsyncBroker
-        :returns: Queue kicking the task registered under each job's kind.
-        :rtype: JobQueue
-        """
-        return TaskiqJobQueue(broker)
+            await stack.aclose()
 
     @provide(scope=Scope.REQUEST)
-    def job_service(self, uow: UnitOfWork, publisher: EventPublisher, stream: EventStream, clock: Clock) -> JobService:
+    def job_service(self, uow: UnitOfWork, board: JobBoard, stream: EventStream, sources: SourceStore) -> JobService:
         """Build the job service over the unit of work of the request or job.
 
         :param uow: Unit of work of the current request or job.
         :type uow: UnitOfWork
-        :param publisher: Publisher of the application's event bus.
-        :type publisher: EventPublisher
+        :param board: Board holding the jobs of every book.
+        :type board: JobBoard
         :param stream: Stream of the application's event bus.
         :type stream: EventStream
-        :param clock: Clock of the application.
-        :type clock: Clock
+        :param sources: Source store of the application.
+        :type sources: SourceStore
         :returns: The job service.
         :rtype: JobService
         """
-        return JobService(uow=uow, publisher=publisher, stream=stream, clock=clock)
+        return JobService(uow=uow, board=board, stream=stream, sources=sources)
 
     @provide(scope=Scope.APP)
     def import_limits(self, settings: Settings) -> ImportLimits:
@@ -141,7 +141,7 @@ class ImportsProvider(Provider):
     ) -> ImportRuntime:
         """Gather what an import reports through and is bounded by.
 
-        :param processing: The publisher, the clock and the queue of the application.
+        :param processing: The publisher, the clock and the job board of the application.
         :type processing: ProcessingRuntime
         :param order_keys: Order keys of the application.
         :type order_keys: OrderKeys
@@ -155,7 +155,7 @@ class ImportsProvider(Provider):
             clock=processing.clock,
             order_keys=order_keys,
             limits=limits,
-            queue=processing.queue,
+            board=processing.board,
         )
 
     @provide(scope=Scope.REQUEST)

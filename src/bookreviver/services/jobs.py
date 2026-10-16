@@ -1,12 +1,12 @@
 """Background jobs as the account holder sees them: their state, cancellation and the live events of a project.
 
 A job belongs to a project, so every use case checks that the acting account owns the project. A job or a project of
-another account is reported as missing rather than forbidden, so no account learns what another one has.
+another account is reported as missing rather than forbidden, so no account learns what another one has. The jobs
+live in the memory of the API process, on the job board, so a job the process does not hold, such as one that ended
+before the process started, is missing too.
 
-Cancelling only records the state. A running job reads its own row before every step and stops once it finds itself
-cancelled, so no worker has to be interrupted. The state is written by ``JobRepository.update_if_state`` rather than
-by a read and a replacement, because a worker may finish the job between the two: the write then finds the job
-finished and changes nothing, and the cancellation is refused like any cancellation of a finished job.
+Cancelling asks the board, which drops a queued job and stops a running one at the boundary of its current task, so no
+worker has to be interrupted. A job that has ended cannot be cancelled.
 
 The event stream is a subscription: it keeps every event published from the moment it is entered, even before the
 first read, and replays nothing from before. A client therefore reads the job after its stream has opened, and again
@@ -15,99 +15,42 @@ after every reconnect, and the stream carries every change from there on.
 
 from typing import TYPE_CHECKING
 
-from attrs import evolve
-
-from bookreviver.domain.enums import JobState
-from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.events import JobChanged
+from bookreviver.domain.enums import JobKind
 from bookreviver.domain.values import Slice
 from bookreviver.services.projects import owned_project
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import AsyncIterator
     from contextlib import AbstractAsyncContextManager
 
     from bookreviver.domain.entities import Actor, Job
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import JobId, ProjectId
     from bookreviver.domain.values import SliceRequest
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
-    from bookreviver.ports.runtime import Clock, EventPublisher, EventStream
-
-JOB_FINISHED: str = 'The job has already finished.'
-
-
-class JobCancellation:
-    """Moves an active job to the cancelled state and announces it, for whoever may take a job off the project."""
-
-    def __init__(self, *, uow: UnitOfWork, publisher: EventPublisher, clock: Clock) -> None:
-        """Cancel jobs through the unit of work.
-
-        :param uow: Unit of work, whose ``change`` holds the cancellation.
-        :type uow: UnitOfWork
-        :param publisher: Publisher announcing a cancelled job to the project's subscribers.
-        :type publisher: EventPublisher
-        :param clock: Clock stamping when a cancelled job finished.
-        :type clock: Clock
-        """
-        self._uow = uow
-        self._publisher = publisher
-        self._clock = clock
-
-    async def cancel(self, job: Job) -> Job | None:
-        """Cancel a job that is queued or running in a ``change`` of its own, and announce it once it committed.
-
-        Opens its own transaction, so it is called outside the work of any.
-
-        :param job: The job as read.
-        :type job: Job
-        :returns: The job in the cancelled state, with the time it finished, or None when it had finished meanwhile, in
-                  which case nothing is changed or announced.
-        :rtype: Job | None
-        """
-        cancelled = await self._uow.change(lambda repos: self.mark_cancelled(repos, job))
-        if cancelled is not None:
-            await self._publisher.publish(JobChanged(project_id=cancelled.project_id, job=cancelled))
-        return cancelled
-
-    def mark_cancelled(self, repos: Repositories, job: Job) -> Job | None:
-        """Write the cancelled state of a job that is queued or running, and announce nothing.
-
-        Writes through the repositories of its caller and opens no transaction, so it is called from the work of a
-        ``change`` or ``change_book``, and the caller announces the job after the work committed.
-
-        :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
-        :param job: The job as read.
-        :type job: Job
-        :returns: The job in the cancelled state, with the time it finished, or None when it had finished meanwhile, in
-                  which case nothing is changed.
-        :rtype: Job | None
-        """
-        return repos.jobs.update_if_state(
-            evolve(job, state=JobState.CANCELLED, finished_at=self._clock.now()), expected=JobState.active()
-        )
+    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.runtime import EventStream, JobBoard
+    from bookreviver.ports.storage import SourceStore
 
 
 class JobService:
     """Reads and cancels jobs, and opens the event stream of a project, for the account that owns the project."""
 
-    def __init__(self, *, uow: UnitOfWork, publisher: EventPublisher, stream: EventStream, clock: Clock) -> None:
+    def __init__(self, *, uow: UnitOfWork, board: JobBoard, stream: EventStream, sources: SourceStore) -> None:
         """Build the service over the ports of one request.
 
-        :param uow: Unit of work of the current request.
+        :param uow: Unit of work of the current request, which checks who owns a project.
         :type uow: UnitOfWork
-        :param publisher: Publisher announcing a cancelled job to the project's subscribers.
-        :type publisher: EventPublisher
+        :param board: Board holding the jobs of every book.
+        :type board: JobBoard
         :param stream: Source of the project's events.
         :type stream: EventStream
-        :param clock: Clock stamping when a cancelled job finished.
-        :type clock: Clock
+        :param sources: Store of the uploads, which holds the files of an import that is cancelled before it begins.
+        :type sources: SourceStore
         """
         self._uow = uow
-        self._publisher = publisher
+        self._board = board
         self._stream = stream
-        self._clock = clock
+        self._sources = sources
 
     async def get(self, actor: Actor, job_id: JobId) -> Job:
         """Return a job of one of the actor's projects.
@@ -116,25 +59,13 @@ class JobService:
         :type actor: Actor
         :param job_id: Identifier of the job.
         :type job_id: JobId
-        :returns: The job as stored.
+        :returns: The job as the board holds it.
         :rtype: Job
-        :raises NotFoundError: If the job does not exist or belongs to another account's project.
+        :raises NotFoundError: If the board does not hold the job, or the job belongs to another account's project.
         """
-
-        def work(repos: Repositories) -> Job:
-            """Read the job and check that its project is the actor's.
-
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :returns: The job as stored.
-            :rtype: Job
-            :raises NotFoundError: If the job does not exist or belongs to another account's project.
-            """
-            job = repos.jobs.get(job_id)
-            owned_project(repos.projects, actor, job.project_id)
-            return job
-
-        return await self._uow.read(work)
+        job = self._board.get(job_id)
+        await self._uow.read(lambda repos: owned_project(repos.projects, actor, job.project_id))
+        return job
 
     async def list_for_project(
         self, actor: Actor, project_id: ProjectId, request: SliceRequest, *, active: bool
@@ -153,24 +84,15 @@ class JobService:
         :rtype: Slice[Job]
         :raises NotFoundError: If the project does not exist or belongs to another account.
         """
-
-        def work(repos: Repositories) -> Sequence[Job]:
-            """Check that the project is the actor's and read its jobs.
-
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :returns: The jobs of the project in the wanted states, the newest first.
-            :rtype: Sequence[Job]
-            :raises NotFoundError: If the project does not exist or belongs to another account.
-            """
-            owned_project(repos.projects, actor, project_id)
-            return repos.jobs.list_for_project(project_id, JobState.active() if active else set(JobState))
-
-        jobs = await self._uow.read(work)
+        await self._uow.read(lambda repos: owned_project(repos.projects, actor, project_id))
+        jobs = self._board.jobs(project_id, active=active)
         return Slice(items=jobs[request.offset : request.offset + request.limit], total=len(jobs))
 
     async def cancel(self, actor: Actor, job_id: JobId) -> Job:
-        """Cancel a queued or running job, and announce it; a running job stops before its next step.
+        """Cancel a queued or running job; a running job stops at the boundary of its current task.
+
+        An import that is cancelled before it began never runs, so nothing removes its upload but this use case. One
+        that had begun removes its own upload when its run ends.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -178,13 +100,13 @@ class JobService:
         :type job_id: JobId
         :returns: The job in the cancelled state, with the time it finished.
         :rtype: Job
-        :raises NotFoundError: If the job does not exist or belongs to another account's project.
-        :raises ConflictError: If the job has already finished, or finished while it was being cancelled.
+        :raises NotFoundError: If the board does not hold the job, or the job belongs to another account's project.
+        :raises JobFinishedError: If the job has already finished, or finished while it was being cancelled.
         """
-        job = await self.get(actor, job_id)
-        cancellation = JobCancellation(uow=self._uow, publisher=self._publisher, clock=self._clock)
-        if (cancelled := await cancellation.cancel(job)) is None:
-            raise ConflictError(JOB_FINISHED)
+        await self.get(actor, job_id)
+        cancelled = await self._board.cancel(job_id)
+        if cancelled.kind is JobKind.IMPORT_SOURCE and cancelled.started_at is None:
+            await self._sources.discard(cancelled.project_id, cancelled.id)
         return cancelled
 
     async def events(

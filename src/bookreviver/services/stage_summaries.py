@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from attrs import evolve
 
-from bookreviver.domain.enums import JobState, PageStageStatus, Stage
+from bookreviver.domain.enums import PageStageStatus, Stage
 from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSummary
 from bookreviver.domain.values import Slice
 from bookreviver.services.stage_inputs import StageInputs
@@ -33,18 +33,23 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.persistence import Repositories
     from bookreviver.ports.processing import ProcessorCatalog
+    from bookreviver.ports.runtime import JobBoard
 
 
 class StageSummaries:
     """Sums the stages of books over their pages, from the records of the page stages."""
 
-    def __init__(self, *, catalogue: ProcessorCatalog) -> None:
+    def __init__(self, *, catalogue: ProcessorCatalog, board: JobBoard) -> None:
         """Work over the ports of one request.
 
         :param catalogue: The processors the application can run, which say which stages are available.
         :type catalogue: ProcessorCatalog
+        :param board: Board holding the jobs of every book, which tells the stages that are running. Its reads are safe
+                      from the worker thread of a read transaction, which is where this class is called.
+        :type board: JobBoard
         """
         self._catalogue = catalogue
+        self._board = board
 
     def of_book(self, repos: Repositories, overview: ProjectOverview) -> list[StageSummary]:
         """Sum every stage of a book, in the order of the pipeline.
@@ -185,7 +190,7 @@ class StageSummaries:
         for tally in repos.page_stages.tally(project_ids):
             tallies[tally.project_id][tally.stage] = tally
         running: defaultdict[ProjectId, set[Stage]] = defaultdict(set)
-        for job in repos.jobs.list_for_projects(project_ids, JobState.active()):
+        for job in self._board.jobs_of(project_ids, active=True):
             if job.stage is not None:
                 running[job.project_id].add(job.stage)
         return [

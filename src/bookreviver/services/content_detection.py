@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Job, Page, PageStage, PageVersion, Project
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.ports.persistence import Repositories, UnitOfWork
-    from bookreviver.services.job_runs import JobTracker
+    from bookreviver.ports.runtime import JobControl
     from bookreviver.services.stage_records import StageRecords
     from bookreviver.services.stage_runs import StageRuntime
 
@@ -60,7 +60,7 @@ class ContentDetector:
     # How many pages are read from the database at once
     WINDOW: ClassVar[int] = 500
 
-    def __init__(self, *, uow: UnitOfWork, runtime: StageRuntime, records: StageRecords, tracker: JobTracker) -> None:
+    def __init__(self, *, uow: UnitOfWork, runtime: StageRuntime, records: StageRecords) -> None:
         """Work over the ports of one job.
 
         :param uow: Unit of work whose ``change_book`` holds the write of each page.
@@ -69,8 +69,6 @@ class ContentDetector:
         :type runtime: StageRuntime
         :param records: Writer of the stage records, which marks the stages of a page stale.
         :type records: StageRecords
-        :param tracker: The life of the job on the worker, which records its progress and learns of its cancellation.
-        :type tracker: JobTracker
         """
         self._uow = uow
         self._runner = runtime.runner
@@ -78,47 +76,70 @@ class ContentDetector:
         self._publisher = runtime.publisher
         self._clock = runtime.clock
         self._records = records
-        self._tracker = tracker
 
-    async def run(self, job: Job) -> tuple[int, int] | None:
-        """Detect the content of the pages of a running job, recording the progress as it goes.
+    async def run(self, job: Job, control: JobControl) -> tuple[int, int]:
+        """Detect the content of the pages of a running job, a task for each page.
+
+        The pages written are announced when the job stops too, whether it ran to the end or was cancelled, since what
+        a page was given stays.
 
         :param job: The running job.
         :type job: Job
-        :returns: How many pages were read and how many could not be, none of them when the processor is not installed,
-                  or None when the job was cancelled.
-        :rtype: tuple[int, int] | None
+        :param control: What the job reports through, and learns of its cancellation from, after each page.
+        :type control: JobControl
+        :returns: How many pages were read and how many could not be, none of them when the processor is not installed.
+        :rtype: tuple[int, int]
         :raises InvalidParametersError: If the parameters of the job are not those of a ``detect-content`` job.
         :raises NotFoundError: If the job names a page that is gone.
+        :raises JobCancelledError: If the job was cancelled, which stops it between two pages.
         """
         detection = ContentDetection.from_map(job.params)
         # A machine without OpenCV offers no such processor, and then the kind of a page is all that says what it shows
         if all(spec.key != PROBE_KEY for spec in self._catalogue.specs()):
             return 0, 0
         pages = await self._pages(job.project_id, detection)
+        control.plan(len(pages))
         changed: list[PageId] = []
         read = failed = 0
-        for window in batched(pages, self.WINDOW, strict=False):
-            bases = await self._bases(window)
-            for page in window:
-                if (saved := await self._tracker.advance(job, done=read + failed, total=len(pages))) is None:
-                    return None
-                job = saved
-                if (base := bases.get(page.id)) is None:
-                    continue
-                try:
-                    content = await self._probe(job.project_id, base)
-                except Exception:
-                    logger.exception('The content of page %s could not be detected', page.id)
-                    failed += 1
-                    continue
-                read += 1
-                if await self._write(job.project_id, page.id, content, forced=detection.page_ids is not None):
-                    changed.append(page.id)
-        if changed:
-            event = PagesChanged(project_id=job.project_id, page_ids=changed, change=PageChange.EDITED)
-            await self._publisher.publish(event)
+        try:
+            for window in batched(pages, self.WINDOW, strict=False):
+                bases = await self._bases(window)
+                for page in window:
+                    if (base := bases.get(page.id)) is not None:
+                        outcome = await self._detect(
+                            job.project_id, page.id, base, forced=detection.page_ids is not None
+                        )
+                        read += outcome is not None
+                        failed += outcome is None
+                        if outcome:
+                            changed.append(page.id)
+                    await control.task_done()
+        finally:
+            if changed:
+                event = PagesChanged(project_id=job.project_id, page_ids=changed, change=PageChange.EDITED)
+                await self._publisher.publish(event)
         return read, failed
+
+    async def _detect(self, project_id: ProjectId, page_id: PageId, base: PageVersion, *, forced: bool) -> bool | None:
+        """Read what the base image of one page shows and write it into the page.
+
+        :param project_id: Project owning the page.
+        :type project_id: ProjectId
+        :param page_id: The page.
+        :type page_id: PageId
+        :param base: The ready base version of the page.
+        :type base: PageVersion
+        :param forced: Whether the user asked for this page by name, which gives a page set by hand back to detection.
+        :type forced: bool
+        :returns: None when the page could not be read, which is logged, else whether the page was written.
+        :rtype: bool | None
+        """
+        try:
+            content = await self._probe(project_id, base)
+        except Exception:
+            logger.exception('The content of page %s could not be detected', page_id)
+            return None
+        return await self._write(project_id, page_id, content, forced=forced)
 
     async def _pages(self, project_id: ProjectId, detection: ContentDetection) -> Sequence[Page]:
         """Choose the pages a job goes over.

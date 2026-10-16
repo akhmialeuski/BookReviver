@@ -1,1 +1,1 @@
-"""Job queue adapters."""
+"""Job board adapters."""

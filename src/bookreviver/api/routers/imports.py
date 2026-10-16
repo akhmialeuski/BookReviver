@@ -1,8 +1,8 @@
 """Upload of the files of a book and start of their import.
 
 ``POST /projects/{project_id}/sources`` takes any number of files, whether chosen one by one or as a whole directory,
-records an import job and answers 202 with it at once. The files are imported in the background, and the job, its
-result and the events of the project tell the browser how it goes.
+puts an import job on the board and answers 202 with it at once. The files are imported in the background, and the job
+and the events of the project tell the browser how it goes.
 
 FastAPI parses a declared body before it runs any dependency, so a route with a ``File()`` parameter would spool the
 upload to disk before the caller is known to be signed in, to own the project or to be allowed another import. The
@@ -89,8 +89,9 @@ async def upload_sources(
 ) -> JobSchema:
     """Receive the files of an upload and import them in the background, each one as a source of the project.
 
-    The response is the queued job. Its result, once it has finished, lists the files that were rejected and why.
-    A project imports one upload at a time.
+    The response is the queued job. Every file of the upload becomes a source of the project, and the ones the import
+    rejected, with the reason, or skipped when it was cancelled, are listed by the sources of the project until the
+    reader closes the report. A project imports one upload at a time.
 
     \N{FORM FEED}
     :param project_id: Identifier of the project.

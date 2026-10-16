@@ -13,7 +13,7 @@ are one batch, so one undo gives the work back on every page.
 
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import ChangeSource, PageOrigin, RunMode
+from bookreviver.domain.enums import ChangeSource, PageOrigin, RunMode, StageState
 from bookreviver.domain.values import RunImpact
 from bookreviver.services.page_batches import PageBatch
 from bookreviver.services.projects import book_pages, owned_project
@@ -21,7 +21,7 @@ from bookreviver.services.projects import book_pages, owned_project
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bookreviver.domain.entities import Actor, Page, PageStepChange, PageStepState, Project, Recipe
+    from bookreviver.domain.entities import Actor, Page, PageStage, PageStepChange, PageStepState, Project, Recipe
     from bookreviver.domain.ids import PageId, ProjectId, StepId
     from bookreviver.domain.values import StageRun
     from bookreviver.ports.persistence import Repositories, UnitOfWork
@@ -58,9 +58,15 @@ class RunPlan:
         self._by_page: dict[PageId, Recipe] | None = None
 
     async def pages(self) -> Sequence[Page]:
-        """Choose the pages a run goes over: the ones it names, or every page of the book that has an image.
+        """Choose the pages a run goes over: the ones it names, or every page of the book that needs the stage run.
 
-        A run that leaves out the pages with work of their own goes over the others.
+        A run that leaves out the pages with work of their own goes over the others. A run that names no pages, which
+        is a run of the whole book, also leaves out the pages whose result of the stage is fresh already, made by the
+        recipe the run picks for the page and through the step the run stops at. That is what lets a new run after an
+        interrupted one, or after a restart of the process, go over only the pages without a fresh result. A run that
+        names its pages goes over all of them, and the versions already made answer the steps they cover. A run that
+        takes the work of the pages away also goes over every page, since the result of a page that had work of its own
+        is not the one the recipe gives.
 
         :returns: The pages in book order, without the placeholders, which have no image.
         :rtype: Sequence[Page]
@@ -71,6 +77,8 @@ class RunPlan:
             if self._run.mode is RunMode.SKIP_OWN:
                 own = self._own_ids(await self._states())
                 found = [page for page in found if page.id not in own]
+            if self._run.page_ids is None and self._run.mode is not RunMode.DROP_OWN:
+                found = await self._without_fresh(found)
             self._pages = found
         return self._pages
 
@@ -157,6 +165,54 @@ class RunPlan:
             found = await self._uow.read(work)
             self._named_pages = [page for page in found if page.origin is not PageOrigin.PLACEHOLDER]
         return self._named_pages
+
+    async def _without_fresh(self, pages: Sequence[Page]) -> list[Page]:
+        """Leave out the pages whose record of the stage is fresh, has a head version and was made by their recipe.
+
+        A record that stopped short of the step the run goes through, or went through a step the run does not, is not
+        what this run makes, so its page stays.
+
+        :param pages: Pages the run would go over.
+        :type pages: Sequence[Page]
+        :returns: The pages that have no fresh result of the stage, in book order.
+        :rtype: list[Page]
+        :raises NotFoundError: If the stage has no recipe.
+        """
+        picked = await self._picked()
+        stage = self._run.stage
+        records = await self._uow.read(
+            lambda repos: {
+                record.page_id: record
+                for record in repos.page_stages.list_for_pages([page.id for page in pages])
+                if record.stage is stage
+            }
+        )
+        return [
+            page
+            for page in pages
+            if not self._is_fresh(records.get(page.id), picked[page.id], through_step=self._run.through_step)
+        ]
+
+    @staticmethod
+    def _is_fresh(record: PageStage | None, recipe: Recipe, *, through_step: int | None) -> bool:
+        """Tell whether the record of a stage holds what a run of the recipe through the step would make.
+
+        :param record: The record of the stage on the page, or None when the stage has not run on it.
+        :type record: PageStage | None
+        :param recipe: The recipe the run picks for the page.
+        :type recipe: Recipe
+        :param through_step: Index in the recipe of the last step the run goes through, or None for every step.
+        :type through_step: int | None
+        :returns: Whether the record is fresh, has a head version, and was made by the recipe through the same step.
+        :rtype: bool
+        """
+        return (
+            record is not None
+            and record.state is StageState.FRESH
+            and record.head_version_id is not None
+            and record.recipe_id == recipe.id
+            and record.through_step == recipe.stopped_at(through_step)
+        )
 
     async def _picked(self) -> dict[PageId, Recipe]:
         """Choose the recipe of every page the run names, before any is left out.

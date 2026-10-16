@@ -36,7 +36,6 @@ from bookreviver.domain.values import PageStageKey, PageStepKey, ProcessorRef, S
 from tests.helpers.builders import (
     DESKEW_STEP_ID,
     EPOCH,
-    make_job,
     make_page,
     make_page_edit,
     make_page_stage,
@@ -1812,23 +1811,3 @@ class TestPageVersionProcessing:
         await fx_uow_factory().change_book(project_id, lambda repos, _project: repos.page_versions.delete_many(ids))
         left = await fx_uow_factory().read(lambda repos: repos.page_versions.list_for_page(page_id))
         assert [version.id for version in left] == [base.id]
-
-
-class TestJobParams:
-    """Tests for the parameters of a processing job."""
-
-    async def test_params_survive_the_store(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify the parameters of a job read back, and a job without any reads back empty.
-
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the backend accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        project_id, _ = await _store_page(fx_uow_factory, fx_new_owner)
-        with_params = evolve(make_job(project_id=project_id), params={'stage': 'geometry', 'page_ids': []})
-        await fx_uow_factory().change(lambda repos: repos.jobs.add(with_params))
-        stored = await fx_uow_factory().read(lambda repos: repos.jobs.get(with_params.id))
-        assert stored.params == with_params.params

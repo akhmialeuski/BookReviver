@@ -24,7 +24,7 @@ from bookreviver.ports.imaging import RenditionWriter, Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.processing import ProcessorCatalog, ProcessorSettings, StepExecutor
-from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
+from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
 from bookreviver.ports.storage import AssetStore
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.edits import EditService
@@ -32,6 +32,7 @@ from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.page_carry import CarryOverService
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
+from bookreviver.services.pages import PageService
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.processing_jobs import ProcessingJobs
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
@@ -134,7 +135,7 @@ class ProcessingProvider(Provider):
 
     @provide(scope=Scope.APP)
     def processing_runtime(
-        self, publisher: EventPublisher, clock: Clock, queue: JobQueue, tracer: Tracer
+        self, publisher: EventPublisher, clock: Clock, board: JobBoard, tracer: Tracer
     ) -> ProcessingRuntime:
         """Gather what a processing use case reports through.
 
@@ -142,14 +143,14 @@ class ProcessingProvider(Provider):
         :type publisher: EventPublisher
         :param clock: Clock of the application.
         :type clock: Clock
-        :param queue: Queue handing jobs to the broker.
-        :type queue: JobQueue
+        :param board: Board holding the jobs of every book.
+        :type board: JobBoard
         :param tracer: Tracer of the application.
         :type tracer: Tracer
         :returns: The runtime.
         :rtype: ProcessingRuntime
         """
-        return ProcessingRuntime(publisher=publisher, clock=clock, queue=queue, tracer=tracer)
+        return ProcessingRuntime(publisher=publisher, clock=clock, board=board, tracer=tracer)
 
     @provide(scope=Scope.APP)
     def step_runner(
@@ -187,7 +188,7 @@ class ProcessingProvider(Provider):
         :type catalogue: ProcessorCatalog
         :param defaults: The recipes a stage starts with.
         :type defaults: DefaultRecipes
-        :param runtime: The publisher, the clock and the queue.
+        :param runtime: The publisher, the clock and the board.
         :type runtime: ProcessingRuntime
         :param config: The retention period and the size of a preview.
         :type config: ProcessingConfig
@@ -249,7 +250,7 @@ class ProcessingProvider(Provider):
         :type runner: StepRunner
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
-        :param runtime: The publisher, the clock, the queue and the tracer.
+        :param runtime: The publisher, the clock, the board and the tracer.
         :type runtime: ProcessingRuntime
         :param order_keys: Order keys of the application.
         :type order_keys: OrderKeys
@@ -270,7 +271,7 @@ class ProcessingProvider(Provider):
 
     @provide(scope=Scope.REQUEST)
     def processing_jobs(
-        self, uow: UnitOfWork, assets: AssetStore, runtime: StageRuntime, parts: ProcessingParts
+        self, uow: UnitOfWork, assets: AssetStore, runtime: StageRuntime, parts: ProcessingParts, pages: PageService
     ) -> ProcessingJobs:
         """Build the work of the processing jobs over the unit of work of a job.
 
@@ -282,10 +283,12 @@ class ProcessingProvider(Provider):
         :type runtime: StageRuntime
         :param parts: The parts the processing use cases share.
         :type parts: ProcessingParts
+        :param pages: The page service of the job, which queues the detection of the content of the pages a split made.
+        :type pages: PageService
         :returns: The jobs.
         :rtype: ProcessingJobs
         """
-        return ProcessingJobs(uow=uow, assets=assets, runtime=runtime, parts=parts)
+        return ProcessingJobs(uow=uow, assets=assets, runtime=runtime, parts=parts, pages=pages)
 
     @provide(scope=Scope.REQUEST)
     def edit_service(

@@ -1,7 +1,7 @@
 """Tests for the endpoints that add and delete pages without a scan and bind scans, on the application's own adapters.
 
-The stores, the imaging adapters and the in-process broker are the application's own, so a page's images are written
-by the ``prepare-pages`` job as they are for a user, and a test waits for the broker to finish its jobs.
+The stores, the imaging adapters and the in-memory job board are the application's own, so a page's images are written
+by the ``prepare-pages`` job as they are for a user, and a test waits until the jobs of the book have finished.
 """
 
 import io
@@ -13,7 +13,6 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from fastapi import status
 from PIL import Image
-from taskiq import AsyncBroker, InMemoryBroker
 
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.enums import PageKind, PageOrigin, Rendition, VersionState
@@ -25,12 +24,12 @@ from tests.helpers.seeding import commit_project
 
 if TYPE_CHECKING:
     import httpx
-    from dishka import AsyncContainer
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.domain.entities import Actor, Project, Scan
     from bookreviver.domain.entities import Page as BookPage
     from bookreviver.ports.storage import AssetStore
+    from tests.helpers.board_idle import JobsIdle
 
 pytestmark = pytest.mark.anyio
 
@@ -76,20 +75,6 @@ def _jpeg() -> bytes:
     buffer = io.BytesIO()
     Image.new('L', SCAN_SIZE_PX, color=200).save(buffer, format='JPEG')
     return buffer.getvalue()
-
-
-@pytest.fixture
-async def fx_broker(fx_container: AsyncContainer) -> InMemoryBroker:
-    """Return the broker the application runs its jobs on, which a test waits on until they have finished.
-
-    :param fx_container: Container of the running application.
-    :type fx_container: AsyncContainer
-    :returns: The started in-process broker.
-    :rtype: InMemoryBroker
-    """
-    broker = await fx_container.get(AsyncBroker)
-    assert isinstance(broker, InMemoryBroker)
-    return broker
 
 
 @pytest.fixture
@@ -177,21 +162,21 @@ class TestCreatePage:
         assert_expectations()
 
     async def test_adds_a_blank_leaf_of_the_median_size_whose_images_a_job_writes(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify a blank leaf has no images when it is created, and once the job is done has paths that serve its files.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
         body = {'origin': 'blank', 'kind': 'endpaper', 'after_page_id': str(fx_book.shown.id)}
 
         response = await fx_client.post(fx_book.pages_path, json=body)
-        await fx_broker.wait_all()
+        await fx_idle(fx_book.project.id)
 
         created = PageSchema.model_validate_json(response.content)
         leaf = await _page(fx_client, fx_book, created.id)
@@ -230,21 +215,21 @@ class TestCreatePage:
         assert_expectations()
 
     async def test_a_given_size_is_used_instead_of_the_median(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify a leaf of a size and a resolution given has that size, whatever the pages of the book are.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
         body = {'origin': 'blank', 'kind': 'blank', 'width_px': 50, 'height_px': 70, 'dpi': 200}
 
         response = await fx_client.post(fx_book.pages_path, json=body)
-        await fx_broker.wait_all()
+        await fx_idle(fx_book.project.id)
 
         leaf = await _page(fx_client, fx_book, PageSchema.model_validate_json(response.content).id)
         assert leaf.images is not None
@@ -449,21 +434,21 @@ class TestAttachScan:
     """Tests for PUT /projects/{project_id}/pages/{page_id}/scan."""
 
     async def test_binds_the_scan_and_the_job_writes_the_images_of_the_page(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify the page is a page of the scan at once, without images, and has them when the job is done.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
         response = await fx_client.put(
             f'{fx_book.pages_path}/{fx_book.placeholder.id}/scan', json={'scan_id': str(fx_book.spare.id)}
         )
-        await fx_broker.wait_all()
+        await fx_idle(fx_book.project.id)
 
         bound = PageSchema.model_validate_json(response.content)
         ready = await _page(fx_client, fx_book, fx_book.placeholder.id)
@@ -479,14 +464,14 @@ class TestAttachScan:
         assert_expectations()
 
     async def test_scan_another_page_shows_is_a_conflict_problem_unless_taken_over(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify the scan of an imported page is refused with a 409 problem, and with ``take_over`` moves to the placeholder.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
@@ -495,7 +480,7 @@ class TestAttachScan:
 
         refused = await fx_client.put(path, json=body)
         taken = await fx_client.put(path, json={**body, 'take_over': True})
-        await fx_broker.wait_all()
+        await fx_idle(fx_book.project.id)
 
         gone = await fx_client.get(f'{fx_book.pages_path}/{fx_book.shown.id}')
         expect(refused.status_code == status.HTTP_409_CONFLICT)

@@ -28,7 +28,7 @@ import anyio
 
 from bookreviver.domain.enums import UploadProblem
 from bookreviver.domain.errors import ConflictError, NotFoundError, UploadRejectedError
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import KeySegment, ProjectKeys
 from bookreviver.domain.values import SourceFile, UploadPath
 from bookreviver.ports.storage import AssetStore, SourceStore
 
@@ -73,7 +73,15 @@ class _LocalTree:
         :param area: Key of the area, such as ``projects/<id>/assets``.
         :type area: StorageKey
         """
-        path = self._path(area)
+        await self._remove_inside_project(self._path(area))
+
+    @staticmethod
+    async def _remove_inside_project(path: anyio.Path) -> None:
+        """Remove one directory of a project, then the project's directory once nothing is left in it.
+
+        :param path: Directory under the directory of a project, such as ``projects/<id>/assets``.
+        :type path: anyio.Path
+        """
         await _remove(path)
         try:
             await path.parent.rmdir()
@@ -181,6 +189,15 @@ class LocalSourceStore(_LocalTree, SourceStore):
         :type job_id: JobId
         """
         await _remove(self._path(ProjectKeys(project_id).incoming(job_id)))
+
+    @override
+    async def discard_all_staged(self) -> None:
+        """Remove the ``incoming/`` directory of every project, and the directory of a project that it leaves empty."""
+        projects = self._root / KeySegment.PROJECTS
+        if not await projects.is_dir():
+            return
+        async for project in projects.iterdir():
+            await self._remove_inside_project(project / KeySegment.INCOMING)
 
     @override
     @asynccontextmanager

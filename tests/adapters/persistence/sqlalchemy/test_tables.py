@@ -9,12 +9,12 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
-from bookreviver.adapters.persistence.sqlalchemy.mappers import JobMapper, PageMapper
-from bookreviver.adapters.persistence.sqlalchemy.tables import JobRow, PageRow, ProjectRow, ScanRow, SourceRow
+from bookreviver.adapters.persistence.sqlalchemy.mappers import PageMapper, SourceMapper
+from bookreviver.adapters.persistence.sqlalchemy.tables import PageRow, ProjectRow, ScanRow, SourceRow
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
-from bookreviver.domain.enums import JobState
+from bookreviver.domain.enums import RejectionReason, SourceStatus
 from bookreviver.domain.errors import NotFoundError
-from tests.helpers.builders import make_job, make_page, make_project, make_scan, make_source, new_account_id
+from tests.helpers.builders import make_page, make_project, make_scan, make_source, new_account_id
 from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
@@ -30,17 +30,20 @@ SQLITE_FOREIGN_KEY_FAILED: str = 'FOREIGN KEY constraint failed'
 # The message SQLite gives for every violated unique index
 SQLITE_UNIQUE_FAILED: str = 'UNIQUE constraint failed'
 SCAN_COUNT: int = 3
-# The states of the jobs that finished or have not begun, which may stand beside a running import
-OTHER_STATES: tuple[JobState, ...] = (JobState.SUCCEEDED, JobState.FAILED, JobState.CANCELLED, JobState.QUEUED)
+# Names of the files of the tests of the digest index, which have different digests
+FIRST_NAME: str = 'first.pdf'
+SECOND_NAME: str = 'second.pdf'
+# The files of an upload that no import took in, which may repeat the digest of an imported source
+UNIMPORTED_STATUSES: tuple[SourceStatus, ...] = (SourceStatus.REJECTED, SourceStatus.REJECTED, SourceStatus.SKIPPED)
 
 
-def count_rows(session: Session, table: type[JobRow | PageRow | ProjectRow | ScanRow | SourceRow]) -> int:
+def count_rows(session: Session, table: type[PageRow | ProjectRow | ScanRow | SourceRow]) -> int:
     """Count the rows of a table in the transaction of the session.
 
     :param session: Session of the transaction.
     :type session: Session
     :param table: Table to count.
-    :type table: type[JobRow | PageRow | ProjectRow | ScanRow | SourceRow]
+    :type table: type[PageRow | ProjectRow | ScanRow | SourceRow]
     :returns: Number of rows the transaction sees.
     :rtype: int
     """
@@ -48,12 +51,12 @@ def count_rows(session: Session, table: type[JobRow | PageRow | ProjectRow | Sca
 
 
 class TestProjectRow:
-    """Tests for ProjectRow together with the foreign keys and relationships of its pages and jobs."""
+    """Tests for ProjectRow together with the foreign keys and relationships of its pages."""
 
-    async def test_database_deletes_pages_and_jobs_with_their_project(
+    async def test_database_deletes_pages_with_their_project(
         self, fx_database: SqlDatabase, fx_owner_id: AccountId
     ) -> None:
-        """Verify a plain SQL delete of a project row removes its pages and jobs through the foreign keys.
+        """Verify a plain SQL delete of a project row removes its pages through the foreign keys.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
@@ -63,17 +66,11 @@ class TestProjectRow:
         project = make_project(owner_id=fx_owner_id)
         uow = SqlAlchemyUnitOfWork(fx_database)
         await store_project(uow, project, make_page(project_id=project.id))
-        await uow.change(lambda repos: repos.jobs.add(make_job(project_id=project.id)))
 
         # A bulk statement bypasses the ORM, so only the database can remove the dependent rows
         await uow.change_session(lambda session: session.execute(delete(ProjectRow).where(ProjectRow.id == project.id)))
 
-        pages, jobs = await uow.read_session(
-            lambda session: (count_rows(session, PageRow), count_rows(session, JobRow))
-        )
-        expect(pages == 0)
-        expect(jobs == 0)
-        assert_expectations()
+        assert await uow.read_session(lambda session: count_rows(session, PageRow)) == 0
 
     async def test_database_deletes_sources_and_scans_with_their_project(
         self, fx_database: SqlDatabase, fx_owner_id: AccountId
@@ -135,8 +132,8 @@ class TestProjectRow:
         expect(pages == 0)
         assert_expectations()
 
-    async def test_update_keeps_pages_and_jobs(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
-        """Verify updating a project leaves its pages and jobs, which the relationships must not merge away.
+    async def test_update_keeps_pages(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
+        """Verify updating a project leaves its pages, which the relationships must not merge away.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
@@ -146,17 +143,11 @@ class TestProjectRow:
         project = make_project(owner_id=fx_owner_id)
         uow = SqlAlchemyUnitOfWork(fx_database)
         await store_project(uow, project, make_page(project_id=project.id))
-        await uow.change(lambda repos: repos.jobs.add(make_job(project_id=project.id)))
 
         renamed = evolve(project, details=evolve(project.details, title='Renamed'))
         await uow.change(lambda repos: repos.projects.update(renamed))
 
-        pages, jobs = await uow.read_session(
-            lambda session: (count_rows(session, PageRow), count_rows(session, JobRow))
-        )
-        expect(pages == 1)
-        expect(jobs == 1)
-        assert_expectations()
+        assert await uow.read_session(lambda session: count_rows(session, PageRow)) == 1
 
     async def test_sqlite_rejects_a_page_of_a_missing_project(self, fx_database: SqlDatabase) -> None:
         """Verify SQLite enforces the foreign key, which it ignores unless the connection turns it on.
@@ -206,13 +197,13 @@ class TestProjectRow:
             )
 
 
-class TestJobRow:
-    """Tests for the partial unique index that keeps a project to one active import."""
+class TestSourceRow:
+    """Tests for the partial unique index that keeps the digest of an imported source unique in its project."""
 
-    async def test_database_refuses_a_second_active_import_of_a_project(
+    async def test_database_refuses_a_second_imported_source_with_one_digest(
         self, fx_database: SqlDatabase, fx_owner_id: AccountId
     ) -> None:
-        """Verify the database itself refuses a queued import beside a running one, whatever a service checked first.
+        """Verify the database itself refuses a second imported source with a digest, whatever a service checked first.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
@@ -220,27 +211,30 @@ class TestJobRow:
         :type fx_owner_id: AccountId
         """
         project = make_project(owner_id=fx_owner_id)
+        first = make_source(project_id=project.id, name=FIRST_NAME)
         uow = SqlAlchemyUnitOfWork(fx_database)
-        await uow.change(lambda repos: repos.projects.add(project))
-        running = JobMapper().to_row(make_job(project_id=project.id, state=JobState.RUNNING))
-        await uow.change_session(lambda session: session.add(running))
-        queued = JobMapper().to_row(make_job(project_id=project.id, state=JobState.QUEUED))
+        await store_project(uow, project, sources=[first])
+        second = SourceMapper().to_row(
+            evolve(make_source(project_id=project.id, name=SECOND_NAME), sha256=first.sha256)
+        )
 
         def add_and_flush(session: Session) -> None:
-            """Add the queued job to the session and flush it, so SQLite checks its index.
+            """Add the second source to the session and flush it, so SQLite checks its index.
 
             :param session: Session of a transaction that writes.
             :type session: Session
             """
             # A row added directly bypasses the repository, which would report the conflict as a domain error
-            session.add(queued)
+            session.add(second)
             session.flush()
 
         with pytest.raises(IntegrityError, match=SQLITE_UNIQUE_FAILED):
             await uow.change_session(add_and_flush)
 
-    async def test_finished_imports_do_not_count(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
-        """Verify any number of finished imports may share a project with an active one.
+    async def test_files_no_import_took_in_may_repeat_the_digest_of_an_imported_source(
+        self, fx_database: SqlDatabase, fx_owner_id: AccountId
+    ) -> None:
+        """Verify any number of rejected and skipped files share a digest with an imported source.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
@@ -248,17 +242,28 @@ class TestJobRow:
         :type fx_owner_id: AccountId
         """
         project = make_project(owner_id=fx_owner_id)
+        imported = make_source(project_id=project.id, name=FIRST_NAME)
         uow = SqlAlchemyUnitOfWork(fx_database)
-        await uow.change(lambda repos: repos.projects.add(project))
+        await store_project(uow, project, sources=[imported])
+        unimported = [
+            evolve(
+                make_source(project_id=project.id, name=SECOND_NAME),
+                sha256=imported.sha256,
+                scan_count=0,
+                status=status,
+                rejection=RejectionReason.DUPLICATE if status is SourceStatus.REJECTED else None,
+            )
+            for status in UNIMPORTED_STATUSES
+        ]
 
-        def add_jobs(session: Session) -> None:
-            """Add a job of the project in each of the states that may stand beside a running import.
+        def add_sources(session: Session) -> None:
+            """Add the files that no import took in, each as a row of its own.
 
             :param session: Session of a transaction that writes.
             :type session: Session
             """
-            session.add_all(JobMapper().to_row(make_job(project_id=project.id, state=state)) for state in OTHER_STATES)
+            session.add_all(SourceMapper().to_row(source) for source in unimported)
 
-        await uow.change_session(add_jobs)
+        await uow.change_session(add_sources)
 
-        assert await uow.read_session(lambda session: count_rows(session, JobRow)) == len(OTHER_STATES)
+        assert await uow.read_session(lambda session: count_rows(session, SourceRow)) == 1 + len(UNIMPORTED_STATUSES)

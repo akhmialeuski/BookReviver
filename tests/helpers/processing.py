@@ -7,15 +7,13 @@ no image library is needed to tell which files a version has and in which format
 """
 
 from datetime import timedelta
-from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from attrs import evolve
 from dishka import Provider, Scope, provide
 
 from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.execution.in_process import InProcessStepExecutor
-from bookreviver.adapters.jobs.recording import RecordingJobQueue
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
 from bookreviver.adapters.tracing.recording import RecordingTracer
@@ -57,13 +55,14 @@ from tests.helpers.builders import (
     make_source,
     new_account_id,
 )
+from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import (
     IMAGE_SIZE_PX,
     FakeCatalogue,
     FakeRenditionWriter,
 )
 from tests.helpers.fakes_jobs import RecordingEventBus
-from tests.helpers.page_services import FakeTiler
+from tests.helpers.page_services import FakeTiler, make_page_service
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 
 if TYPE_CHECKING:
@@ -71,11 +70,12 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Job, Page, PageVersion, Project, Recipe, ResultMarkChange, Scan
     from bookreviver.domain.ids import JobId, PageVersionId
-    from bookreviver.domain.values import MetadataMap, RecipeDraft, Slice
+    from bookreviver.domain.values import JobEnd, MetadataMap, RecipeDraft, Slice
     from bookreviver.ports.persistence import PageVersionRepository, Repositories, UnitOfWork
     from bookreviver.ports.processing import Processor
-    from bookreviver.ports.runtime import JobQueue
+    from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.storage import AssetStore
+    from bookreviver.services.pages import PageService
 
 IMAGE_CONTENT: bytes = b'image'
 PREVIEW_RETENTION_HOURS: int = 24
@@ -92,6 +92,15 @@ DEFAULTS: DefaultRecipes = DefaultRecipes(
 
 # The recipes of a kit with the OpenCV plugins, which are the ones the application starts with
 CV_DEFAULTS: DefaultRecipes = DefaultRecipes()
+# The method of ``ProcessingJobs`` that runs each kind of job it does
+JOB_METHODS: dict[JobKind, str] = {
+    JobKind.RUN_STAGE: 'run_stage',
+    JobKind.PREVIEW_STEP: 'preview_step',
+    JobKind.CUT_TILES: 'cut_tiles',
+    JobKind.COLLECT_VERSIONS: 'collect_versions',
+    JobKind.MEASURE_BOOK: 'measure_book',
+    JobKind.DETECT_CONTENT: 'detect_content',
+}
 
 
 class ProcessingKit:
@@ -102,8 +111,7 @@ class ProcessingKit:
     :ivar assets: Asset store over a temporary directory.
     :ivar events: Event bus recording what is published.
     :ivar clock: Clock stopped at the epoch, which a test moves.
-    :ivar recording: Queue that records the jobs it is handed.
-    :ivar queue: Queue the jobs are handed to, which is the recording one unless a test gave another.
+    :ivar board: Board the jobs are put on, which records them and runs them when a test calls ``work_queue``.
     :ivar fake: The fake geometry processor, which counts its runs and previews.
     :ivar cleanup: The fake cleanup processor.
     :ivar catalogue: The catalogue of the processors the services can run.
@@ -117,8 +125,8 @@ class ProcessingKit:
         assets: AssetStore,
         *,
         processors: Sequence[Processor] | None = None,
-        queue: JobQueue | None = None,
         defaults: DefaultRecipes = DEFAULTS,
+        database: InMemoryDatabase | None = None,
     ) -> None:
         """Build the kit over an asset store.
 
@@ -126,19 +134,19 @@ class ProcessingKit:
         :type assets: AssetStore
         :param processors: The processors of the catalogue, or None for the real ``split.none`` and the two fakes.
         :type processors: Sequence[Processor] | None
-        :param queue: The queue the jobs are handed to, or None for one that records them.
-        :type queue: JobQueue | None
         :param defaults: The recipes the stages start with.
         :type defaults: DefaultRecipes
+        :param database: The database of another kit, which this kit then stands for the same process after a restart
+                         with: its board is new and empty and its database and files are the ones the other left.
+        :type database: InMemoryDatabase | None
         """
         self._defaults = defaults
-        self.database = InMemoryDatabase()
+        self.database = InMemoryDatabase() if database is None else database
         self.gate = BookGate()
         self.assets = assets
         self.events = RecordingEventBus()
         self.clock = FixedClock(EPOCH)
-        self.recording = RecordingJobQueue()
-        self.queue = queue or self.recording
+        self.board = FakeJobBoard(runner=self._run_job, publisher=self.events, clock=self.clock)
         self.fake = FakeProcessor()
         self.cleanup = CleanupProcessor()
         self.writer = FakeRenditionWriter()
@@ -161,7 +169,7 @@ class ProcessingKit:
         :returns: The parts.
         :rtype: ProcessingParts
         """
-        runtime = ProcessingRuntime(publisher=self.events, clock=self.clock, queue=self.queue, tracer=self.tracer)
+        runtime = ProcessingRuntime(publisher=self.events, clock=self.clock, board=self.board, tracer=self.tracer)
         config = ProcessingConfig(
             preview_retention=timedelta(hours=PREVIEW_RETENTION_HOURS),
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
@@ -237,7 +245,7 @@ class ProcessingKit:
         :returns: The stage summaries, which offer the processors of the kit.
         :rtype: StageSummaries
         """
-        return StageSummaries(catalogue=self.catalogue)
+        return StageSummaries(catalogue=self.catalogue, board=self.board)
 
     def jobs(self) -> ProcessingJobs:
         """Build the work of the processing jobs over a new unit of work.
@@ -255,38 +263,37 @@ class ProcessingKit:
             preview_long_side_px=PREVIEW_LONG_SIDE_PX,
             tracer=self.tracer,
         )
-        return ProcessingJobs(uow=uow, assets=self.assets, runtime=runtime, parts=self.parts(uow))
+        return ProcessingJobs(uow=uow, assets=self.assets, runtime=runtime, parts=self.parts(uow), pages=self._pages())
 
     async def work_queue(self) -> None:
-        """Let a worker take every job the recording queue holds that has not finished, in the order they were queued.
+        """Let the board run every job put on it that has not run, in the order they were put.
 
-        A project processes one thing at a time, so a test that starts a second job first lets the worker finish the
-        collection that a run queues when it ends.
+        A project processes one thing at a time, so the jobs of a book run one after the other, and a job that a running
+        job puts, such as the collection a run queues when it ends, runs too.
         """
-        methods = {
-            JobKind.RUN_STAGE: 'run_stage',
-            JobKind.PREVIEW_STEP: 'preview_step',
-            JobKind.CUT_TILES: 'cut_tiles',
-            JobKind.COLLECT_VERSIONS: 'collect_versions',
-            JobKind.MEASURE_BOOK: 'measure_book',
-            JobKind.DETECT_CONTENT: 'detect_content',
-        }
+        await self.board.run_queued()
 
-        def is_final(job_id: JobId, repos: Repositories) -> bool:
-            """Tell whether a job has finished, as committed.
+    async def _run_job(self, job: Job, control: JobControl) -> JobEnd:
+        """Run a job through the entry of its kind, over services built on a new unit of work, as the application does.
 
-            :param job_id: Identifier of the job.
-            :type job_id: JobId
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :returns: Whether the job is in a final state.
-            :rtype: bool
-            """
-            return repos.jobs.get(job_id).state.is_final
+        :param job: The job the board took from its queue.
+        :type job: Job
+        :param control: What the job reports through.
+        :type control: JobControl
+        :returns: How the job ended.
+        :rtype: JobEnd
+        """
+        if job.kind is JobKind.PREPARE_PAGES:
+            return await self._pages().prepare_images(job, control)
+        return cast('JobEnd', await getattr(self.jobs(), JOB_METHODS[job.kind])(job, control))
 
-        for queued in list(self.recording.enqueued):
-            if not await self.uow().read(partial(is_final, queued.id)):
-                await getattr(self.jobs(), methods[queued.kind])(queued.id)
+    def _pages(self) -> PageService:
+        """Build the page service over a new unit of work, which prepares the images and queues the detection.
+
+        :returns: The service.
+        :rtype: PageService
+        """
+        return make_page_service(self.uow(), self.assets, (self.events, self.clock, self.board))
 
     def edits(self) -> EditService:
         """Build the edit service over a new unit of work.
@@ -475,17 +482,17 @@ class ProcessingKit:
         return dict(values)
 
 
-async def stored_job(kit: ProcessingKit, job_id: JobId) -> Job:
-    """Read a job back as committed.
+def stored_job(kit: ProcessingKit, job_id: JobId) -> Job:
+    """Read a job back as the board holds it.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param job_id: Identifier of the job.
     :type job_id: JobId
-    :returns: The job as the database holds it now.
+    :returns: The job as the board holds it now.
     :rtype: Job
     """
-    return await kit.uow().read(lambda repos: repos.jobs.get(job_id))
+    return kit.board.get(job_id)
 
 
 async def change_versions(

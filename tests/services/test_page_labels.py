@@ -24,7 +24,6 @@ if TYPE_CHECKING:
     from typing import Any
 
     from bookreviver.adapters.clock.system import FixedClock
-    from bookreviver.adapters.jobs.recording import RecordingJobQueue
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Page, Project
@@ -32,6 +31,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.book_gate import GatedUnitOfWork
+    from tests.helpers.fake_board import FakeJobBoard
     from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
@@ -237,7 +237,7 @@ class TestConcurrentWrites:
         fx_database: InMemoryDatabase,
         fx_gated_uow: Callable[[], GatedUnitOfWork],
         fx_asset_store: LocalAssetStore,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         fx_actor: Actor,
     ) -> None:
         """Verify a group move ends in the new order while a job records the content of one of the moved pages.
@@ -252,8 +252,8 @@ class TestConcurrentWrites:
         :type fx_gated_uow: Callable[[], GatedUnitOfWork]
         :param fx_asset_store: Local asset store of the test.
         :type fx_asset_store: LocalAssetStore
-        :param fx_runtime: The recording bus, the clock and the queue the service reports through.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_runtime: The recording bus, the clock and the job board the service reports through.
+        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
