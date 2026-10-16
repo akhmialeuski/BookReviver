@@ -13,16 +13,50 @@ from tests.helpers.builders import EPOCH, make_page, make_page_stage, make_proje
 from tests.helpers.seeding import commit_project
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from bookreviver.adapters.clock.system import FixedClock
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
-    from bookreviver.domain.entities import Project
+    from bookreviver.domain.entities import PageStage, Project, Recipe
     from bookreviver.ports.persistence import Repositories
     from tests.helpers.fakes_jobs import RecordingEventBus
+    from tests.helpers.page_stage_writes import PageStageWrites
 
 pytestmark = pytest.mark.anyio
 
 # The time the clock shows when the recipe changes, apart from the epoch the records are seeded at
 CHANGED_AT = EPOCH + timedelta(hours=1)
+# The places of the three pages the tests seed
+PAGE_ORDER_KEYS: tuple[str, ...] = ('a0', 'a1', 'a2')
+
+
+async def store_records(
+    uow: InMemoryUnitOfWork, project: Project, recipe: Recipe, records: Sequence[PageStage]
+) -> None:
+    """Store a recipe and the stage records of the pages of a project that exists already.
+
+    :param uow: Unit of work that commits the recipe and the records.
+    :type uow: InMemoryUnitOfWork
+    :param project: Project owning the pages the records belong to.
+    :type project: Project
+    :param recipe: Recipe of the project, which the records may name.
+    :type recipe: Recipe
+    :param records: Records to store in one batch.
+    :type records: Sequence[PageStage]
+    """
+
+    def seed(repos: Repositories, _project: Project) -> None:
+        """Store the recipe and the records.
+
+        :param repos: Repositories of the transaction.
+        :type repos: Repositories
+        :param _project: Project of the book, which the work does not need.
+        :type _project: Project
+        """
+        repos.recipes.add(recipe)
+        repos.page_stages.save_many(records)
+
+    await uow.change_book(project.id, seed)
 
 
 class TestMarkRecipeStale:
@@ -41,7 +75,7 @@ class TestMarkRecipeStale:
         :type fx_events: RecordingEventBus
         """
         project = make_project(owner_id=new_account_id())
-        first, second, third = (make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1', 'a2'))
+        first, second, third = (make_page(project_id=project.id, order_key=key) for key in PAGE_ORDER_KEYS)
         await commit_project(fx_database, project, first, second, third)
         recipe = make_recipe(project_id=project.id)
         fresh_first = make_page_stage(page_id=first.id, recipe_id=recipe.id)
@@ -50,19 +84,7 @@ class TestMarkRecipeStale:
         without_recipe = make_page_stage(page_id=first.id, stage=Stage.CLEANUP)
         uow = InMemoryUnitOfWork(fx_database)
         records = StageRecords(publisher=fx_events, clock=fx_clock)
-
-        def seed(repos: Repositories, _project: Project) -> None:
-            """Store the recipe and the four records.
-
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :param _project: Project of the book, which the work does not need.
-            :type _project: Project
-            """
-            repos.recipes.add(recipe)
-            repos.page_stages.save_many([fresh_first, fresh_second, failed, without_recipe])
-
-        await uow.change_book(project.id, seed)
+        await store_records(uow, project, recipe, [fresh_first, fresh_second, failed, without_recipe])
         fx_clock.moment = CHANGED_AT
 
         marked = await uow.change_book(project.id, lambda repos, _project: records.mark_recipe_stale(repos, recipe.id))
@@ -78,3 +100,39 @@ class TestMarkRecipeStale:
             {record.key: record for record in stale},
             {record.key: record for record in (*stale, failed, without_recipe)},
         )
+
+    async def test_the_records_of_the_recipe_are_written_by_one_save_many_and_never_by_save(
+        self,
+        fx_database: InMemoryDatabase,
+        fx_clock: FixedClock,
+        fx_events: RecordingEventBus,
+        fx_page_stage_writes: PageStageWrites,
+    ) -> None:
+        """Verify three fresh records are written by one ``save_many`` holding all three, and ``save`` is not called.
+
+        The end state of the records is the same when each one is written on its own, so only a record of the calls
+        tells a batch of one statement from a statement for each record.
+
+        :param fx_database: Empty in-memory database.
+        :type fx_database: InMemoryDatabase
+        :param fx_clock: Clock stopped at the epoch.
+        :type fx_clock: FixedClock
+        :param fx_events: Recording event bus the records are announced through.
+        :type fx_events: RecordingEventBus
+        :param fx_page_stage_writes: Record of the writes of the page stage repository, not yet started.
+        :type fx_page_stage_writes: PageStageWrites
+        """
+        project = make_project(owner_id=new_account_id())
+        pages = [make_page(project_id=project.id, order_key=key) for key in PAGE_ORDER_KEYS]
+        await commit_project(fx_database, project, *pages)
+        recipe = make_recipe(project_id=project.id)
+        fresh = [make_page_stage(page_id=page.id, recipe_id=recipe.id) for page in pages]
+        uow = InMemoryUnitOfWork(fx_database)
+        records = StageRecords(publisher=fx_events, clock=fx_clock)
+        await store_records(uow, project, recipe, fresh)
+        fx_clock.moment = CHANGED_AT
+        fx_page_stage_writes.start()
+
+        marked = await uow.change_book(project.id, lambda repos, _project: records.mark_recipe_stale(repos, recipe.id))
+
+        assert (len(marked), fx_page_stage_writes.batches, fx_page_stage_writes.saves) == (3, [marked], [])
