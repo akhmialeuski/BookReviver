@@ -23,8 +23,7 @@ transaction isolation:
   transaction commits while it runs, and its copy is the state it would find at its commit.
 - Locks: the adapter has none. The work of a change is synchronous and runs between two awaits, so no other change
   commits while it runs, and a change copies the tables when it starts, so it reads what the previous change committed.
-  A read takes no lock either. A test that needs changes to queue behind a busy book gates the unit of work itself
-  (``tests/helpers/book_gate.py``).
+  A read takes no lock either.
 
 Each repository states its table's keys in two hooks of the generic repository, ``_check`` before a row is stored and
 ``_cascade`` after one is removed, so the generic operations stay in one place.
