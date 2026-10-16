@@ -81,6 +81,7 @@ describe('ProcessingPanel', () => {
       states: new Map(),
       page: stepPage(open.stepId, 'found', { version: version('step-version') }),
       rows: [],
+      rowsPending: false,
       carried: null,
       setCarried: vi.fn(),
     };

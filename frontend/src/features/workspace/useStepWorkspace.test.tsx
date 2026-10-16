@@ -41,6 +41,14 @@ const CURRENT: StripItem = { page: page('p2', { position: 1 }), row: row('p2') }
 /** What a step says of a page. */
 type States = Record<string, Record<string, FigureState>>;
 
+/** What the server is asked for the rows of a step: the step, the page of the window and its size. */
+interface RowsRequest {
+  query: { step: string; page: number; size: number };
+}
+
+/** The size of the window that reads the whole book for the open step. */
+const WHOLE_BOOK = 1000;
+
 function stepRow(stepId: string, pageId: string, state: FigureState): StagePageSchema {
   const flags: StepFlag[] =
     state === 'by-hand' ? ['by-hand'] : state === 'skipped' ? ['skipped'] : [];
@@ -59,6 +67,15 @@ describe('useStepWorkspace', () => {
     b: { p1: 'found', p2: 'by-hand', p3: 'skipped' },
     c: { p1: 'skipped', p2: 'skipped', p3: 'found' },
   };
+
+  /** Answer a request for the rows of a step as the server does: the whole book, or the one row at a place. */
+  async function serveRows({ query }: RowsRequest) {
+    const all = ['p1', 'p2', 'p3'].map((id) =>
+      stepRow(query.step, id, STATES[query.step]?.[id] ?? 'default'),
+    );
+    const items = query.size === 1 ? all.slice(query.page - 1, query.page) : all;
+    return { data: { items, total: 3, page: query.page, size: query.size, pages: 1 } };
+  }
 
   function Probe({
     stepId,
@@ -94,15 +111,7 @@ describe('useStepWorkspace', () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     seen = undefined;
     sdk.rows.mockReset();
-    sdk.rows.mockImplementation(
-      async ({ query }: { query: { step: string; page: number; size: number } }) => {
-        const all = ['p1', 'p2', 'p3'].map((id) =>
-          stepRow(query.step, id, STATES[query.step]?.[id] ?? 'default'),
-        );
-        const items = query.size === 1 ? all.slice(query.page - 1, query.page) : all;
-        return { data: { items, total: 3, page: query.page, size: query.size, pages: 1 } };
-      },
-    );
+    sdk.rows.mockImplementation(serveRows);
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -205,6 +214,39 @@ describe('useStepWorkspace', () => {
       ['p3', ['skipped']],
     ]);
     expect(seen?.rows).toBeNull();
+  });
+
+  it('waits for the rows of the open step while they are read, and not once they are, nor with no step open', async () => {
+    // The read of the whole book for the open step never answers, and the rows of the other steps do
+    sdk.rows.mockImplementation(async (options: RowsRequest) =>
+      options.query.size === WHOLE_BOOK ? new Promise(() => undefined) : serveRows(options),
+    );
+    await render('b');
+    const whileRead = { rows: seen?.rows, pending: seen?.rowsPending };
+    sdk.rows.mockImplementation(serveRows);
+    await render('c');
+    const afterRead = { rows: seen?.rows?.length, pending: seen?.rowsPending };
+    await render(undefined);
+
+    expect(whileRead).toEqual({ rows: null, pending: true });
+    expect(afterRead).toEqual({ rows: 3, pending: false });
+    expect(seen?.rowsPending).toBe(false);
+  });
+
+  it('stops waiting for the rows of the open step when their read fails, which leaves them null', async () => {
+    sdk.rows.mockImplementation(async (options: RowsRequest) => {
+      if (options.query.size === WHOLE_BOOK) {
+        throw new Error('The rows of the step are not served.');
+      }
+      return serveRows(options);
+    });
+
+    await render('b');
+
+    expect({ rows: seen?.rows, pending: seen?.rowsPending }).toEqual({
+      rows: null,
+      pending: false,
+    });
   });
 
   it('has the bar of steps for Cleanup as it has for Geometry', async () => {

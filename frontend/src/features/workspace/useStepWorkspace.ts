@@ -37,6 +37,11 @@ export interface StepWorkspace {
   page: StepPageSchema | null;
   /** The rows of every page of the book at the open step, with the flags the server put on them, or null while read. */
   rows: readonly StagePageSchema[] | null;
+  /**
+   * Whether the rows of the open step are still being read, which is false once they are read or the read has failed and
+   * when no step is open, so a screen that waits for the rows stops waiting when they are never coming.
+   */
+  rowsPending: boolean;
   /** What the last carry-over of the open step did, or null when there is none, it was taken back, or no step is open. */
   carried: CarryOverSchema | null;
   /** Record what a carry-over of the open step did, or null once it was taken back; it does nothing with no step open. */
@@ -113,6 +118,7 @@ export function useStepWorkspace(
     states,
     page: rowOfPage?.step ?? null,
     rows: open === null ? null : (rows.data ?? null),
+    rowsPending: open !== null && rows.isPending,
     carried: carryKey === null ? null : (carriedResults.get(carryKey) ?? null),
     setCarried,
   };
