@@ -9,10 +9,11 @@ import {
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PageSchema, ScanSchema, SourceSchema } from '@/api';
+import type { PageSchema, ScanSchema } from '@/api';
 import { projectWith } from '@/features/about/fixtures';
 import { FilePanel } from '@/features/import/FilePanel';
 import { scan, source } from '@/features/import/fixtures';
+import type { ImportedSource } from '@/features/import/queries';
 import { page } from '@/features/workspace/fixtures';
 
 /**
@@ -52,7 +53,7 @@ describe('FilePanel', () => {
   });
 
   async function render(
-    file: SourceSchema,
+    file: ImportedSource,
     pages: PageSchema[] = [],
     scans: ScanSchema[] = [],
     description = 'A title',

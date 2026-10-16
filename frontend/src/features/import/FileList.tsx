@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { FileImageIcon, FileTextIcon, Loader2Icon } from 'lucide-react';
-import type { JobSchema, SourceSchema } from '@/api';
+import type { JobSchema } from '@/api';
 import { cancelJobApiV1JobsJobIdDeleteMutation } from '@/api/@tanstack/react-query.gen';
+import type { ImportedSource } from '@/features/import/queries';
 import { refreshProject } from '@/features/projects/events';
 import { UploadDialog } from '@/features/projects/upload/UploadDialog';
 import { describeError } from '@/shared/http/problem';
@@ -29,7 +30,7 @@ function FileRow({
   selected,
   onSelect,
 }: {
-  source: SourceSchema;
+  source: ImportedSource;
   selected: boolean;
   onSelect: () => void;
 }): React.JSX.Element {
@@ -127,7 +128,7 @@ export function FileList({
   onSelect,
 }: {
   projectId: string;
-  sources: readonly SourceSchema[];
+  sources: readonly ImportedSource[];
   /** The imports that are queued or running. */
   imports: readonly JobSchema[];
   selectedId: string | undefined;

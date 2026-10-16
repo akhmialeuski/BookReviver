@@ -1081,9 +1081,6 @@ export const MESSAGES = {
       cancelled: 'Cancelled',
     } satisfies Record<JobState, string>,
     dismiss: 'Dismiss',
-    imported: (count: number) =>
-      `${count} ${pluralize(count, 'file', 'files')} imported into the book.`,
-    nothingImported: 'No file was imported.',
     rejectedTitle: (count: number) => `${count} ${pluralize(count, 'file', 'files')} not imported`,
     skippedTitle: (count: number) =>
       `${count} ${pluralize(count, 'file', 'files')} not reached before the import was cancelled`,

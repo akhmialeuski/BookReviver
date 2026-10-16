@@ -815,30 +815,6 @@ export type ImagePathsSchema = {
 export type ImagePolicy = 'compact' | 'lossless';
 
 /**
- * ImportResultSchema
- *
- * What an import job did with the files of its upload.
- *
- * :ivar imported: Identifiers of the sources the job committed to the project, in book order.
- * :ivar rejected: Files no check let through, each with its reason.
- * :ivar skipped: Names of the files a cancelled job never reached.
- */
-export type ImportResultSchema = {
-    /**
-     * Imported
-     */
-    imported: Array<string>;
-    /**
-     * Rejected
-     */
-    rejected: Array<RejectedFileSchema>;
-    /**
-     * Skipped
-     */
-    skipped: Array<string>;
-};
-
-/**
  * JobKind
  *
  * What a background job does.
@@ -850,16 +826,18 @@ export type JobKind = 'import-source' | 'prepare-pages' | 'run-stage' | 'preview
  *
  * A background job, its state and its progress; also the data of a ``job-changed`` event.
  *
+ * A job lives in the memory of the API process, so a job the process does not hold, such as one that ended before the
+ * process started, is answered as not found.
+ *
  * :ivar id: Identifier of the job.
  * :ivar project_id: Project the job works on.
  * :ivar kind: What the job does.
  * :ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.
  * :ivar state: Where the job is in its life cycle.
- * :ivar progress: How many of its steps are done.
+ * :ivar progress: How many of its tasks are done; for an import the files dealt with and the scans cut.
  * :ivar error: Why the job failed, shown to the user, or empty.
- * :ivar result: What an import job did with the files of its upload, or None until it has finished.
- * :ivar created_at: When the job was recorded.
- * :ivar started_at: When a worker started the job, or None while it is queued.
+ * :ivar created_at: When the job was queued.
+ * :ivar started_at: When its book began to run the job, or None while it is queued.
  * :ivar finished_at: When the job reached a final state, or None before.
  */
 export type JobSchema = {
@@ -879,7 +857,6 @@ export type JobSchema = {
      * Error
      */
     error: string;
-    result: ImportResultSchema | null;
     /**
      * Created At
      */
@@ -3051,27 +3028,6 @@ export type RecipeSchema = {
 };
 
 /**
- * RejectedFileSchema
- *
- * A file of an upload that was not imported, with the reason shown to the user.
- *
- * :ivar file_name: Name of the file, or of the main file of its source.
- * :ivar reason: Why the file was not imported.
- * :ivar detail: Text that says more than the reason, such as the name of the source the file repeats.
- */
-export type RejectedFileSchema = {
-    /**
-     * File Name
-     */
-    file_name: string;
-    reason: RejectionReason;
-    /**
-     * Detail
-     */
-    detail: string;
-};
-
-/**
  * RejectionReason
  *
  * Why one file of an upload was not imported, while the other files of the upload were.
@@ -3370,8 +3326,9 @@ export type SourceKind = 'pdf' | 'djvu' | 'image';
  * An uploaded file of a book, or the files of one indirect DjVu document, never changed after its import.
  *
  * :ivar id: Identifier of the source.
- * :ivar kind: Kind of the source, which selects the format that reads it.
- * :ivar file_type: Exact format of the main file.
+ * :ivar kind: Kind of the source, which selects the format that reads it, or None for a rejected or skipped file of an
+ * unknown type.
+ * :ivar file_type: Exact format of the main file, or None for a rejected or skipped file of an unknown type.
  * :ivar file_name: Name the browser sent for the main file.
  * :ivar files: Stored files, the main file first; more than one only for an indirect DjVu document.
  * :ivar size_bytes: Total size of the files in bytes.
@@ -3379,16 +3336,18 @@ export type SourceKind = 'pdf' | 'djvu' | 'image';
  * :ivar scan_count: Number of scans the source holds.
  * :ivar metadata: Technical metadata of the format, whose keys depend on the kind of source.
  * :ivar suggestion: Values of the book description found in the file.
- * :ivar import_job_id: Import job that created the source, or None once that job is deleted.
- * :ivar imported_at: When the source became part of the project.
+ * :ivar status: Whether the file was imported, rejected by the import, or skipped by a cancelled one.
+ * :ivar rejection: Why a rejected file was refused, or None for a file that was not.
+ * :ivar detail: Text that says more than the reason, such as the name of the source a duplicate repeats, or empty.
+ * :ivar imported_at: When the file was recorded, which for an imported source is when it became part of the project.
  */
 export type SourceSchema = {
     /**
      * Id
      */
     id: string;
-    kind: SourceKind;
-    file_type: FileType;
+    kind: SourceKind | null;
+    file_type: FileType | null;
     /**
      * File Name
      */
@@ -3416,15 +3375,24 @@ export type SourceSchema = {
         [key: string]: unknown;
     };
     suggestion: MetadataSuggestionSchema;
+    status: SourceStatus;
+    rejection: RejectionReason | null;
     /**
-     * Import Job Id
+     * Detail
      */
-    import_job_id: string | null;
+    detail: string;
     /**
      * Imported At
      */
     imported_at: string;
 };
+
+/**
+ * SourceStatus
+ *
+ * What became of an uploaded file: it joined the book, an import refused it, or a cancelled import skipped it.
+ */
+export type SourceStatus = 'imported' | 'rejected' | 'skipped';
 
 /**
  * Stage
@@ -4223,12 +4191,22 @@ export type ListSourcesApiV1ProjectsProjectIdSourcesGetData = {
     query?: {
         /**
          * Page
+         *
+         * Page number
          */
         page?: number;
         /**
          * Size
+         *
+         * Page size
          */
         size?: number;
+        /**
+         * Status
+         *
+         * List the files in these statuses; the imported sources by default
+         */
+        status?: Array<SourceStatus>;
     };
     url: '/api/v1/projects/{project_id}/sources';
 };
@@ -4312,6 +4290,46 @@ export type UploadSourcesApiV1ProjectsProjectIdSourcesPostResponses = {
 };
 
 export type UploadSourcesApiV1ProjectsProjectIdSourcesPostResponse = UploadSourcesApiV1ProjectsProjectIdSourcesPostResponses[keyof UploadSourcesApiV1ProjectsProjectIdSourcesPostResponses];
+
+export type DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/sources/unimported';
+};
+
+export type DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteError = DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteErrors[keyof DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteErrors];
+
+export type DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteResponse = DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteResponses[keyof DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteResponses];
 
 export type DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteData = {
     body?: never;
