@@ -40,7 +40,7 @@ from bookreviver.domain.ids import RecipeId
 from bookreviver.domain.values import RecipeDraft, Step
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from bookreviver.domain.entities import Page, Project, RecipeProfile
     from bookreviver.domain.ids import PageId, ProjectId
@@ -215,7 +215,9 @@ class RecipeBook:
         self._clock = clock
         self._order = order
 
-    async def recipes(self, project_id: ProjectId, stage: Stage) -> list[Recipe]:
+    async def recipes(
+        self, project_id: ProjectId, stage: Stage, *, checking: Callable[[Repositories], object] | None = None
+    ) -> list[Recipe]:
         """Return the recipes of a stage, one for each kind of page, creating them when the stage is first asked for.
 
         Called outside any work, since it runs on the unit of work itself. It reads in a transaction that only reads,
@@ -223,16 +225,37 @@ class RecipeBook:
         since a task that ran at the same time may have stored them first, and adds the defaults only if they are still
         missing. The work of a transaction cannot call this, and calls ``recipes_in`` instead.
 
+        A caller that has to read something else before it goes on, such as the project of the actor, hands the read in
+        as ``checking``, which runs first in the transaction that reads the recipes. When the recipes are stored that
+        transaction is the only one, where a read of the caller beside this call would be a second snapshot of the
+        database.
+
         :param project_id: Project owning the recipes.
         :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
+        :param checking: Function over the repositories of the reading transaction, run before the recipes are read,
+                         whose exceptions go to the caller, or None for no check.
+        :type checking: Callable[[Repositories], object] | None
         :returns: The recipes in the order of the kinds.
         :rtype: list[Recipe]
         :raises NotFoundError: If the project does not exist, the stage has no recipe by default, or none of its
                                processors is installed.
         """
-        if found := await self._uow.read(lambda repos: self._stored(repos, project_id, stage)):
+
+        def read(repos: Repositories) -> list[Recipe]:
+            """Run the check of the caller, then read the stored recipes of the stage.
+
+            :param repos: Repositories of the transaction that only reads.
+            :type repos: Repositories
+            :returns: The stored recipes, none before the stage has been used.
+            :rtype: list[Recipe]
+            """
+            if checking is not None:
+                checking(repos)
+            return self._stored(repos, project_id, stage)
+
+        if found := await self._uow.read(read):
             return found
         return await self._uow.change_book(project_id, lambda repos, project: self.recipes_in(repos, project, stage))
 

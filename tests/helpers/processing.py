@@ -71,7 +71,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Job, Page, PageVersion, Project, Recipe, ResultMarkChange, Scan
     from bookreviver.domain.ids import JobId, PageVersionId
     from bookreviver.domain.values import MetadataMap, RecipeDraft, Slice
-    from bookreviver.ports.persistence import PageVersionRepository, Repositories
+    from bookreviver.ports.persistence import PageVersionRepository, Repositories, UnitOfWork
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobQueue
     from bookreviver.ports.storage import AssetStore
@@ -150,11 +150,11 @@ class ProcessingKit:
             iiif_root=IIIF_ROOT,
         )
 
-    def parts(self, uow: InMemoryUnitOfWork) -> ProcessingParts:
+    def parts(self, uow: UnitOfWork) -> ProcessingParts:
         """Build the shared parts over a unit of work.
 
         :param uow: Unit of work of the request or job.
-        :type uow: InMemoryUnitOfWork
+        :type uow: UnitOfWork
         :returns: The parts.
         :rtype: ProcessingParts
         """
@@ -165,13 +165,16 @@ class ProcessingKit:
         )
         return ProcessingParts.build(uow, self.catalogue, self._defaults, runtime, config)
 
-    def service(self) -> ProcessingService:
-        """Build the processing service over a new unit of work.
+    def service(self, uow: UnitOfWork | None = None) -> ProcessingService:
+        """Build the processing service over a unit of work.
 
+        :param uow: The unit of work to run on, such as one that counts its reads, or None for a new one.
+        :type uow: UnitOfWork | None
         :returns: The service.
         :rtype: ProcessingService
         """
-        uow = InMemoryUnitOfWork(self.database)
+        if uow is None:
+            uow = InMemoryUnitOfWork(self.database)
         return ProcessingService(uow=uow, assets=self.assets, catalogue=self.catalogue, parts=self.parts(uow))
 
     def profiles(self) -> RecipeProfiles:
