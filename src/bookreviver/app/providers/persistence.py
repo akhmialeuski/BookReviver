@@ -2,7 +2,7 @@
 
 from dishka import Provider, Scope, alias, provide
 
-# Neither exported by dishka's top level nor documented, so tests/app/test_change_wait_provider.py pins its behaviour
+# Neither exported by dishka's top level nor documented
 from dishka.entities.marker import HasContext
 from starlette.requests import Request
 

@@ -4,8 +4,7 @@ Services never see a database. They hand the ``UnitOfWork`` a function over ``Re
 runs that function whole on one transaction: ``read`` on a transaction that only reads, ``change`` and ``change_book``
 on one that writes and commits when the function returns. The repositories are synchronous, because the function runs
 from its first statement to its commit without returning to the event loop, which is what keeps a write short: the
-adapter of a database runs it in a thread of its own. The in-memory and SQLAlchemy adapters both run the contract suite
-in ``tests/contracts``, which is what makes them interchangeable.
+adapter of a database runs it in a thread of its own.
 
 The book is the aggregate. Every change of a book runs in ``change_book``, which waits for any other change of that
 book and reads the project first, so it sees only what the previous change committed. A change outside the content of
