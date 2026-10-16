@@ -19,7 +19,6 @@ import { MESSAGES } from '@/shared/messages';
 
 const labels = MESSAGES.editors.quad;
 
-const SHEET_WIDTH_PX = 2;
 const HANDLE_RADIUS_PX = 9;
 
 export function QuadCanvas({
@@ -32,7 +31,7 @@ export function QuadCanvas({
   onCommitLater,
 }: CanvasProps<QuadShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
-  const { stroke, dash } = FIGURE_STYLE[figure];
+  const { stroke, lineWidth, dash } = FIGURE_STYLE[figure];
   const editing = useShapeEditing(frame, shape, onChange, onCommit, onCommitLater);
   const [grabbed, setGrabbed] = useState<QuadCorner>(QuadCorner.TopLeft);
 
@@ -65,7 +64,7 @@ export function QuadCanvas({
         closed
         stroke={stroke}
         dash={dash}
-        strokeWidth={SHEET_WIDTH_PX}
+        strokeWidth={lineWidth}
         listening={false}
       />
       {CORNER_ORDER.map((corner, index) => (

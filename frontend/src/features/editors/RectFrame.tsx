@@ -16,8 +16,6 @@ import { dashed, type Point, pairOf, type RectShape } from '@/features/editors/s
  * margins editor draws the border of the page round it through `outer`, and its own handles after it.
  */
 
-const FRAME_WIDTH_PX = 2;
-
 /** A rectangle on the screen, in screen pixels. */
 export interface ScreenBox {
   x: number;
@@ -90,8 +88,8 @@ export function RectFrame({
   /** The border drawn round the frame, behind it. */
   outer?: ScreenBox | null;
 }): React.JSX.Element {
-  const { stroke, dash } = FIGURE_STYLE[figure];
-  const outline = { stroke, dash, strokeWidth: FRAME_WIDTH_PX, listening: false };
+  const { stroke, lineWidth, dash } = FIGURE_STYLE[figure];
+  const outline = { stroke, dash, strokeWidth: lineWidth, listening: false };
   return (
     <>
       {outer === null ? null : <Rect {...outer} {...outline} />}

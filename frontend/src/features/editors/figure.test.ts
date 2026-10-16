@@ -34,16 +34,23 @@ describe('FIGURE_STYLE', () => {
 });
 
 describe('the shape set by hand', () => {
-  it('is painted orange, a red channel far above the green and the blue far below it, and solid', () => {
+  it('is painted dark green, the green channel far above the red and the blue and darker than the found shape, and solid', () => {
     const { stroke, dash } = FIGURE_STYLE['by-hand'];
-    const [red = 0, green = 0, blue = 0] = [1, 3, 5].map((at) =>
-      Number.parseInt(stroke.slice(at, at + 2), 16),
-    );
+    const channels = (colour: string): number[] =>
+      [1, 3, 5].map((at) => Number.parseInt(colour.slice(at, at + 2), 16));
+    const [red = 0, green = 0, blue = 0] = channels(stroke);
+    const [, foundGreen = 0] = channels(FIGURE_STYLE.found.stroke);
 
-    expect(stroke).toMatch(/^#[0-9a-f]{6}$/);
-    expect(red).toBeGreaterThan(200);
-    expect(green).toBeGreaterThan(blue + 40);
-    expect(red).toBeGreaterThan(green + 80);
+    expect(stroke).toBe('#047857');
+    expect(green).toBeGreaterThan(red + 40);
+    expect(green).toBeGreaterThan(blue);
+    expect(green).toBeLessThan(foundGreen);
     expect(dash).toBeUndefined();
+  });
+
+  it('is drawn with a line of 3 px against the 2 px of the shape the step found', () => {
+    expect(FIGURE_STYLE['by-hand'].lineWidth).toBe(3);
+    expect(FIGURE_STYLE.found.lineWidth).toBe(2);
+    expect(FIGURE_STYLE['by-hand'].lineWidth).toBeGreaterThan(FIGURE_STYLE.found.lineWidth);
   });
 });

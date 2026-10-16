@@ -18,7 +18,7 @@ import { runPages } from './support/page-work';
  * The shape of a step on the page, in its three states, and the grid over the page.
  *
  * A step that is open has its shape on the page from the start: the grey dashed default before the step has run, the green
- * line it found after a run of all pages, and the orange line the reader set, which the later runs keep. The angle of the
+ * line it found after a run of all pages, and the thicker dark green line the reader set, which the later runs keep. The angle of the
  * Deskew step is set with the field, the slider and the arrow keys, and all three states are still there when the open
  * step changes and comes back. The grid is a choice of the book that every step of Geometry shares, and the key G switches
  * it.
@@ -141,7 +141,7 @@ test('the shape of a step is on the page in its three states, they survive a cha
     await open('Deskew', 'Page rotation');
   });
 
-  await test.step('the angle typed in the field is the shape set by hand, orange, and the bar says so', async () => {
+  await test.step('the angle typed in the field is the shape set by hand, dark green, and the bar says so', async () => {
     await angle.fill('1.5');
     await angle.press('Enter');
     await expect(layer).toHaveAttribute('data-degrees', '1.5');

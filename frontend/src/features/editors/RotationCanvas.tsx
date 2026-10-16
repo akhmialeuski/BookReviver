@@ -32,7 +32,6 @@ import { MESSAGES } from '@/shared/messages';
 
 const labels = MESSAGES.editors.rotation;
 
-const AXIS_WIDTH_PX = 2;
 const HANDLE_RADIUS_PX = 10;
 const HANDLE_BORDER_PX = 3;
 const HANDLE_FILL = '#ffffff';
@@ -57,7 +56,7 @@ export function RotationCanvas({
   onCommitLater,
 }: CanvasProps<RotationShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
-  const { stroke, dash } = FIGURE_STYLE[figure];
+  const { stroke, lineWidth, dash } = FIGURE_STYLE[figure];
   const { latest, change, commitLater, release } = useShapeEditing(
     frame,
     shape,
@@ -142,7 +141,7 @@ export function RotationCanvas({
         points={[handles.left.x, handles.left.y, handles.right.x, handles.right.y]}
         stroke={stroke}
         dash={dash}
-        strokeWidth={AXIS_WIDTH_PX}
+        strokeWidth={lineWidth}
         listening={false}
       />
       <Text
