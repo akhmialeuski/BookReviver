@@ -9,6 +9,9 @@ import { ImportStatus } from '@/features/projects/upload/ImportStatus';
  * and the reason of a failure.
  */
 
+/** A button whose disabled attribute is set, as the static markup writes it. */
+const DISABLED_BUTTON = /<button[^>]* disabled=""/;
+
 function render(
   files: readonly SourceSchema[],
   failed: JobSchema | undefined = undefined,
@@ -52,7 +55,8 @@ describe('ImportStatus', () => {
   });
 
   it('disables the dismissal while the server deletes the files', () => {
-    expect(render([unimported('f-1', 'skipped')], undefined, true)).toContain('disabled');
-    expect(render([unimported('f-1', 'skipped')])).not.toContain('disabled');
+    // The attribute itself, since the classes of every button name the disabled variants of its styles
+    expect(render([unimported('f-1', 'skipped')], undefined, true)).toMatch(DISABLED_BUTTON);
+    expect(render([unimported('f-1', 'skipped')])).not.toMatch(DISABLED_BUTTON);
   });
 });
