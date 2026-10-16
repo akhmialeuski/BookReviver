@@ -60,7 +60,9 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   forms and headers, built on the shared `RequestModel` base and the constrained types in `api/schemas/types.py`.
   Handlers never check raw input by hand.
 - HTTP status codes come from `fastapi.status` or `http.HTTPStatus`, never as number literals, in code and in tests.
-- Everything is async: ports, API, SQLAlchemy `AsyncSession`, files, HTTP. Blocking library calls go through
+- Everything on the event loop is async: the API and the ports of files, jobs, events and HTTP. The persistence
+  repositories are synchronous and run only inside the work a service hands to `UnitOfWork.read`, `change` or
+  `change_book`, which the adapter runs in a worker thread as one transaction. Other blocking library calls go through
   `anyio.to_thread.run_sync` inside adapters, keyword arguments through `functools.partial`. Heavy work (parsing,
   rasterising, tiling, OCR, LLM calls) runs only in background jobs, whose entry points live in `app` and call one
   service method.
@@ -78,7 +80,8 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 
 ## Conventions
 
-- Python 3.14 with deferred annotations. SQLAlchemy 2.0 async in the persistence adapter, its tables private to it.
+- Python 3.14 with deferred annotations. SQLAlchemy 2.0 synchronous engines over SQLite in the persistence adapter, its
+  tables private to it.
 - A change of a table ships with an Alembic revision in `adapters/persistence/sqlalchemy/migrations/versions/`,
   generated with `make-migrations --autogenerate`, read by eye for every key and index, and formatted by the gate.
   `tests/adapters/persistence/sqlalchemy/test_migrations.py` fails until the revision matches the tables. The
