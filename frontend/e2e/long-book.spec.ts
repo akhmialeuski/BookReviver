@@ -6,14 +6,18 @@ import {
   createBook,
   openImportStage,
   openLibrary,
+  openProjectId,
   snap,
+  uploadFolder,
+  waitForIdleJobs,
   writePagesFolder,
 } from './support/account';
 import { test } from './support/fixtures';
 
 /**
  * A long book and a long job: the strip of a book of a thousand pages keeps only the pages in sight in the document
- * while it scrolls from the first page to the last, and the activity of the book stops an import that is still running.
+ * while it scrolls from the first page to the last, the activity of the book stops an import that is still running, and
+ * a reload of the page in the middle of a run finds the run going on, since the server holds the jobs of the book.
  *
  * The thousand pages are placeholders added through the pages route, since importing a thousand scans would spend the
  * run on the import rather than on the strip.
@@ -26,6 +30,8 @@ const SCROLL_STEPS = 10;
 const LONG_BOOK_TIMEOUT_MS = 180_000;
 // Enough files that their import is still running when the reader reaches the Stop button
 const STOPPED_IMPORT_FILES = 300;
+// Enough pages that a run of Geometry over the book is still going when the page has been reloaded
+const RELOADED_RUN_PAGES = 40;
 
 test('the strip of a book of a thousand pages keeps only the pages in sight', async ({ page }) => {
   test.setTimeout(LONG_BOOK_TIMEOUT_MS);
@@ -84,6 +90,52 @@ test('the activity of a book stops an import that is still running', async ({ pa
     await test.step('the book keeps fewer files than the folder held', async () => {
       await page.keyboard.press('Escape');
       expect(await page.getByTestId('source-name').count()).toBeLessThan(STOPPED_IMPORT_FILES);
+    });
+  } finally {
+    await rm(path.dirname(folder), { recursive: true, force: true });
+  }
+});
+
+test('a reload of the page in the middle of a run shows the same run, which goes on to its end', async ({
+  page,
+}) => {
+  test.setTimeout(LONG_BOOK_TIMEOUT_MS);
+  const folder = await writePagesFolder(RELOADED_RUN_PAGES);
+  const chip = page.getByTestId('activity-chip');
+  const runJob = page.getByTestId('activity-job').filter({ hasText: 'Geometry' }).first();
+
+  try {
+    await test.step('a run of Geometry over the whole book starts, and the chip shows it', async () => {
+      await openLibrary(page);
+      await createBook(page, 'A reloaded run');
+      await uploadFolder(page, folder, RELOADED_RUN_PAGES);
+      const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
+      await page.goto(`${bookPath}/stages/geometry`);
+      // The strip keeps only the pages in sight, so the stage is told open by its title and not by its pages
+      await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
+      // The editor of the step opens with a preview of its own, which is over before the run is asked for
+      await waitForIdleJobs(page, openProjectId(page));
+      await page.getByTestId('run-menu').click();
+      await page.getByTestId('run-pages-all').click();
+      await page.keyboard.press('Escape');
+      await page.getByTestId('run-start').click();
+      await expect(chip).toHaveAttribute('data-busy', 'true');
+      await expect(chip).toContainText('Geometry');
+    });
+
+    await test.step('after a reload the chip shows the same run still going, as the server holds it', async () => {
+      await page.reload();
+      await expect(chip).toHaveAttribute('data-busy', 'true');
+      await chip.click();
+      await expect(runJob).toHaveAttribute('data-state', 'running');
+      await snap(page, 'run-after-reload');
+      await page.keyboard.press('Escape');
+    });
+
+    await test.step('the run goes on to its end, which the reloaded page learns from the stream', async () => {
+      await expect(chip).toHaveAttribute('data-busy', 'false', { timeout: LONG_BOOK_TIMEOUT_MS });
+      await chip.click();
+      await expect(runJob).toHaveAttribute('data-state', 'succeeded');
     });
   } finally {
     await rm(path.dirname(folder), { recursive: true, force: true });
