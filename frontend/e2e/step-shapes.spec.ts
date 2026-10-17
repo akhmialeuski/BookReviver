@@ -17,13 +17,12 @@ import { dragFrom, numbersOf, pairOf } from './support/layer';
 import { runPages } from './support/page-work';
 
 /**
- * The shape of a step on the page, in its three states, and the grid over the page.
+ * The shape of a step on the page, in its three states.
  *
  * A step that is open has its shape on the page from the start: the grey dashed default before the step has run, the green
  * line it found after a run of all pages, and the thicker dark green line the reader set, which the later runs keep. The angle of the
  * Deskew step is set with the field, the slider and the arrow keys, and all three states are still there when the open
- * step changes and comes back. The grid is a choice of the book that every step of Geometry shares, and the key G switches
- * it.
+ * step changes and comes back. The grid over the page is the subject of `grid-geometry-steps.spec.ts`.
  *
  * The pages are plain squares, so the steps find nothing on their own and the shapes they find are the ones they start
  * from. Exact values come from the field and from the keys and never from a drag, so no screen distance depends on the
@@ -40,15 +39,13 @@ const CORNER_DRAG = { x: -12, y: -9 };
 // Tall enough for the pictures of the key states to show the bar, the canvas and the section of the step in the panel
 test.use({ viewport: { width: 1280, height: 1000 } });
 
-test('the shape of a step is on the page in its three states, they survive a change of step, and the grid is the book’s', async ({
+test('the shape of a step is on the page in its three states, and they survive a change of step', async ({
   page,
 }) => {
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
   const barSteps = page.getByTestId('bar-step');
   const layer = page.getByTestId('editor-layer');
-  const grid = page.getByTestId('canvas-grid');
-  const gridButton = page.getByTestId('canvas-grid-toggle');
   // The open step names the state of its shape in the bar
   const state = page.locator('[data-testid="bar-step"][aria-current="step"]');
   const angle = page.getByRole('textbox', { name: 'Angle in degrees' });
@@ -93,44 +90,18 @@ test('the shape of a step is on the page in its three states, they survive a cha
     await snap(page, 'deskew-default-shape');
   });
 
-  await test.step('the grid is on at Deskew until the reader chooses, and the key G and the button switch it', async () => {
-    await expect(grid).toBeVisible();
-    await expect(gridButton).toHaveAttribute('aria-pressed', 'true');
-    await snap(page, 'deskew-grid-on');
-
-    await page.keyboard.press('g');
-    await expect(grid).toHaveCount(0);
-    await expect(gridButton).toHaveAttribute('aria-pressed', 'false');
-    await page.keyboard.press('Shift+G');
-    await expect(grid).toBeVisible();
-
-    await gridButton.click();
-    await expect(grid).toHaveCount(0);
-  });
-
-  await test.step('the choice of the book stays through a reload and goes with the reader to every step of Geometry', async () => {
-    await page.reload();
-    await expect(page.getByTestId('step-panel-title')).toHaveText(/Deskew/);
-    // The grid is drawn with the canvas, so the canvas is waited for before the grid is said to be gone
-    await expect(layer).toBeVisible();
-    await expect(grid).toHaveCount(0);
-
+  await test.step('Perspective and Select content open with their default shape on the page before they have run', async () => {
     await open('Perspective', 'Corners of the sheet');
-    await expect(grid).toHaveCount(0);
     await expect(layer).toHaveAttribute('data-figure', 'default');
-    await gridButton.click();
-    await expect(grid).toBeVisible();
-    await snap(page, 'perspective-default-shape-with-grid');
+    await snap(page, 'perspective-default-shape');
 
     await open('Select content', 'Frame of the content');
     await expect(layer).toHaveAttribute('data-figure', 'default');
-    await expect(grid).toBeVisible();
     const [, , width = 0, height = 0] = await numbersOf(layer, 'data-rect');
     expect(width).toBeGreaterThan(0);
     expect(height).toBeGreaterThan(0);
 
     await open('Deskew', 'Page rotation');
-    await expect(grid).toBeVisible();
   });
 
   await test.step('a run of all pages through the open step gives the steps their found shape, green on the page and named in the bar', async () => {

@@ -12,7 +12,7 @@ import {
 } from '@/features/workspace/grid';
 import type { WorkspaceStorage } from '@/features/workspace/storage';
 
-/** The grid over the page of a Geometry step: the choice kept for a book, the fallback, and the key G. */
+/** The grid over the page of a Geometry step: the choice kept for a book, which is off until it is made, and the key G. */
 
 function memory(initial: Record<string, string> = {}): WorkspaceStorage & {
   data: Map<string, string>;
@@ -93,14 +93,12 @@ describe('useGrid and useGridKey', () => {
 
   function Harness({
     projectId,
-    fallback,
     keyed = true,
   }: {
     projectId: string;
-    fallback: boolean;
     keyed?: boolean;
   }): React.JSX.Element {
-    const [on, toggle] = useGrid(projectId, fallback);
+    const [on, toggle] = useGrid(projectId);
     useGridKey(toggle, keyed);
     return (
       <button type="button" data-testid="grid" data-on={on} onClick={toggle}>
@@ -127,32 +125,50 @@ describe('useGrid and useGridKey', () => {
     vi.unstubAllGlobals();
   });
 
-  it('follows the fallback until the reader chooses, and remembers the choice for the book', () => {
-    act(() => root.render(<Harness projectId="book-a" fallback />));
-    expect(state()).toBe('true');
+  it('is off until the reader chooses, and writes nothing to the storage', () => {
+    act(() => root.render(<Harness projectId="book-a" />));
+    expect(state()).toBe('false');
     expect(localStorage.getItem(gridStorageKey('book-a'))).toBeNull();
+  });
 
+  it('remembers the choice for the book, on or off, through a render', () => {
+    act(() => root.render(<Harness projectId="book-a" />));
+    act(() => container.querySelector('button')?.click());
+    expect(state()).toBe('true');
+    expect(localStorage.getItem(gridStorageKey('book-a'))).toBe('on');
+    act(() => root.render(<Harness projectId="book-a" />));
+    expect(state()).toBe('true');
+
+    // An off choice is a choice too, and stays off
     act(() => container.querySelector('button')?.click());
     expect(state()).toBe('false');
     expect(localStorage.getItem(gridStorageKey('book-a'))).toBe('off');
-
-    // Once chosen, the step no longer decides
-    act(() => root.render(<Harness projectId="book-a" fallback />));
+    act(() => root.render(<Harness projectId="book-a" />));
     expect(state()).toBe('false');
+  });
+
+  it('survives a new mount, which reads what the book kept', () => {
+    act(() => root.render(<Harness projectId="book-a" />));
+    act(() => container.querySelector('button')?.click());
+    act(() => root.unmount());
+
+    root = createRoot(container);
+    act(() => root.render(<Harness projectId="book-a" />));
+    expect(state()).toBe('true');
   });
 
   it('starts from what the book kept, and does not carry a choice over to another book', () => {
     localStorage.setItem(gridStorageKey('book-a'), 'on');
 
-    act(() => root.render(<Harness projectId="book-a" fallback={false} />));
+    act(() => root.render(<Harness projectId="book-a" />));
     expect(state()).toBe('true');
 
-    act(() => root.render(<Harness projectId="book-b" fallback={false} />));
+    act(() => root.render(<Harness projectId="book-b" />));
     expect(state()).toBe('false');
   });
 
   it('switches with the key G, and not while a field is being typed in or the screen has no grid', () => {
-    act(() => root.render(<Harness projectId="book-a" fallback={false} />));
+    act(() => root.render(<Harness projectId="book-a" />));
 
     const event = press('g');
     expect(event.defaultPrevented).toBe(true);
@@ -165,8 +181,35 @@ describe('useGrid and useGridKey', () => {
     press('g', {}, field);
     expect(state()).toBe('false');
 
-    act(() => root.render(<Harness projectId="book-a" fallback={false} keyed={false} />));
+    act(() => root.render(<Harness projectId="book-a" keyed={false} />));
     press('g');
     expect(state()).toBe('false');
+  });
+
+  it('leaves the key G to a dialog and to a modifier, and takes it again once they are gone', () => {
+    act(() => root.render(<Harness projectId="book-a" />));
+
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    document.body.append(dialog);
+    press('g');
+    expect(state()).toBe('false');
+    dialog.remove();
+
+    press('g', { ctrlKey: true });
+    expect(state()).toBe('false');
+
+    press('g');
+    expect(state()).toBe('true');
+  });
+
+  it('takes the key again when the screen gets its grid back', () => {
+    act(() => root.render(<Harness projectId="book-a" keyed={false} />));
+    press('g');
+    expect(state()).toBe('false');
+
+    act(() => root.render(<Harness projectId="book-a" keyed />));
+    press('g');
+    expect(state()).toBe('true');
   });
 });
