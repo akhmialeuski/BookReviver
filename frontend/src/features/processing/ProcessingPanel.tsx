@@ -1,6 +1,6 @@
-import { useState } from 'react';
 import type { EditorSession } from '@/features/editors/session';
 import { PageTimeline, type TimelineStep } from '@/features/processing/PageTimeline';
+import { RecipeBar } from '@/features/processing/RecipeBar';
 import { RecipeSection } from '@/features/processing/RecipeSection';
 import { RunControls } from '@/features/processing/RunControls';
 import { SplitSection } from '@/features/processing/SplitSection';
@@ -9,7 +9,6 @@ import { usePageValues } from '@/features/processing/usePageValues';
 import type { Processing } from '@/features/processing/useProcessing';
 import { useStageRun } from '@/features/processing/useStageRun';
 import { useThisPage } from '@/features/processing/useThisPage';
-import { ProfileLibraryPanel } from '@/features/profiles/ProfileLibraryPanel';
 import { StagePanel } from '@/features/workspace/StagePanel';
 import { type BarStep, hasStepBar } from '@/features/workspace/steps';
 import type { StripItem } from '@/features/workspace/strip';
@@ -20,7 +19,9 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 /**
  * The panel of a stage that is built from processors, which only fills the slots of the `StagePanel` every stage has:
  *
- * - `recipe`: the profile menu and the save bar, and on a stage without a step bar the picker and the list of steps;
+ * - `bar`: the profile, the choice of the recipe and the row that saves it, above everything else, on every stage that has
+ *   recipes;
+ * - `recipe`: on a stage without a step bar, the list of the steps of the recipe;
  * - `step`: on a stage with a step bar, the title of the open step and the notes about its place in the order;
  * - `settings`: the form of the open step, the values pages have for each setting and the measurement of the book, for
  *   the step open in the bar or, on a stage without a bar, the card open in the list of the recipe;
@@ -58,7 +59,6 @@ export function ProcessingPanel({
   const rows = items.flatMap((item) => (item.row === undefined ? [] : [item.row]));
   const run = useStageRun(processing, items, current, selected);
   const values = usePageValues(processing, items, current, selected);
-  const [libraryOpen, setLibraryOpen] = useState(false);
   // The open step is the one open in the bar, or on a stage without a bar the card open in the list of the recipe. The
   // settings and the history are those of this step.
   const openDraft =
@@ -120,21 +120,14 @@ export function ProcessingPanel({
     <StagePanel
       stage={stage}
       available
-      recipe={
+      bar={
         processing.recipe === undefined ? undefined : (
-          <>
-            <RecipeSection
-              processing={processing}
-              rows={rows}
-              run={run}
-              onManageProfiles={() => setLibraryOpen(true)}
-            />
-            <ProfileLibraryPanel
-              open={libraryOpen}
-              onOpenChange={setLibraryOpen}
-              book={{ processing }}
-            />
-          </>
+          <RecipeBar processing={processing} rows={rows} />
+        )
+      }
+      recipe={
+        processing.recipe === undefined || hasStepBar(stage) ? undefined : (
+          <RecipeSection processing={processing} rows={rows} run={run} />
         )
       }
       step={

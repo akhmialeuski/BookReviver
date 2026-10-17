@@ -4,7 +4,7 @@ import { cn } from '@/shared/lib/utils';
 import { MESSAGES } from '@/shared/messages';
 
 /**
- * The choice of the recipe of a stage that the panel and the step bar show, which is the one place a recipe is chosen.
+ * The choice of the recipe of a stage that the recipe bar of the panel and the step bar over the canvas show.
  *
  * A stage has one recipe for each kind of page, and a page is processed by the recipe of its kind. Each option names the
  * kind and says how many pages of the book are of it, which the summary of the stage gives. A stage with one recipe has
@@ -17,9 +17,12 @@ const labels = MESSAGES.processing.recipe;
 export function RecipePicker({
   processing,
   className,
+  testId = 'recipe-select',
 }: {
   processing: Processing;
   className?: string;
+  /** The test id of the select, which differs between the two places a stage shows the picker in. */
+  testId?: string;
 }): React.JSX.Element | null {
   const { recipe, recipes } = processing;
   const summaries = useStageSummaries(processing.projectId);
@@ -30,7 +33,7 @@ export function RecipePicker({
   return (
     <select
       aria-label={labels.choose}
-      data-testid="recipe-select"
+      data-testid={testId}
       className={cn(
         'min-w-0 rounded-md border border-input bg-background text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50',
         className,

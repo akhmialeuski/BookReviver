@@ -84,12 +84,13 @@ export function ProfileMenu({
             variant="outline"
             size="sm"
             className="w-full min-w-0 justify-between"
-            title={linked === undefined ? labels.noneHint : undefined}
+            title={linked === undefined ? labels.noneHint : linked.name}
             data-testid="profile-button"
           >
             <span className="flex min-w-0 items-center gap-2">
               <BookmarkIcon />
-              <span className="shrink-0 text-muted-foreground">{labels.label}</span>
+              {/* The bookmark says what the button is, so the word is read out but not drawn, and the name gets the width */}
+              <span className="sr-only">{labels.label}</span>
               <span className="truncate font-semibold" data-testid="profile-name">
                 {linked?.name ?? labels.none}
               </span>

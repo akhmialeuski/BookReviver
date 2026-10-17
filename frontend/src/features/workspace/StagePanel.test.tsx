@@ -66,6 +66,26 @@ describe('StagePanel', () => {
     expect(find('stage-panel')?.lastElementChild?.tagName).toBe('FOOTER');
   });
 
+  it('draws the bar between the header and the scrolling area, so it stays in view above the open step', async () => {
+    await render(
+      <StagePanel
+        stage="geometry"
+        available
+        bar={<p data-testid="bar-content">Bar</p>}
+        {...FULL}
+      />,
+    );
+
+    const bar = find('panel-bar');
+    expect(bar?.contains(find('bar-content'))).toBe(true);
+    expect(bar?.previousElementSibling?.tagName).toBe('HEADER');
+    expect(bar?.nextElementSibling).toBe(find('stage-panel-scroll'));
+    expect(find('stage-panel-scroll')?.contains(bar)).toBe(false);
+
+    await render(<StagePanel stage="geometry" available bar={null} {...FULL} />);
+    expect(find('panel-bar')).toBeNull();
+  });
+
   it('draws nothing for a slot that is empty, and the grey history alone for a stage with no slot filled', async () => {
     await render(<StagePanel stage="import" available settings={null} footer={false} />);
 

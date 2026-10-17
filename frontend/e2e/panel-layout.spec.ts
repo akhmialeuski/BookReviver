@@ -16,7 +16,7 @@ import { runPages } from './support/page-work';
 
 /**
  * The panel of every stage is laid out by one component, so Geometry and Cleanup, with a step open, show their parts
- * in one order: the recipe, the open step, its settings in one bordered frame, the section of the page with the facts
+ * in one order: the bar of the profile and the recipe above the area, then the open step, its settings in one bordered frame, the section of the page with the facts
  * of the page last, and the history. The step is named by its title alone, and "This page" comes once.
  */
 
@@ -26,8 +26,9 @@ const STAGE_STEPS = [
   ['geometry', 'Deskew'],
   ['cleanup', 'Binarization'],
 ] as const;
-// The parts of the panel in the order the layout gives them, by their test ids
-const PANEL_ORDER = ['panel-recipe', 'panel-step', 'panel-settings', 'panel-page', 'page-history'];
+// The parts of the scrolling area of the panel in the order the layout gives them, by their test ids. The bar of the
+// profile and the recipe stands above the area, and a stage with a step bar has no recipe section in it
+const PANEL_ORDER = ['panel-step', 'panel-settings', 'panel-page', 'page-history'];
 
 /** Read the test ids of the parts of the scrolling area of the panel, in the order they stand. */
 async function partsOf(page: Page): Promise<string[]> {
@@ -68,6 +69,13 @@ test('Geometry and Cleanup lay out their panels in one order, with the facts of 
       await expect(panel.getByTestId('panel-facts')).toBeVisible();
 
       expect(await partsOf(page)).toEqual(PANEL_ORDER);
+      // The bar of the profile and the recipe stands above the open step, and keeps its place while the area scrolls
+      const barBox = await panel.getByTestId('panel-bar').boundingBox();
+      const stepBox = await panel.getByTestId('panel-step').boundingBox();
+      expect(barBox).not.toBeNull();
+      expect(stepBox).not.toBeNull();
+      expect((barBox?.y ?? 0) + (barBox?.height ?? 0)).toBeLessThanOrEqual(stepBox?.y ?? 0);
+      await expect(panel.getByTestId('panel-bar').getByTestId('profile-button')).toBeVisible();
       // The step is named by its title alone, and the settings stand in the frame the layout draws
       await expect(panel.getByTestId('step-panel-title')).toHaveText(step);
       expect(

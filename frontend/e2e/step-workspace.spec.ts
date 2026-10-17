@@ -91,9 +91,12 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     ]) {
       await expect(page.getByTestId(id)).toBeVisible();
     }
-    // The steps are in the bar only, and the panel of the recipe lists none
+    // The steps are in the bar only, so the panel has no recipe section of its own and only the bar of the profile and the
+    // recipe at its top
     await expect(page.getByTestId('recipe-steps')).toHaveCount(0);
-    await expect(page.getByTestId('panel-recipe').getByTestId('step-catalogue')).toHaveCount(0);
+    await expect(page.getByTestId('panel-recipe')).toHaveCount(0);
+    await expect(page.getByTestId('stage-panel').getByTestId('step-catalogue')).toHaveCount(0);
+    await expect(page.getByTestId('panel-bar').getByTestId('profile-button')).toBeVisible();
   });
 
   await test.step('a second Deskew is added after the first, which saves it', async () => {

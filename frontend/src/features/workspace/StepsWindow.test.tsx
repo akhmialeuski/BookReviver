@@ -4,15 +4,29 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { deskew, processing, processor, recipe, step } from '@/features/processing/fixtures';
 import { draftOf } from '@/features/processing/recipe';
+import { profilePage } from '@/features/profiles/fixtures';
 import { row } from '@/features/workspace/fixtures';
 import { StepsWindow } from '@/features/workspace/StepsWindow';
 
 /**
- * The window of the gear: the list of the steps of the recipe, which `StepList` tests, the bar that saves the draft, and
- * the buttons for profiles.
+ * The window of the gear: the recipe bar the panel shows, the list of the steps of the recipe, which `StepList` tests, and
+ * the buttons for profiles. What the bar does is tested in `RecipeBar`, so the window is tested for drawing it, and only it,
+ * to save the draft.
  *
  * Radix measures a switch, which jsdom cannot, so the observer it asks for is given a stand-in.
  */
+
+const sdk = vi.hoisted(() => ({
+  stages: vi.fn(),
+  profiles: vi.fn(),
+}));
+
+vi.mock('@/api/sdk.gen', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
+  listStagesApiV1ProjectsProjectIdStagesGet: sdk.stages,
+  listProfilesApiV1RecipeProfilesGet: sdk.profiles,
+}));
+vi.mock('@/features/profiles/ProfileLibraryPanel', () => ({ ProfileLibraryPanel: () => null }));
 
 class SizeObserverStandIn {
   observe(): void {}
@@ -74,6 +88,8 @@ describe('StepsWindow', () => {
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('ResizeObserver', SizeObserverStandIn);
+    sdk.profiles.mockResolvedValue(profilePage([]));
+    sdk.stages.mockResolvedValue({ data: { items: [], total: 0, page: 1, size: 50, pages: 1 } });
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -103,12 +119,27 @@ describe('StepsWindow', () => {
     expect(byId('steps-window')?.querySelector('[data-testid="field-values"]')).toBeNull();
   });
 
-  it('shows the bar that saves only while the draft differs from the saved recipe', async () => {
+  it('draws the recipe bar of the panel above the list of the steps, and no bar of its own to save', async () => {
+    render();
+    await open();
+
+    const dialog = byId('steps-window');
+    const bar = dialog?.querySelector('[data-testid="recipe-bar"]');
+    expect(bar).not.toBeNull();
+    expect(bar?.querySelector('[data-testid="profile-button"]')).not.toBeNull();
+    expect(
+      bar?.compareDocumentPosition(rowsOf()[0] as Node) === Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(true);
+    expect(dialog?.querySelectorAll('[data-testid="recipe-bar"]')).toHaveLength(1);
+  });
+
+  it('shows the amber row that saves only while the draft differs from the saved recipe, inside the bar', async () => {
     render();
     await open();
     expect(byId('recipe-save-bar')).toBeNull();
 
     render({ dirty: true });
+    expect(byId('recipe-bar')?.contains(byId('recipe-save-bar'))).toBe(true);
     expect(byId('recipe-save-bar')?.textContent).toContain('not saved');
     expect(byId('recipe-stale-warning')?.textContent).toContain('1 page');
   });
