@@ -38,10 +38,11 @@ export function RecipeBar({
         <div className="min-w-0 flex-1">
           <ProfileMenu processing={processing} onManage={() => setLibraryOpen(true)} />
         </div>
+        {/* The choice of the recipe is as wide as its label, so the name of the profile takes the rest of the row */}
         <RecipePicker
           processing={processing}
           testId="recipe-bar-select"
-          className="h-8 min-w-0 flex-1 px-2"
+          className="h-8 w-auto max-w-1/2 shrink-0 px-2"
         />
       </div>
       <RecipeSaveBar processing={processing} rows={rows} />
