@@ -6,6 +6,7 @@ import { processing, recipe, step } from '@/features/processing/fixtures';
 import { bodyOf, draftOf, toggleStep } from '@/features/processing/recipe';
 import { profile, profilePage } from '@/features/profiles/fixtures';
 import { ProfileMenu } from '@/features/profiles/ProfileMenu';
+import { MESSAGES } from '@/shared/messages';
 
 /**
  * The profile button of the recipe panel: the profile the recipe was made from, the mark that appears as soon as the steps
@@ -131,6 +132,24 @@ describe('ProfileMenu', () => {
     expect(sdk.list).toHaveBeenCalledWith(
       expect.objectContaining({ query: { size: 100, stage: 'geometry' } }),
     );
+  });
+
+  it('puts the full name of the profile in the tooltip and reads the word Profile out without drawing it', async () => {
+    await render(processing({ recipe: LINKED, steps: draftOf(LINKED) }));
+    await vi.waitFor(() => expect(byId('profile-name')?.textContent).toBe('Photographed book'));
+
+    // A bar as narrow as the top of the panel may still cut a long name, so the tooltip carries all of it
+    expect(byId('profile-button')?.title).toBe('Photographed book');
+    const word = [...(byId('profile-button')?.querySelectorAll('span') ?? [])].find(
+      (span) => span.textContent === MESSAGES.profiles.link.label,
+    );
+    expect(word?.classList.contains('sr-only')).toBe(true);
+  });
+
+  it('explains in the tooltip what no profile means for a recipe made from none', async () => {
+    await render(processing({ recipe: recipe('r1', { steps: STEPS }), steps: draftOf(LINKED) }));
+
+    expect(byId('profile-button')?.title).toBe(MESSAGES.profiles.link.noneHint);
   });
 
   it('says no profile for a recipe made from none, and offers only to save the steps as a new profile', async () => {
