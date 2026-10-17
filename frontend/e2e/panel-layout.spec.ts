@@ -16,8 +16,9 @@ import { runPages } from './support/page-work';
 
 /**
  * The panel of every stage is laid out by one component, so Geometry and Cleanup, with a step open, show their parts
- * in one order: the bar of the profile and the recipe above the area, then the open step, its settings in one bordered frame, the section of the page with the facts
- * of the page last, and the history. The step is named by its title alone, and "This page" comes once.
+ * in one order: the bar of the profile and the recipe above the area, then the open step, its settings in one bordered
+ * frame, the section of the page with the facts of the page last, and the history. The step is named by its title
+ * alone, and "This page" comes once.
  */
 
 const PAGES = 2;
@@ -69,7 +70,7 @@ test('Geometry and Cleanup lay out their panels in one order, with the facts of 
       await expect(panel.getByTestId('panel-facts')).toBeVisible();
 
       expect(await partsOf(page)).toEqual(PANEL_ORDER);
-      // The bar of the profile and the recipe stands above the open step, and keeps its place while the area scrolls
+      // The bar of the profile and the recipe stands above the open step
       const barBox = await panel.getByTestId('panel-bar').boundingBox();
       const stepBox = await panel.getByTestId('panel-step').boundingBox();
       expect(barBox).not.toBeNull();
@@ -92,6 +93,15 @@ test('Geometry and Cleanup lay out their panels in one order, with the facts of 
       await expect(panel.getByText(/^This page/)).toHaveCount(1);
       await expect(panel).not.toContainText('Settings of the step');
       await snap(page, `panel-layout-${stage}`);
+      // The bar stands outside the scrolling area, so the wheel turned over the open step moves the step up and leaves
+      // the bar in its place, with the profile in view
+      await panel.getByTestId('panel-step').hover();
+      await page.mouse.wheel(0, 10_000);
+      await expect
+        .poll(async () => (await panel.getByTestId('panel-step').boundingBox())?.y ?? 0)
+        .toBeLessThan(stepBox?.y ?? 0);
+      expect((await panel.getByTestId('panel-bar').boundingBox())?.y).toBe(barBox?.y);
+      await expect(panel.getByTestId('panel-bar').getByTestId('profile-button')).toBeInViewport();
     });
   }
 

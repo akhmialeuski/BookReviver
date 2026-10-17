@@ -157,6 +157,9 @@ test('a reader runs and checks the Geometry stage', async ({ page }) => {
     await expect(page.getByTestId('panel-bar').getByTestId('profile-button')).toBeVisible();
     await expect(page.getByTestId('panel-bar').getByTestId('recipe-bar-select')).toBeVisible();
     await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
+    // The name of the profile takes the rest of the row beside the choice of the recipe, so it is drawn whole
+    const name = page.getByTestId('panel-bar').getByTestId('profile-name');
+    expect(await name.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     await snap(page, 'recipe-bar-saved');
     await page
       .getByTestId('panel-settings')

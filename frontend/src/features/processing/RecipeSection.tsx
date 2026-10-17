@@ -9,14 +9,14 @@ import { MESSAGES } from '@/shared/messages';
 
 /**
  * The content of the `recipe` slot of the panel on a stage without a step bar: the steps of the recipe as cards, with the
- * same button that adds one as the bar has. The panel passes the slot only for such a stage, and the layout draws the
- * section and its heading.
+ * same button that adds one as the step bar over the canvas has. The panel passes the slot only for such a stage, and the
+ * layout draws the section and its heading.
  *
- * A stage with a step bar keeps its steps there: they are added from the catalogue of the bar, ordered and switched in
- * the window of the gear, and set in the settings frame of the panel for the open step. The settings of the open card of a
- * stage without a bar stand in the settings frame like those of a step of the bar.
+ * A stage with a step bar keeps its steps there: they are added from the catalogue of the step bar, ordered and switched
+ * in the window of the gear, and set in the settings frame of the panel for the open step. The settings of the open card
+ * of a stage without a step bar stand in the settings frame like those of a step of the step bar.
  *
- * The profile, the choice of the recipe and the bar that saves it are not here: `RecipeBar` draws them above the panel.
+ * The profile, the choice of the recipe and the row that saves it are not here: `RecipeBar` draws them above the panel.
  */
 
 export function RecipeSection({

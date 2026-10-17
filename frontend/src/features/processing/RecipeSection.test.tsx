@@ -8,8 +8,8 @@ import { row } from '@/features/workspace/fixtures';
 
 /**
  * The content of the recipe slot of the panel on a stage that has no step bar: the steps as cards, with the plus button of
- * the bar to add one. No form of settings stands in a card, since the settings are in the frame of the panel, and the
- * profile, the choice of the recipe and the bar that saves it are not here, since `RecipeBar` draws them.
+ * the step bar to add one. No form of settings stands in a card, since the settings are in the frame of the panel, and the
+ * profile, the choice of the recipe and the row that saves it are not here, since `RecipeBar` draws them.
  *
  * Radix measures the thumb of a slider, which jsdom cannot, so the observer it asks for is given a stand-in.
  */
