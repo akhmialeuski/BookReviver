@@ -1408,9 +1408,11 @@ export const MESSAGES = {
       } satisfies Record<RoadmapKey, string>,
     },
     save: {
-      save: 'Save the recipe',
+      save: 'Save',
+      saveHint: 'Save the recipe',
       saving: 'Saving…',
-      discard: 'Discard changes',
+      discard: 'Discard',
+      discardHint: 'Discard the changes and go back to the saved recipe',
       unsaved: 'Changes not saved yet.',
       staleWarning: (pages: number) =>
         `Saving makes ${pages} ${pluralize(pages, 'page', 'pages')} out of date.`,
