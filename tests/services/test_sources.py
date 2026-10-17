@@ -1,4 +1,4 @@
-"""Tests for the source use cases, against in-memory persistence and the local stores over a temporary directory."""
+"""Tests for the source use cases, against the local stores over a temporary directory."""
 
 from typing import TYPE_CHECKING, override
 from uuid import uuid4
@@ -7,7 +7,6 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.adapters.storage import LocalSourceStore
 from bookreviver.domain.enums import JobKind, RejectionReason, Rendition, SourceStatus
 from bookreviver.domain.errors import ConflictError, NotFoundError
@@ -25,13 +24,14 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from bookreviver.adapters.clock.system import FixedClock
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Project, Source
     from bookreviver.domain.ids import ProjectId
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from tests.helpers.books import Book
+    from tests.helpers.clock import FixedClock
+    from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
@@ -87,15 +87,15 @@ def fx_import_board(fx_events: RecordingEventBus, fx_clock: FixedClock) -> FakeJ
 
 @pytest.fixture
 def fx_service(
-    fx_database: InMemoryDatabase,
+    fx_uow: UnitOfWorkFactory,
     fx_source_store: LocalSourceStore,
     fx_asset_store: LocalAssetStore,
     fx_import_board: FakeJobBoard,
 ) -> Callable[[], SourceService]:
     """Return a function building the service for one request.
 
-    :param fx_database: In-memory database every request of the test shares.
-    :type fx_database: InMemoryDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_source_store: Local source store over the test's storage root.
     :type fx_source_store: LocalSourceStore
     :param fx_asset_store: Local asset store over the test's storage root.
@@ -105,22 +105,17 @@ def fx_service(
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], SourceService]
     """
-    return lambda: SourceService(
-        uow=InMemoryUnitOfWork(fx_database), board=fx_import_board, sources=fx_source_store, assets=fx_asset_store
-    )
+    return lambda: SourceService(uow=fx_uow(), board=fx_import_board, sources=fx_source_store, assets=fx_asset_store)
 
 
 @pytest.fixture
 def fx_flaky_service(
-    fx_database: InMemoryDatabase,
-    fx_asset_store: LocalAssetStore,
-    fx_storage_root: Path,
-    fx_import_board: FakeJobBoard,
+    fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore, fx_storage_root: Path, fx_import_board: FakeJobBoard
 ) -> Callable[[], SourceService]:
     """Return a function building the service for one request over a source store whose first deletion fails.
 
-    :param fx_database: In-memory database every request of the test shares.
-    :type fx_database: InMemoryDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :param fx_storage_root: Storage root both stores share.
@@ -131,16 +126,14 @@ def fx_flaky_service(
     :rtype: Callable[[], SourceService]
     """
     sources = SourceStoreFailingOnce(root=fx_storage_root)
-    return lambda: SourceService(
-        uow=InMemoryUnitOfWork(fx_database), board=fx_import_board, sources=sources, assets=fx_asset_store
-    )
+    return lambda: SourceService(uow=fx_uow(), board=fx_import_board, sources=sources, assets=fx_asset_store)
 
 
-async def _record_unimported(database: InMemoryDatabase, project_id: ProjectId) -> tuple[Source, Source]:
+async def _record_unimported(uow: UnitOfWork, project_id: ProjectId) -> tuple[Source, Source]:
     """Record a rejected and a skipped file of a project, after the sources of a book made by ``commit_book``.
 
-    :param database: In-memory database to commit into.
-    :type database: InMemoryDatabase
+    :param uow: Unit of work to commit through.
+    :type uow: UnitOfWork
     :param project_id: Project the files were uploaded to.
     :type project_id: ProjectId
     :returns: The rejected file and the skipped file, in the order they were recorded.
@@ -172,32 +165,32 @@ async def _record_unimported(database: InMemoryDatabase, project_id: ProjectId) 
         repos.sources.add(rejected)
         repos.sources.add(skipped)
 
-    await InMemoryUnitOfWork(database).change_book(project_id, record)
+    await uow.change_book(project_id, record)
     return rejected, skipped
 
 
 @pytest.fixture
-async def fx_unimported(fx_database: InMemoryDatabase, fx_book: Book) -> tuple[Source, Source]:
+async def fx_unimported(fx_uow: UnitOfWorkFactory, fx_book: Book) -> tuple[Source, Source]:
     """Record a rejected and a skipped file in the project of the book of the acting account.
 
-    :param fx_database: In-memory database of the test.
-    :type fx_database: InMemoryDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_book: Book of the acting account.
     :type fx_book: Book
     :returns: The rejected file and the skipped file.
     :rtype: tuple[Source, Source]
     """
-    return await _record_unimported(fx_database, fx_book.project.id)
+    return await _record_unimported(fx_uow(), fx_book.project.id)
 
 
 @pytest.fixture
 async def fx_book(
-    fx_database: InMemoryDatabase, fx_source_store: LocalSourceStore, fx_asset_store: LocalAssetStore, fx_actor: Actor
+    fx_database: SqlDatabase, fx_source_store: LocalSourceStore, fx_asset_store: LocalAssetStore, fx_actor: Actor
 ) -> Book:
     """Commit and store a book of the acting account.
 
-    :param fx_database: In-memory database of the test.
-    :type fx_database: InMemoryDatabase
+    :param fx_database: Database of the test.
+    :type fx_database: SqlDatabase
     :param fx_source_store: Local source store over the test's storage root.
     :type fx_source_store: LocalSourceStore
     :param fx_asset_store: Local asset store over the test's storage root.
@@ -212,12 +205,12 @@ async def fx_book(
 
 @pytest.fixture
 async def fx_strangers_book(
-    fx_database: InMemoryDatabase, fx_source_store: LocalSourceStore, fx_asset_store: LocalAssetStore
+    fx_database: SqlDatabase, fx_source_store: LocalSourceStore, fx_asset_store: LocalAssetStore
 ) -> Book:
     """Commit and store a book of an account that acts nowhere in the test.
 
-    :param fx_database: In-memory database of the test.
-    :type fx_database: InMemoryDatabase
+    :param fx_database: Database of the test.
+    :type fx_database: SqlDatabase
     :param fx_source_store: Local source store over the test's storage root.
     :type fx_source_store: LocalSourceStore
     :param fx_asset_store: Local asset store over the test's storage root.
@@ -315,14 +308,14 @@ class TestGet:
         assert await fx_service().get(fx_actor, fx_book.project.id, fx_book.second.id) == fx_book.second
 
     async def test_source_of_another_project_of_the_actor_is_not_found(
-        self, fx_service: Callable[[], SourceService], fx_database: InMemoryDatabase, fx_book: Book, fx_actor: Actor
+        self, fx_service: Callable[[], SourceService], fx_database: SqlDatabase, fx_book: Book, fx_actor: Actor
     ) -> None:
         """Verify a source is found only through the project holding it, even for an owner of both projects.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
         :param fx_book: Book of the acting account.
         :type fx_book: Book
         :param fx_actor: Account the service acts for.
@@ -400,14 +393,14 @@ class TestScans:
         assert_expectations()
 
     async def test_source_of_another_project_is_not_found(
-        self, fx_service: Callable[[], SourceService], fx_database: InMemoryDatabase, fx_book: Book, fx_actor: Actor
+        self, fx_service: Callable[[], SourceService], fx_database: SqlDatabase, fx_book: Book, fx_actor: Actor
     ) -> None:
         """Verify the scans of a source are listed only through the project holding it.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
         :param fx_book: Book of the acting account.
         :type fx_book: Book
         :param fx_actor: Account the service acts for.
@@ -441,7 +434,7 @@ class TestDelete:
     async def test_removes_the_source_its_scans_and_their_files_but_keeps_the_page(
         self,
         fx_service: Callable[[], SourceService],
-        fx_database: InMemoryDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_book: Book,
         fx_storage_root: Path,
         fx_actor: Actor,
@@ -450,8 +443,8 @@ class TestDelete:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_book: Book of the acting account.
         :type fx_book: Book
         :param fx_storage_root: Storage root both stores share.
@@ -461,7 +454,7 @@ class TestDelete:
         """
         await fx_service().delete(fx_actor, fx_book.project.id, fx_book.first.id)
 
-        uow = InMemoryUnitOfWork(fx_database)
+        uow = fx_uow()
         remaining = await fx_service().list(fx_actor, fx_book.project.id, SliceRequest())
         scans = await fx_service().scans(fx_actor, fx_book.project.id, SliceRequest())
         image = ProjectKeys(fx_book.project.id).version_rendition(fx_book.version, Rendition.FULL_JPEG)
@@ -638,7 +631,7 @@ class TestDeleteUnimported:
     async def test_project_of_another_account_is_not_found_and_keeps_its_report(
         self,
         fx_service: Callable[[], SourceService],
-        fx_database: InMemoryDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_strangers_book: Book,
         fx_actor: Actor,
     ) -> None:
@@ -646,19 +639,17 @@ class TestDeleteUnimported:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_strangers_book: Book of another account.
         :type fx_strangers_book: Book
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        recorded = await _record_unimported(fx_database, fx_strangers_book.project.id)
+        recorded = await _record_unimported(fx_uow(), fx_strangers_book.project.id)
 
         with pytest.raises(NotFoundError):
             await fx_service().delete_unimported(fx_actor, fx_strangers_book.project.id)
 
-        kept = await InMemoryUnitOfWork(fx_database).read(
-            lambda repos: repos.sources.list_unimported(fx_strangers_book.project.id)
-        )
+        kept = await fx_uow().read(lambda repos: repos.sources.list_unimported(fx_strangers_book.project.id))
         assert list(kept) == list(recorded)

@@ -1,8 +1,8 @@
-"""A record of how the in-memory page stage repository is written, for the tests that prove records go in one batch."""
+"""A record of how the page stage repository is written, for the tests that prove records go in one batch."""
 
 from typing import TYPE_CHECKING
 
-from bookreviver.adapters.persistence.memory.unit_of_work import InMemoryPageStageRepository
+from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyPageStageRepository
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -34,14 +34,14 @@ class PageStageWrites:
 
     def start(self) -> None:
         """Record every write from now on, so what a test seeds before the call is not in the lists."""
-        save = InMemoryPageStageRepository.save
-        save_many = InMemoryPageStageRepository.save_many
+        save = SqlAlchemyPageStageRepository.save
+        save_many = SqlAlchemyPageStageRepository.save_many
 
-        def recording_save(repository: InMemoryPageStageRepository, entity: PageStage) -> PageStage:
+        def recording_save(repository: SqlAlchemyPageStageRepository, entity: PageStage) -> PageStage:
             """Record the record, then store it as the repository does.
 
             :param repository: The repository of the transaction that writes.
-            :type repository: InMemoryPageStageRepository
+            :type repository: SqlAlchemyPageStageRepository
             :param entity: Record to store.
             :type entity: PageStage
             :returns: The record as stored.
@@ -51,12 +51,12 @@ class PageStageWrites:
             return save(repository, entity)
 
         def recording_save_many(
-            repository: InMemoryPageStageRepository, entities: Sequence[PageStage]
+            repository: SqlAlchemyPageStageRepository, entities: Sequence[PageStage]
         ) -> Sequence[PageStage]:
             """Record the batch, then store it as the repository does.
 
             :param repository: The repository of the transaction that writes.
-            :type repository: InMemoryPageStageRepository
+            :type repository: SqlAlchemyPageStageRepository
             :param entities: Records to store.
             :type entities: Sequence[PageStage]
             :returns: The records as stored.
@@ -65,5 +65,5 @@ class PageStageWrites:
             self.batches.append(list(entities))
             return save_many(repository, entities)
 
-        self._monkeypatch.setattr(InMemoryPageStageRepository, 'save', recording_save)
-        self._monkeypatch.setattr(InMemoryPageStageRepository, 'save_many', recording_save_many)
+        self._monkeypatch.setattr(SqlAlchemyPageStageRepository, 'save', recording_save)
+        self._monkeypatch.setattr(SqlAlchemyPageStageRepository, 'save_many', recording_save_many)

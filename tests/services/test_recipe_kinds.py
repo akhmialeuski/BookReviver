@@ -17,6 +17,7 @@ from tests.helpers.processors import FakeProcessor
 from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, PageStage, Project, Recipe
     from bookreviver.domain.ids import PageId
@@ -144,15 +145,19 @@ class TestRecipesOfAStage:
         assert_expectations()
 
     async def test_a_kind_without_a_template_starts_with_a_copy_of_the_recipe_of_text(
-        self, fx_asset_store: LocalAssetStore
+        self, fx_database: SqlDatabase, fx_asset_store: LocalAssetStore
     ) -> None:
         """Verify a template that is given for text pages alone leaves the other kinds the same steps, identifiers too.
 
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
         :param fx_asset_store: Local asset store over the test's storage root.
         :type fx_asset_store: LocalAssetStore
         """
         template = RecipeTemplate(processor_keys=(FAKE_KEY,), params={FAKE_KEY: {STRENGTH_PARAM: TEMPLATE_STRENGTH}})
-        kit = ProcessingKit(fx_asset_store, defaults=DefaultRecipes({Stage.GEOMETRY: {RecipeKind.TEXT: template}}))
+        kit = ProcessingKit(
+            fx_database, fx_asset_store, defaults=DefaultRecipes({Stage.GEOMETRY: {RecipeKind.TEXT: template}})
+        )
         actor, project = await kit.seed_project()
         found = (await kit.service().recipes(actor, project.id, Stage.GEOMETRY, SliceRequest(limit=10))).items
         expect([recipe.kind for recipe in found] == list(RecipeKind))
@@ -365,9 +370,13 @@ class TestResetToTheDefaultSteps:
         expect(reset_picture.profile_id is None)
         assert_expectations()
 
-    async def test_a_recipe_takes_the_template_of_its_own_kind(self, fx_asset_store: LocalAssetStore) -> None:
+    async def test_a_recipe_takes_the_template_of_its_own_kind(
+        self, fx_database: SqlDatabase, fx_asset_store: LocalAssetStore
+    ) -> None:
         """Verify each recipe gets the template of its kind.
 
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
         :param fx_asset_store: Local asset store over the test's storage root.
         :type fx_asset_store: LocalAssetStore
         """
@@ -379,7 +388,7 @@ class TestResetToTheDefaultSteps:
                 }
             }
         )
-        kit = ProcessingKit(fx_asset_store, defaults=templates)
+        kit = ProcessingKit(fx_database, fx_asset_store, defaults=templates)
         actor, project = await kit.seed_project()
         found = (await kit.service().recipes(actor, project.id, Stage.GEOMETRY, SliceRequest(limit=10))).items
         strengths = {}

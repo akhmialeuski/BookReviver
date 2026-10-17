@@ -2,8 +2,8 @@
 
 from typing import TYPE_CHECKING
 
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
+from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import BlockKind
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 from tests.helpers.builders import new_account_id
@@ -11,7 +11,6 @@ from tests.helpers.builders import new_account_id
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Page, PageVersion, Project, Scan, Source
     from bookreviver.domain.ids import AccountId
@@ -56,6 +55,21 @@ async def commit_account(
     return account_id
 
 
+async def ensure_account(database: SqlDatabase, account_id: AccountId) -> None:
+    """Commit the account unless the database stores it already, as the owner key of a project needs it.
+
+    The database of a test stores the signed-in actor's account from the start, so a project of the actor needs
+    nothing more, and a project of any other account needs the account committed first.
+
+    :param database: SQL database to commit into.
+    :type database: SqlDatabase
+    :param account_id: Identifier of the account that owns a project.
+    :type account_id: AccountId
+    """
+    if await database.read(lambda session: session.get(AccountTable, account_id)) is None:
+        await commit_account(database, account_id=account_id)
+
+
 async def store_project(
     uow: UnitOfWork,
     project: Project,
@@ -69,7 +83,7 @@ async def store_project(
     The project is a change outside the content of a book, so it is stored by ``change``. The rest is the content of
     the book, so it is stored by ``change_book`` of the project, which cannot open before the project exists.
 
-    :param uow: Unit of work of any backend.
+    :param uow: Unit of work to store through, over a database that stores the account owning the project.
     :type uow: UnitOfWork
     :param project: Project to store.
     :type project: Project
@@ -101,18 +115,18 @@ async def store_project(
 
 
 async def commit_project(
-    database: InMemoryDatabase,
+    database: SqlDatabase,
     project: Project,
     *pages: Page,
     sources: Sequence[Source] = (),
     scans: Sequence[Scan] = (),
     versions: Sequence[PageVersion] = (),
 ) -> None:
-    """Commit a project with its sources, their scans, its pages and their versions to an in-memory database.
+    """Commit a project with its sources, their scans, its pages and their versions, and its owner when it is new.
 
-    :param database: In-memory database to commit into.
-    :type database: InMemoryDatabase
-    :param project: Project to store.
+    :param database: SQL database to commit into.
+    :type database: SqlDatabase
+    :param project: Project to store, whose owner account is committed first unless the database stores it.
     :type project: Project
     :param pages: Pages of the project, which may show the given scans.
     :type pages: Page
@@ -123,4 +137,7 @@ async def commit_project(
     :param versions: Versions of those pages.
     :type versions: Sequence[PageVersion]
     """
-    await store_project(InMemoryUnitOfWork(database), project, *pages, sources=sources, scans=scans, versions=versions)
+    await ensure_account(database, project.owner_id)
+    await store_project(
+        SqlAlchemyUnitOfWork(database), project, *pages, sources=sources, scans=scans, versions=versions
+    )

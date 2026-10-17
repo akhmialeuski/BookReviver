@@ -1,11 +1,13 @@
-"""Fixtures of the API tests: the committed state and the stored files of the running application."""
+"""Fixtures of the API tests: the dependency container and the stored files of the running application.
+
+The database is the root ``fx_database``, which the application runs on as well.
+"""
 
 from typing import TYPE_CHECKING
 
 import pytest
 from dishka import AsyncContainer
 
-from bookreviver.adapters.persistence.memory import InMemoryDatabase
 from bookreviver.ports.runtime import EventStream, JobBoard
 from bookreviver.ports.storage import AssetStore, SourceStore
 from tests.helpers.board_idle import JobsIdle
@@ -43,18 +45,6 @@ async def fx_idle(fx_container: AsyncContainer) -> JobsIdle:
     :rtype: JobsIdle
     """
     return JobsIdle(await fx_container.get(JobBoard), await fx_container.get(EventStream))
-
-
-@pytest.fixture
-async def fx_database(fx_container: AsyncContainer) -> InMemoryDatabase:
-    """Return the in-memory database of the running application, to store what earlier requests would have.
-
-    :param fx_container: Container of the application, built with in-memory persistence.
-    :type fx_container: AsyncContainer
-    :returns: The database every request of the application reads and writes.
-    :rtype: InMemoryDatabase
-    """
-    return await fx_container.get(InMemoryDatabase)
 
 
 @pytest.fixture

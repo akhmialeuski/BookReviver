@@ -1,4 +1,4 @@
-"""Contract of the PageLabelWriter port, run against the adapter of every output format and the one in memory."""
+"""Contract of the PageLabelWriter port, run against the adapter of every output format."""
 
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -6,7 +6,7 @@ import pymupdf
 import pytest
 from defusedxml.ElementTree import parse
 
-from bookreviver.adapters.imaging import EpubPageList, MemoryPageLabelWriter, PdfLabelWriter
+from bookreviver.adapters.imaging import EpubPageList, PdfLabelWriter
 from bookreviver.adapters.imaging.pdf_labels import read_label_rules
 from bookreviver.domain.enums import LabelStyle
 from bookreviver.domain.page_label_rules import BookLabeling, PageLabelRule, PrintedNumber
@@ -115,27 +115,10 @@ def _epub_kept(_writer: PageLabelWriter, target: Path) -> list[str]:
     ]
 
 
-def _memory_kept(writer: PageLabelWriter, target: Path) -> BookLabeling:
-    """Read what the writer in memory remembers for a target.
-
-    :param writer: The adapter in memory.
-    :type writer: PageLabelWriter
-    :param target: The path written to.
-    :type target: Path
-    :returns: The numbering written last.
-    :rtype: BookLabeling
-    """
-    assert isinstance(writer, MemoryPageLabelWriter)
-    return writer.written[target]
-
-
 FORMAT_ADAPTERS: dict[str, FormatAdapter] = {
     'pdf': FormatAdapter(PdfLabelWriter, _pdf_target, _pdf_kept, lambda labeling: list(labeling.rules)),
     'epub': FormatAdapter(
         EpubPageList, _epub_target, _epub_kept, lambda labeling: [number.label for number in labeling.printed]
-    ),
-    'memory': FormatAdapter(
-        MemoryPageLabelWriter, lambda directory: directory / 'out', _memory_kept, lambda labeling: labeling
     ),
 }
 

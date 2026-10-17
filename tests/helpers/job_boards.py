@@ -13,9 +13,9 @@ from typing import TYPE_CHECKING
 import anyio
 from attrs import frozen
 
-from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.jobs.board import InMemoryJobBoard
 from tests.helpers.builders import EPOCH
+from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.scripted_runner import ScriptedRunner

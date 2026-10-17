@@ -8,7 +8,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.persistence.memory.unit_of_work import InMemoryPageRepository
+from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyPageRepository
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import (
     ChangeSource,
@@ -50,7 +50,9 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
-COUNT_BEFORE_PATCH: str = 'bookreviver.adapters.persistence.memory.unit_of_work.InMemoryPageRepository.count_before'
+COUNT_BEFORE_PATCH: str = (
+    'bookreviver.adapters.persistence.sqlalchemy.repositories.SqlAlchemyPageRepository.count_before'
+)
 STEPS_OF_A_CHAIN: int = 3
 UNKNOWN_FIELD: str = 'no_such_field'
 FAKE_KEY: str = FakeProcessor.spec.key
@@ -760,7 +762,7 @@ class TestRunWithPageSettings:
         expect(shared.params[STRENGTH_PARAMETER] == 1)
         assert_expectations()
 
-    @patch(COUNT_BEFORE_PATCH, autospec=True, side_effect=InMemoryPageRepository.count_before)
+    @patch(COUNT_BEFORE_PATCH, autospec=True, side_effect=SqlAlchemyPageRepository.count_before)
     async def test_a_page_counts_its_place_once_however_many_steps_the_recipe_has(
         self, counting: MagicMock, fx_kit: ProcessingKit
     ) -> None:

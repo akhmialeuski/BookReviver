@@ -20,16 +20,16 @@ from attrs import frozen
 
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.adapters.tracing.opentelemetry_tracer import OpenTelemetryTracer
-from bookreviver.adapters.tracing.recording import RecordingTracer
 from bookreviver.app.trace_report import load_spans
 from bookreviver.domain.enums import SpanName, SpanParent
+from tests.helpers.recording_tracer import RecordingTracer
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from pathlib import Path
 
-    from bookreviver.adapters.tracing.recording import RecordingSpan
     from bookreviver.ports.tracing import AttributeValue, SpanAttributes, Tracer
+    from tests.helpers.recording_tracer import RecordingSpan
 
 SPAN_FILE_NAME: str = 'spans.jsonl'
 

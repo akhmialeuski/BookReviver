@@ -36,6 +36,7 @@ from tests.helpers.processors import FakeContentProbe
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.storage.local import LocalAssetStore
     from bookreviver.domain.entities import Actor, Job, Page, PageVersion, Project
     from bookreviver.domain.ids import ProjectId
@@ -44,21 +45,36 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
+type ProbeKitFactory = Callable[[list[ContentType | None]], tuple[ProcessingKit, FakeContentProbe]]
+
 ANSWERS: tuple[ContentType, ...] = (ContentType.TEXT, ContentType.COLOR_PICTURE, ContentType.BW_PICTURE)
 
 
-def probe_kit(assets: LocalAssetStore, answers: list[ContentType | None]) -> tuple[ProcessingKit, FakeContentProbe]:
-    """Build the processing kit over a catalogue with the fake processor that tells what an image shows.
+@pytest.fixture
+def fx_probe_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) -> ProbeKitFactory:
+    """Return a function building the processing kit with the fake processor that tells what an image shows.
 
-    :param assets: Local asset store of the test.
-    :type assets: LocalAssetStore
-    :param answers: What the pages are found to show, in the order they are read.
-    :type answers: list[ContentType | None]
-    :returns: The kit and the fake processor.
-    :rtype: tuple[ProcessingKit, FakeContentProbe]
+    :param fx_database: Database of the test.
+    :type fx_database: SqlDatabase
+    :param fx_asset_store: Local asset store of the test.
+    :type fx_asset_store: LocalAssetStore
+    :returns: Function taking what the pages are found to show, in the order they are read, and returning the kit and
+              the fake processor.
+    :rtype: ProbeKitFactory
     """
-    probe = FakeContentProbe(answers)
-    return ProcessingKit(assets, processors=[SplitNone(), probe]), probe
+
+    def build(answers: list[ContentType | None]) -> tuple[ProcessingKit, FakeContentProbe]:
+        """Build the kit over the database and the assets of the test, with a probe that gives the answers.
+
+        :param answers: What the pages are found to show, in the order they are read.
+        :type answers: list[ContentType | None]
+        :returns: The kit and the fake processor.
+        :rtype: tuple[ProcessingKit, FakeContentProbe]
+        """
+        probe = FakeContentProbe(answers)
+        return ProcessingKit(fx_database, fx_asset_store, processors=[SplitNone(), probe]), probe
+
+    return build
 
 
 def pages_of(kit: ProcessingKit) -> PageService:
@@ -187,14 +203,14 @@ class TestDetectionJob:
     """Tests for the ``detect-content`` job."""
 
     async def test_what_the_processor_finds_is_written_into_each_page_and_announced(
-        self, fx_asset_store: LocalAssetStore
+        self, fx_probe_kit: ProbeKitFactory
     ) -> None:
         """Verify each page gets its own answer as a proposal, the job ends well, and one event names the pages.
 
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
         """
-        kit, probe = probe_kit(fx_asset_store, list(ANSWERS))
+        kit, probe = fx_probe_kit(list(ANSWERS))
         actor, project, pages = await book_of(kit, [PageKind.TEXT, PageKind.TEXT, PageKind.TITLE])
 
         job = await detect(kit, actor, project)
@@ -214,14 +230,14 @@ class TestDetectionJob:
         assert_expectations()
 
     async def test_a_job_that_names_no_pages_goes_over_the_pages_that_are_not_detected_and_not_a_role(
-        self, fx_asset_store: LocalAssetStore
+        self, fx_probe_kit: ProbeKitFactory
     ) -> None:
         """Verify a page that has a type, a page the user set, a cover, a blank page and a placeholder are left alone.
 
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
         """
-        kit, probe = probe_kit(fx_asset_store, [ContentType.COLOR_PICTURE])
+        kit, probe = fx_probe_kit([ContentType.COLOR_PICTURE])
         kinds = [PageKind.TEXT, PageKind.TEXT, PageKind.TEXT, PageKind.COVER, PageKind.BLANK]
         actor, project, pages = await book_of(kit, kinds)
         found = await keep(kit, pages[1], ContentType.TEXT)
@@ -240,14 +256,14 @@ class TestDetectionJob:
         assert_expectations()
 
     async def test_a_job_that_names_pages_goes_over_those_whatever_they_have_and_gives_them_back_to_the_detection(
-        self, fx_asset_store: LocalAssetStore
+        self, fx_probe_kit: ProbeKitFactory
     ) -> None:
         """Verify a page the user set and a cover that are named are detected, and the first is no longer by hand.
 
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
         """
-        kit, probe = probe_kit(fx_asset_store, [ContentType.TEXT, ContentType.BW_PICTURE])
+        kit, probe = fx_probe_kit([ContentType.TEXT, ContentType.BW_PICTURE])
         actor, project, pages = await book_of(kit, [PageKind.TEXT, PageKind.COVER, PageKind.TEXT])
         await keep(kit, pages[0], ContentType.COLOR_PICTURE, by_hand=True)
 
@@ -262,14 +278,14 @@ class TestDetectionJob:
         assert_expectations()
 
     async def test_a_page_that_cannot_be_read_fails_for_itself_and_the_job_goes_on(
-        self, fx_asset_store: LocalAssetStore
+        self, fx_probe_kit: ProbeKitFactory
     ) -> None:
         """Verify the page whose image the processor cannot read keeps no type, and the next page is detected.
 
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
         """
-        kit, _ = probe_kit(fx_asset_store, [None, ContentType.BW_PICTURE])
+        kit, _ = fx_probe_kit([None, ContentType.BW_PICTURE])
         actor, project, pages = await book_of(kit, [PageKind.TEXT, PageKind.TEXT])
 
         job = await detect(kit, actor, project)
@@ -278,13 +294,13 @@ class TestDetectionJob:
         expect([(await stored(kit, page)).content_type for page in pages] == [None, ContentType.BW_PICTURE])
         assert_expectations()
 
-    async def test_a_job_that_reads_no_page_fails_with_a_reason(self, fx_asset_store: LocalAssetStore) -> None:
+    async def test_a_job_that_reads_no_page_fails_with_a_reason(self, fx_probe_kit: ProbeKitFactory) -> None:
         """Verify a job whose every page failed ends failed, which the activity of the book shows.
 
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
         """
-        kit, _ = probe_kit(fx_asset_store, [None, None])
+        kit, _ = fx_probe_kit([None, None])
         actor, project, _ = await book_of(kit, [PageKind.TEXT, PageKind.TEXT])
 
         job = await detect(kit, actor, project)
@@ -294,14 +310,16 @@ class TestDetectionJob:
         assert_expectations()
 
     async def test_a_machine_without_the_processor_leaves_the_pages_to_their_kind(
-        self, fx_asset_store: LocalAssetStore
+        self, fx_database: SqlDatabase, fx_asset_store: LocalAssetStore
     ) -> None:
         """Verify a catalogue without the processor, as a machine without OpenCV has, gives a job that reads nothing.
 
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
         :param fx_asset_store: Local asset store of the test.
         :type fx_asset_store: LocalAssetStore
         """
-        kit = ProcessingKit(fx_asset_store, processors=[SplitNone()])
+        kit = ProcessingKit(fx_database, fx_asset_store, processors=[SplitNone()])
         actor, project, pages = await book_of(kit, [PageKind.TEXT])
 
         job = await detect(kit, actor, project)
@@ -310,13 +328,13 @@ class TestDetectionJob:
         expect((await stored(kit, pages[0])).content_type is None)
         assert_expectations()
 
-    async def test_a_page_without_a_ready_image_is_left_for_the_next_job(self, fx_asset_store: LocalAssetStore) -> None:
+    async def test_a_page_without_a_ready_image_is_left_for_the_next_job(self, fx_probe_kit: ProbeKitFactory) -> None:
         """Verify a page whose base version is not made yet is not read and has no type, though the job ends well.
 
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
         """
-        kit, probe = probe_kit(fx_asset_store, [ContentType.TEXT])
+        kit, probe = fx_probe_kit([ContentType.TEXT])
         actor, project, _ = await book_of(kit, [PageKind.TEXT])
         waiting, _ = await kit.seed_scan_page(project, order_key='a5')
 
@@ -328,14 +346,14 @@ class TestDetectionJob:
         assert_expectations()
 
     async def test_the_stages_of_a_page_whose_content_changed_for_the_steps_go_out_of_date(
-        self, fx_asset_store: LocalAssetStore
+        self, fx_probe_kit: ProbeKitFactory
     ) -> None:
         """Verify the Geometry stage of a page that turns out a picture is stale, and that of a text page is not.
 
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
         """
-        kit, _ = probe_kit(fx_asset_store, [ContentType.BW_PICTURE, ContentType.TEXT])
+        kit, _ = fx_probe_kit([ContentType.BW_PICTURE, ContentType.TEXT])
         actor, project, pages = await book_of(kit, [PageKind.TEXT, PageKind.TEXT])
         await geometry_records(kit, project, pages)
 
@@ -347,13 +365,13 @@ class TestDetectionJob:
         expect([event.stage.page_id for event in changed] == [pages[0].id])
         assert_expectations()
 
-    async def test_a_job_that_was_cancelled_reads_nothing(self, fx_asset_store: LocalAssetStore) -> None:
+    async def test_a_job_that_was_cancelled_reads_nothing(self, fx_probe_kit: ProbeKitFactory) -> None:
         """Verify a job cancelled while it was queued is dropped by the board and leaves the pages as they are.
 
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
         """
-        kit, probe = probe_kit(fx_asset_store, [ContentType.TEXT])
+        kit, probe = fx_probe_kit([ContentType.TEXT])
         actor, project, pages = await book_of(kit, [PageKind.TEXT])
         job = await pages_of(kit).start_detection(actor, project.id, None)
         await kit.board.cancel(job.id)
@@ -368,13 +386,13 @@ class TestDetectionJob:
 class TestStartDetection:
     """Tests for the requests that queue a detection."""
 
-    async def test_the_request_queues_a_job_that_names_the_pages(self, fx_asset_store: LocalAssetStore) -> None:
+    async def test_the_request_queues_a_job_that_names_the_pages(self, fx_probe_kit: ProbeKitFactory) -> None:
         """Verify the job is queued with the pages as its parameters, and put on the board.
 
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
         """
-        kit, _ = probe_kit(fx_asset_store, [])
+        kit, _ = fx_probe_kit([])
         actor, project, pages = await book_of(kit, [PageKind.TEXT, PageKind.TEXT])
 
         job = await pages_of(kit).start_detection(actor, project.id, [pages[1].id])
@@ -384,13 +402,13 @@ class TestStartDetection:
         expect([queued.id for queued in kit.board.put_jobs] == [job.id])
         assert_expectations()
 
-    async def test_a_page_that_is_not_in_the_book_is_refused(self, fx_asset_store: LocalAssetStore) -> None:
+    async def test_a_page_that_is_not_in_the_book_is_refused(self, fx_probe_kit: ProbeKitFactory) -> None:
         """Verify naming a page that does not exist is an error, and no job is stored.
 
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
         """
-        kit, _ = probe_kit(fx_asset_store, [])
+        kit, _ = fx_probe_kit([])
         actor, project, _ = await book_of(kit, [PageKind.TEXT])
 
         with pytest.raises(NotFoundError):
@@ -399,13 +417,13 @@ class TestStartDetection:
         expect(not kit.board.put_jobs)
         assert_expectations()
 
-    async def test_a_second_request_while_one_is_queued_is_refused(self, fx_asset_store: LocalAssetStore) -> None:
+    async def test_a_second_request_while_one_is_queued_is_refused(self, fx_probe_kit: ProbeKitFactory) -> None:
         """Verify one detection of the project at a time, so the pages of the second request are not silently dropped.
 
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
         """
-        kit, _ = probe_kit(fx_asset_store, [])
+        kit, _ = fx_probe_kit([])
         actor, project, pages = await book_of(kit, [PageKind.TEXT])
         await pages_of(kit).start_detection(actor, project.id, None)
 
@@ -413,14 +431,14 @@ class TestStartDetection:
             await pages_of(kit).start_detection(actor, project.id, [pages[0].id])
 
     async def test_the_detection_of_new_pages_is_queued_once_while_one_waits(
-        self, fx_asset_store: LocalAssetStore
+        self, fx_probe_kit: ProbeKitFactory
     ) -> None:
         """Verify the worker that made images asks for one detection, whatever the number of jobs that ask.
 
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
         """
-        kit, _ = probe_kit(fx_asset_store, [])
+        kit, _ = fx_probe_kit([])
         _, project, _ = await book_of(kit, [PageKind.TEXT])
 
         pages_of(kit).detect_new_pages(project.id)
@@ -436,14 +454,14 @@ class TestChangeOfContent:
     """Tests for the user setting what a page shows."""
 
     async def test_the_content_the_user_sets_is_by_hand_and_marks_the_stages_stale(
-        self, fx_asset_store: LocalAssetStore
+        self, fx_probe_kit: ProbeKitFactory
     ) -> None:
         """Verify the type is kept as the user's, the page says so, and the stage of the page that read it is stale.
 
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
         """
-        kit, _ = probe_kit(fx_asset_store, [])
+        kit, _ = fx_probe_kit([])
         actor, project, pages = await book_of(kit, [PageKind.TEXT])
         await geometry_records(kit, project, pages)
 
@@ -457,14 +475,14 @@ class TestChangeOfContent:
         assert_expectations()
 
     async def test_a_type_that_changes_nothing_for_the_steps_leaves_the_stages_up_to_date(
-        self, fx_asset_store: LocalAssetStore
+        self, fx_probe_kit: ProbeKitFactory
     ) -> None:
         """Verify choosing text for a page that was text does not make its stages stale.
 
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
         """
-        kit, _ = probe_kit(fx_asset_store, [])
+        kit, _ = fx_probe_kit([])
         actor, project, pages = await book_of(kit, [PageKind.TEXT])
         await geometry_records(kit, project, pages)
 
@@ -519,7 +537,7 @@ class TestApplyStep:
     )
     async def test_a_page_that_changed_after_the_probe_is_not_written(
         self,
-        fx_asset_store: LocalAssetStore,
+        fx_probe_kit: ProbeKitFactory,
         monkeypatch: pytest.MonkeyPatch,
         change: Callable[[ProcessingKit, Page], Awaitable[None]],
         kept_type: ContentType | None,
@@ -530,8 +548,8 @@ class TestApplyStep:
         The change is made right after the probe returns, so the write finds the page as the change left it, and the
         job writes nothing and announces no page.
 
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_probe_kit: Function building the processing kit with the fake processor.
+        :type fx_probe_kit: ProbeKitFactory
         :param monkeypatch: Fixture putting the change between the probe and the write.
         :type monkeypatch: pytest.MonkeyPatch
         :param change: What another request does to the page while the job reads it.
@@ -541,7 +559,7 @@ class TestApplyStep:
         :param kept_source: Where the type the page holds afterwards comes from, or None for a page that is gone.
         :type kept_source: ContentSource | None
         """
-        kit, _ = probe_kit(fx_asset_store, [ContentType.TEXT])
+        kit, _ = fx_probe_kit([ContentType.TEXT])
         actor, project, pages = await book_of(kit, [PageKind.TEXT])
         probe = ContentDetector._probe
 

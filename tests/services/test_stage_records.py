@@ -1,4 +1,4 @@
-"""Tests for the stage records a change of a recipe marks stale, over the in-memory adapter."""
+"""Tests for the stage records a change of a recipe marks stale."""
 
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 import pytest
 from attrs import evolve
 
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.enums import Stage, StageState
 from bookreviver.services.stage_records import StageRecords
 from tests.helpers.builders import EPOCH, make_page, make_page_stage, make_project, make_recipe, new_account_id
@@ -15,10 +14,11 @@ from tests.helpers.seeding import commit_project
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.adapters.clock.system import FixedClock
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import PageStage, Project, Recipe
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from tests.helpers.clock import FixedClock
+    from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
     from tests.helpers.page_stage_writes import PageStageWrites
 
@@ -30,13 +30,11 @@ CHANGED_AT = EPOCH + timedelta(hours=1)
 PAGE_ORDER_KEYS: tuple[str, ...] = ('a0', 'a1', 'a2')
 
 
-async def store_records(
-    uow: InMemoryUnitOfWork, project: Project, recipe: Recipe, records: Sequence[PageStage]
-) -> None:
+async def store_records(uow: UnitOfWork, project: Project, recipe: Recipe, records: Sequence[PageStage]) -> None:
     """Store a recipe and the stage records of the pages of a project that exists already.
 
     :param uow: Unit of work that commits the recipe and the records.
-    :type uow: InMemoryUnitOfWork
+    :type uow: UnitOfWork
     :param project: Project owning the pages the records belong to.
     :type project: Project
     :param recipe: Recipe of the project, which the records may name.
@@ -63,12 +61,14 @@ class TestMarkRecipeStale:
     """Tests for ``StageRecords.mark_recipe_stale``."""
 
     async def test_the_fresh_records_of_the_recipe_end_stale_and_the_others_stay_as_they_were(
-        self, fx_database: InMemoryDatabase, fx_clock: FixedClock, fx_events: RecordingEventBus
+        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_clock: FixedClock, fx_events: RecordingEventBus
     ) -> None:
         """Verify the fresh records of the recipe are stamped stale together, and a failed one or one of no recipe stays.
 
-        :param fx_database: Empty in-memory database.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, holding no project yet.
+        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_clock: Clock stopped at the epoch.
         :type fx_clock: FixedClock
         :param fx_events: Recording event bus the records are announced through.
@@ -82,7 +82,7 @@ class TestMarkRecipeStale:
         fresh_second = make_page_stage(page_id=second.id, recipe_id=recipe.id)
         failed = make_page_stage(page_id=third.id, recipe_id=recipe.id, state=StageState.FAILED)
         without_recipe = make_page_stage(page_id=first.id, stage=Stage.CLEANUP)
-        uow = InMemoryUnitOfWork(fx_database)
+        uow = fx_uow()
         records = StageRecords(publisher=fx_events, clock=fx_clock)
         await store_records(uow, project, recipe, [fresh_first, fresh_second, failed, without_recipe])
         fx_clock.moment = CHANGED_AT
@@ -103,7 +103,8 @@ class TestMarkRecipeStale:
 
     async def test_the_records_of_the_recipe_are_written_by_one_save_many_and_never_by_save(
         self,
-        fx_database: InMemoryDatabase,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_clock: FixedClock,
         fx_events: RecordingEventBus,
         fx_page_stage_writes: PageStageWrites,
@@ -113,8 +114,10 @@ class TestMarkRecipeStale:
         The end state of the records is the same when each one is written on its own, so only a record of the calls
         tells a batch of one statement from a statement for each record.
 
-        :param fx_database: Empty in-memory database.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, holding no project yet.
+        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_clock: Clock stopped at the epoch.
         :type fx_clock: FixedClock
         :param fx_events: Recording event bus the records are announced through.
@@ -127,7 +130,7 @@ class TestMarkRecipeStale:
         await commit_project(fx_database, project, *pages)
         recipe = make_recipe(project_id=project.id)
         fresh = [make_page_stage(page_id=page.id, recipe_id=recipe.id) for page in pages]
-        uow = InMemoryUnitOfWork(fx_database)
+        uow = fx_uow()
         records = StageRecords(publisher=fx_events, clock=fx_clock)
         await store_records(uow, project, recipe, fresh)
         fx_clock.moment = CHANGED_AT

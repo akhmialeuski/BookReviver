@@ -16,7 +16,6 @@ from fastapi import status
 from PIL import Image
 from pydantic import ValidationError
 
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.api.schemas.edits import EditForm
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.processing import (
@@ -56,11 +55,12 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Page, Project, Scan
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.ports.storage import AssetStore
     from tests.helpers.board_idle import JobsIdle
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -111,11 +111,11 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_book(fx_database: InMemoryDatabase, fx_asset_store: AssetStore, fx_actor: Actor) -> Book:
+async def fx_book(fx_database: SqlDatabase, fx_asset_store: AssetStore, fx_actor: Actor) -> Book:
     """Commit a book of one page and store the full image of its scan as a real JPEG.
 
-    :param fx_database: In-memory database of the application.
-    :type fx_database: InMemoryDatabase
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
     :param fx_asset_store: Asset store of the application.
     :type fx_asset_store: AssetStore
     :param fx_actor: The signed-in account.
@@ -382,7 +382,7 @@ class TestStageSummaries:
         fx_client: httpx.AsyncClient,
         fx_idle: JobsIdle,
         fx_book: Book,
-        fx_database: InMemoryDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_asset_store: AssetStore,
     ) -> None:
         """Verify a text page and a plate are counted under the recipes of their kinds, and each row says its kind.
@@ -396,12 +396,12 @@ class TestStageSummaries:
         :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account with a text page.
         :type fx_book: Book
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         """
-        _, scan = await add_page(fx_database, fx_book, 'a1', PageKind.PLATE)
+        _, scan = await add_page(fx_uow(), fx_book, 'a1', PageKind.PLATE)
         await store_scan_images(fx_asset_store, fx_book.project, scan)
         await run_stage(fx_client, fx_idle, fx_book, 'geometry')
         recipes = await recipes_of(fx_client, fx_book, 'geometry')
@@ -657,7 +657,7 @@ class TestRunAndVersions:
         fx_client: httpx.AsyncClient,
         fx_idle: JobsIdle,
         fx_book: Book,
-        fx_database: InMemoryDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_asset_store: AssetStore,
     ) -> None:
         """Verify the report names the versions a collection would delete and the bytes of their files, and deletes none.
@@ -668,13 +668,13 @@ class TestRunAndVersions:
         :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         """
         await run_stage(fx_client, fx_idle, fx_book, 'page-split')
-        uow = InMemoryUnitOfWork(fx_database)
+        uow = fx_uow()
         record = await uow.read(lambda repos: repos.page_stages.get(PageStageKey(fx_book.page.id, Stage.PAGE_SPLIT)))
         assert record.head_version_id is not None
         head_id = record.head_version_id
@@ -1083,13 +1083,11 @@ class TestPageHistory:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
-async def add_page(
-    database: InMemoryDatabase, book: Book, order_key: str, kind: PageKind = PageKind.TEXT
-) -> tuple[Page, Scan]:
+async def add_page(uow: UnitOfWork, book: Book, order_key: str, kind: PageKind = PageKind.TEXT) -> tuple[Page, Scan]:
     """Commit another page cut from a scan of the book, after the pages it has.
 
-    :param database: In-memory database of the application.
-    :type database: InMemoryDatabase
+    :param uow: Unit of work over the database of the test, which the application runs on.
+    :type uow: UnitOfWork
     :param book: Book of the signed-in account.
     :type book: Book
     :param order_key: Order key of the page, which places it in the book.
@@ -1115,7 +1113,7 @@ async def add_page(
         repos.scans.add(scan)
         repos.pages.add(page)
 
-    await InMemoryUnitOfWork(database).change_book(book.project.id, add_scan_page)
+    await uow.change_book(book.project.id, add_scan_page)
     return page, scan
 
 
@@ -1123,7 +1121,7 @@ class TestCarryOverOfAShape:
     """Tests for the endpoint that carries the shape a page set by hand over to other pages."""
 
     async def test_a_shape_is_carried_to_the_following_pages_in_one_batch_that_one_undo_takes_back(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify the shape reaches the pages after the source and one undo on any of them takes it from all.
 
@@ -1131,11 +1129,11 @@ class TestCarryOverOfAShape:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
         step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
-        pages = [(await add_page(fx_database, fx_book, order_key))[0] for order_key in ('a1', 'a2')]
+        pages = [(await add_page(fx_uow(), fx_book, order_key))[0] for order_key in ('a1', 'a2')]
         await fx_client.put(
             f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
         )
@@ -1159,7 +1157,7 @@ class TestCarryOverOfAShape:
         assert_expectations()
 
     async def test_a_page_set_by_hand_separately_is_skipped_unless_the_form_overwrites(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify the page with a shape of its own is listed as skipped and keeps it, and overwriting takes it along.
 
@@ -1167,11 +1165,11 @@ class TestCarryOverOfAShape:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
         step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
-        page, _ = await add_page(fx_database, fx_book, 'a1')
+        page, _ = await add_page(fx_uow(), fx_book, 'a1')
         own = f'{fx_book.path}/pages/{page.id}/edits/geometry'
         await fx_client.put(
             f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}

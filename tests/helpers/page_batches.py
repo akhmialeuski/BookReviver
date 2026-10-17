@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 
 from attrs import frozen
 
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.enums import ValueScope
 from bookreviver.domain.step_values import ValueField, ValueTarget
 from bookreviver.services.page_carry import CarryOverService
@@ -26,7 +25,7 @@ def carry_over(kit: ProcessingKit) -> CarryOverService:
     :returns: The service.
     :rtype: CarryOverService
     """
-    uow = InMemoryUnitOfWork(kit.database)
+    uow = kit.uow()
     return CarryOverService(uow=uow, records=kit.parts(uow).records, clock=kit.clock)
 
 
@@ -38,7 +37,7 @@ def run_impact(kit: ProcessingKit) -> RunImpactService:
     :returns: The service.
     :rtype: RunImpactService
     """
-    uow = InMemoryUnitOfWork(kit.database)
+    uow = kit.uow()
     return RunImpactService(uow=uow, recipes=kit.parts(uow).recipes, clock=kit.clock)
 
 

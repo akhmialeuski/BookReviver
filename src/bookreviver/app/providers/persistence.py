@@ -1,4 +1,4 @@
-"""Providers of the persistence adapters, one class per backend selectable in the settings."""
+"""Providers of the persistence port: the limit a unit of work waits with, and the SQL unit of work itself."""
 
 from dishka import Provider, Scope, alias, provide
 
@@ -6,9 +6,8 @@ from dishka import Provider, Scope, alias, provide
 from dishka.entities.marker import HasContext
 from starlette.requests import Request
 
-from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
-from bookreviver.app.settings import PersistenceBackend, Settings
+from bookreviver.app.settings import Settings
 from bookreviver.ports.persistence import ChangeWaitSeconds, UnitOfWork
 
 
@@ -48,41 +47,11 @@ class ChangeWaitProvider(Provider):
         return ChangeWaitSeconds(settings.change_wait.request_seconds)
 
 
-class MemoryPersistenceProvider(Provider):
-    """In-memory persistence: one database per application, one unit of work per request."""
-
-    @provide(scope=Scope.APP)
-    def database(self) -> InMemoryDatabase:
-        """Create the empty in-memory database of the application.
-
-        :returns: Database shared by every unit of work of the application.
-        :rtype: InMemoryDatabase
-        """
-        return InMemoryDatabase()
-
-    @provide(scope=Scope.REQUEST)
-    def unit_of_work(self, database: InMemoryDatabase) -> UnitOfWork:
-        """Open a unit of work over the application's in-memory database.
-
-        :param database: The application's in-memory database.
-        :type database: InMemoryDatabase
-        :returns: Unit of work over a private copy of the database.
-        :rtype: UnitOfWork
-        """
-        return InMemoryUnitOfWork(database)
-
-
 class SqlAlchemyPersistenceProvider(Provider):
     """SQL persistence: the unit of work of the request that ``DatabaseProvider`` builds is the port's.
 
     The provider builds nothing. The engines and the unit of work come from ``DatabaseProvider``, which the account
-    tables share, so selecting this backend adds no second connection pool and no second unit of work.
+    tables share, so this provider adds no second connection pool and no second unit of work.
     """
 
     unit_of_work = alias(source=SqlAlchemyUnitOfWork, provides=UnitOfWork)
-
-
-PERSISTENCE_PROVIDERS: dict[PersistenceBackend, type[Provider]] = {
-    PersistenceBackend.SQLALCHEMY: SqlAlchemyPersistenceProvider,
-    PersistenceBackend.MEMORY: MemoryPersistenceProvider,
-}

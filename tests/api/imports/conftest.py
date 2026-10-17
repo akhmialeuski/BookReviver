@@ -1,4 +1,4 @@
-"""Fixtures of the import API tests: the application runs on the job fakes' database, event bus and clock.
+"""Fixtures of the import API tests: the application runs on the job fakes' event bus and clock.
 
 The stores, the imaging adapters and the job board are the application's own, so a test uploads real files and the
 import runs to the end in the background, as it does for a user.
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project
 
 
@@ -38,7 +39,7 @@ def fx_fakes(fx_events: JobEndBus) -> JobFakes:
 
     :param fx_events: Event bus of the application.
     :type fx_events: JobEndBus
-    :returns: Fakes with an empty database and nothing published.
+    :returns: Fakes with nothing published.
     :rtype: JobFakes
     """
     return JobFakes(clock=TickingClock(EPOCH), events=fx_events)
@@ -46,7 +47,7 @@ def fx_fakes(fx_events: JobEndBus) -> JobFakes:
 
 @pytest.fixture
 def fx_extra_providers(fx_fakes: JobFakes) -> Sequence[Provider]:
-    """Replace the application's database, event bus and clock with ``fx_fakes``, and keep its job board.
+    """Replace the application's event bus and clock with ``fx_fakes``, and keep its job board.
 
     :param fx_fakes: Adapters of the test.
     :type fx_fakes: JobFakes
@@ -57,18 +58,20 @@ def fx_extra_providers(fx_fakes: JobFakes) -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_project(fx_fakes: JobFakes, fx_actor: Actor) -> Project:
+async def fx_project(fx_fakes: JobFakes, fx_database: SqlDatabase, fx_actor: Actor) -> Project:
     """Store a project of the signed-in account with no sources.
 
     :param fx_fakes: Adapters the application runs on.
     :type fx_fakes: JobFakes
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored project.
     :rtype: Project
     """
     project = make_project(owner_id=fx_actor.account_id)
-    await fx_fakes.store(project)
+    await fx_fakes.store(fx_database, project)
     return project
 
 

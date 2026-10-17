@@ -1,4 +1,4 @@
-"""Tests of what a failed import leaves in the SQL database, whose foreign keys the in-memory adapter only mirrors."""
+"""Tests of what a failed import leaves in the SQL database, whose foreign keys refuse a row without its parent."""
 
 from typing import TYPE_CHECKING
 

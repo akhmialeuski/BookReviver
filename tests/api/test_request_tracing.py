@@ -26,10 +26,10 @@ if TYPE_CHECKING:
 
     import httpx
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
-    from bookreviver.adapters.tracing.recording import RecordingTracer
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Actor
+    from tests.helpers.recording_tracer import RecordingTracer
 
 pytestmark = pytest.mark.anyio
 
@@ -106,14 +106,14 @@ class TestRequestSpan:
     """Tests for the span of a request, read from the tracer the application was given."""
 
     async def test_request_is_timed_under_the_template_of_its_route_not_its_path(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor, fx_tracer: RecordingTracer
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor, fx_tracer: RecordingTracer
     ) -> None:
         """Verify the span names the route with its parameter in braces, though the path holds the project's identifier.
 
         :param fx_client: Client talking to the application with tracing on.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_tracer: Tracer the application was given.

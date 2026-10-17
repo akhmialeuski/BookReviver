@@ -1,4 +1,4 @@
-"""Tests that an open event stream holds no connection of the database pool, on SQLAlchemy persistence over a file.
+"""Tests that an open event stream holds no connection of the database pool of the SQLite file.
 
 The stream of a book stays open for as long as a browser tab does, and the session of its request closes only when the
 stream ends, so a read that the request left in a transaction would keep one of the pool's connections all that time.
@@ -11,10 +11,8 @@ import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.api.route_names import RouteName
-from bookreviver.app.settings import PersistenceBackend
 from bookreviver.domain.events import ProjectChanged
 from tests.helpers.builders import make_project
 from tests.helpers.connections import checked_out_connections
@@ -23,10 +21,9 @@ from tests.helpers.sse import STREAM_TIMEOUT_SECONDS, EventStreamReader
 
 if TYPE_CHECKING:
     import httpx
-    from dishka import AsyncContainer
     from fastapi import FastAPI
 
-    from bookreviver.app.settings import Settings
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project
     from bookreviver.domain.ids import AccountId
     from tests.helpers.fakes_jobs import JobFakes
@@ -53,62 +50,37 @@ async def _store_project_of(database: SqlDatabase, owner_id: AccountId) -> Proje
 
 
 @pytest.fixture
-def fx_settings(fx_settings: Settings) -> Settings:
-    """Store the books in the SQLite file of the data directory instead of in memory.
+async def fx_owned_project(fx_database: SqlDatabase, fx_actor: Actor) -> Project:
+    """Commit a project of the signed-in account, which ``fx_database`` stores.
 
-    :param fx_settings: Settings with in-memory persistence and a fresh data directory.
-    :type fx_settings: Settings
-    :returns: The same settings with SQLAlchemy persistence.
-    :rtype: Settings
-    """
-    return fx_settings.model_copy(update={'persistence': PersistenceBackend.SQLALCHEMY})
-
-
-@pytest.fixture
-async def fx_sql_database(fx_container: AsyncContainer) -> SqlDatabase:
-    """Return the SQL database of the running application, whose pool a test counts the connections of.
-
-    :param fx_container: Container of the application, built with SQLAlchemy persistence by ``fx_settings``.
-    :type fx_container: AsyncContainer
-    :returns: The database whose engine every request of the application takes its connections from.
-    :rtype: SqlDatabase
-    """
-    return await fx_container.get(SqlDatabase)
-
-
-@pytest.fixture
-async def fx_owned_project(fx_sql_database: SqlDatabase, fx_actor: Actor) -> Project:
-    """Commit the signed-in account and a project that it owns.
-
-    :param fx_sql_database: SQL database of the running application.
-    :type fx_sql_database: SqlDatabase
-    :param fx_actor: The signed-in account, which has no row in the account table yet.
+    :param fx_database: SQL database of the test, which the running application runs on, whose pool a test counts the
+                        connections of.
+    :type fx_database: SqlDatabase
+    :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored project of the signed-in account.
     :rtype: Project
     """
-    return await _store_project_of(
-        fx_sql_database, await commit_account(fx_sql_database, account_id=fx_actor.account_id)
-    )
+    return await _store_project_of(fx_database, fx_actor.account_id)
 
 
 @pytest.fixture
-async def fx_strangers_project(fx_sql_database: SqlDatabase) -> Project:
+async def fx_strangers_project(fx_database: SqlDatabase) -> Project:
     """Commit a project of another account.
 
-    :param fx_sql_database: SQL database of the running application.
-    :type fx_sql_database: SqlDatabase
+    :param fx_database: SQL database of the test, which the running application runs on.
+    :type fx_database: SqlDatabase
     :returns: The stored project of the other account.
     :rtype: Project
     """
-    return await _store_project_of(fx_sql_database, await commit_account(fx_sql_database))
+    return await _store_project_of(fx_database, await commit_account(fx_database))
 
 
 class TestStreamConnections:
     """Tests for the connections of the pool that GET /projects/{project_id}/events holds."""
 
     async def test_open_streams_of_one_book_hold_no_connection(
-        self, fx_app: FastAPI, fx_fakes: JobFakes, fx_sql_database: SqlDatabase, fx_owned_project: Project
+        self, fx_app: FastAPI, fx_fakes: JobFakes, fx_database: SqlDatabase, fx_owned_project: Project
     ) -> None:
         """Verify three streams of one book that are open at once leave the connections in use where they were.
 
@@ -120,14 +92,14 @@ class TestStreamConnections:
         :type fx_app: FastAPI
         :param fx_fakes: Adapters the application runs on, whose event bus counts the open subscriptions.
         :type fx_fakes: JobFakes
-        :param fx_sql_database: SQL database of the running application.
-        :type fx_sql_database: SqlDatabase
+        :param fx_database: SQL database of the running application.
+        :type fx_database: SqlDatabase
         :param fx_owned_project: Project of the signed-in account, which the streams listen to.
         :type fx_owned_project: Project
         """
         path = fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=fx_owned_project.id)
         readers = [EventStreamReader(count=1) for _ in range(OPEN_TABS)]
-        before = checked_out_connections(fx_sql_database)
+        before = checked_out_connections(fx_database)
         # A list, so that a test that never reached the measurement fails instead of comparing a default
         while_open: list[int] = []
         async with anyio.create_task_group() as group:
@@ -135,13 +107,13 @@ class TestStreamConnections:
                 group.start_soon(reader.read, fx_app, path)
             with anyio.fail_after(STREAM_TIMEOUT_SECONDS):
                 await fx_fakes.events.wait_for_subscriptions(OPEN_TABS)
-            while_open.append(checked_out_connections(fx_sql_database))
+            while_open.append(checked_out_connections(fx_database))
             await fx_fakes.events.publish(ProjectChanged(project_id=fx_owned_project.id))
 
         expect(while_open == [before])
         expect([reader.status for reader in readers] == [HTTPStatus.OK] * OPEN_TABS)
         expect(fx_fakes.events.open_subscriptions == 0)
-        expect(checked_out_connections(fx_sql_database) == before)
+        expect(checked_out_connections(fx_database) == before)
         assert_expectations()
 
     async def test_project_of_another_account_is_not_found_before_any_event(
@@ -149,7 +121,7 @@ class TestStreamConnections:
         fx_app: FastAPI,
         fx_client: httpx.AsyncClient,
         fx_fakes: JobFakes,
-        fx_sql_database: SqlDatabase,
+        fx_database: SqlDatabase,
         fx_strangers_project: Project,
     ) -> None:
         """Verify the owner check still refuses another account's book before the release, and holds nothing.
@@ -160,18 +132,18 @@ class TestStreamConnections:
         :type fx_client: httpx.AsyncClient
         :param fx_fakes: Adapters the application runs on, whose event bus records a subscription if one is made.
         :type fx_fakes: JobFakes
-        :param fx_sql_database: SQL database of the running application.
-        :type fx_sql_database: SqlDatabase
+        :param fx_database: SQL database of the running application.
+        :type fx_database: SqlDatabase
         :param fx_strangers_project: Project of another account.
         :type fx_strangers_project: Project
         """
         path = fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=fx_strangers_project.id)
-        before = checked_out_connections(fx_sql_database)
+        before = checked_out_connections(fx_database)
         # A stream that started by mistake would never end, so the request is bounded
         with anyio.fail_after(STREAM_TIMEOUT_SECONDS):
             response = await fx_client.get(path)
 
         expect(response.status_code == HTTPStatus.NOT_FOUND)
         expect(not fx_fakes.events.subscribed.is_set())
-        expect(checked_out_connections(fx_sql_database) == before)
+        expect(checked_out_connections(fx_database) == before)
         assert_expectations()

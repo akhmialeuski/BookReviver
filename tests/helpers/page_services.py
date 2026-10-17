@@ -1,10 +1,9 @@
-"""Building the page service of a test over in-memory persistence and the local asset store."""
+"""Building the page service of a test over a unit of work of the test's database and the local asset store."""
 
 from typing import TYPE_CHECKING, override
 
 import anyio
 
-from bookreviver.adapters.execution.in_process import InProcessStepExecutor
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.plugins.blank import BlankPage
@@ -14,6 +13,7 @@ from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.pages import PageImaging, PageRuntime, PageService
 from bookreviver.services.steps import StepRunner
 from tests.helpers.fake_processing import FakeCatalogue, FakeRenditionWriter
+from tests.helpers.in_process_executor import InProcessStepExecutor
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -91,7 +91,7 @@ def make_page_service(
 ) -> PageService:
     """Build a page service over a unit of work, as a new request or job would get one.
 
-    :param uow: Unit of work of the service, usually a new in-memory one over the database of the test.
+    :param uow: Unit of work of the service, usually a new one over the database of the test.
     :type uow: UnitOfWork
     :param assets: Asset store the service writes and reads files through.
     :type assets: AssetStore

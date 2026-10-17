@@ -1,4 +1,4 @@
-"""Tests for the IIIF file endpoint, on in-memory persistence and the local stores under the test's data directory."""
+"""Tests for the IIIF file endpoint, on the SQLite file and the local stores under the test's data directory."""
 
 from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
@@ -19,7 +19,7 @@ from tests.helpers.storage import upload
 if TYPE_CHECKING:
     import httpx
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, PageVersion, Project
     from bookreviver.ports.storage import AssetStore, SourceStore
 
@@ -54,11 +54,11 @@ class Book(NamedTuple):
         return ProjectKeys(self.project.id).version_rendition(self.version, Rendition.TILES)
 
 
-async def _store_book(database: InMemoryDatabase, assets: AssetStore, owner: Actor | None) -> Book:
+async def _store_book(database: SqlDatabase, assets: AssetStore, owner: Actor | None) -> Book:
     """Store a project with a page whose pyramid holds an ``info.json`` and one tile, and whose thumbnail exists.
 
-    :param database: In-memory database of the application.
-    :type database: InMemoryDatabase
+    :param database: Database of the test, which the application runs on.
+    :type database: SqlDatabase
     :param assets: Asset store of the application.
     :type assets: AssetStore
     :param owner: Account owning the project, or None for one that is not the signed-in account.
@@ -86,14 +86,14 @@ class TestIiifFile:
     """Tests for GET /iiif/{key}."""
 
     async def test_info_json_is_served_exactly_as_the_pyramid_stores_it(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_asset_store: AssetStore, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_asset_store: AssetStore, fx_actor: Actor
     ) -> None:
         """Verify the document reaches the viewer byte for byte, with the IIIF media type and an eternal cache.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         :param fx_actor: The signed-in account.
@@ -113,7 +113,7 @@ class TestIiifFile:
     async def test_streams_other_files_unchanged_as_immutable(
         self,
         fx_client: httpx.AsyncClient,
-        fx_database: InMemoryDatabase,
+        fx_database: SqlDatabase,
         fx_asset_store: AssetStore,
         fx_actor: Actor,
         rendition: Rendition,
@@ -122,8 +122,8 @@ class TestIiifFile:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         :param fx_actor: The signed-in account.
@@ -146,7 +146,7 @@ class TestIiifFile:
     async def test_key_without_a_file_is_not_found(
         self,
         fx_client: httpx.AsyncClient,
-        fx_database: InMemoryDatabase,
+        fx_database: SqlDatabase,
         fx_asset_store: AssetStore,
         fx_actor: Actor,
         name: str,
@@ -155,8 +155,8 @@ class TestIiifFile:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         :param fx_actor: The signed-in account.
@@ -172,14 +172,14 @@ class TestIiifFile:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_another_accounts_file_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_asset_store: AssetStore
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_asset_store: AssetStore
     ) -> None:
         """Verify a stored file of another account's project answers exactly like a missing one.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         """
@@ -190,14 +190,14 @@ class TestIiifFile:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_source_and_upload_files_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_source_store: SourceStore, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_source_store: SourceStore, fx_actor: Actor
     ) -> None:
         """Verify a stored source file and a staged upload of the account's own project answer 404, not 500.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_source_store: Source store of the application.
         :type fx_source_store: SourceStore
         :param fx_actor: The signed-in account.
@@ -220,14 +220,14 @@ class TestIiifFile:
         assert [response.status_code for response in responses] == [status.HTTP_404_NOT_FOUND] * 2
 
     async def test_dot_segment_is_rejected(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_asset_store: AssetStore, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_asset_store: AssetStore, fx_actor: Actor
     ) -> None:
         """Verify a key climbing with an encoded ``..`` is refused by validation before any lookup.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         :param fx_actor: The signed-in account.

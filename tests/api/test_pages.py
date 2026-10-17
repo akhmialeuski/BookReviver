@@ -1,4 +1,4 @@
-"""Tests for the page endpoints, on in-memory persistence and the local stores under the test's data directory."""
+"""Tests for the page endpoints, on the SQLite file and the local stores under the test's data directory."""
 
 from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
@@ -20,7 +20,7 @@ from tests.helpers.seeding import commit_project
 if TYPE_CHECKING:
     import httpx
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, PageVersion, Project
     from bookreviver.domain.entities import Page as BookPage
     from bookreviver.ports.storage import AssetStore
@@ -61,11 +61,11 @@ class Book(NamedTuple):
 
 
 @pytest.fixture
-async def fx_book(fx_database: InMemoryDatabase, fx_actor: Actor) -> Book:
+async def fx_book(fx_database: SqlDatabase, fx_actor: Actor) -> Book:
     """Commit the book of the signed-in account.
 
-    :param fx_database: In-memory database of the application.
-    :type fx_database: InMemoryDatabase
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored book.
@@ -172,7 +172,7 @@ class TestListPages:
 
     @pytest.mark.parametrize('full', [Rendition.FULL_JPEG, Rendition.FULL_PNG])
     async def test_full_image_path_has_the_extension_of_the_format_recorded_with_the_version(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor, full: Rendition
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor, full: Rendition
     ) -> None:
         """Verify the path of the full image names the format its version was stored in, whatever the project's policy.
 
@@ -180,8 +180,8 @@ class TestListPages:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param full: Format the base version of the page records for its full image.
@@ -239,14 +239,14 @@ class TestListPages:
         assert (await _list_pages(fx_client, fx_book.path, **{PAGE_SIZE_PARAM: size})).status_code == expected
 
     async def test_another_accounts_project_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase
     ) -> None:
         """Verify the pages of another account's project cannot be listed.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         """
         project = make_project(owner_id=new_account_id())
         await commit_project(fx_database, project, make_page(project_id=project.id))
@@ -298,14 +298,14 @@ class TestGetPage:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_missing_page_and_page_of_another_project_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_book: Book, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_book: Book, fx_actor: Actor
     ) -> None:
         """Verify an identifier no page has, and a page of another project of the account, both answer 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         :param fx_actor: The signed-in account.
@@ -320,14 +320,14 @@ class TestGetPage:
         assert [response.status_code for response in responses] == [status.HTTP_404_NOT_FOUND] * 2
 
     async def test_page_of_another_accounts_project_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase
     ) -> None:
         """Verify a page of another account's project answers exactly like a missing one.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         """
         project = make_project(owner_id=new_account_id())
         page = make_page(project_id=project.id)

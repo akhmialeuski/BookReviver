@@ -16,7 +16,7 @@ from tests.helpers.storage import upload
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Page, PageVersion, Project, Scan, Source
     from bookreviver.ports.storage import AssetStore, SourceStore
 
@@ -44,15 +44,13 @@ class Book(NamedTuple):
     version: PageVersion
 
 
-async def commit_book(
-    database: InMemoryDatabase, sources: SourceStore, assets: AssetStore, owner: Actor | None
-) -> Book:
+async def commit_book(database: SqlDatabase, sources: SourceStore, assets: AssetStore, owner: Actor | None) -> Book:
     """Commit and store a project of two sources with scans, and one page cut from a scan of the first source.
 
     Every source has its file in the source store, and every scan and the page have their full image in the asset store.
 
-    :param database: In-memory database to commit into.
-    :type database: InMemoryDatabase
+    :param database: SQL database to commit into, which gets the account of the project when it does not store it.
+    :type database: SqlDatabase
     :param sources: Source store receiving the two sources.
     :type sources: SourceStore
     :param assets: Asset store receiving the renditions of the scans and the image of the page.

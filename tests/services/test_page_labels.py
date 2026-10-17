@@ -1,4 +1,4 @@
-"""Tests for the use cases that edit the fields of a page, on in-memory persistence."""
+"""Tests for the use cases that edit the fields of a page."""
 
 from typing import TYPE_CHECKING
 
@@ -14,25 +14,24 @@ from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.events import PagesChanged
 from bookreviver.domain.values import PageAnchor
 from bookreviver.services.projects import book_pages
+from tests.helpers.book_gate import hold_book_in_thread
 from tests.helpers.builders import EPOCH, make_page, make_project, new_account_id
-from tests.helpers.page_services import make_page_service
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import ensure_account, store_project
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
     from datetime import datetime
     from typing import Any
 
-    from bookreviver.adapters.clock.system import FixedClock
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
-    from bookreviver.adapters.storage import LocalAssetStore
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Page, Project
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.services.pages import PageService
-    from tests.helpers.book_gate import GatedUnitOfWork
-    from tests.helpers.fake_board import FakeJobBoard
+    from tests.helpers.clock import FixedClock
+    from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
+    from tests.helpers.page_writes import PageWrites
 
 pytestmark = pytest.mark.anyio
 
@@ -52,11 +51,11 @@ LAYOUT: list[tuple[PageKind, bool]] = [
 ]
 
 
-async def _commit_book(database: InMemoryDatabase, owner: Actor) -> tuple[Project, list[Page]]:
+async def _commit_book(uow: UnitOfWork, owner: Actor) -> tuple[Project, list[Page]]:
     """Commit a book of seven pages of the kinds in ``LAYOUT``, each labelled by hand with a stale number.
 
-    :param database: In-memory database to commit into.
-    :type database: InMemoryDatabase
+    :param uow: Unit of work to commit through, over a database that stores the account of the owner.
+    :type uow: UnitOfWork
     :param owner: Account owning the project.
     :type owner: Actor
     :returns: The project and its pages in book order.
@@ -74,34 +73,21 @@ async def _commit_book(database: InMemoryDatabase, owner: Actor) -> tuple[Projec
         )
         for key, (kind, included) in zip(keys, LAYOUT, strict=True)
     ]
-    await commit_project(database, project, *pages)
+    await store_project(uow, project, *pages)
     return project, pages
 
 
-def _labels(database: InMemoryDatabase, pages: list[Page]) -> list[str]:
-    """Read the committed labels of pages.
+async def _stored(uow: UnitOfWork, project_id: ProjectId) -> dict[PageId, Page]:
+    """Read the committed pages of a book.
 
-    :param database: In-memory database to read.
-    :type database: InMemoryDatabase
-    :param pages: Pages to read the labels of.
-    :type pages: list[Page]
-    :returns: The label of each page as committed, in the order given.
-    :rtype: list[str]
+    :param uow: Unit of work to read through.
+    :type uow: UnitOfWork
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :returns: The pages of the book as committed, in book order, by identifier.
+    :rtype: dict[PageId, Page]
     """
-    return [database.tables.pages[page.id].label for page in pages]
-
-
-def _written(database: InMemoryDatabase, before: dict[PageId, Page]) -> set[PageId]:
-    """Find the pages whose rows were written since ``before``, which the frozen rows tell by their identity.
-
-    :param database: In-memory database to compare.
-    :type database: InMemoryDatabase
-    :param before: The committed page rows as they were.
-    :type before: dict[PageId, Page]
-    :returns: Identifiers of the pages whose row is another object now.
-    :rtype: set[PageId]
-    """
-    return {page_id for page_id, page in database.tables.pages.items() if before[page_id] is not page}
+    return await uow.read(lambda repos: {page.id: page for page in book_pages(repos.pages, project_id)})
 
 
 async def _update_kind(service: PageService, actor: Actor, project_id: ProjectId, page_ids: list[PageId]) -> None:
@@ -137,10 +123,10 @@ async def _delete_page(service: PageService, actor: Actor, project_id: ProjectId
 class TestUpdate:
     """Tests for PageService.update()."""
 
-    async def test_changes_the_four_fields_and_writes_one_row(
+    async def test_changes_the_four_fields_stamped_and_announced_once(
         self,
         fx_service: Callable[[], PageService],
-        fx_database: InMemoryDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
         fx_clock: FixedClock,
         fx_events: RecordingEventBus,
@@ -149,8 +135,8 @@ class TestUpdate:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_clock: Clock the service stamps pages with.
@@ -158,8 +144,7 @@ class TestUpdate:
         :param fx_events: Recording event bus of the test.
         :type fx_events: RecordingEventBus
         """
-        project, pages = await _commit_book(fx_database, fx_actor)
-        before = dict(fx_database.tables.pages)
+        project, pages = await _commit_book(fx_uow(), fx_actor)
         fx_clock.moment = LATER
 
         updated = await fx_service().update(
@@ -169,7 +154,7 @@ class TestUpdate:
             PageChanges(label=NEW_LABEL, kind=PageKind.OTHER, included=False, notes=NEW_NOTES),
         )
 
-        stored = fx_database.tables.pages[pages[2].id]
+        stored = await fx_uow().read(lambda repos: repos.pages.get(pages[2].id))
         expect(
             (stored.label, stored.kind, stored.included, stored.notes) == (NEW_LABEL, PageKind.OTHER, False, NEW_NOTES)
         )
@@ -177,47 +162,84 @@ class TestUpdate:
         expect((stored.id, stored.order_key, stored.scan_id) == (pages[2].id, pages[2].order_key, pages[2].scan_id))
         expect(updated.page == stored)
         expect(updated.position == 2)
-        expect(_written(fx_database, before) == {pages[2].id})
         expect(
             fx_events.published
             == [PagesChanged(project_id=project.id, page_ids=[pages[2].id], change=PageChange.EDITED)]
         )
         assert_expectations()
 
+    async def test_an_update_writes_only_the_row_of_its_page(
+        self,
+        fx_service: Callable[[], PageService],
+        fx_uow: UnitOfWorkFactory,
+        fx_page_writes: PageWrites,
+        fx_actor: Actor,
+    ) -> None:
+        """Verify an update of the third page writes its row and no row of another page.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_page_writes: Record of the pages the page repository writes.
+        :type fx_page_writes: PageWrites
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project, pages = await _commit_book(fx_uow(), fx_actor)
+        fx_page_writes.start()
+
+        await fx_service().update(
+            fx_actor,
+            project.id,
+            pages[2].id,
+            PageChanges(label=NEW_LABEL, kind=PageKind.OTHER, included=False, notes=NEW_NOTES),
+        )
+
+        assert fx_page_writes.page_ids == {pages[2].id}
+
     async def test_a_field_left_as_none_keeps_its_value(
-        self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify changing the label alone leaves the kind, the inclusion and the notes of the page as they were.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project, pages = await _commit_book(fx_database, fx_actor)
+        project, pages = await _commit_book(fx_uow(), fx_actor)
 
         await fx_service().update(fx_actor, project.id, pages[3].id, PageChanges(label=''))
 
-        stored = fx_database.tables.pages[pages[3].id]
+        stored = (await _stored(fx_uow(), project.id))[pages[3].id]
         assert evolve(stored, label=STALE_LABEL, label_manual=True, updated_at=EPOCH) == pages[3]
         assert (stored.label, stored.label_manual) == ('', False)
 
     async def test_missing_page_page_of_another_project_and_foreign_project_are_not_found(
-        self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor
+        self,
+        fx_service: Callable[[], PageService],
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
     ) -> None:
         """Verify a page that does not exist, one of another project, and a project of another account are all 404.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project, pages = await _commit_book(fx_database, fx_actor)
-        stranger, strangers_pages = await _commit_book(fx_database, evolve(fx_actor, account_id=new_account_id()))
+        project, pages = await _commit_book(fx_uow(), fx_actor)
+        strangers_account = evolve(fx_actor, account_id=new_account_id())
+        await ensure_account(fx_database, strangers_account.account_id)
+        stranger, strangers_pages = await _commit_book(fx_uow(), strangers_account)
         other = make_page(project_id=project.id, order_key='z0')
 
         with pytest.raises(NotFoundError):
@@ -226,19 +248,15 @@ class TestUpdate:
             await fx_service().update(fx_actor, project.id, strangers_pages[0].id, PageChanges(label='1'))
         with pytest.raises(NotFoundError):
             await fx_service().update(fx_actor, stranger.id, strangers_pages[0].id, PageChanges(label='1'))
-        assert _labels(fx_database, pages) == [STALE_LABEL] * len(pages)
+        stored = await _stored(fx_uow(), project.id)
+        assert [stored[page.id].label for page in pages] == [STALE_LABEL] * len(pages)
 
 
 class TestConcurrentWrites:
     """Tests for the use cases that write pages while another change of the same book is waiting for the book."""
 
     async def test_a_job_writing_a_moved_page_after_a_group_move_keeps_both_changes(
-        self,
-        fx_database: InMemoryDatabase,
-        fx_gated_uow: Callable[[], GatedUnitOfWork],
-        fx_asset_store: LocalAssetStore,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
-        fx_actor: Actor,
+        self, fx_uow: UnitOfWorkFactory, fx_service_over: Callable[[UnitOfWork], PageService], fx_actor: Actor
     ) -> None:
         """Verify a group move ends in the new order while a job records the content of one of the moved pages.
 
@@ -246,18 +264,14 @@ class TestConcurrentWrites:
         the job's write second, so the job's change has to wait for the move and then read the new order. Ordering is
         proved with ``wait_all_tasks_blocked``, never by waiting for a time.
 
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
-        :param fx_gated_uow: Function opening a unit of work whose changes wait at the gate the test holds the book with.
-        :type fx_gated_uow: Callable[[], GatedUnitOfWork]
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
-        :param fx_runtime: The recording bus, the clock and the job board the service reports through.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_service_over: Function building the page service over a unit of work.
+        :type fx_service_over: Callable[[UnitOfWork], PageService]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project, pages = await _commit_book(fx_database, fx_actor)
+        project, pages = await _commit_book(fx_uow(), fx_actor)
         moved = [pages[0].id, pages[1].id]
         anchor = PageAnchor(page_id=pages[3].id, side=Side.AFTER)
         seen_by_job: list[PageId] = []
@@ -273,18 +287,20 @@ class TestConcurrentWrites:
             seen_by_job.extend(page.id for page in book_pages(repos.pages, project.id))
             repos.pages.update(evolve(repos.pages.get(moved[1]), content_type=ContentType.COLOR_PICTURE))
 
-        mover = make_page_service(fx_gated_uow(), fx_asset_store, fx_runtime)
-        async with anyio.create_task_group() as group, fx_gated_uow().gate.hold(project.id):
+        mover = fx_service_over(fx_uow())
+        # The hold ends first, when the block ends, and the group then waits for the changes that queued behind it
+        async with anyio.create_task_group() as group, hold_book_in_thread(fx_uow(), project.id):
             group.start_soon(mover.move_group, fx_actor, project.id, moved, anchor)
             await anyio.wait_all_tasks_blocked()
-            group.start_soon(fx_gated_uow().change_book, project.id, job_writes_content)
+            group.start_soon(fx_uow().change_book, project.id, job_writes_content)
             await anyio.wait_all_tasks_blocked()
             expect(not seen_by_job)
 
-        order = sorted(fx_database.tables.pages.values(), key=lambda page: page.order_key)
+        stored = await _stored(fx_uow(), project.id)
+        order = sorted(stored.values(), key=lambda page: page.order_key)
         expected = [pages[2].id, pages[3].id, *moved, pages[4].id]
         expect([page.id for page in order][:5] == expected)
-        expect(fx_database.tables.pages[moved[1]].content_type == ContentType.COLOR_PICTURE)
+        expect(stored[moved[1]].content_type == ContentType.COLOR_PICTURE)
         expect(seen_by_job[:5] == expected)
         assert_expectations()
 
@@ -292,8 +308,8 @@ class TestConcurrentWrites:
     async def test_a_use_case_started_while_the_book_is_held_writes_after_the_one_asked_before_it(
         self,
         write: Callable[[PageService, Actor, ProjectId, list[PageId]], Coroutine[Any, Any, None]],
-        fx_database: InMemoryDatabase,
-        fx_gated_uow: Callable[[], GatedUnitOfWork],
+        fx_uow: UnitOfWorkFactory,
+        fx_page_writes: PageWrites,
         fx_service_over: Callable[[UnitOfWork], PageService],
         fx_actor: Actor,
     ) -> None:
@@ -304,33 +320,35 @@ class TestConcurrentWrites:
 
         :param write: The use case that starts second, given the service, the actor, the project and the page ids.
         :type write: Callable[[PageService, Actor, ProjectId, list[PageId]], Coroutine[Any, Any, None]]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
-        :param fx_gated_uow: Function opening a unit of work whose changes wait at the gate the test holds the book with.
-        :type fx_gated_uow: Callable[[], GatedUnitOfWork]
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_page_writes: Record of the pages the page repository writes.
+        :type fx_page_writes: PageWrites
         :param fx_service_over: Function building the page service over a unit of work.
         :type fx_service_over: Callable[[UnitOfWork], PageService]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project, pages = await _commit_book(fx_database, fx_actor)
+        project, pages = await _commit_book(fx_uow(), fx_actor)
         ids = [page.id for page in pages]
-        before = dict(fx_database.tables.pages)
+        fx_page_writes.start()
 
-        async with anyio.create_task_group() as group, fx_gated_uow().gate.hold(project.id):
+        # The hold ends first, when the block ends, and the group then waits for the changes that queued behind it
+        async with anyio.create_task_group() as group, hold_book_in_thread(fx_uow(), project.id):
             group.start_soon(
-                fx_service_over(fx_gated_uow()).move,
+                fx_service_over(fx_uow()).move,
                 fx_actor,
                 project.id,
                 ids[0],
                 PageAnchor(page_id=ids[3], side=Side.AFTER),
             )
             await anyio.wait_all_tasks_blocked()
-            group.start_soon(write, fx_service_over(fx_gated_uow()), fx_actor, project.id, ids)
+            group.start_soon(write, fx_service_over(fx_uow()), fx_actor, project.id, ids)
             await anyio.wait_all_tasks_blocked()
-            expect(_written(fx_database, before) == set())
+            expect(fx_page_writes.page_ids == set())
 
-        expect(fx_database.tables.pages[ids[0]].order_key != pages[0].order_key)
+        after = await _stored(fx_uow(), project.id)
+        expect(after[ids[0]].order_key != pages[0].order_key)
         # The third page is the one both use cases of the parameters write: its row is changed or gone
-        expect(fx_database.tables.pages.get(ids[2]) is not before[ids[2]])
+        expect(after.get(ids[2]) != pages[2])
         assert_expectations()

@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import event
 
-from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.domain.entities import Actor
@@ -13,6 +12,7 @@ from bookreviver.domain.values import SliceRequest
 from bookreviver.services.projects import ProjectService
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import EPOCH, make_job, make_page, make_page_stage, make_project
+from tests.helpers.clock import FixedClock
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.fakes_jobs import JobFakes
 from tests.helpers.statements import STATEMENT_EVENT, StatementCounter

@@ -5,20 +5,19 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 from attrs import evolve
 
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.enums import NewPageOrigin, PageKind, Side, Stage, StageState, ValueScope
 from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.values import NewPage, PageAnchor
 from tests.helpers.builders import make_page, make_page_stage, make_project, make_step_values
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.domain.entities import Actor, Page, Project
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.services.pages import PageService
+    from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
@@ -116,11 +115,11 @@ REORDERINGS: dict[str, Reordering] = {
 }
 
 
-async def _commit_book(database: InMemoryDatabase, actor: Actor, valued: tuple[ValueScope, Stage] | None) -> Book:
+async def _commit_book(uow: UnitOfWork, actor: Actor, valued: tuple[ValueScope, Stage] | None) -> Book:
     """Commit a book of four pages with a fresh record of each checked stage, and one value for a step of a stage.
 
-    :param database: In-memory database to commit into.
-    :type database: InMemoryDatabase
+    :param uow: Unit of work to commit through, over a database that stores the account of the owner.
+    :type uow: UnitOfWork
     :param actor: Owner of the book.
     :type actor: Actor
     :param valued: The part of the pages and the stage of the one value the book has for a step, or None for no value.
@@ -130,7 +129,7 @@ async def _commit_book(database: InMemoryDatabase, actor: Actor, valued: tuple[V
     """
     project = make_project(owner_id=actor.account_id)
     pages = [make_page(project_id=project.id, order_key=f'a{number}') for number in range(PAGE_COUNT)]
-    await commit_project(database, project, *pages)
+    await store_project(uow, project, *pages)
 
     def save_records(repos: Repositories, _project: Project) -> None:
         """Save a record for every checked stage of every page, and the value of the part of the pages when given.
@@ -149,22 +148,22 @@ async def _commit_book(database: InMemoryDatabase, actor: Actor, valued: tuple[V
             values = make_step_values(project_id=project.id, scope=scope, group_label=group_label)
             repos.step_values.save(evolve(values, stage=stage))
 
-    await InMemoryUnitOfWork(database).change_book(project.id, save_records)
+    await uow.change_book(project.id, save_records)
     return Book(project=project, pages=pages)
 
 
-async def _stale(database: InMemoryDatabase, book: Book) -> set[tuple[int, Stage]]:
+async def _stale(uow: UnitOfWork, book: Book) -> set[tuple[int, Stage]]:
     """Read which stages of which pages are stale.
 
-    :param database: In-memory database of the test.
-    :type database: InMemoryDatabase
+    :param uow: Unit of work to read through.
+    :type uow: UnitOfWork
     :param book: The book.
     :type book: Book
     :returns: The index of the page in the original book order and the stage, of each stale record.
     :rtype: set[tuple[int, Stage]]
     """
     index = {page.id: place for place, page in enumerate(book.pages)}
-    records = await InMemoryUnitOfWork(database).read(lambda repos: repos.page_stages.list_for_pages(list(index)))
+    records = await uow.read(lambda repos: repos.page_stages.list_for_pages(list(index)))
     return {(index[record.page_id], record.stage) for record in records if record.state is StageState.STALE}
 
 
@@ -175,7 +174,7 @@ class TestPagesTurnedOver:
     async def test_the_pages_that_turned_over_go_stale_where_the_odd_pages_have_a_value(
         self,
         fx_service: Callable[[], PageService],
-        fx_database: InMemoryDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
         reordering: Reordering,
     ) -> None:
@@ -183,38 +182,38 @@ class TestPagesTurnedOver:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param reordering: The change of the places and the pages it turns over.
         :type reordering: Reordering
         """
-        book = await _commit_book(fx_database, fx_actor, (ValueScope.ODD, Stage.GEOMETRY))
+        book = await _commit_book(fx_uow(), fx_actor, (ValueScope.ODD, Stage.GEOMETRY))
         await reordering.act(fx_service(), fx_actor, book)
-        assert await _stale(fx_database, book) == {(place, Stage.GEOMETRY) for place in reordering.turned}
+        assert await _stale(fx_uow(), book) == {(place, Stage.GEOMETRY) for place in reordering.turned}
 
     async def test_only_the_stages_that_have_a_value_for_a_side_go_stale(
-        self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify the stage the even pages have a value in is marked, and the stage that has none is left fresh.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        book = await _commit_book(fx_database, fx_actor, (ValueScope.EVEN, Stage.CLEANUP))
+        book = await _commit_book(fx_uow(), fx_actor, (ValueScope.EVEN, Stage.CLEANUP))
         await _move(fx_service(), fx_actor, book)
-        assert await _stale(fx_database, book) == {(1, Stage.CLEANUP), (2, Stage.CLEANUP)}
+        assert await _stale(fx_uow(), book) == {(1, Stage.CLEANUP), (2, Stage.CLEANUP)}
 
     @pytest.mark.parametrize('valued', [None, (ValueScope.GROUP, Stage.GEOMETRY)], ids=['no-value', 'group-value'])
     async def test_a_book_with_no_value_for_a_side_marks_nothing(
         self,
         fx_service: Callable[[], PageService],
-        fx_database: InMemoryDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
         valued: tuple[ValueScope, Stage] | None,
     ) -> None:
@@ -222,21 +221,21 @@ class TestPagesTurnedOver:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param valued: The one value the book has, or None.
         :type valued: tuple[ValueScope, Stage] | None
         """
-        book = await _commit_book(fx_database, fx_actor, valued)
+        book = await _commit_book(fx_uow(), fx_actor, valued)
         await _move(fx_service(), fx_actor, book)
-        assert await _stale(fx_database, book) == set()
+        assert await _stale(fx_uow(), book) == set()
 
     async def test_the_marked_stages_are_announced_after_the_commit(
         self,
         fx_service: Callable[[], PageService],
-        fx_database: InMemoryDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
         fx_events: RecordingEventBus,
     ) -> None:
@@ -244,14 +243,14 @@ class TestPagesTurnedOver:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_events: Recording event bus the service publishes to.
         :type fx_events: RecordingEventBus
         """
-        book = await _commit_book(fx_database, fx_actor, (ValueScope.ODD, Stage.GEOMETRY))
+        book = await _commit_book(fx_uow(), fx_actor, (ValueScope.ODD, Stage.GEOMETRY))
         await _move(fx_service(), fx_actor, book)
         announced = {event.stage.page_id for event in fx_events.published if isinstance(event, PageStageChanged)}
         assert announced == {book.pages[1].id, book.pages[2].id}

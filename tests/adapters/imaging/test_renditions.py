@@ -36,7 +36,7 @@ SMALL_SIZE_PX: tuple[int, int] = (120, 90)
 def fx_settings(fx_settings: Settings) -> Settings:
     """Override the suite's settings with the preview and thumbnail sizes of these tests.
 
-    :param fx_settings: Settings of the whole suite, with in-memory persistence and a fresh data directory.
+    :param fx_settings: Settings of the whole suite, with a fresh data directory.
     :type fx_settings: Settings
     :returns: The same settings with ``IMAGING`` as their imaging group.
     :rtype: Settings

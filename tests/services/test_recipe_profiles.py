@@ -10,8 +10,9 @@ from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import RecipeKind, Stage, StageState
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.values import PageStageKey, ProfileDraft, SliceRequest, Step
-from tests.helpers.builders import make_page_stage, make_project, make_recipe_profile, new_account_id
+from tests.helpers.builders import make_page_stage, make_project, make_recipe_profile
 from tests.helpers.processors import FakeProcessor
+from tests.helpers.seeding import commit_account
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Project, RecipeProfile
@@ -363,7 +364,7 @@ class TestDefaultProfileOfANewBook:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        stranger = Actor(account_id=new_account_id())
+        stranger = Actor(account_id=await commit_account(fx_kit.database))
         profile = await saved(fx_kit, stranger)
         await fx_kit.profiles().set_default(stranger, profile.id, is_default=True)
         actor, project = await fx_kit.seed_project()

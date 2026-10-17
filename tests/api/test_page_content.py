@@ -1,4 +1,4 @@
-"""Tests for what the pages say they show, and for the endpoint that detects it, on in-memory persistence."""
+"""Tests for what the pages say they show, and for the endpoint that detects it, on the SQLite file of the test."""
 
 from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
@@ -9,13 +9,13 @@ from delayed_assert import assert_expectations, expect
 from fastapi import status
 from fastapi_pagination import Page
 
-from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.enums import ContentSource, ContentType, JobKind, JobState, PageKind
 from bookreviver.domain.values import ContentDetection
 from tests.helpers.builders import EPOCH, make_job, make_page, make_project, new_account_id
+from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import FakeBoardProvider, RecordingEventBus
 from tests.helpers.scripted_runner import ScriptedRunner
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project
     from bookreviver.domain.entities import Page as BookPage
 
@@ -92,11 +92,11 @@ def fx_extra_providers(fx_board: FakeJobBoard) -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_book(fx_database: InMemoryDatabase, fx_actor: Actor) -> Book:
+async def fx_book(fx_database: SqlDatabase, fx_actor: Actor) -> Book:
     """Commit the book for the signed-in account.
 
-    :param fx_database: In-memory database of the application.
-    :type fx_database: InMemoryDatabase
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored book.
@@ -277,7 +277,7 @@ class TestDetectContent:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_a_page_that_is_not_in_the_book_and_a_book_of_another_account_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase
     ) -> None:
         """Verify a page that does not exist and a project that is not the account's answer 404 and queue nothing.
 
@@ -285,8 +285,8 @@ class TestDetectContent:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         """
         stranger = make_project(owner_id=new_account_id())
         page = make_page(project_id=stranger.id)

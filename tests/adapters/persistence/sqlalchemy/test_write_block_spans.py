@@ -27,9 +27,9 @@ from tests.helpers.wait_limits import IMPATIENT_SECONDS
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.adapters.tracing.recording import RecordingSpan
     from bookreviver.domain.entities import Project
     from bookreviver.ports.persistence import Repositories
+    from tests.helpers.recording_tracer import RecordingSpan
     from tests.helpers.tracers import AskingTracer
 
 pytestmark = pytest.mark.anyio

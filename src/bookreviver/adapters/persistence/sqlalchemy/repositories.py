@@ -8,7 +8,7 @@ adds only the queries specific to BookReviver, such as the counts of the book of
 repositories are synchronous, because the unit of work runs the whole work of a use case in one worker thread, and
 :class:`SqlAlchemyRepositories` binds all of them to the session of that transaction.
 
-The database's own checks are reported as the domain errors the in-memory adapter raises, so services never see an
+The database's own checks are reported as the domain errors the port promises, so services never see an
 advanced-alchemy exception. A missing row is a :class:`~bookreviver.domain.errors.NotFoundError` naming its key. A row
 whose primary key or unique value is already stored is a :class:`~bookreviver.domain.errors.ConflictError` naming
 them, and a row whose parent row is missing is a ``NotFoundError`` naming the parent's key. advanced-alchemy's own
