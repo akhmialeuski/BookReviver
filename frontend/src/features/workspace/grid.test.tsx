@@ -91,20 +91,17 @@ describe('useGrid and useGridKey', () => {
   let container: HTMLDivElement;
   let root: Root;
 
-  /** The grid of the stage screen: the step is what changes while the book and its choice stay. */
   function Harness({
     projectId,
-    step = 'deskew',
     keyed = true,
   }: {
     projectId: string;
-    step?: string;
     keyed?: boolean;
   }): React.JSX.Element {
     const [on, toggle] = useGrid(projectId);
     useGridKey(toggle, keyed);
     return (
-      <button type="button" data-testid="grid" data-step={step} data-on={on} onClick={toggle}>
+      <button type="button" data-testid="grid" data-on={on} onClick={toggle}>
         grid
       </button>
     );
@@ -128,30 +125,25 @@ describe('useGrid and useGridKey', () => {
     vi.unstubAllGlobals();
   });
 
-  it('is off on every step until the reader chooses, and writes nothing to the storage', () => {
-    for (const step of ['perspective', 'deskew', 'dewarp', 'select-content', 'margins']) {
-      act(() => root.render(<Harness projectId="book-a" step={step} />));
-      expect(state()).toBe('false');
-    }
+  it('is off until the reader chooses, and writes nothing to the storage', () => {
+    act(() => root.render(<Harness projectId="book-a" />));
+    expect(state()).toBe('false');
     expect(localStorage.getItem(gridStorageKey('book-a'))).toBeNull();
   });
 
-  it('remembers the choice for the book, and a change of step does not take it back', () => {
-    act(() => root.render(<Harness projectId="book-a" step="deskew" />));
+  it('remembers the choice for the book, on or off, through a render', () => {
+    act(() => root.render(<Harness projectId="book-a" />));
     act(() => container.querySelector('button')?.click());
     expect(state()).toBe('true');
     expect(localStorage.getItem(gridStorageKey('book-a'))).toBe('on');
+    act(() => root.render(<Harness projectId="book-a" />));
+    expect(state()).toBe('true');
 
-    for (const step of ['perspective', 'dewarp', 'select-content', 'margins', 'deskew']) {
-      act(() => root.render(<Harness projectId="book-a" step={step} />));
-      expect(state()).toBe('true');
-    }
-
-    // An off choice is a choice too, and stays off through the same steps
+    // An off choice is a choice too, and stays off
     act(() => container.querySelector('button')?.click());
     expect(state()).toBe('false');
     expect(localStorage.getItem(gridStorageKey('book-a'))).toBe('off');
-    act(() => root.render(<Harness projectId="book-a" step="margins" />));
+    act(() => root.render(<Harness projectId="book-a" />));
     expect(state()).toBe('false');
   });
 
@@ -192,20 +184,6 @@ describe('useGrid and useGridKey', () => {
     act(() => root.render(<Harness projectId="book-a" keyed={false} />));
     press('g');
     expect(state()).toBe('false');
-  });
-
-  it('switches the grid of the step that is open, whatever step it was first pressed on', () => {
-    act(() => root.render(<Harness projectId="book-a" step="perspective" />));
-    press('g');
-    expect(state()).toBe('true');
-
-    for (const step of ['deskew', 'dewarp', 'select-content', 'margins']) {
-      act(() => root.render(<Harness projectId="book-a" step={step} />));
-      press('g');
-      expect(state()).toBe('false');
-      press('g');
-      expect(state()).toBe('true');
-    }
   });
 
   it('leaves the key G to a dialog and to a modifier, and takes it again once they are gone', () => {

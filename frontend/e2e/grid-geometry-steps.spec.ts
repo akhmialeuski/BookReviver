@@ -83,10 +83,14 @@ test('the grid is off until chosen, then shown over the editor of every Geometry
     }
   });
 
-  await test.step('the key G switches the grid on at the step that is open', async () => {
+  await test.step('the key G in either case switches the grid at the step that is open', async () => {
     await page.keyboard.press('g');
     await expect(grid).toBeVisible();
     await expect(gridButton).toHaveAttribute('aria-pressed', 'true');
+    await page.keyboard.press('Shift+G');
+    await expect(grid).toHaveCount(0);
+    await page.keyboard.press('g');
+    await expect(grid).toBeVisible();
   });
 
   await test.step('the grid is shown on every step, above the editor and taking no pointer', async () => {
@@ -98,32 +102,33 @@ test('the grid is off until chosen, then shown over the editor of every Geometry
       await expect(grid).toBeVisible();
       await expect(gridButton).toHaveAttribute('aria-pressed', 'true');
 
-      // The grid covers the editor, takes no pointer, and stands above it in the stacking order of the same parent
-      const covers = await grid.evaluate(
-        (element, editor) => {
-          const own = getComputedStyle(element);
-          const box = element.getBoundingClientRect();
-          const under = editor?.getBoundingClientRect();
-          return {
-            pointerEvents: own.pointerEvents,
-            zIndex: Number(own.zIndex),
-            sameParent: editor !== null && element.parentElement?.contains(editor) === true,
-            covered:
-              under !== undefined &&
-              box.left <= under.left &&
-              box.top <= under.top &&
-              box.right >= under.right &&
-              box.bottom >= under.bottom,
-          };
-        },
-        await layer.elementHandle(),
-      );
-      expect(covers).toEqual({
-        pointerEvents: 'none',
-        zIndex: 10,
-        sameParent: true,
-        covered: true,
+      // The grid covers the editor and takes no pointer. Made hit-testable for one look, it is the topmost element over the
+      // middle of the editor, which holds whatever stacking contexts the editor and its parents form
+      const over = await layer.evaluate((editor) => {
+        const overlay = document.querySelector<HTMLElement>('[data-testid="canvas-grid"]');
+        if (overlay === null) {
+          return null;
+        }
+        const under = editor.getBoundingClientRect();
+        const box = overlay.getBoundingClientRect();
+        const { pointerEvents } = getComputedStyle(overlay);
+        overlay.style.pointerEvents = 'auto';
+        const top = document.elementFromPoint(
+          under.left + under.width / 2,
+          under.top + under.height / 2,
+        );
+        overlay.style.pointerEvents = '';
+        return {
+          pointerEvents,
+          onTop: top === overlay,
+          covered:
+            box.left <= under.left &&
+            box.top <= under.top &&
+            box.right >= under.right &&
+            box.bottom >= under.bottom,
+        };
       });
+      expect(over).toEqual({ pointerEvents: 'none', onTop: true, covered: true });
       await snap(page, `grid-${picture}`);
     }
   });
@@ -165,8 +170,11 @@ test('the grid is off until chosen, then shown over the editor of every Geometry
   });
 
   await test.step('the grid is shown over the result of the stage too, with the editor shut, and the key G switches it off there', async () => {
-    // The address of a stage with a step bar always opens a step, so the result is the picture the compare draws with
-    // the editor shut
+    // The address of a stage with a step bar always opens a step, and the compare draws the picture the open step makes,
+    // so the result of the stage is the picture of the last step with the editor shut
+    await stepOf('Margins').click();
+    await expect(page).toHaveURL(STEP_ADDRESS);
+    await expect(page.getByTestId('step-panel-title')).toHaveText(/Margins/);
     await page.getByTestId('compare-menu').click();
     await page.getByTestId('compare-swipe').click();
     await expect(layer).toHaveCount(0);
