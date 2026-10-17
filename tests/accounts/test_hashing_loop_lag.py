@@ -5,8 +5,10 @@ late the event loop woke each of its ticks. An argon2id hash or check on the loo
 asleep across it ends that late. In a worker thread the requests delay the loop about as much as a request that hashes
 nothing, a few milliseconds at most, which is the noise of the interpreter switching threads every 5 ms.
 
-The first request that reaches the ORM in a process holds the loop for 10 to 29 ms while SQLAlchemy configures its
-mappers and the request paths run cold, so each test signs up and signs out one account before it measures.
+The first request that reaches the ORM in a process held the loop for 10 to 29 ms while SQLAlchemy configured its
+mappers and the request paths ran cold. The application configures the mappers at start now, and one test measures the
+first registration of a fresh application. The tests of the hash sign up and sign out one account before they measure,
+so what they time is the hash and not the paths that are cold in the first request.
 """
 
 from http import HTTPStatus
@@ -163,3 +165,19 @@ class TestHashingLeavesTheLoopOnTime:
             lambda: fx_warm_visitor.client.patch(ME_PATH, json={PASSWORD_FIELD: NEW_PASSWORD})
         )
         expect_on_time(response, HTTPStatus.OK, lags)
+
+
+class TestFirstRequestLeavesTheLoopOnTime:
+    """Tests that the first request of a freshly started application holds the event loop no longer than a later one."""
+
+    async def test_first_registration(self, fx_visitor: Visitor) -> None:
+        """Verify the first registration in a fresh application delays no tick of the probe beyond the bound.
+
+        The registration is the first request to reach the ORM and the hasher, so the mappers SQLAlchemy would
+        configure on first use must have been configured at start.
+
+        :param fx_visitor: Signed-out visitor of an application that has served no registration.
+        :type fx_visitor: Visitor
+        """
+        response, lags = await lags_during(lambda: fx_visitor.register(EMAIL))
+        expect_on_time(response, HTTPStatus.CREATED, lags)
