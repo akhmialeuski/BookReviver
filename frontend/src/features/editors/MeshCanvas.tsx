@@ -22,7 +22,6 @@ import { MESSAGES } from '@/shared/messages';
 
 const labels = MESSAGES.editors.mesh;
 
-const CURVE_WIDTH_PX = 2;
 /** How far a curve bends between its nodes, as Konva counts it. */
 const CURVE_TENSION = 0.4;
 const HANDLE_RADIUS_PX = 7;
@@ -43,7 +42,7 @@ export function MeshCanvas({
   onCommitLater,
 }: CanvasProps<MeshShape>): React.JSX.Element {
   const frame = useSceneFrame(scene, size);
-  const { stroke, dash } = FIGURE_STYLE[figure];
+  const { stroke, lineWidth, dash } = FIGURE_STYLE[figure];
   const showAll = useMoreControl();
   // What is on the screen: the grid, or the two curves of the shape
   const shown = showAll ? gridOf(shape, GRID_ROWS) : curvesOf(shape);
@@ -105,7 +104,7 @@ export function MeshCanvas({
           points={curve.points}
           stroke={stroke}
           dash={dash}
-          strokeWidth={CURVE_WIDTH_PX}
+          strokeWidth={lineWidth}
           tension={CURVE_TENSION}
           listening={false}
         />

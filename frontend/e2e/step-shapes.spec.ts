@@ -3,22 +3,24 @@ import path from 'node:path';
 import { expect } from '@playwright/test';
 import {
   createBook,
+  markPagesAsText,
   openLibrary,
   openProjectId,
   snap,
   uploadFolder,
   waitForIdleJobs,
   writePagesFolder,
+  writeSheetsFolder,
 } from './support/account';
 import { test } from './support/fixtures';
-import { numbersOf, pairOf } from './support/layer';
+import { dragFrom, numbersOf, pairOf } from './support/layer';
 import { runPages } from './support/page-work';
 
 /**
  * The shape of a step on the page, in its three states, and the grid over the page.
  *
  * A step that is open has its shape on the page from the start: the grey dashed default before the step has run, the green
- * line it found after a run of all pages, and the orange line the reader set, which the later runs keep. The angle of the
+ * line it found after a run of all pages, and the thicker dark green line the reader set, which the later runs keep. The angle of the
  * Deskew step is set with the field, the slider and the arrow keys, and all three states are still there when the open
  * step changes and comes back. The grid is a choice of the book that every step of Geometry shares, and the key G switches
  * it.
@@ -32,6 +34,8 @@ const PAGES = 3;
 const SCENARIO_TIMEOUT_MS = 300_000;
 const RUN_TIMEOUT_MS = 90_000;
 const STEP_ADDRESS = /\/stages\/geometry\/steps\/[0-9a-f-]{36}(\?|$)/;
+// Outward, into the margin of the scan, so that the corner of the sheet stays inside the picture
+const CORNER_DRAG = { x: -12, y: -9 };
 
 // Tall enough for the pictures of the key states to show the bar, the canvas and the section of the step in the panel
 test.use({ viewport: { width: 1280, height: 1000 } });
@@ -141,7 +145,7 @@ test('the shape of a step is on the page in its three states, they survive a cha
     await open('Deskew', 'Page rotation');
   });
 
-  await test.step('the angle typed in the field is the shape set by hand, orange, and the bar says so', async () => {
+  await test.step('the angle typed in the field is the shape set by hand, dark green, and the bar says so', async () => {
     await angle.fill('1.5');
     await angle.press('Enter');
     await expect(layer).toHaveAttribute('data-degrees', '1.5');
@@ -204,6 +208,38 @@ test('the shape of a step is on the page in its three states, they survive a cha
     await runPages(page, { pages: 'page', throughOpenStep: true });
     await expect(layer).toHaveAttribute('data-figure', 'by-hand');
     await expect(layer).toHaveAttribute('data-degrees', '2');
+  });
+
+  await rm(path.dirname(folder), { recursive: true, force: true });
+});
+
+test('on a sheet of old paper the shape set by hand stays a dark green line beside the one the step found', async ({
+  page,
+}) => {
+  test.setTimeout(SCENARIO_TIMEOUT_MS);
+  const folder = await writeSheetsFolder(1);
+  const layer = page.getByTestId('editor-layer');
+
+  await test.step('a sheet of yellowed paper is run through Geometry, and Perspective found its corners', async () => {
+    await openLibrary(page);
+    await createBook(page, 'A book of old paper');
+    await uploadFolder(page, folder, 1);
+    await waitForIdleJobs(page, openProjectId(page));
+    await markPagesAsText(page);
+    const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
+    await page.goto(`${bookPath}/stages/geometry`);
+    await runPages(page);
+    await page.getByTestId('bar-step').filter({ hasText: 'Perspective' }).click();
+    await expect(page).toHaveURL(STEP_ADDRESS);
+    await expect(layer).toHaveAttribute('data-figure', 'found', { timeout: RUN_TIMEOUT_MS });
+    await snap(page, 'paper-found');
+  });
+
+  await test.step('a corner dragged by hand turns the shape into the thicker dark green one', async () => {
+    await dragFrom(page, layer, await pairOf(layer, 'data-handle-top-left'), CORNER_DRAG);
+    await expect(layer).toHaveAttribute('data-figure', 'by-hand', { timeout: RUN_TIMEOUT_MS });
+    await waitForIdleJobs(page, openProjectId(page));
+    await snap(page, 'paper-set-by-hand');
   });
 
   await rm(path.dirname(folder), { recursive: true, force: true });
