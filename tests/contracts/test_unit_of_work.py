@@ -17,13 +17,12 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.app.settings import ChangeWaitSettings, PersistenceBackend
-from bookreviver.domain.enums import ImagePolicy, JobState, Stage, ValueScope
+from bookreviver.domain.enums import ImagePolicy, Stage, ValueScope
 from bookreviver.domain.errors import BookBusyError, DomainError, NotFoundError
 from bookreviver.domain.values import PageStepKey
 from bookreviver.ports.persistence import NoChangeOpenError, Repositories, UnitOfWork
 from tests.helpers.builders import (
     make_book_place,
-    make_job,
     make_page,
     make_page_stage,
     make_page_step_change,
@@ -44,8 +43,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
 
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import Job, Project
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.entities import Project, RecipeProfile
+    from bookreviver.domain.ids import AccountId, ProjectId
     from tests.contracts.conftest import BookHolder, OwnerFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
@@ -81,7 +80,6 @@ WRITE_METHODS: tuple[str, ...] = (
     'delete',
     'delete_many',
     'delete_for_step',
-    'update_if_state',
     'save',
     'save_many',
 )
@@ -174,7 +172,6 @@ WRITES: dict[str, Callable[[Any, Row], object]] = {
     'delete_for_step': lambda repository, row: repository.delete_for_step(
         PageStepKey(page_id=row.stored.page_id, stage=row.stored.stage, step_id=row.stored.step_id)
     ),
-    'update_if_state': lambda repository, row: repository.update_if_state(row.changed, expected=JobState.active()),
     'save': lambda repository, row: repository.save(row.changed),
     'save_many': lambda repository, row: repository.save_many([row.changed]),
 }
@@ -323,7 +320,7 @@ async def fx_rows(
 
     :param fx_uow_factory: Function opening a new unit of work of the backend under test.
     :type fx_uow_factory: UnitOfWorkFactory
-    :param fx_project: Stored project, which owns the jobs and the places.
+    :param fx_project: Stored project, which owns the places.
     :type fx_project: Project
     :param fx_book_rows: Rows of the repositories that hold the content of the book.
     :type fx_book_rows: dict[str, Row]
@@ -332,7 +329,6 @@ async def fx_rows(
     """
     project, owner_id = fx_project, fx_project.owner_id
     profile = make_recipe_profile(account_id=owner_id)
-    job = make_job(project_id=project.id, state=JobState.SUCCEEDED)
     place = make_book_place(account_id=owner_id, project_id=project.id)
 
     def add_rows(repos: Repositories) -> None:
@@ -342,7 +338,6 @@ async def fx_rows(
         :type repos: Repositories
         """
         repos.recipe_profiles.add(profile)
-        repos.jobs.add(job)
         repos.book_places.add(place)
 
     await fx_uow_factory().change(add_rows)
@@ -360,7 +355,6 @@ async def fx_rows(
             make_recipe_profile(account_id=owner_id, stage=Stage.CLEANUP),
             profile.id,
         ),
-        'jobs': Row(job, evolve(job, created_at=job.created_at + ONE_MINUTE), make_job(project_id=project.id), job.id),
         'book_places': Row(
             place,
             evolve(place, updated_at=place.updated_at + ONE_MINUTE),
@@ -370,17 +364,17 @@ async def fx_rows(
     }
 
 
-async def stored_jobs(uow: UnitOfWork, project_id: ProjectId) -> list[Job]:
-    """Read every job of a project, as committed.
+async def stored_profiles(uow: UnitOfWork, account_id: AccountId) -> list[RecipeProfile]:
+    """Read every recipe profile of an account, as committed.
 
     :param uow: Unit of work to read with.
     :type uow: UnitOfWork
-    :param project_id: Project owning the jobs.
-    :type project_id: ProjectId
-    :returns: The jobs in every state.
-    :rtype: list[Job]
+    :param account_id: Account owning the profiles.
+    :type account_id: AccountId
+    :returns: The profiles of every stage.
+    :rtype: list[RecipeProfile]
     """
-    return list(await uow.read(lambda repos: repos.jobs.list_for_project(project_id, set(JobState))))
+    return list(await uow.read(lambda repos: repos.recipe_profiles.list_for_account(account_id)))
 
 
 class TestChangeEnd:
@@ -399,10 +393,10 @@ class TestChangeEnd:
         :param kind: The kind of change under test.
         :type kind: ChangeKind
         """
-        job = make_job(project_id=fx_project.id)
-        await kind.run(fx_uow_factory(), fx_project, lambda repos: repos.jobs.add(job))
+        profile = make_recipe_profile(account_id=fx_project.owner_id)
+        await kind.run(fx_uow_factory(), fx_project, lambda repos: repos.recipe_profiles.add(profile))
         other = fx_uow_factory()
-        assert await other.read(lambda repos: repos.jobs.get(job.id)) == job
+        assert await other.read(lambda repos: repos.recipe_profiles.get(profile.id)) == profile
 
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)
     async def test_change_returns_what_the_work_returns(
@@ -417,20 +411,20 @@ class TestChangeEnd:
         :param kind: The kind of change under test.
         :type kind: ChangeKind
         """
-        job = make_job(project_id=fx_project.id)
+        profile = make_recipe_profile(account_id=fx_project.owner_id)
 
-        def add_and_count(repos: Repositories) -> tuple[Job, int]:
-            """Add the job and count the jobs of the project, which then include it.
+        def add_and_count(repos: Repositories) -> tuple[RecipeProfile, int]:
+            """Add the profile and count the profiles of the account, which then include it.
 
             :param repos: Repositories of the transaction.
             :type repos: Repositories
-            :returns: The job as stored, and how many jobs the project has.
-            :rtype: tuple[Job, int]
+            :returns: The profile as stored, and how many profiles the account has.
+            :rtype: tuple[RecipeProfile, int]
             """
-            stored = repos.jobs.add(job)
-            return stored, len(repos.jobs.list_for_project(fx_project.id, set(JobState)))
+            stored = repos.recipe_profiles.add(profile)
+            return stored, len(repos.recipe_profiles.list_for_account(fx_project.owner_id))
 
-        assert await kind.run(fx_uow_factory(), fx_project, add_and_count) == (job, 1)
+        assert await kind.run(fx_uow_factory(), fx_project, add_and_count) == (profile, 1)
 
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)
     @pytest.mark.parametrize(ERROR_ARG, ERROR_TYPES, ids=[error.__name__ for error in ERROR_TYPES])
@@ -451,40 +445,39 @@ class TestChangeEnd:
         :param error_type: Class of the exception the work raises.
         :type error_type: type[Exception]
         """
-        job = make_job(project_id=fx_project.id)
+        place = make_book_place(account_id=fx_project.owner_id, project_id=fx_project.id)
         profile = make_recipe_profile(account_id=fx_project.owner_id)
         error = error_type(LEFT_THE_WORK)
         uow = fx_uow_factory()
 
         def write_and_raise(repos: Repositories) -> None:
-            """Add a job and a recipe profile, and raise the exception of the test.
+            """Add a place of the book and a recipe profile, and raise the exception of the test.
 
             :param repos: Repositories of the transaction.
             :type repos: Repositories
             :raises Exception: Always, the exception of the test.
             """
-            repos.jobs.add(job)
+            repos.book_places.add(place)
             repos.recipe_profiles.add(profile)
             raise error
 
         def add_both(repos: Repositories) -> None:
-            """Add the job and the recipe profile.
+            """Add the place of the book and the recipe profile.
 
             :param repos: Repositories of the transaction.
             :type repos: Repositories
             """
-            repos.jobs.add(job)
+            repos.book_places.add(place)
             repos.recipe_profiles.add(profile)
 
         with pytest.raises(error_type, match=LEFT_THE_WORK) as raised:
             await kind.run(uow, fx_project, write_and_raise)
         expect(raised.value is error)
-        expect(await stored_jobs(fx_uow_factory(), fx_project.id) == [])
-        expect(
-            await fx_uow_factory().read(lambda repos: repos.recipe_profiles.list_for_account(fx_project.owner_id)) == []
-        )
+        expect(await fx_uow_factory().read(lambda repos: repos.book_places.find(place.key)) is None)
+        expect(await stored_profiles(fx_uow_factory(), fx_project.owner_id) == [])
         await kind.run(uow, fx_project, add_both)
-        expect(await stored_jobs(fx_uow_factory(), fx_project.id) == [job])
+        expect(await fx_uow_factory().read(lambda repos: repos.book_places.find(place.key)) == place)
+        expect(await stored_profiles(fx_uow_factory(), fx_project.owner_id) == [profile])
         assert_expectations()
 
 
@@ -564,40 +557,40 @@ class TestRead:
         :param fx_project: Stored project the rows belong to.
         :type fx_project: Project
         """
-        kept = make_job(project_id=fx_project.id, state=JobState.SUCCEEDED)
+        kept = make_recipe_profile(account_id=fx_project.owner_id)
         place = make_book_place(account_id=fx_project.owner_id, project_id=fx_project.id)
-        lost = make_job(project_id=fx_project.id, state=JobState.SUCCEEDED, minutes=1)
+        lost = make_recipe_profile(account_id=fx_project.owner_id, minutes=1)
         uow = fx_uow_factory()
 
         def add_kept(repos: Repositories) -> None:
-            """Add a job and a place of the book.
+            """Add a recipe profile and a place of the book.
 
             :param repos: Repositories of the transaction.
             :type repos: Repositories
             """
-            repos.jobs.add(kept)
+            repos.recipe_profiles.add(kept)
             repos.book_places.add(place)
 
         def add_lost(repos: Repositories) -> None:
-            """Add another job and raise, so the change rolls back.
+            """Add another recipe profile and raise, so the change rolls back.
 
             :param repos: Repositories of the transaction.
             :type repos: Repositories
             :raises DomainError: Always.
             """
-            repos.jobs.add(lost)
+            repos.recipe_profiles.add(lost)
             raise DomainError
 
-        def read_both(repos: Repositories) -> tuple[list[Job], object]:
-            """Read the jobs of the project and the place, in one read.
+        def read_both(repos: Repositories) -> tuple[list[RecipeProfile], object]:
+            """Read the recipe profiles of the account and the place, in one read.
 
             :param repos: Repositories of the transaction.
             :type repos: Repositories
-            :returns: The jobs of the project in every state, and the place of the account in the book.
-            :rtype: tuple[list[Job], object]
+            :returns: The profiles of the account in every stage, and the place of the account in the book.
+            :rtype: tuple[list[RecipeProfile], object]
             """
-            jobs = list(repos.jobs.list_for_project(fx_project.id, set(JobState)))
-            return jobs, repos.book_places.find(place.key)
+            profiles = list(repos.recipe_profiles.list_for_account(fx_project.owner_id))
+            return profiles, repos.book_places.find(place.key)
 
         await uow.change(add_kept)
         with pytest.raises(DomainError):
@@ -680,29 +673,28 @@ class TestChangeWait:
         :param kind: The kind of change under test.
         :type kind: ChangeKind
         """
-        # Finished jobs, because a project may have only one active job of a kind
-        first_job = make_job(project_id=fx_project.id, state=JobState.SUCCEEDED)
-        second_job = make_job(project_id=fx_project.id, state=JobState.SUCCEEDED, minutes=1)
+        first_profile = make_recipe_profile(account_id=fx_project.owner_id)
+        second_profile = make_recipe_profile(account_id=fx_project.owner_id, minutes=1)
         holder, first, second = fx_uow_factory(), fx_uow_factory(), fx_uow_factory()
         seen: list[bool] = []
 
         def add_first(repos: Repositories) -> None:
-            """Add the first job.
+            """Add the first recipe profile.
 
             :param repos: Repositories of the transaction.
             :type repos: Repositories
             """
-            repos.jobs.add(first_job)
+            repos.recipe_profiles.add(first_profile)
 
         def add_second(repos: Repositories) -> None:
-            """Note whether the first job is stored, and add the second job.
+            """Note whether the first recipe profile is stored, and add the second one.
 
             :param repos: Repositories of the transaction.
             :type repos: Repositories
             """
-            listed = repos.jobs.list_for_project(fx_project.id, set(JobState))
-            seen.append(first_job.id in {job.id for job in listed})
-            repos.jobs.add(second_job)
+            listed = repos.recipe_profiles.list_for_account(fx_project.owner_id)
+            seen.append(first_profile.id in {profile.id for profile in listed})
+            repos.recipe_profiles.add(second_profile)
 
         async with anyio.create_task_group() as tasks, fx_hold_book(holder, kind.lock_of(fx_project)):
             tasks.start_soon(kind.run, first, fx_project, add_first)
@@ -710,7 +702,7 @@ class TestChangeWait:
             tasks.start_soon(kind.run, second, fx_project, add_second)
             await anyio.wait_all_tasks_blocked()
         expect(seen == [True])
-        expect(len(await stored_jobs(fx_uow_factory(), fx_project.id)) == 2)
+        expect(len(await stored_profiles(fx_uow_factory(), fx_project.owner_id)) == 2)
         assert_expectations()
 
     async def test_two_changes_of_a_book_that_read_and_write_one_page_keep_both_writes(

@@ -3,7 +3,6 @@
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from taskiq import TaskiqMessage
 
 from bookreviver.app.container import build_container
 from bookreviver.app.settings import ChangeWaitSettings
@@ -21,8 +20,6 @@ pytestmark = pytest.mark.anyio
 # Two limits that differ from each other and from the defaults, so a test cannot pass on a default by chance
 REQUEST_SECONDS: float = 1.25
 JOB_SECONDS: float = 17.0
-TASK_ID: str = 'task-1'
-TASK_NAME: str = 'bookreviver.tests.task'
 
 
 class TestChangeWaitProvider:
@@ -57,18 +54,8 @@ class TestChangeWaitProvider:
         async with fx_container(context=fx_request_context) as scope:
             assert await scope.get(ChangeWaitSeconds) == REQUEST_SECONDS
 
-    async def test_scope_with_a_task_message_gets_the_limit_of_a_job(self, fx_container: AsyncContainer) -> None:
-        """Verify a scope with a ``TaskiqMessage`` in its context, as every background job has, gets ``job_seconds``.
-
-        :param fx_container: Container of the test.
-        :type fx_container: AsyncContainer
-        """
-        message = TaskiqMessage(task_id=TASK_ID, task_name=TASK_NAME, labels={}, args=[], kwargs={})
-        async with fx_container(context={TaskiqMessage: message}) as scope:
-            assert await scope.get(ChangeWaitSeconds) == JOB_SECONDS
-
     async def test_scope_without_a_context_gets_the_limit_of_a_job(self, fx_container: AsyncContainer) -> None:
-        """Verify a bare scope, as the work of the startup in the lifespan has, gets ``job_seconds``.
+        """Verify a bare scope with no ``Request``, as every background job and the startup in the lifespan have, gets ``job_seconds``.
 
         :param fx_container: Container of the test.
         :type fx_container: AsyncContainer

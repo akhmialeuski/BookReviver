@@ -17,7 +17,6 @@ function job(id: string, state: JobSchema['state'], startedAt: string | null): J
     state,
     progress: { done: 1, total: 4, fraction: 0.25 },
     error: '',
-    result: null,
     created_at: '2026-10-01T10:00:00Z',
     started_at: startedAt,
     finished_at: null,

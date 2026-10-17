@@ -25,6 +25,7 @@ from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import NewPageEdit, PageStageKey, SliceRequest, StageRun, Step, StepPreview
 from tests.helpers.builders import EPOCH, make_page_stage, make_step_values
 from tests.helpers.meanwhile import change_while_writing
+from tests.helpers.processing import stored_job
 from tests.helpers.samples import png_bytes, spread
 from tests.helpers.spreads import (
     HEIGHT_PX,
@@ -41,7 +42,7 @@ from tests.helpers.spreads import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from bookreviver.domain.entities import Actor, Job, PageStage, PageVersion, Project
+    from bookreviver.domain.entities import Actor, PageStage, PageVersion, Project
     from bookreviver.domain.values import Slice
     from bookreviver.ports.persistence import Repositories
     from tests.helpers.processing import ProcessingKit
@@ -193,11 +194,12 @@ class TestSplit:
         :param fx_cv_kit: The processing kit with the OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
-        actor, project, _ = await seed_spreads(fx_cv_kit)
+        actor, project, [first] = await seed_spreads(fx_cv_kit)
         await use_recipe(fx_cv_kit, actor, project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         written = len(fx_cv_kit.writer.calls)
-        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
+        # The run names the page, which a run of the whole book would leave out as fresh
+        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT, page_ids=(first.id,)))
         expect(len(fx_cv_kit.writer.calls) == written)
         expect(len(await book_of(fx_cv_kit, project)) == 2)
         assert_expectations()
@@ -207,13 +209,17 @@ class TestSplit:
     ) -> None:
         """Verify the right half made by a run is not split again by the next run over every page.
 
+        The second run names every page of the book, the right halves too, which a run of the whole book would leave
+        out as fresh.
+
         :param fx_cv_kit: The processing kit with the OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
         actor, project, _ = await seed_spreads(fx_cv_kit, count=2)
         await use_recipe(fx_cv_kit, actor, project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
-        for _ in range(2):
-            await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
+        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
+        every = StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(page.id for page in await book_of(fx_cv_kit, project)))
+        await run_stage(fx_cv_kit, actor, project, every)
         expect([page.slot for page in await book_of(fx_cv_kit, project)] == [1, 2, 1, 2])
         assert_expectations()
 
@@ -299,8 +305,8 @@ class TestSplit:
             page_id=page.id, stage=Stage.PAGE_SPLIT, steps=(Step(processor_key=SPLIT_SPREAD),), step_index=0
         )
         job = await fx_cv_kit.service().start_preview(actor, project.id, preview)
-        await fx_cv_kit.jobs().preview_step(job.id)
-        stored = await fx_cv_kit.uow().read(lambda repos: repos.jobs.get(job.id))
+        await fx_cv_kit.work_queue()
+        stored = stored_job(fx_cv_kit, job.id)
         expect(stored.state is JobState.FAILED)
         expect('cannot be previewed' in (stored.error or ''))
         expect(len(await book_of(fx_cv_kit, project)) == 1)
@@ -504,30 +510,29 @@ class TestSplitApplyStep:
         await use_recipe(fx_cv_kit, actor, project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
         job = await fx_cv_kit.service().start_run(actor, project.id, Stage.PAGE_SPLIT, StageRun(stage=Stage.PAGE_SPLIT))
         change_while_writing(fx_cv_kit, monkeypatch, partial(change, fx_cv_kit, book))
-        made = await fx_cv_kit.jobs().run_stage(job.id)
+        await fx_cv_kit.work_queue()
 
-        def read_what_is_stored(repos: Repositories) -> tuple[Job, Slice[PageVersion], PageStage | None]:
-            """Read the job, the versions of the page split and its record, in one snapshot.
+        def read_what_is_stored(repos: Repositories) -> tuple[Slice[PageVersion], PageStage | None]:
+            """Read the versions of the page split and its record, in one snapshot.
 
             :param repos: Repositories of the transaction.
             :type repos: Repositories
-            :returns: The job, the window of the versions of the stage, and the record of the stage or None.
-            :rtype: tuple[Job, Slice[PageVersion], PageStage | None]
+            :returns: The window of the versions of the stage, and the record of the stage or None.
+            :rtype: tuple[Slice[PageVersion], PageStage | None]
             """
             return (
-                repos.jobs.get(job.id),
                 repos.page_versions.list_for_stage(page.id, Stage.PAGE_SPLIT, None, EVERYTHING),
                 repos.page_stages.find(PageStageKey(page.id, Stage.PAGE_SPLIT)),
             )
 
-        stored, versions, record = await fx_cv_kit.uow().read(read_what_is_stored)
+        versions, record = await fx_cv_kit.uow().read(read_what_is_stored)
+        stored = stored_job(fx_cv_kit, job.id)
         told = [
             event
             for event in fx_cv_kit.events.published
             if isinstance(event, PageVersionReady)
             or (isinstance(event, PagesChanged) and event.change is PageChange.ADDED)
         ]
-        expect(made is None)
         expect((stored.state, stored.progress.total) == (JobState.SUCCEEDED, 1))
         expect(len(await book_of(fx_cv_kit, project)) == pages_left)
         expect(record is None)

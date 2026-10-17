@@ -28,9 +28,9 @@ from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import ContentDetection, PageStageKey
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.services.content_detection import ContentDetector
-from tests.helpers.builders import make_job, make_page, make_page_stage
+from tests.helpers.builders import make_page, make_page_stage
 from tests.helpers.page_services import make_page_service
-from tests.helpers.processing import ProcessingKit
+from tests.helpers.processing import ProcessingKit, stored_job
 from tests.helpers.processors import FakeContentProbe
 
 if TYPE_CHECKING:
@@ -62,14 +62,14 @@ def probe_kit(assets: LocalAssetStore, answers: list[ContentType | None]) -> tup
 
 
 def pages_of(kit: ProcessingKit) -> PageService:
-    """Build the page service over a new unit of work and the queue, the events and the clock of the kit.
+    """Build the page service over a new unit of work and the board, the events and the clock of the kit.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :returns: The service.
     :rtype: PageService
     """
-    return make_page_service(kit.uow(), kit.assets, (kit.events, kit.clock, kit.recording))
+    return make_page_service(kit.uow(), kit.assets, (kit.events, kit.clock, kit.board))
 
 
 async def book_of(kit: ProcessingKit, kinds: list[PageKind]) -> tuple[Actor, Project, list[Page]]:
@@ -139,7 +139,7 @@ async def geometry_records(kit: ProcessingKit, project: Project, pages: list[Pag
 
 
 async def detect(kit: ProcessingKit, actor: Actor, project: Project, page_ids: list[PageId] | None = None) -> Job:
-    """Ask for the detection and let the worker do it.
+    """Ask for the detection and let the board run it.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
@@ -149,12 +149,12 @@ async def detect(kit: ProcessingKit, actor: Actor, project: Project, page_ids: l
     :type project: Project
     :param page_ids: The pages to detect, or None for those that are not detected yet.
     :type page_ids: list[PageId] | None
-    :returns: The job as it stands when the worker is done.
+    :returns: The job as it stands when the board is done.
     :rtype: Job
     """
     job = await pages_of(kit).start_detection(actor, project.id, page_ids)
-    await kit.jobs().detect_content(job.id)
-    return await kit.uow().read(lambda repos: repos.jobs.get(job.id))
+    await kit.work_queue()
+    return stored_job(kit, job.id)
 
 
 async def stored(kit: ProcessingKit, page: Page) -> Page:
@@ -348,7 +348,7 @@ class TestDetectionJob:
         assert_expectations()
 
     async def test_a_job_that_was_cancelled_reads_nothing(self, fx_asset_store: LocalAssetStore) -> None:
-        """Verify a job found cancelled when the worker takes it leaves the pages as they are.
+        """Verify a job cancelled while it was queued is dropped by the board and leaves the pages as they are.
 
         :param fx_asset_store: Local asset store of the test.
         :type fx_asset_store: LocalAssetStore
@@ -356,9 +356,9 @@ class TestDetectionJob:
         kit, probe = probe_kit(fx_asset_store, [ContentType.TEXT])
         actor, project, pages = await book_of(kit, [PageKind.TEXT])
         job = await pages_of(kit).start_detection(actor, project.id, None)
-        await kit.uow().change(lambda repos: repos.jobs.update(evolve(job, state=JobState.CANCELLED)))
+        await kit.board.cancel(job.id)
 
-        await kit.jobs().detect_content(job.id)
+        await kit.work_queue()
 
         expect(probe.reads == 0)
         expect((await stored(kit, pages[0])).content_type is None)
@@ -369,7 +369,7 @@ class TestStartDetection:
     """Tests for the requests that queue a detection."""
 
     async def test_the_request_queues_a_job_that_names_the_pages(self, fx_asset_store: LocalAssetStore) -> None:
-        """Verify the job is stored with the pages as its parameters, announced, and handed to the queue.
+        """Verify the job is queued with the pages as its parameters, and put on the board.
 
         :param fx_asset_store: Local asset store of the test.
         :type fx_asset_store: LocalAssetStore
@@ -381,7 +381,7 @@ class TestStartDetection:
 
         expect((job.kind, job.state) == (JobKind.DETECT_CONTENT, JobState.QUEUED))
         expect(ContentDetection.from_map(job.params) == ContentDetection(page_ids=(pages[1].id,)))
-        expect([queued.id for queued in kit.recording.enqueued] == [job.id])
+        expect([queued.id for queued in kit.board.put_jobs] == [job.id])
         assert_expectations()
 
     async def test_a_page_that_is_not_in_the_book_is_refused(self, fx_asset_store: LocalAssetStore) -> None:
@@ -396,7 +396,7 @@ class TestStartDetection:
         with pytest.raises(NotFoundError):
             await pages_of(kit).start_detection(actor, project.id, [PageId(uuid4())])
 
-        expect(not kit.recording.enqueued)
+        expect(not kit.board.put_jobs)
         assert_expectations()
 
     async def test_a_second_request_while_one_is_queued_is_refused(self, fx_asset_store: LocalAssetStore) -> None:
@@ -423,33 +423,12 @@ class TestStartDetection:
         kit, _ = probe_kit(fx_asset_store, [])
         _, project, _ = await book_of(kit, [PageKind.TEXT])
 
-        await pages_of(kit).detect_new_pages(project.id)
-        await pages_of(kit).detect_new_pages(project.id)
+        pages_of(kit).detect_new_pages(project.id)
+        pages_of(kit).detect_new_pages(project.id)
 
-        [job] = kit.recording.enqueued
+        [job] = kit.board.put_jobs
         expect(job.kind is JobKind.DETECT_CONTENT)
         expect(ContentDetection.from_map(job.params) == ContentDetection())
-        assert_expectations()
-
-    async def test_a_job_that_prepared_the_images_is_returned_for_the_worker_to_follow_up(
-        self, fx_asset_store: LocalAssetStore
-    ) -> None:
-        """Verify the preparation of images returns the job it ran, and nothing for a job that was over already.
-
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
-        """
-        kit, _ = probe_kit(fx_asset_store, [])
-        _, project, _ = await book_of(kit, [])
-        waiting = make_job(project_id=project.id, kind=JobKind.PREPARE_PAGES)
-        over = make_job(project_id=project.id, kind=JobKind.PREPARE_PAGES, state=JobState.SUCCEEDED)
-        await kit.uow().change(lambda repos: repos.jobs.add_many([waiting, over]))
-
-        ran = await pages_of(kit).prepare_images(waiting.id)
-        repeated = await pages_of(kit).prepare_images(over.id)
-
-        expect(ran is not None and ran.project_id == project.id)
-        expect(repeated is None)
         assert_expectations()
 
 

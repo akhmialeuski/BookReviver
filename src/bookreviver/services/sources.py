@@ -5,18 +5,23 @@ records of where the book came from, and the book's pages hold copies of their o
 without touching a page. Deleting one removes its files, its scans and the derived files of its scans, and the pages
 made from those scans only lose the reference to them.
 
+Every file of an upload is a source with a status. The imported ones are the sources of the book and what a list shows
+unless it asks for more. The rejected and skipped ones are the report of an import, which the reader closes by deleting
+them all. They hold no scan and no stored file.
+
 A source is deleted files first and row last, like a project. Every lookup, a repeated deletion included, needs the
 row, so a row deleted first would leave the files of a failed deletion out of every request's reach. Both stores treat
 a missing source as deleted, so a deletion that fails part-way keeps the source, and repeating it finishes the job. A
-source whose import keeps failing on one of its scans is left by this deletion too: the failed scan is named in the
-result of the import job, and the user deletes the source by hand. Nothing skips a scan automatically.
+source whose import keeps failing on one of its scans is left by this deletion too, and the user deletes the source by
+hand. Nothing skips a scan automatically.
 
 A source is not deleted while the project imports, because the import may be writing the renditions of its scans.
 """
 
+from operator import attrgetter
 from typing import TYPE_CHECKING
 
-from bookreviver.domain.enums import JobState
+from bookreviver.domain.enums import SourceStatus
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import Slice
@@ -24,12 +29,13 @@ from bookreviver.services.imports import IMPORT_JOBS
 from bookreviver.services.projects import owned_project
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Collection, Sequence
 
     from bookreviver.domain.entities import Actor, Scan, Source
     from bookreviver.domain.ids import ProjectId, SourceId
     from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.runtime import JobBoard
     from bookreviver.ports.storage import AssetStore, SourceStore
 
 SOURCE_IMPORTING: str = 'This project is importing files. Delete the source when the import has finished.'
@@ -51,22 +57,32 @@ def _window[ItemT](items: Sequence[ItemT], request: SliceRequest) -> Slice[ItemT
 class SourceService:
     """Sources and scans of the acting account's projects, and the deletion of a source with its files."""
 
-    def __init__(self, *, uow: UnitOfWork, sources: SourceStore, assets: AssetStore) -> None:
+    def __init__(self, *, uow: UnitOfWork, board: JobBoard, sources: SourceStore, assets: AssetStore) -> None:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request, whose ``change_book`` ends the deletion of a source.
         :type uow: UnitOfWork
+        :param board: Board holding the jobs of every book, which tells whether the project imports.
+        :type board: JobBoard
         :param sources: Store of the uploaded sources, emptied of a source when it is deleted.
         :type sources: SourceStore
         :param assets: Store of the derived files, emptied of the renditions of a source's scans when it is deleted.
         :type assets: AssetStore
         """
         self._uow = uow
+        self._board = board
         self._sources = sources
         self._assets = assets
 
-    async def list(self, actor: Actor, project_id: ProjectId, request: SliceRequest) -> Slice[Source]:
-        """Return a window of the project's sources in the order they were imported.
+    async def list(
+        self,
+        actor: Actor,
+        project_id: ProjectId,
+        request: SliceRequest,
+        *,
+        statuses: Collection[SourceStatus] = (SourceStatus.IMPORTED,),
+    ) -> Slice[Source]:
+        """Return a window of the project's files in the given statuses, in the order they were recorded.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -74,24 +90,56 @@ class SourceService:
         :type project_id: ProjectId
         :param request: Offset and limit of the window.
         :type request: SliceRequest
-        :returns: The sources of the window and the number of all the project's sources.
+        :param statuses: Which files to list: the imported sources, which are the project's sources, and the rejected
+                         and skipped files of the report of an import.
+        :type statuses: Collection[SourceStatus]
+        :returns: The sources of the window and the number of all the files listed.
         :rtype: Slice[Source]
         :raises NotFoundError: If the actor has no such project.
         """
 
         def work(repos: Repositories) -> Slice[Source]:
-            """Read the sources of the actor's project and cut the window.
+            """Read the files of the actor's project in the statuses and cut the window.
 
             :param repos: Repositories of the transaction.
             :type repos: Repositories
-            :returns: The sources of the window and the number of all the project's sources.
+            :returns: The sources of the window and the number of all the files listed.
             :rtype: Slice[Source]
             :raises NotFoundError: If the actor has no such project.
             """
             owned_project(repos.projects, actor, project_id)
-            return _window(repos.sources.list_for_project(project_id), request)
+            found = [*repos.sources.list_for_project(project_id)] if SourceStatus.IMPORTED in statuses else []
+            found += [source for source in repos.sources.list_unimported(project_id) if source.status in statuses]
+            found.sort(key=attrgetter('imported_at', 'id'))
+            return _window(found, request)
 
         return await self._uow.read(work)
+
+    async def delete_unimported(self, actor: Actor, project_id: ProjectId) -> None:
+        """Delete the rejected and skipped files of the project, which is closing the report of an import.
+
+        The imported sources stay. The files of a rejected or skipped source were never stored, so only rows go.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :raises NotFoundError: If the actor has no such project.
+        :raises ConflictError: If the project has an import queued or running, which is writing the report.
+        """
+        await self._uow.read(lambda repos: owned_project(repos.projects, actor, project_id))
+        self._refuse_active_import(project_id)
+        await self._uow.change_book(project_id, lambda repos, _project: repos.sources.delete_unimported(project_id))
+
+    def _refuse_active_import(self, project_id: ProjectId) -> None:
+        """Refuse a project that has an import queued or running, which writes sources and their scans.
+
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :raises ConflictError: If the project has an import queued or running.
+        """
+        if any(job.kind in IMPORT_JOBS for job in self._board.jobs(project_id, active=True)):
+            raise ConflictError(SOURCE_IMPORTING)
 
     async def get(self, actor: Actor, project_id: ProjectId, source_id: SourceId) -> Source:
         """Return one source of the project.
@@ -163,21 +211,8 @@ class SourceService:
         :raises NotFoundError: If the actor has no such project, or the project has no such source.
         :raises ConflictError: If the project has an import queued or running.
         """
-
-        def check(repos: Repositories) -> None:
-            """Require the source to be the actor's and the project not to import.
-
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :raises NotFoundError: If the actor has no such project, or the project has no such source.
-            :raises ConflictError: If the project has an import queued or running.
-            """
-            self._owned_source(repos, actor, project_id, source_id)
-            active = repos.jobs.list_for_project(project_id, JobState.active())
-            if any(job.kind in IMPORT_JOBS for job in active):
-                raise ConflictError(SOURCE_IMPORTING)
-
-        await self._uow.read(check)
+        await self._uow.read(lambda repos: self._owned_source(repos, actor, project_id, source_id))
+        self._refuse_active_import(project_id)
         # The row goes last: only an existing row lets a repeated call reach files a failed call left behind
         await self._sources.delete_source(project_id, source_id)
         await self._assets.delete_prefix(ProjectKeys(project_id).source_scans(source_id))

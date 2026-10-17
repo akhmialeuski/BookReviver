@@ -12,7 +12,7 @@ from fastapi import Query
 from fastapi_pagination import Params
 
 from bookreviver.api.schemas.base import ResponseModel
-from bookreviver.domain.enums import JobKind, JobState, PageChange, RejectionReason, Stage, StageState
+from bookreviver.domain.enums import JobKind, JobState, PageChange, Stage, StageState
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
 
 
@@ -41,45 +41,21 @@ class ProgressSchema(ResponseModel):
     fraction: float
 
 
-class RejectedFileSchema(ResponseModel):
-    """A file of an upload that was not imported, with the reason shown to the user.
-
-    :ivar file_name: Name of the file, or of the main file of its source.
-    :ivar reason: Why the file was not imported.
-    :ivar detail: Text that says more than the reason, such as the name of the source the file repeats.
-    """
-
-    file_name: str
-    reason: RejectionReason
-    detail: str
-
-
-class ImportResultSchema(ResponseModel):
-    """What an import job did with the files of its upload.
-
-    :ivar imported: Identifiers of the sources the job committed to the project, in book order.
-    :ivar rejected: Files no check let through, each with its reason.
-    :ivar skipped: Names of the files a cancelled job never reached.
-    """
-
-    imported: list[SourceId]
-    rejected: list[RejectedFileSchema]
-    skipped: list[str]
-
-
 class JobSchema(ResponseModel):
     """A background job, its state and its progress; also the data of a ``job-changed`` event.
+
+    A job lives in the memory of the API process, so a job the process does not hold, such as one that ended before the
+    process started, is answered as not found.
 
     :ivar id: Identifier of the job.
     :ivar project_id: Project the job works on.
     :ivar kind: What the job does.
     :ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.
     :ivar state: Where the job is in its life cycle.
-    :ivar progress: How many of its steps are done.
+    :ivar progress: How many of its tasks are done; for an import the files dealt with and the scans cut.
     :ivar error: Why the job failed, shown to the user, or empty.
-    :ivar result: What an import job did with the files of its upload, or None until it has finished.
-    :ivar created_at: When the job was recorded.
-    :ivar started_at: When a worker started the job, or None while it is queued.
+    :ivar created_at: When the job was queued.
+    :ivar started_at: When its book began to run the job, or None while it is queued.
     :ivar finished_at: When the job reached a final state, or None before.
     """
 
@@ -90,7 +66,6 @@ class JobSchema(ResponseModel):
     state: JobState
     progress: ProgressSchema
     error: str
-    result: ImportResultSchema | None
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None

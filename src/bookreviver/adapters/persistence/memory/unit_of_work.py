@@ -4,19 +4,18 @@ The adapter backs the service and API tests and runs the same port contract suit
 reproduces the behaviour services rely on rather than only storing rows. It mirrors the schema of the SQL tables and
 transaction isolation:
 
-- Foreign keys: a source, a scan, a page, a recipe or a job needs its project, a scan its source, a version, a page
-  stage, a page step state and a page step change their page, and a source, a page, a version or a page stage the
-  import job, scan, input version, head version or recipe it names. A project's cover is one of its own pages. The
-  owner of a project is not checked, because accounts belong to fastapi-users and have no port.
-- Unique keys: the digest of a source's main file within its project, the number of a scan within its source, the
-  order key of a page within its project, the pair of a scan and a slot, the project of a queued or running
-  import job, so a project runs one import at a time, and the project, stage and kind of a recipe, so a stage has
-  one recipe for each kind.
-- Referential actions: a project takes its sources, scans, pages, recipes and jobs with it, a source its scans, and a
-  page its versions, stage records, step states and step changes. A deleted cover page leaves its project without a
-  cover, a deleted scan leaves its pages without their scan, a deleted job leaves the sources it imported without
-  their import job, a deleted version leaves the versions it fed without their input and the stage records it headed
-  without their head, and a deleted recipe leaves the stage records it processed without their recipe.
+- Foreign keys: a source, a scan, a page or a recipe needs its project, a scan its source, a version, a page
+  stage, a page step state and a page step change their page, and a page, a version or a page stage the scan, input
+  version, head version or recipe it names. A project's cover is one of its own pages. The owner of a project is not
+  checked, because accounts belong to fastapi-users and have no port.
+- Unique keys: the digest of an imported source's main file within its project, the number of a scan within its
+  source, the order key of a page within its project, the pair of a scan and a slot, and the project, stage and kind
+  of a recipe, so a stage has one recipe for each kind.
+- Referential actions: a project takes its sources, scans, pages and recipes with it, a source its scans, and a page
+  its versions, stage records, step states and step changes. A deleted cover page leaves its project without a cover,
+  a deleted scan leaves its pages without their scan, a deleted version leaves the versions it fed without their input
+  and the stage records it headed without their head, and a deleted recipe leaves the stage records it processed
+  without their recipe.
 - Isolation: ``change`` and ``change_book`` hand their work a private copy of the tables, which replaces the committed
   tables when the work returns and is dropped when it raises, and ``read`` hands its work the committed tables with
   every write refused. The work is a synchronous function that never returns to the event loop, so no other
@@ -30,7 +29,6 @@ Each repository states its table's keys in two hooks of the generic repository, 
 """
 
 from collections import Counter
-from functools import partial
 from operator import attrgetter
 from typing import TYPE_CHECKING, override
 
@@ -38,7 +36,6 @@ from attrs import define, evolve, field, fields
 
 from bookreviver.domain.entities import (
     BookPlace,
-    Job,
     Page,
     PageStage,
     PageStepChange,
@@ -54,11 +51,10 @@ from bookreviver.domain.entities import (
     Source,
 )
 from bookreviver.domain.enums import (
-    JobKind,
-    JobState,
     PageOrigin,
     ResultMark,
     Side,
+    SourceStatus,
     Stage,
     StageState,
     ValueScope,
@@ -67,7 +63,6 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.ids import (
-    JobId,
     PageId,
     PageStepChangeId,
     PageVersionId,
@@ -85,7 +80,6 @@ from bookreviver.domain.values import BookPlaceKey, PageSize, PageStageKey, Page
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
     BookPlaceRepository,
-    JobRepository,
     KeyedRepository,
     NoChangeOpenError,
     PageRepository,
@@ -126,16 +120,6 @@ PAGE_ID: str = 'page_id'
 PROJECT_ID: str = 'project_id'
 SEQUENCE: str = 'sequence'
 SLOT: str = 'slot'
-# The kinds and states of the jobs of which a project has at most one, each the rows of a partial unique index of the
-# ``jobs`` table: the imports, the writing of page images, the jobs the user asks to process the versions of pages, the
-# housekeeping jobs on them, and the one of all of these that is running
-AT_MOST_ONE_JOB: tuple[tuple[frozenset[JobKind], frozenset[JobState]], ...] = (
-    (frozenset({JobKind.IMPORT_SOURCE}), frozenset(JobState.active())),
-    (frozenset({JobKind.PREPARE_PAGES}), frozenset(JobState.active())),
-    (JobKind.requested(), frozenset(JobState.active())),
-    (JobKind.housekeeping(), frozenset(JobState.active())),
-    (JobKind.processing(), frozenset({JobState.RUNNING})),
-)
 
 
 @define(kw_only=True)
@@ -155,7 +139,6 @@ class InMemoryTables:
     :ivar result_mark_changes: Changes of the marks and comments of the results by identifier.
     :ivar recipes: Recipes by identifier.
     :ivar recipe_profiles: Recipe profiles of the accounts by identifier.
-    :ivar jobs: Jobs by identifier.
     :ivar book_places: Places of books by account and book.
     """
 
@@ -172,7 +155,6 @@ class InMemoryTables:
     result_mark_changes: dict[ResultMarkChangeId, ResultMarkChange] = field(factory=dict)
     recipes: dict[RecipeId, Recipe] = field(factory=dict)
     recipe_profiles: dict[RecipeProfileId, RecipeProfile] = field(factory=dict)
-    jobs: dict[JobId, Job] = field(factory=dict)
     book_places: dict[BookPlaceKey, BookPlace] = field(factory=dict)
 
     def copy(self) -> InMemoryTables:
@@ -455,7 +437,7 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
 
     @override
     def _cascade(self, entity: Project) -> None:
-        """Remove the project's sources, scans, pages with their records, recipes and jobs, as the cascade does.
+        """Remove the project's sources, scans, pages with their records and recipes, as the cascade does.
 
         :param entity: Project just removed.
         :type entity: Project
@@ -473,7 +455,6 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
         remove_where(self._tables.recipes, lambda recipe: recipe.project_id == entity.id)
         remove_where(self._tables.sources, lambda source: source.project_id == entity.id)
         remove_where(self._tables.scans, lambda scan: scan.project_id == entity.id)
-        remove_where(self._tables.jobs, lambda job: job.project_id == entity.id)
         remove_where(self._tables.book_places, lambda place: place.project_id == entity.id)
 
     @override
@@ -489,7 +470,10 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
         return ProjectOverview(
             project=project,
             page_count=sum(page.project_id == project.id and page.included for page in tables.pages.values()),
-            source_count=sum(source.project_id == project.id for source in tables.sources.values()),
+            source_count=sum(
+                source.project_id == project.id and source.status is SourceStatus.IMPORTED
+                for source in tables.sources.values()
+            ),
             scan_count=sum(scan.project_id == project.id for scan in tables.scans.values()),
             image_page_count=sum(
                 page.project_id == project.id and page.origin is not PageOrigin.PLACEHOLDER
@@ -519,10 +503,10 @@ class InMemoryProjectRepository(InMemoryRepository[Project, ProjectId], ProjectR
 
 
 class InMemorySourceRepository(InMemoryRepository[Source, SourceId], SourceRepository):
-    """Sources, unique by project and the digest of their main file."""
+    """Sources, whose imported ones are unique by project and the digest of their main file."""
 
     def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
-        """Work on the source table of the transaction, checking sources against projects and jobs.
+        """Work on the source table of the transaction, checking sources against projects.
 
         :param tables: Every table of the transaction.
         :type tables: InMemoryTables
@@ -533,16 +517,28 @@ class InMemorySourceRepository(InMemoryRepository[Source, SourceId], SourceRepos
 
     @override
     def _check(self, entity: Source) -> None:
-        """Require the source's project and import job, and a digest new to the project.
+        """Require the source's project, and for an imported source a digest new to the project.
+
+        A rejected or skipped file may repeat a digest, as the partial unique index of the database lets it.
 
         :param entity: Source about to be stored.
         :type entity: Source
-        :raises NotFoundError: If the project, or the import job it names, is not stored.
-        :raises ConflictError: If another source of the project has the same digest.
+        :raises NotFoundError: If the project is not stored.
+        :raises ConflictError: If the source is imported and another imported source of the project has its digest.
         """
         require(self._tables.projects, entity.project_id)
-        require(self._tables.jobs, entity.import_job_id)
-        self._require_unique(entity, attrgetter(PROJECT_ID, 'sha256'))
+        self._require_unique(entity, self._digest_key)
+
+    @staticmethod
+    def _digest_key(source: Source) -> Hashable:
+        """Key an imported source by its project and digest, and any other source by its own identifier.
+
+        :param source: The source.
+        :type source: Source
+        :returns: The key, which equals another source's only when both are imported by one project with one digest.
+        :rtype: Hashable
+        """
+        return (source.project_id, source.sha256) if source.status is SourceStatus.IMPORTED else source.id
 
     @override
     def _cascade(self, entity: Source) -> None:
@@ -557,31 +553,70 @@ class InMemorySourceRepository(InMemoryRepository[Source, SourceId], SourceRepos
 
     @override
     def list_for_project(self, project_id: ProjectId) -> Sequence[Source]:
-        """Return the project's sources, the earliest import first, ties by identifier.
+        """Return the project's imported sources, the earliest import first, ties by identifier.
 
         :param project_id: Project owning the sources.
         :type project_id: ProjectId
-        :returns: Every source of the project in import order.
+        :returns: Every imported source of the project in import order.
         :rtype: Sequence[Source]
         """
         return sorted(
-            (source for source in self._rows.values() if source.project_id == project_id),
+            (
+                source
+                for source in self._rows.values()
+                if source.project_id == project_id and source.status is SourceStatus.IMPORTED
+            ),
             key=attrgetter(IMPORTED_AT, ID_ATTRIBUTE),
         )
 
     @override
+    def list_unimported(self, project_id: ProjectId) -> Sequence[Source]:
+        """Return the project's rejected and skipped files, the earliest first, ties by identifier.
+
+        :param project_id: Project owning the sources.
+        :type project_id: ProjectId
+        :returns: Every rejected or skipped source of the project in the order it was recorded.
+        :rtype: Sequence[Source]
+        """
+        return sorted(
+            (
+                source
+                for source in self._rows.values()
+                if source.project_id == project_id and source.status is not SourceStatus.IMPORTED
+            ),
+            key=attrgetter(IMPORTED_AT, ID_ATTRIBUTE),
+        )
+
+    @override
+    def delete_unimported(self, project_id: ProjectId) -> None:
+        """Delete the project's rejected and skipped sources.
+
+        :param project_id: Project owning the sources.
+        :type project_id: ProjectId
+        :raises NoChangeOpenError: If the transaction only reads.
+        """
+        self._require_writable()
+        remove_where(
+            self._rows, lambda source: source.project_id == project_id and source.status is not SourceStatus.IMPORTED
+        )
+
+    @override
     def find_by_sha256(self, project_id: ProjectId, sha256: str) -> Source | None:
-        """Return the project's source with this digest.
+        """Return the project's imported source with this digest.
 
         :param project_id: Project owning the sources.
         :type project_id: ProjectId
         :param sha256: SHA-256 digest of a main file.
         :type sha256: str
-        :returns: The source with this digest, or None.
+        :returns: The imported source with this digest, or None.
         :rtype: Source | None
         """
         return next(
-            (source for source in self._rows.values() if (source.project_id, source.sha256) == (project_id, sha256)),
+            (
+                source
+                for source in self._rows.values()
+                if (source.project_id, source.sha256, source.status) == (project_id, sha256, SourceStatus.IMPORTED)
+            ),
             None,
         )
 
@@ -1864,112 +1899,6 @@ class InMemoryRecipeProfileRepository(InMemoryRepository[RecipeProfile, RecipePr
         return {profile_id: len(projects) for profile_id, projects in books.items()}
 
 
-class InMemoryJobRepository(InMemoryRepository[Job, JobId], JobRepository):
-    """Jobs of every project."""
-
-    def __init__(self, tables: InMemoryTables, *, writable: bool) -> None:
-        """Work on the job table of the transaction, checking jobs against its projects.
-
-        :param tables: Every table of the transaction.
-        :type tables: InMemoryTables
-        :param writable: Whether the transaction may write, which every write requires.
-        :type writable: bool
-        """
-        super().__init__(tables.jobs, tables, writable=writable)
-
-    @override
-    def _check(self, entity: Job) -> None:
-        """Require the job's project, and no other active job of its group in it, as the partial unique indexes do.
-
-        :param entity: Job about to be stored.
-        :type entity: Job
-        :raises NotFoundError: If the job's project is not stored.
-        :raises ConflictError: If the job is a queued or running import, a job writing page images, or a job
-                               processing versions, and the project has another active job of the same group.
-        """
-        require(self._tables.projects, entity.project_id)
-        for position, (kinds, states) in enumerate(AT_MOST_ONE_JOB):
-            if entity.kind in kinds and entity.state in states:
-                # Every other job gets its own identifier as its value, so only a job of the same limit can match
-                self._require_unique(entity, partial(self._limit_key, position=position, kinds=kinds, states=states))
-
-    @staticmethod
-    def _limit_key(job: Job, *, position: int, kinds: frozenset[JobKind], states: frozenset[JobState]) -> Hashable:
-        """Key a job by the project when it is one the limit counts, and by its own identifier otherwise.
-
-        :param job: The job.
-        :type job: Job
-        :param position: Position of the limit in ``AT_MOST_ONE_JOB``.
-        :type position: int
-        :param kinds: The kinds of job the limit counts.
-        :type kinds: frozenset[JobKind]
-        :param states: The states of job the limit counts.
-        :type states: frozenset[JobState]
-        :returns: The key, which equals another job's only when both are counted by the limit in one project.
-        :rtype: Hashable
-        """
-        return (job.project_id, position) if job.kind in kinds and job.state in states else job.id
-
-    @override
-    def _cascade(self, entity: Job) -> None:
-        """Leave the sources the job imported without their import job, as the database's ``SET NULL`` does.
-
-        :param entity: Job just removed.
-        :type entity: Job
-        """
-        for source in [source for source in self._tables.sources.values() if source.import_job_id == entity.id]:
-            self._tables.sources[source.id] = evolve(source, import_job_id=None)
-
-    @override
-    def list_for_project(self, project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
-        """Return a project's jobs in the given states, newest first.
-
-        :param project_id: Project owning the jobs.
-        :type project_id: ProjectId
-        :param states: States a returned job may be in.
-        :type states: Collection[JobState]
-        :returns: The matching jobs, most recently created first.
-        :rtype: Sequence[Job]
-        """
-        jobs = (job for job in self._tables.jobs.values() if job.project_id == project_id and job.state in states)
-        return sorted(jobs, key=attrgetter(CREATED_AT), reverse=True)
-
-    @override
-    def list_for_projects(self, project_ids: Collection[ProjectId], states: Collection[JobState]) -> Sequence[Job]:
-        """Return the jobs of several projects in the given states, newest first.
-
-        :param project_ids: Projects owning the jobs.
-        :type project_ids: Collection[ProjectId]
-        :param states: States a returned job may be in.
-        :type states: Collection[JobState]
-        :returns: The matching jobs of all the projects, most recently created first.
-        :rtype: Sequence[Job]
-        """
-        jobs = (job for job in self._tables.jobs.values() if job.project_id in project_ids and job.state in states)
-        return sorted(jobs, key=attrgetter(CREATED_AT), reverse=True)
-
-    @override
-    def update_if_state(self, entity: Job, *, expected: Collection[JobState]) -> Job | None:
-        """Replace the job while its state is one of ``expected``.
-
-        No other transaction commits while this one runs, so the stored state is the latest committed one.
-
-        :param entity: Job with its new state.
-        :type entity: Job
-        :param expected: States the stored job must be in for the replacement to happen.
-        :type expected: Collection[JobState]
-        :returns: The job as stored, or None when its state is not one of ``expected``.
-        :rtype: Job | None
-        :raises NoChangeOpenError: If the transaction only reads.
-        :raises NotFoundError: If the job is not stored.
-        """
-        self._require_writable()
-        if self.get(entity.id).state not in expected:
-            return None
-        self._rows[entity.id] = entity
-        return entity
-
-
 class InMemoryRepositories(Repositories):
     """Every in-memory repository of one transaction, over the tables of that transaction.
 
@@ -1986,7 +1915,6 @@ class InMemoryRepositories(Repositories):
     :ivar result_mark_changes: Result mark change repository of this transaction.
     :ivar recipes: Recipe repository of this transaction.
     :ivar recipe_profiles: Recipe profile repository of this transaction.
-    :ivar jobs: Job repository of this transaction.
     :ivar book_places: Book place repository of this transaction.
     """
 
@@ -2011,7 +1939,6 @@ class InMemoryRepositories(Repositories):
         self.result_mark_changes = InMemoryResultMarkChangeRepository(tables, writable=writable)
         self.recipes = InMemoryRecipeRepository(tables, writable=writable)
         self.recipe_profiles = InMemoryRecipeProfileRepository(tables, writable=writable)
-        self.jobs = InMemoryJobRepository(tables, writable=writable)
         self.book_places = InMemoryBookPlaceRepository(tables, writable=writable)
 
 

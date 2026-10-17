@@ -1,4 +1,4 @@
-"""Fakes of the processing ports: a catalogue of given processors, a rendition writer that copies, a queue that refuses.
+"""Fakes of the processing ports: a catalogue of given processors, and a rendition writer that copies.
 
 The rendition writer copies the image it is given as ``full`` and writes token files for the preview and the
 thumbnail, so no image library is needed to tell which files a version has and in which format its ``full`` was asked
@@ -14,13 +14,11 @@ from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.values import RenditionInfo
 from bookreviver.ports.imaging import RenditionWriter
 from bookreviver.ports.processing import ProcessorCatalog
-from bookreviver.ports.runtime import JobQueue
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from bookreviver.domain.entities import Job
     from bookreviver.domain.enums import ColorMode
     from bookreviver.domain.values import ProcessorSpec
     from bookreviver.ports.processing import Processor
@@ -29,21 +27,6 @@ if TYPE_CHECKING:
 IMAGE_SIZE_PX: int = 100
 PREVIEW_TOKEN: bytes = b'preview'
 THUMBNAIL_TOKEN: bytes = b'thumbnail'
-
-
-class RefusingJobQueue(JobQueue):
-    """A queue that refuses every job, as a broker that is down does."""
-
-    @override
-    async def enqueue(self, job: Job) -> None:
-        """Refuse the job.
-
-        :param job: The job handed to the queue.
-        :type job: Job
-        :raises RuntimeError: Always.
-        """
-        err_msg = f'The queue is down, so it cannot take {job.id}.'
-        raise RuntimeError(err_msg)
 
 
 class FakeCatalogue(ProcessorCatalog):

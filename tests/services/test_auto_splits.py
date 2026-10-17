@@ -62,6 +62,23 @@ async def choose(kit: ProcessingKit, actor: Actor, project: Project, page: Page,
     await kit.edits().save(actor, project.id, key, NewPageEdit(kind=choice.editor, geometry=choice), None)
 
 
+async def run_over_every_page(kit: ProcessingKit, actor: Actor, project: Project) -> None:
+    """Run the page split over every page of the book by name, the right halves too.
+
+    A run of the whole book leaves out the pages whose result is fresh, so a run that must go over pages that have one
+    names them.
+
+    :param kit: The processing kit with the OpenCV plugins.
+    :type kit: ProcessingKit
+    :param actor: Account owning the project.
+    :type actor: Actor
+    :param project: The project.
+    :type project: Project
+    """
+    pages = await book_of(kit, project)
+    await run_stage(kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT, page_ids=tuple(page.id for page in pages)))
+
+
 class TestAutomaticSplit:
     """Tests for the run of the default recipe of the page split."""
 
@@ -88,7 +105,7 @@ class TestAutomaticSplit:
         actor, project, _ = await seed_mixed_book(fx_cv_kit)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         written = len(fx_cv_kit.writer.calls)
-        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
+        await run_over_every_page(fx_cv_kit, actor, project)
         expect(len(fx_cv_kit.writer.calls) == written)
         expect(len(await book_of(fx_cv_kit, project)) == len(WHOLE_BOOK_SLOTS))
         assert_expectations()
@@ -120,7 +137,7 @@ class TestSplitChoice:
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         await choose(fx_cv_kit, actor, project, first, SplitChoice(pages=SplitChoice.ONE_PAGE))
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT, confirm_unsplit=True))
-        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
+        await run_over_every_page(fx_cv_kit, actor, project)
         pages = await book_of(fx_cv_kit, project)
         expect([page.slot for page in pages] == [Page.WHOLE_SCAN, Page.WHOLE_SCAN, Page.LEFT_HALF, Page.RIGHT_HALF])
         expect((await stage_of(fx_cv_kit, pages[0], Stage.PAGE_SPLIT)).state is StageState.FRESH)
@@ -152,7 +169,7 @@ class TestSplitChoice:
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         await choose(fx_cv_kit, actor, project, single, SplitChoice(pages=SplitChoice.TWO_PAGES))
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT, page_ids=(single.id,)))
-        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
+        await run_over_every_page(fx_cv_kit, actor, project)
         pages = await book_of(fx_cv_kit, project)
         expect([page.slot for page in pages] == [1, 2, 1, 2, 1, 2])
         assert_expectations()

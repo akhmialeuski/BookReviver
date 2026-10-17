@@ -25,6 +25,7 @@ from bookreviver.domain.enums import (
     PageKind,
     PageOrigin,
     RecipeKind,
+    SourceStatus,
     StageState,
     StepLayer,
     ValueScope,
@@ -56,6 +57,7 @@ if TYPE_CHECKING:
         LabelStyle,
         PageSide,
         PlaceMode,
+        RejectionReason,
         ResultMark,
         ReviewReason,
         SourceKind,
@@ -82,7 +84,6 @@ if TYPE_CHECKING:
         BookDetails,
         CanvasPosition,
         ImportRequest,
-        ImportResult,
         MetadataMap,
         ProcessorRef,
         ScanFacts,
@@ -94,6 +95,8 @@ if TYPE_CHECKING:
 VERSION_ID_LENGTH: int = 16
 VERSION_ID_PATTERN: str = rf'[0-9a-f]{{{VERSION_ID_LENGTH}}}'
 LAYER_NOT_KEPT: str = 'The layer {layer} of a step is not kept on the page yet.'
+IMPORTED_NEEDS_TYPE: str = 'An imported source has a kind and a file type.'
+REJECTION_NEEDS_STATUS: str = 'A source has a reason of rejection when, and only when, it is rejected.'
 # The names of the fields of a manual edit as the history keeps it and of its shape as the hash of the edit reads it
 KIND_FIELD: str = 'kind'
 GEOMETRY_FIELD: str = 'geometry'
@@ -173,25 +176,33 @@ class ProjectOverview:
 class Source:
     """One uploaded file of a book, or the files of one indirect DjVu document, never changed after its import.
 
+    Every file of an upload is recorded as a source. An imported one is part of the book and holds its scans. A
+    rejected one was refused by the import with a reason, and a skipped one was never reached by a cancelled import.
+    Both are kept until the reader closes the report of the import, hold no scan and have no stored file.
+
     :ivar id: Identifier of the source, which also names its storage directory.
     :ivar project_id: Project owning the source.
-    :ivar kind: Kind of the source, which selects the format that reads it.
-    :ivar file_type: Exact format of the main file.
+    :ivar kind: Kind of the source, which selects the format that reads it, or None for a rejected or skipped file whose
+                type is unknown.
+    :ivar file_type: Exact format of the main file, or None for a rejected or skipped file whose type is unknown.
     :ivar file_name: Name the browser sent, with the relative path of a directory upload sanitised.
-    :ivar files: Stored files, the main file first; more than one only for an indirect DjVu document.
+    :ivar files: Staged files, the main file first; more than one only for an indirect DjVu document.
     :ivar size_bytes: Total size of the files in bytes.
     :ivar sha256: SHA-256 digest of the main file, which refuses a second upload of the same file to the project.
     :ivar scan_count: Number of scans the source holds.
     :ivar metadata: Technical metadata of the format, which stays here and is never copied into the project.
     :ivar suggestion: Values of the book description found in the file, which fill only empty description fields.
-    :ivar import_job_id: Import job that created the source, or None once that job is deleted.
-    :ivar imported_at: When the source became part of the project.
+    :ivar status: Whether the file was imported, rejected or skipped.
+    :ivar rejection: Why a rejected file was refused, or None for a file that was not.
+    :ivar detail: Text for the reader that says more than the reason, such as the name of the source a duplicate
+                  repeats, or empty.
+    :ivar imported_at: When the file was recorded, which for an imported source is when it became part of the project.
     """
 
     id: SourceId
     project_id: ProjectId
-    kind: SourceKind
-    file_type: FileType
+    kind: SourceKind | None
+    file_type: FileType | None
     file_name: str = field(validator=validators.min_len(1))
     files: Sequence[SourceFile] = field(validator=validators.min_len(1))
     size_bytes: int = field(validator=validators.ge(0))
@@ -199,8 +210,21 @@ class Source:
     scan_count: int = field(validator=validators.ge(0))
     metadata: MetadataMap = field(factory=dict)
     suggestion: MetadataSuggestion = field(factory=MetadataSuggestion)
-    import_job_id: JobId | None = None
+    status: SourceStatus = SourceStatus.IMPORTED
+    rejection: RejectionReason | None = None
+    detail: str = ''
     imported_at: datetime
+
+    def __attrs_post_init__(self) -> None:
+        """Check that the status agrees with the fields it decides.
+
+        :raises ValueError: If an imported source has no kind or no type, or only a rejected source has a reason, or a
+                            rejected source has none.
+        """
+        if self.status is SourceStatus.IMPORTED and (self.kind is None or self.file_type is None):
+            raise ValueError(IMPORTED_NEEDS_TYPE)
+        if (self.status is SourceStatus.REJECTED) != (self.rejection is not None):
+            raise ValueError(REJECTION_NEEDS_STATUS)
 
 
 @frozen(kw_only=True)
@@ -554,19 +578,22 @@ class PageOverview:
 
 @frozen(kw_only=True)
 class Job:
-    """A background job and how far it has come.
+    """A background job and how far it has come, held in the memory of the API process and never stored.
+
+    A job is made of tasks, and its progress counts them. A task is the processing of one page by one plugin, or for an
+    import the whole import, which reports its files and scans inside the task.
 
     :ivar id: Identifier of the job.
     :ivar project_id: Project the job works on.
-    :ivar kind: What the job does, which also selects its worker pool.
+    :ivar kind: What the job does.
     :ivar state: Where the job is in its life cycle.
-    :ivar progress: How many of its steps are done.
+    :ivar progress: How many of its tasks are done.
     :ivar error: Why the job failed, shown to the user, or empty.
-    :ivar request: The files an import job was asked to import, or None for a job that takes none.
+    :ivar request: The staged files an import job was asked to import, which its run needs in memory, or None for a
+                   job that takes none.
     :ivar params: What a processing job was asked to do, in the form its value class writes, empty for a job without.
-    :ivar result: What an import job did with them, or None until it has finished.
-    :ivar created_at: When the job was recorded.
-    :ivar started_at: When a worker started the job, or None while it is queued.
+    :ivar created_at: When the job was queued.
+    :ivar started_at: When its book began to run the job, or None while it is queued.
     :ivar finished_at: When the job reached a final state, or None before.
     """
 
@@ -578,7 +605,6 @@ class Job:
     error: str = ''
     request: ImportRequest | None = None
     params: MetadataMap = field(factory=dict)
-    result: ImportResult | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None

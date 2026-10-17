@@ -19,9 +19,9 @@ class ChangeWaitProvider(Provider):
     reported at once as a problem the interface can retry. A background job must not lose its work to a short wait,
     and the work of the startup in the lifespan is no request either, so both get the long limit. Neither is told
     apart by a flag that every caller would have to pass. dishka's FastAPI integration puts the ``Request`` into the
-    context of the scope of every HTTP request, the Taskiq integration puts the ``TaskiqMessage`` into the scope of a
-    job, and the lifespan puts nothing, so the presence of the ``Request`` in the context is what makes a scope a
-    request, and every other scope falls back to the default factory.
+    context of the scope of every HTTP request, a job opens its scope with no ``Request``, and the lifespan puts
+    nothing, so the presence of the ``Request`` in the context is what makes a scope a request, and every other scope
+    falls back to the default factory.
     """
 
     @provide(scope=Scope.REQUEST)

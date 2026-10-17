@@ -13,39 +13,42 @@ from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.api.auth import current_actor
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import EventName
-from bookreviver.domain.enums import JobKind, JobState, RejectionReason
+from bookreviver.domain.enums import JobKind, JobState, RejectionReason, SourceStatus
 from tests.adapters.imaging.samples import DjvuPage, requires_djvulibre, write_djvu_indirect
 from tests.helpers.builders import make_job, make_project, new_account_id
 from tests.helpers.fakes_imports import djvu_uploads, image_upload, pdf_upload, stored_book
+from tests.helpers.fakes_jobs import FakeBoardProvider, JobFakesProvider
 from tests.helpers.sse import EventStreamReader
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     import httpx
+    from dishka import Provider
     from fastapi import FastAPI, UploadFile
-    from taskiq import InMemoryBroker
 
     from bookreviver.domain.entities import Project
+    from tests.api.imports.watch import ImportWatch
     from tests.helpers.fakes_jobs import JobFakes
 
 pytestmark = pytest.mark.anyio
 
 SOURCES_PATH: str = '/api/v1/projects/{project_id}/sources'
-JOB_PATH: str = '/api/v1/jobs/{job_id}'
 FILES_FIELD: str = 'files'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
 FIRST_PART_PAGES: int = 2
 SECOND_PART_PAGES: int = 3
 SCAN_COUNT: int = FIRST_PART_PAGES + SECOND_PART_PAGES + 1
-SOURCE_COUNT: int = 3
+# The progress of an import counts the files dealt with and the scans cut, so it ends at both added up
+FILE_COUNT: int = 3
 SECOND_PART_WIDTH_PX: int = 210
 # Pages of the sample indirect DjVu documents
 DJVU_PAGES: tuple[DjvuPage, ...] = (DjvuPage(), DjvuPage(size_px=(250, 350)), DjvuPage(size_px=(320, 420)))
 # The events of an import of one image, in the order they are published: the job queued and running, the job with
-# its total, the source and its pages, the job with its first scan done, the scan, the stage of its page and the job
-# with its result
+# its total, the source and its pages, the job with its file dealt with, the job as the cut of its scan begins, the
+# scan, the stage of its page, the job with its scan cut and the job as it ended
 ONE_IMAGE_EVENTS: list[EventName] = [
     EventName.JOB_CHANGED,
     EventName.JOB_CHANGED,
@@ -53,8 +56,10 @@ ONE_IMAGE_EVENTS: list[EventName] = [
     EventName.SOURCE_IMPORTED,
     EventName.PAGES_CHANGED,
     EventName.JOB_CHANGED,
+    EventName.JOB_CHANGED,
     EventName.SCAN_READY,
     EventName.PAGE_STAGE_CHANGED,
+    EventName.JOB_CHANGED,
     EventName.JOB_CHANGED,
 ]
 
@@ -76,7 +81,7 @@ class TestUploadSources:
     async def test_two_part_pdf_and_a_cover_become_three_sources_with_their_pages_in_order(
         self,
         fx_client: httpx.AsyncClient,
-        fx_broker: InMemoryBroker,
+        fx_import: ImportWatch,
         fx_fakes: JobFakes,
         fx_project: Project,
         tmp_path: Path,
@@ -88,8 +93,8 @@ class TestUploadSources:
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the import job.
-        :type fx_broker: InMemoryBroker
+        :param fx_import: Reader of the imports the application runs.
+        :type fx_import: ImportWatch
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
         :param fx_project: Project of the signed-in account.
@@ -107,18 +112,18 @@ class TestUploadSources:
 
         response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=_multipart(files))
         queued = response.json()
-        await fx_broker.wait_all()
+        finished = await fx_import.finished(queued['id'])
 
-        finished = (await fx_client.get(JOB_PATH.format(job_id=queued['id']))).json()
         book = await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)
         sources, pages = book.sources, book.pages
         scans = {scan.id: scan for scan in book.scans}
         expect(response.status_code == HTTPStatus.ACCEPTED)
-        expect((queued['state'], queued['kind'], queued['result']) == (JobState.QUEUED, JobKind.IMPORT_SOURCE, None))
+        expect((queued['state'], queued['kind']) == (JobState.QUEUED, JobKind.IMPORT_SOURCE))
         expect(finished['state'] == JobState.SUCCEEDED)
-        expect(finished['progress'] == {'done': SCAN_COUNT, 'total': SCAN_COUNT, 'fraction': 1.0})
-        expect(finished['result']['imported'] == [str(source.id) for source in sources])
-        expect((finished['result']['rejected'], finished['result']['skipped']) == ([], []))
+        expect(
+            finished['progress'] == {'done': FILE_COUNT + SCAN_COUNT, 'total': FILE_COUNT + SCAN_COUNT, 'fraction': 1.0}
+        )
+        expect(await fx_import.report(fx_project.id) == [])
         expect([source.file_name for source in sources] == ['part3-cover.jpg', 'part2.pdf', 'part1.pdf'])
         expect([source.scan_count for source in sources] == [1, SECOND_PART_PAGES, FIRST_PART_PAGES])
         expect(
@@ -163,22 +168,25 @@ class TestUploadSources:
 
         book = await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)
         [source], [scan] = book.sources, book.scans
-        final = reader.events[-1].data
+        queued, ended = reader.events[0].data, reader.events[-1].data
         expect([event.name for event in reader.events] == ONE_IMAGE_EVENTS)
         expect(reader.events[3].data == {'project_id': str(fx_project.id), 'source_id': str(source.id)})
-        expect(reader.events[6].data == {'project_id': str(fx_project.id), 'scan_id': str(scan.id)})
-        expect((final['state'], final['result']['imported']) == (JobState.SUCCEEDED, [str(source.id)]))
+        expect(reader.events[7].data == {'project_id': str(fx_project.id), 'scan_id': str(scan.id)})
+        expect((queued['state'], ended['state']) == (JobState.QUEUED, JobState.SUCCEEDED))
+        expect(ended['id'] == queued['id'])
         assert_expectations()
 
-    async def test_rejected_files_are_reported_in_the_result_of_the_job(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_project: Project, tmp_path: Path
+    async def test_rejected_files_are_listed_with_their_reason_as_the_report_of_the_import(
+        self, fx_client: httpx.AsyncClient, fx_import: ImportWatch, fx_project: Project, tmp_path: Path
     ) -> None:
-        """Verify a file that is not a source is reported with its reason in the job, and the others are imported.
+        """Verify a file that is not a source is a rejected file with its reason, and the others are imported.
+
+        The rejected file has no kind and no type, since nothing could tell what it is.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the import job.
-        :type fx_broker: InMemoryBroker
+        :param fx_import: Reader of the imports the application runs.
+        :type fx_import: ImportWatch
         :param fx_project: Project of the signed-in account.
         :type fx_project: Project
         :param tmp_path: Temporary directory of the test.
@@ -188,22 +196,25 @@ class TestUploadSources:
         parts = [*_multipart(files), (FILES_FIELD, ('notes.txt', b'not a page', 'text/plain'))]
 
         queued = (await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)).json()
-        await fx_broker.wait_all()
+        finished = await fx_import.finished(queued['id'])
 
-        finished = (await fx_client.get(JOB_PATH.format(job_id=queued['id']))).json()
+        imported = (await fx_client.get(SOURCES_PATH.format(project_id=fx_project.id))).json()
+        [rejected] = await fx_import.report(fx_project.id)
         expect(finished['state'] == JobState.SUCCEEDED)
-        expect(len(finished['result']['imported']) == 1)
+        expect([source['file_name'] for source in imported['items']] == [files[0].filename])
+        expect((rejected['file_name'], rejected['status']) == ('notes.txt', SourceStatus.REJECTED))
         expect(
-            [(file['file_name'], file['reason']) for file in finished['result']['rejected']]
-            == [('notes.txt', RejectionReason.UNSUPPORTED_TYPE)]
+            (rejected['rejection'], rejected['detail'])
+            == (RejectionReason.UNSUPPORTED_TYPE, RejectionReason.UNSUPPORTED_TYPE.label)
         )
+        expect((rejected['kind'], rejected['file_type']) == (None, None))
         assert_expectations()
 
     @requires_djvulibre
     async def test_indirect_djvu_document_is_one_source_and_an_incomplete_one_is_rejected_by_name(
         self,
         fx_client: httpx.AsyncClient,
-        fx_broker: InMemoryBroker,
+        fx_import: ImportWatch,
         fx_fakes: JobFakes,
         fx_project: Project,
         tmp_path: Path,
@@ -214,8 +225,8 @@ class TestUploadSources:
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the import job.
-        :type fx_broker: InMemoryBroker
+        :param fx_import: Reader of the imports the application runs.
+        :type fx_import: ImportWatch
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
         :param fx_project: Project of the signed-in account.
@@ -232,42 +243,15 @@ class TestUploadSources:
                 files=_multipart(djvu_uploads([*complete, *incomplete[:-1]])),
             )
         ).json()
-        await fx_broker.wait_all()
+        finished = await fx_import.finished(queued['id'])
 
-        finished = (await fx_client.get(JOB_PATH.format(job_id=queued['id']))).json()
         [source] = (await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)).sources
-        [rejected] = finished['result']['rejected']
+        [rejected] = await fx_import.report(fx_project.id)
         expect(finished['state'] == JobState.SUCCEEDED)
         expect((source.file_name, source.scan_count) == ('a-index.djvu', len(DJVU_PAGES)))
         expect([file.name for file in source.files] == [path.name for path in complete])
-        expect(finished['result']['imported'] == [str(source.id)])
-        expect((rejected['file_name'], rejected['reason']) == ('b-index.djvu', RejectionReason.UNREADABLE))
+        expect((rejected['file_name'], rejected['rejection']) == ('b-index.djvu', RejectionReason.UNREADABLE))
         expect('b0003.djvu' in rejected['detail'])
-        assert_expectations()
-
-    async def test_second_upload_while_an_import_is_running_is_a_conflict(
-        self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_project: Project, tmp_path: Path
-    ) -> None:
-        """Verify an upload to a project that is importing answers 409 with a problem.
-
-        :param fx_client: Client of the signed-in account.
-        :type fx_client: httpx.AsyncClient
-        :param fx_fakes: Adapters the application runs on.
-        :type fx_fakes: JobFakes
-        :param fx_project: Project of the signed-in account.
-        :type fx_project: Project
-        :param tmp_path: Temporary directory of the test.
-        :type tmp_path: Path
-        """
-        running = make_job(project_id=fx_project.id, state=JobState.RUNNING)
-        await InMemoryUnitOfWork(fx_fakes.database).change(lambda repos: repos.jobs.add(running))
-
-        response = await fx_client.post(
-            SOURCES_PATH.format(project_id=fx_project.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])
-        )
-
-        expect(response.status_code == HTTPStatus.CONFLICT)
-        expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
         assert_expectations()
 
     async def test_project_of_another_account_is_not_found(
@@ -365,6 +349,17 @@ class UploadParsedError(Exception):
 class TestUploadIsRefusedBeforeItsBodyIsRead:
     """Tests that a request the server will refuse is refused before its body is parsed and spooled to disk."""
 
+    @pytest.fixture
+    def fx_extra_providers(self, fx_fakes: JobFakes) -> Sequence[Provider]:
+        """Replace the job board of the application too, with one that holds the jobs a test puts and never runs them.
+
+        :param fx_fakes: Adapters of the test.
+        :type fx_fakes: JobFakes
+        :returns: The providers of the fakes and of their board.
+        :rtype: Sequence[Provider]
+        """
+        return (JobFakesProvider(fx_fakes), FakeBoardProvider(fx_fakes.board))
+
     async def test_project_of_another_account_is_refused_unread(
         self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, tmp_path: Path
     ) -> None:
@@ -389,7 +384,7 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
     async def test_project_that_is_importing_is_refused_unread(
         self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_project: Project, tmp_path: Path
     ) -> None:
-        """Verify an upload to a project that already imports gets 409 without its files being read.
+        """Verify an upload to a project that already imports gets a 409 problem without its files being read.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
@@ -400,14 +395,15 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        queued = make_job(project_id=fx_project.id, state=JobState.QUEUED)
-        await InMemoryUnitOfWork(fx_fakes.database).change(lambda repos: repos.jobs.add(queued))
+        fx_fakes.board.put(make_job(project_id=fx_project.id))
 
         response = await fx_client.post(
             SOURCES_PATH.format(project_id=fx_project.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])
         )
 
-        assert response.status_code == HTTPStatus.CONFLICT
+        expect(response.status_code == HTTPStatus.CONFLICT)
+        expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
+        assert_expectations()
 
     async def test_caller_who_is_not_signed_in_is_refused_unread(
         self, fx_app: FastAPI, fx_client: httpx.AsyncClient, fx_project: Project, tmp_path: Path

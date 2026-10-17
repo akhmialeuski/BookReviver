@@ -1,10 +1,10 @@
-"""Fixtures of the job API tests: the application runs on the job fakes' database, event bus and clock."""
+"""Fixtures of the job API tests: the application runs on the job fakes' database, event bus, clock and board."""
 
 from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.helpers.fakes_jobs import JobFakes, JobFakesProvider
+from tests.helpers.fakes_jobs import FakeBoardProvider, JobFakes, JobFakesProvider
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -24,11 +24,14 @@ def fx_fakes() -> JobFakes:
 
 @pytest.fixture
 def fx_extra_providers(fx_fakes: JobFakes) -> Sequence[Provider]:
-    """Replace the application's database, event bus and clock with ``fx_fakes``.
+    """Replace the application's database, event bus, clock and job board with ``fx_fakes``.
+
+    The board is the fake one, which runs a job only when a test calls ``run_queued``, so a job a test puts stays
+    queued until it says otherwise.
 
     :param fx_fakes: Adapters of the test.
     :type fx_fakes: JobFakes
-    :returns: One provider that supplies the fakes.
+    :returns: The providers that supply the fakes.
     :rtype: Sequence[Provider]
     """
-    return (JobFakesProvider(fx_fakes),)
+    return (JobFakesProvider(fx_fakes), FakeBoardProvider(fx_fakes.board))

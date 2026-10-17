@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import anyio
 import pytest
+from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.domain.enums import Rendition
@@ -23,6 +24,7 @@ pytestmark = pytest.mark.anyio
 
 STORE_TYPES_ARG: str = 'store_types'
 PROJECT_ID: ProjectId = ProjectId(uuid4())
+OTHER_PROJECT_ID: ProjectId = ProjectId(uuid4())
 KEYS: ProjectKeys = ProjectKeys(PROJECT_ID)
 JOB_ID: JobId = JobId(uuid4())
 SOURCE_ID: SourceId = SourceId(uuid4())
@@ -80,6 +82,25 @@ class TestLocalSourceStore:
             await store.promote(PROJECT_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
         assert [path.name for path in sources_dir.iterdir()] == [str(SOURCE_ID)]
+
+    async def test_discarding_all_staged_removes_the_directory_of_a_project_left_empty(self, tmp_path: Path) -> None:
+        """Verify a project with an upload only leaves no directory, and a project with a source keeps its sources.
+
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        """
+        store = LocalSourceStore(root=tmp_path)
+        other_sources_dir = tmp_path / ProjectKeys(OTHER_PROJECT_ID).sources_area
+        await store.stage(PROJECT_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await store.stage(OTHER_PROJECT_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await store.promote(OTHER_PROJECT_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+        await store.stage(OTHER_PROJECT_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+
+        await store.discard_all_staged()
+
+        expect(not (tmp_path / KEYS.sources_area).parent.exists())
+        expect([path.name for path in other_sources_dir.parent.iterdir()] == [other_sources_dir.name])
+        assert_expectations()
 
 
 class TestLocalAssetStore:

@@ -1,7 +1,7 @@
 """Tests for the processing endpoints, on the application's own adapters with the fake processors of the tests.
 
-The stores, the imaging adapters and the in-process broker are the application's own, so the files of a version are
-written by libvips as they are for a user, and a test waits for the broker to finish the jobs a request queued.
+The stores, the imaging adapters and the in-memory job board are the application's own, so the files of a version are
+written by libvips as they are for a user, and a test waits until the jobs a request queued have finished.
 """
 
 import io
@@ -15,7 +15,6 @@ from delayed_assert import assert_expectations, expect
 from fastapi import status
 from PIL import Image
 from pydantic import ValidationError
-from taskiq import AsyncBroker, InMemoryBroker
 
 from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.api.schemas.edits import EditForm
@@ -55,12 +54,13 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     import httpx
-    from dishka import AsyncContainer, Provider
+    from dishka import Provider
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.domain.entities import Actor, Page, Project, Scan
     from bookreviver.ports.persistence import Repositories
     from bookreviver.ports.storage import AssetStore
+    from tests.helpers.board_idle import JobsIdle
 
 pytestmark = pytest.mark.anyio
 
@@ -108,20 +108,6 @@ def fx_extra_providers() -> Sequence[Provider]:
     :rtype: Sequence[Provider]
     """
     return [ProcessingFakesProvider()]
-
-
-@pytest.fixture
-async def fx_broker(fx_container: AsyncContainer) -> InMemoryBroker:
-    """Return the broker the application runs its jobs on, which a test waits on until they have finished.
-
-    :param fx_container: Container of the running application.
-    :type fx_container: AsyncContainer
-    :returns: The started in-process broker.
-    :rtype: InMemoryBroker
-    """
-    broker = await fx_container.get(AsyncBroker)
-    assert isinstance(broker, InMemoryBroker)
-    return broker
 
 
 @pytest.fixture
@@ -185,13 +171,13 @@ async def set_strength(client: httpx.AsyncClient, book: Book, step_id: str, valu
     return await client.put(f'{book.path}/stages/geometry/steps/{step_id}/values/strength', json=body)
 
 
-async def run_stage(client: httpx.AsyncClient, broker: InMemoryBroker, book: Book, stage: str) -> JobSchema:
+async def run_stage(client: httpx.AsyncClient, idle: JobsIdle, book: Book, stage: str) -> JobSchema:
     """Ask for a run of a stage and wait for the job to finish.
 
     :param client: Client of the running application.
     :type client: httpx.AsyncClient
-    :param broker: In-process broker running the job.
-    :type broker: InMemoryBroker
+    :param idle: Wait that lets the jobs of the book finish.
+    :type idle: JobsIdle
     :param book: Book of the signed-in account.
     :type book: Book
     :param stage: The stage to run.
@@ -201,7 +187,7 @@ async def run_stage(client: httpx.AsyncClient, broker: InMemoryBroker, book: Boo
     """
     response = await client.post(f'{book.path}/stages/{stage}/run', json={})
     assert response.status_code == status.HTTP_202_ACCEPTED
-    await broker.wait_all()
+    await idle(book.project.id)
     return JobSchema.model_validate_json(response.content)
 
 
@@ -394,7 +380,7 @@ class TestStageSummaries:
     async def test_a_summary_counts_the_pages_of_each_kind_and_a_page_row_names_its_kind(
         self,
         fx_client: httpx.AsyncClient,
-        fx_broker: InMemoryBroker,
+        fx_idle: JobsIdle,
         fx_book: Book,
         fx_database: InMemoryDatabase,
         fx_asset_store: AssetStore,
@@ -406,8 +392,8 @@ class TestStageSummaries:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account with a text page.
         :type fx_book: Book
         :param fx_database: In-memory database of the application.
@@ -417,7 +403,7 @@ class TestStageSummaries:
         """
         _, scan = await add_page(fx_database, fx_book, 'a1', PageKind.PLATE)
         await store_scan_images(fx_asset_store, fx_book.project, scan)
-        await run_stage(fx_client, fx_broker, fx_book, 'geometry')
+        await run_stage(fx_client, fx_idle, fx_book, 'geometry')
         recipes = await recipes_of(fx_client, fx_book, 'geometry')
         summaries = (await fx_client.get(f'{fx_book.path}/stages')).json()[ITEMS]
         [geometry] = [summary for summary in summaries if summary['stage'] == 'geometry']
@@ -437,18 +423,18 @@ class TestRunAndVersions:
     """Tests for running a stage, and for reading the stages and versions it made."""
 
     async def test_run_answers_202_and_the_job_makes_a_current_version_with_served_images(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify the run is a job, the stage names its current version, and the version's images are served.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        job = await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        job = await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         stages = await fx_client.get(f'{fx_book.page_path}/stages')
         [stage] = [PageStageSchema.model_validate(item) for item in stages.json()[ITEMS]]
         assert stage.head_version_id is not None
@@ -484,18 +470,18 @@ class TestRunAndVersions:
         assert_expectations()
 
     async def test_versions_are_listed_with_a_filter(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify the list of versions filters by scale, and a version that does not exist is a 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         full = await fx_client.get(f'{fx_book.page_path}/versions', params={'scale': VersionScale.FULL.value})
         previews = await fx_client.get(f'{fx_book.page_path}/versions', params={'scale': VersionScale.PREVIEW.value})
         missing = await fx_client.get(f'{fx_book.page_path}/versions/{"0" * 16}')
@@ -515,18 +501,18 @@ class TestRunAndVersions:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_choosing_a_version_makes_it_current(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify PUT on a stage with a version of the page makes it the current one, and a stranger is refused.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         listed = await fx_client.get(f'{fx_book.page_path}/versions')
         version_id = listed.json()[ITEMS][0]['id']
         chosen = await fx_client.put(f'{fx_book.page_path}/stages/page-split', json={'version_id': version_id})
@@ -537,18 +523,18 @@ class TestRunAndVersions:
         assert_expectations()
 
     async def test_choosing_a_version_while_a_preview_is_active_cancels_it_and_makes_the_version_current(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify PUT on a stage answers 200 while a preview is queued, which it cancels.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         version_id = (await fx_client.get(f'{fx_book.page_path}/versions')).json()[ITEMS][0]['id']
         preview = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
         chosen = await fx_client.put(f'{fx_book.page_path}/stages/page-split', json={'version_id': version_id})
@@ -559,7 +545,7 @@ class TestRunAndVersions:
         assert_expectations()
 
     async def test_choosing_a_version_while_a_run_is_active_is_a_409(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify PUT on a stage answers 409 while a run is queued, which a preview would not cause.
 
@@ -567,12 +553,12 @@ class TestRunAndVersions:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         version_id = (await fx_client.get(f'{fx_book.page_path}/versions')).json()[ITEMS][0]['id']
         run = await fx_client.post(f'{fx_book.path}/stages/geometry/run', json={})
         chosen = await fx_client.put(f'{fx_book.page_path}/stages/page-split', json={'version_id': version_id})
@@ -581,20 +567,20 @@ class TestRunAndVersions:
         assert_expectations()
 
     async def test_preview_makes_a_preview_version_that_has_only_its_preview_path(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify a preview is a job whose result is a preview-scale version with the path of its preview image.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         response = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
-        await fx_broker.wait_all()
+        await fx_idle(fx_book.project.id)
         previews = await fx_client.get(f'{fx_book.page_path}/versions', params={'scale': 'preview'})
         [version] = [PageVersionSchema.model_validate(item) for item in previews.json()[ITEMS]]
         assert version.preview is not None
@@ -646,18 +632,18 @@ class TestRunAndVersions:
         assert_expectations()
 
     async def test_collection_while_a_preview_is_active_cancels_it_and_is_a_202_job(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify a collection is answered 202 while a preview is queued, which it cancels.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         preview = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
         response = await fx_client.post(f'{fx_book.path}/versions/collect')
         job = await fx_client.get(f'{JOBS_PATH}/{preview.json()["id"]}')
@@ -669,7 +655,7 @@ class TestRunAndVersions:
     async def test_collectable_versions_are_counted_with_their_bytes_and_nothing_is_deleted(
         self,
         fx_client: httpx.AsyncClient,
-        fx_broker: InMemoryBroker,
+        fx_idle: JobsIdle,
         fx_book: Book,
         fx_database: InMemoryDatabase,
         fx_asset_store: AssetStore,
@@ -678,8 +664,8 @@ class TestRunAndVersions:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         :param fx_database: In-memory database of the application.
@@ -687,7 +673,7 @@ class TestRunAndVersions:
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         """
-        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         uow = InMemoryUnitOfWork(fx_database)
         record = await uow.read(lambda repos: repos.page_stages.get(PageStageKey(fx_book.page.id, Stage.PAGE_SPLIT)))
         assert record.head_version_id is not None
@@ -763,18 +749,18 @@ class TestRunAndVersions:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_tiles_of_a_version_are_cut_on_request(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify the tiles endpoint queues a job for a ready version, and answers 404 for one that does not exist.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         listed = await fx_client.get(f'{fx_book.page_path}/versions')
         version_id = listed.json()[ITEMS][0]['id']
         accepted = await fx_client.post(f'{fx_book.page_path}/versions/{version_id}/tiles')
@@ -986,19 +972,19 @@ class TestPageHistory:
         assert_expectations()
 
     async def test_clear_deletes_the_result_of_the_step_and_counts_it(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify a clear of the only step after a run deletes its result, so the stage has no result on the page.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the jobs.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
-        await run_stage(fx_client, fx_broker, fx_book, 'geometry')
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'geometry')
         step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         versions = f'{fx_book.page_path}/versions'
         of_step = {'stage': 'geometry', 'step': step_id}
@@ -1045,7 +1031,7 @@ class TestPageHistory:
         assert_expectations()
 
     async def test_clear_while_a_preview_is_active_cancels_it_and_deletes_the_history(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify a clear answers 200 while a preview is queued, which it cancels, and the step has no history left.
 
@@ -1054,12 +1040,12 @@ class TestPageHistory:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the jobs.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         history = f'{fx_book.page_path}/history/geometry/{step_id}'
         await set_strength(fx_client, fx_book, step_id, 2)
@@ -1257,7 +1243,7 @@ class TestRunModes:
         assert_expectations()
 
     async def test_a_mode_that_takes_work_is_a_409_until_it_is_confirmed_and_then_a_job(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_broker: InMemoryBroker
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_idle: JobsIdle
     ) -> None:
         """Verify the run is refused with the number of pages, and queued with the confirmation, and takes the setting.
 
@@ -1265,15 +1251,15 @@ class TestRunModes:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         """
         step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         await set_strength(fx_client, fx_book, step_id, 2)
         path = f'{fx_book.path}/stages/geometry/run'
         refused = await fx_client.post(path, json={'mode': 'drop-own-work'})
         accepted = await fx_client.post(path, json={'mode': 'drop-own-work', 'confirm_overwrite': True})
-        await fx_broker.wait_all()
+        await fx_idle(fx_book.project.id)
         settings = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
         expect(refused.status_code == status.HTTP_409_CONFLICT and '1 pages' in refused.json()['detail'])
         expect(accepted.status_code == status.HTTP_202_ACCEPTED)
@@ -1281,7 +1267,7 @@ class TestRunModes:
         assert_expectations()
 
     async def test_a_run_keeps_the_settings_by_default(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_broker: InMemoryBroker
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_idle: JobsIdle
     ) -> None:
         """Verify a run that names no mode leaves the setting of the page as it is.
 
@@ -1289,12 +1275,12 @@ class TestRunModes:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         """
         step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         await set_strength(fx_client, fx_book, step_id, 2)
-        await run_stage(fx_client, fx_broker, fx_book, 'geometry')
+        await run_stage(fx_client, fx_idle, fx_book, 'geometry')
         settings = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
         assert [item['params'] for item in settings.json()[ITEMS]] == [{'strength': 2}]
 
@@ -1500,19 +1486,19 @@ class TestStepRows:
         assert_expectations()
 
     async def test_a_page_run_through_the_step_has_what_the_step_found_and_read(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify the row of a step that ran holds the version it made and the version of the stage before it read.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
-        await run_stage(fx_client, fx_broker, fx_book, 'geometry')
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'geometry')
         step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         response = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
         row = response.json()[ITEMS][0]
@@ -1523,19 +1509,19 @@ class TestStepRows:
         assert_expectations()
 
     async def test_the_picture_of_a_row_is_the_input_of_the_step_and_the_head_of_a_row_without_one(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify the row carries the picture of the page: the step input at a step, the current version without one.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
-        await run_stage(fx_client, fx_broker, fx_book, 'geometry')
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'geometry')
         step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         at_step = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
         alone = await fx_client.get(f'{fx_book.path}/stages/geometry/pages')
@@ -1546,18 +1532,18 @@ class TestStepRows:
         assert_expectations()
 
     async def test_a_page_the_stage_has_not_run_on_has_the_picture_the_stage_reads(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify a row of a stage that has not run is drawn from the page split, with a step and without one.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        await run_stage(fx_client, fx_broker, fx_book, 'page-split')
+        await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
         at_step = await fx_client.get(f'{fx_book.path}/stages/geometry/pages', params={'step': step_id})
         alone = await fx_client.get(f'{fx_book.path}/stages/geometry/pages')
@@ -1643,35 +1629,35 @@ class TestResultMarks:
     """Tests for the mark and the comment of a result and the log of their changes."""
 
     @staticmethod
-    async def version_path(client: httpx.AsyncClient, broker: InMemoryBroker, book: Book) -> str:
+    async def version_path(client: httpx.AsyncClient, idle: JobsIdle, book: Book) -> str:
         """Run the page split and return the path of the version it made.
 
         :param client: Client of the running application.
         :type client: httpx.AsyncClient
-        :param broker: In-process broker running the job.
-        :type broker: InMemoryBroker
+        :param idle: Wait that lets the jobs of the book finish.
+        :type idle: JobsIdle
         :param book: Book of the signed-in account.
         :type book: Book
         :returns: The path of the version.
         :rtype: str
         """
-        await run_stage(client, broker, book, 'page-split')
+        await run_stage(client, idle, book, 'page-split')
         stages = await client.get(f'{book.page_path}/stages')
         return f'{book.page_path}/versions/{stages.json()[ITEMS][0]["head_version_id"]}'
 
     async def test_put_sets_the_mark_and_the_comment_and_the_version_carries_them(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify PUT answers with the version, and a later GET of the version shows the same mark and comment.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        path = await self.version_path(fx_client, fx_broker, fx_book)
+        path = await self.version_path(fx_client, fx_idle, fx_book)
         before = PageVersionSchema.model_validate_json((await fx_client.get(path)).content)
         response = await fx_client.put(f'{path}/mark', json={'mark': 'bad', 'comment': 'Cut too tight.\nTry again.'})
         answered = PageVersionSchema.model_validate_json(response.content)
@@ -1684,18 +1670,18 @@ class TestResultMarks:
         assert_expectations()
 
     async def test_a_body_without_a_mark_takes_the_mark_off_and_the_log_lists_the_changes(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify the log lists a set and a take-off, and a repeated body adds no entry.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        path = await self.version_path(fx_client, fx_broker, fx_book)
+        path = await self.version_path(fx_client, fx_idle, fx_book)
         await fx_client.put(f'{path}/mark', json={'mark': 'good', 'comment': ''})
         await fx_client.put(f'{path}/mark', json={'mark': 'good', 'comment': ''})
         await fx_client.put(f'{path}/mark', json={'mark': None})
@@ -1709,18 +1695,18 @@ class TestResultMarks:
         assert_expectations()
 
     async def test_a_mark_that_is_neither_good_nor_bad_is_a_422(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify the body is checked before the route runs, and a body without a mark field is refused.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the job.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        path = await self.version_path(fx_client, fx_broker, fx_book)
+        path = await self.version_path(fx_client, fx_idle, fx_book)
         wrong = await fx_client.put(f'{path}/mark', json={'mark': 'fine', 'comment': ''})
         absent = await fx_client.put(f'{path}/mark', json={'comment': 'x'})
         expect(wrong.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
@@ -1748,14 +1734,14 @@ class TestResultsOfAStep:
 
     @staticmethod
     async def marked_geometry(
-        client: httpx.AsyncClient, broker: InMemoryBroker, book: Book, mark: str | None
+        client: httpx.AsyncClient, idle: JobsIdle, book: Book, mark: str | None
     ) -> tuple[str, str]:
         """Run the page split and the geometry, and set a mark on the version the geometry made.
 
         :param client: Client of the running application.
         :type client: httpx.AsyncClient
-        :param broker: In-process broker running the jobs.
-        :type broker: InMemoryBroker
+        :param idle: Wait that lets the jobs of the book finish.
+        :type idle: JobsIdle
         :param book: Book of the signed-in account.
         :type book: Book
         :param mark: The mark to set, or None to leave the version unmarked.
@@ -1763,8 +1749,8 @@ class TestResultsOfAStep:
         :returns: The identifier of the step of the geometry recipe and the identifier of the version it made.
         :rtype: tuple[str, str]
         """
-        await run_stage(client, broker, book, 'page-split')
-        await run_stage(client, broker, book, 'geometry')
+        await run_stage(client, idle, book, 'page-split')
+        await run_stage(client, idle, book, 'geometry')
         step_id = await text_step_id(client, book, Stage.GEOMETRY)
         stages = await client.get(f'{book.page_path}/stages')
         [geometry] = [item for item in stages.json()[ITEMS] if item['stage'] == 'geometry']
@@ -1774,18 +1760,18 @@ class TestResultsOfAStep:
         return step_id, version_id
 
     async def test_the_versions_of_a_step_and_of_a_mark_are_listed_apart(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify the step narrows the list to its own versions and the mark to the versions that carry it.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the jobs.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id, version_id = await self.marked_geometry(fx_client, fx_broker, fx_book, 'bad')
+        step_id, version_id = await self.marked_geometry(fx_client, fx_idle, fx_book, 'bad')
         versions = f'{fx_book.page_path}/versions'
         stage = {'stage': 'geometry', 'step': step_id}
         of_step = await fx_client.get(versions, params=stage)
@@ -1799,18 +1785,18 @@ class TestResultsOfAStep:
         assert_expectations()
 
     async def test_a_step_without_its_stage_is_a_422_and_a_step_no_recipe_has_is_a_404(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify the step is refused without the stage it belongs to, and an unknown step is not an empty list.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the jobs.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id, _ = await self.marked_geometry(fx_client, fx_broker, fx_book, None)
+        step_id, _ = await self.marked_geometry(fx_client, fx_idle, fx_book, None)
         versions = f'{fx_book.page_path}/versions'
         without_stage = await fx_client.get(versions, params={'step': step_id})
         unknown = await fx_client.get(versions, params={'stage': 'geometry', 'step': str(uuid4())})
@@ -1821,34 +1807,34 @@ class TestResultsOfAStep:
         assert_expectations()
 
     async def test_a_version_tells_it_was_made_by_the_step(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify a version made without a manual edit has the origin of the step.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the jobs.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        _, version_id = await self.marked_geometry(fx_client, fx_broker, fx_book, None)
+        _, version_id = await self.marked_geometry(fx_client, fx_idle, fx_book, None)
         read = await fx_client.get(f'{fx_book.page_path}/versions/{version_id}')
         assert PageVersionSchema.model_validate_json(read.content).origin is VersionOrigin.AUTO
 
     async def test_a_row_tells_that_its_result_is_marked_bad(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
         """Verify the row of the stage and the row at the step both carry the flag once the result is marked bad.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the jobs.
-        :type fx_broker: InMemoryBroker
+        :param fx_idle: Wait that lets the jobs of the book finish.
+        :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        step_id, version_id = await self.marked_geometry(fx_client, fx_broker, fx_book, None)
+        step_id, version_id = await self.marked_geometry(fx_client, fx_idle, fx_book, None)
         rows = f'{fx_book.path}/stages/geometry/pages'
         before = await fx_client.get(rows)
         await fx_client.put(f'{fx_book.page_path}/versions/{version_id}/mark', json={'mark': 'bad', 'comment': ''})

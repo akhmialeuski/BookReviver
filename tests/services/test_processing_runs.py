@@ -12,6 +12,7 @@ from bookreviver.domain.enums import (
     ColorMode,
     EditorKind,
     ImagePolicy,
+    JobKind,
     JobState,
     RecipeKind,
     Rendition,
@@ -22,7 +23,7 @@ from bookreviver.domain.enums import (
     VersionScale,
     VersionState,
 )
-from bookreviver.domain.errors import ConflictError, InvalidParametersError
+from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.events import PageStageChanged, PageVersionReady
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import PageVersionId
@@ -38,22 +39,30 @@ from bookreviver.domain.values import (
     Step,
     StepPreview,
 )
-from tests.helpers.builders import EPOCH, make_page
+from tests.helpers.builders import EPOCH, make_job, make_page
 from tests.helpers.counting import CountingUnitOfWork
 from tests.helpers.fake_processing import PREVIEW_TOKEN
+from tests.helpers.held_steps import steps_held
 from tests.helpers.meanwhile import change_while_writing
 from tests.helpers.page_batches import PageValues
-from tests.helpers.processing import IMAGE_CONTENT, found_stage, stage_versions, stored_job
+from tests.helpers.processing import (
+    IMAGE_CONTENT,
+    ProcessingKit,
+    change_versions,
+    found_stage,
+    stage_versions,
+    stored_job,
+)
 from tests.helpers.processors import FAILING_PARAMETER, RAN_KEY, STRENGTH_PARAMETER, FakeProcessor
-from tests.helpers.spreads import head_of, stage_of
+from tests.helpers.spreads import head_of, run_stage, stage_of
 from tests.helpers.stage_heads import seed_head
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from bookreviver.domain.entities import Actor, Page, Project
+    from bookreviver.adapters.storage import LocalAssetStore
+    from bookreviver.domain.entities import Actor, Job, Page, Project
     from bookreviver.ports.persistence import Repositories
-    from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
 
@@ -63,23 +72,10 @@ EVERYTHING: SliceRequest = SliceRequest(limit=100)
 STRENGTH_BY_HAND: int = 7
 OTHER_INPUT_ID: str = '00112233445566ff'
 COMMENT_BY_HAND: str = 'Check the margin.'
-
-
-async def run_stage(kit: ProcessingKit, actor: Actor, project: Project, run: StageRun) -> None:
-    """Start a run of a stage and let the worker do it.
-
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
-    :param actor: Account owning the project.
-    :type actor: Actor
-    :param project: Project to run in.
-    :type project: Project
-    :param run: The stage and the recipe and pages to run it on.
-    :type run: StageRun
-    """
-    job = await kit.service().start_run(actor, project.id, run.stage, run)
-    await kit.jobs().run_stage(job.id)
-    await kit.work_queue()
+# The order key of the second page of a book
+SECOND_PAGE_KEY: str = 'a1'
+# The pages of a book a run is interrupted in, the last of which is the one whose step is under way
+INTERRUPTED_BOOK_PAGES: int = 3
 
 
 async def prepared_page(kit: ProcessingKit, **project_options: ImagePolicy) -> tuple[Actor, Project, Page]:
@@ -129,26 +125,58 @@ class TestRunStage:
         """
         actor, project, _ = await prepared_page(fx_kit)
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        ran = await fx_kit.jobs().run_stage(job.id)
-        stored = await stored_job(fx_kit, job.id)
+        await fx_kit.work_queue()
+        stored = stored_job(fx_kit, job.id)
         expect((stored.state, stored.progress.done, stored.progress.total) == (JobState.SUCCEEDED, 1, 1))
-        expect([queued.kind.value for queued in fx_kit.recording.enqueued] == ['run-stage', 'collect-versions'])
-        # The worker reads the job it gets back to follow a page split with the detection of the content
-        expect(ran is not None and (ran.id, ran.stage) == (job.id, Stage.GEOMETRY))
-        expect(await fx_kit.jobs().run_stage(job.id) is None)
+        expect([queued.kind.value for queued in fx_kit.board.put_jobs] == ['run-stage', 'collect-versions'])
+        assert_expectations()
+
+    async def test_progress_counts_a_task_for_each_step_of_each_page(self, fx_kit: ProcessingKit) -> None:
+        """Verify a run of two pages by a recipe of three steps plans six tasks and has done all six when it ends.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, _ = await prepared_page(fx_kit)
+        second, _ = await fx_kit.seed_scan_page(project, order_key=SECOND_PAGE_KEY)
+        await fx_kit.seed_base_version(second)
+        await save_three_steps(fx_kit, actor, project)
+        job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        await fx_kit.work_queue()
+        stored = stored_job(fx_kit, job.id)
+        expect((stored.state, stored.progress.done, stored.progress.total) == (JobState.SUCCEEDED, 6, 6))
         assert_expectations()
 
     async def test_rerun_with_the_same_parameters_finds_the_version_it_made(self, fx_kit: ProcessingKit) -> None:
-        """Verify a repeated run is a lookup: the processor does not run again and no version is added.
+        """Verify a repeated run of the page is a lookup: the processor does not run again and no version is added.
+
+        The run names the page, which a run of the whole book would leave out as fresh, so the versions that were made
+        are what answers the steps.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared_page(fx_kit)
-        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        run = StageRun(stage=Stage.GEOMETRY, page_ids=(page.id,))
+        await run_stage(fx_kit, actor, project, run)
+        await run_stage(fx_kit, actor, project, run)
         versions = await stage_versions(fx_kit, page, Stage.GEOMETRY)
         expect((fx_kit.fake.runs, versions.total) == (1, 1))
+        assert_expectations()
+
+    async def test_run_of_the_whole_book_leaves_out_the_page_whose_result_is_fresh(self, fx_kit: ProcessingKit) -> None:
+        """Verify a second run of the whole book plans no task for a page that is fresh, and still ends as succeeded.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project, _ = await prepared_page(fx_kit)
+        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        again = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        await fx_kit.work_queue()
+        stored = stored_job(fx_kit, again.id)
+        expect((stored.state, stored.progress.done, stored.progress.total) == (JobState.SUCCEEDED, 0, 0))
+        expect(fx_kit.fake.runs == 1)
         assert_expectations()
 
     async def test_rerun_with_other_parameters_makes_a_new_version_and_going_back_makes_the_first_again(
@@ -285,16 +313,16 @@ class TestRunStage:
         :type fx_kit: ProcessingKit
         """
         actor, project, first = await prepared_page(fx_kit)
-        second, _ = await fx_kit.seed_scan_page(project, order_key='a1')
+        second, _ = await fx_kit.seed_scan_page(project, order_key=SECOND_PAGE_KEY)
         await fx_kit.seed_base_version(second)
         failing = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={FAILING_PARAMETER: True})])
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, failing)
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        await fx_kit.jobs().run_stage(job.id)
+        await fx_kit.work_queue()
         versions = await stage_versions(fx_kit, first, Stage.GEOMETRY)
         stage = await stage_of(fx_kit, first, Stage.GEOMETRY)
         other = await stage_of(fx_kit, second, Stage.GEOMETRY)
-        stored = await stored_job(fx_kit, job.id)
+        stored = stored_job(fx_kit, job.id)
         expect(
             [(version.state, version.data) for version in versions.items]
             == [(VersionState.FAILED, {VersionData.ERROR: 'The fake step was told to fail.'})]
@@ -333,8 +361,8 @@ class TestRunStage:
         placeholder = make_page(project_id=project.id)
         await fx_kit.uow().change_book(project.id, lambda repos, _project: repos.pages.add(placeholder))
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        await fx_kit.jobs().run_stage(job.id)
-        stored = await stored_job(fx_kit, job.id)
+        await fx_kit.work_queue()
+        stored = stored_job(fx_kit, job.id)
         assert (stored.state, stored.progress.total, fx_kit.fake.runs) == (JobState.SUCCEEDED, 0, 0)
 
     async def test_page_split_runs_the_split_none_plugin_on_the_scan(self, fx_kit: ProcessingKit) -> None:
@@ -411,29 +439,30 @@ class TestRunStage:
         expect(head.params[STRENGTH_PARAMETER] == 1)
         assert_expectations()
 
-    async def test_cancelled_job_stops_before_its_next_page(self, fx_kit: ProcessingKit) -> None:
-        """Verify a job cancelled while queued does nothing when a worker takes it.
+    async def test_job_cancelled_while_queued_is_dropped_and_runs_nothing(self, fx_kit: ProcessingKit) -> None:
+        """Verify a job cancelled before the board takes it never runs, and no page is processed.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared_page(fx_kit)
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        await fx_kit.uow().change(lambda repos: repos.jobs.update(evolve(job, state=JobState.CANCELLED)))
-        await fx_kit.jobs().run_stage(job.id)
-        assert (fx_kit.fake.runs, await found_stage(fx_kit, page, Stage.GEOMETRY)) == (0, None)
+        await fx_kit.board.cancel(job.id)
+        await fx_kit.work_queue()
+        expect(stored_job(fx_kit, job.id).state is JobState.CANCELLED)
+        expect((fx_kit.fake.runs, await found_stage(fx_kit, page, Stage.GEOMETRY)) == (0, None))
+        assert_expectations()
 
     async def test_job_with_parameters_it_cannot_read_fails_with_the_reason(self, fx_kit: ProcessingKit) -> None:
-        """Verify a job whose stored parameters are not those of a run fails and says so.
+        """Verify a job whose parameters are not those of a run fails and says so.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, _ = await prepared_page(fx_kit)
-        job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
-        await fx_kit.uow().change(lambda repos: repos.jobs.update(evolve(job, params={'stage': 'nowhere'})))
-        await fx_kit.jobs().run_stage(job.id)
-        stored = await stored_job(fx_kit, job.id)
+        _, project, _ = await prepared_page(fx_kit)
+        job = fx_kit.board.put(make_job(project_id=project.id, kind=JobKind.RUN_STAGE, params={'stage': 'nowhere'}))
+        await fx_kit.work_queue()
+        stored = stored_job(fx_kit, job.id)
         assert (stored.state, 'not valid' in stored.error) == (JobState.FAILED, True)
 
 
@@ -581,7 +610,7 @@ class TestRunThroughStep:
         run = StageRun(stage=Stage.GEOMETRY, through_step=through_step)
         with pytest.raises(ConflictError):
             await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, run)
-        assert fx_kit.recording.enqueued == []
+        assert fx_kit.board.put_jobs == []
 
     async def test_run_through_a_step_with_every_step_up_to_it_off_is_refused(self, fx_kit: ProcessingKit) -> None:
         """Verify there is nothing to run when the steps up to the one asked are all switched off.
@@ -625,8 +654,8 @@ class TestPreviewStep:
         preview = StepPreview(
             page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=FAKE_KEY),), step_index=0
         )
-        job = await fx_kit.service().start_preview(actor, project.id, preview)
-        await fx_kit.jobs().preview_step(job.id)
+        await fx_kit.service().start_preview(actor, project.id, preview)
+        await fx_kit.work_queue()
         versions = await fx_kit.uow().read(
             lambda repos: repos.page_versions.list_for_stage(page.id, Stage.GEOMETRY, VersionScale.PREVIEW, EVERYTHING)
         )
@@ -652,8 +681,8 @@ class TestPreviewStep:
             page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=FAKE_KEY),), step_index=0
         )
         for _ in range(2):
-            job = await fx_kit.service().start_preview(actor, project.id, preview)
-            await fx_kit.jobs().preview_step(job.id)
+            await fx_kit.service().start_preview(actor, project.id, preview)
+            await fx_kit.work_queue()
         assert fx_kit.fake.previews == 1
 
     async def test_only_the_steps_after_a_changed_one_are_computed_again(self, fx_kit: ProcessingKit) -> None:
@@ -667,8 +696,8 @@ class TestPreviewStep:
         for strength in (1, 2):
             steps = (first, Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: strength + 1}))
             preview = StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=steps, step_index=1)
-            job = await fx_kit.service().start_preview(actor, project.id, preview)
-            await fx_kit.jobs().preview_step(job.id)
+            await fx_kit.service().start_preview(actor, project.id, preview)
+            await fx_kit.work_queue()
         assert fx_kit.fake.previews == 3
 
     async def test_step_switched_off_is_left_out_of_the_preview(self, fx_kit: ProcessingKit) -> None:
@@ -684,8 +713,8 @@ class TestPreviewStep:
         )
         preview = StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=steps, step_index=1)
         job = await fx_kit.service().start_preview(actor, project.id, preview)
-        await fx_kit.jobs().preview_step(job.id)
-        stored = await stored_job(fx_kit, job.id)
+        await fx_kit.work_queue()
+        stored = stored_job(fx_kit, job.id)
         expect((stored.state, fx_kit.fake.previews) == (JobState.SUCCEEDED, 1))
         assert_expectations()
 
@@ -702,8 +731,8 @@ class TestPreviewStep:
         )
         preview = StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=steps, step_index=0)
         job = await fx_kit.service().start_preview(actor, project.id, preview)
-        await fx_kit.jobs().preview_step(job.id)
-        stored = await stored_job(fx_kit, job.id)
+        await fx_kit.work_queue()
+        stored = stored_job(fx_kit, job.id)
         expect((stored.state, fx_kit.fake.previews) == (JobState.FAILED, 0))
         expect('switched off' in stored.error)
         assert_expectations()
@@ -739,8 +768,8 @@ class TestPreviewStep:
             page_id=placeholder.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=FAKE_KEY),), step_index=0
         )
         job = await fx_kit.service().start_preview(actor, project.id, preview)
-        await fx_kit.jobs().preview_step(job.id)
-        stored = await stored_job(fx_kit, job.id)
+        await fx_kit.work_queue()
+        stored = stored_job(fx_kit, job.id)
         assert (stored.state, stored.error) == (JobState.FAILED, 'The page has no image to preview a step on.')
 
 
@@ -856,15 +885,14 @@ class TestRunApplyStep:
             seeded.actor, seeded.project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         change_while_writing(fx_kit, monkeypatch, partial(change, fx_kit, seeded))
-        made = await fx_kit.jobs().run_stage(job.id)
-        stored = await stored_job(fx_kit, job.id)
+        await fx_kit.work_queue()
+        stored = stored_job(fx_kit, job.id)
         record = await found_stage(fx_kit, seeded.page, Stage.GEOMETRY)
         announced = [
             event
             for event in fx_kit.events.published
             if isinstance(event, PageStageChanged) and event.stage.stage is Stage.GEOMETRY
         ]
-        expect(made is None)
         expect((stored.state, stored.progress.total, stored.error) == (JobState.SUCCEEDED, 1, ''))
         expect(record is None)
         expect(announced == [])
@@ -881,11 +909,11 @@ class TestRunApplyStep:
         :type monkeypatch: pytest.MonkeyPatch
         """
         seeded = SeededPage(*await prepared_page(fx_kit))
-        job = await fx_kit.service().start_run(
+        await fx_kit.service().start_run(
             seeded.actor, seeded.project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         change_while_writing(fx_kit, monkeypatch, partial(delete_the_page, fx_kit, seeded))
-        await fx_kit.jobs().run_stage(job.id)
+        await fx_kit.work_queue()
         left = await fx_kit.assets.size_of(ProjectKeys(seeded.project.id).page(seeded.page.id))
         assert left == 0
 
@@ -916,6 +944,100 @@ class TestRunApplyStep:
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         head = await head_of(fx_kit, page, Stage.GEOMETRY)
         expect((head.state, head.mark, head.comment) == (VersionState.READY, ResultMark.BAD, COMMENT_BY_HAND))
+        assert_expectations()
+
+
+async def interrupted_book(kit: ProcessingKit) -> tuple[Actor, Project, list[Page], Job]:
+    """Seed a book of three pages and cancel a run of its geometry stage while the step of the third page is under way.
+
+    The step is let go after the cancel, so it finishes and stores its version, and the job stops at the boundary of
+    the task, before it makes the page current.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :returns: The actor, the project, the pages in book order, and the job as it was cancelled.
+    :rtype: tuple[Actor, Project, list[Page], Job]
+    """
+    actor, project = await kit.seed_project()
+    pages = []
+    for number in range(INTERRUPTED_BOOK_PAGES):
+        page, _ = await kit.seed_scan_page(project, order_key=f'a{number}')
+        await kit.seed_base_version(page)
+        pages.append(page)
+    job = await kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+    async with steps_held(kit, after=INTERRUPTED_BOOK_PAGES - 1):
+        await kit.board.cancel(job.id)
+    return actor, project, pages, job
+
+
+class TestCancelledRun:
+    """Tests for a run that is cancelled while a task is under way, which stops between two tasks."""
+
+    async def test_cancel_between_tasks_keeps_the_finished_versions_and_fails_no_page(
+        self, fx_kit: ProcessingKit
+    ) -> None:
+        """Verify the pages the run finished stay fresh, the task under way keeps its version, and no page is failed.
+
+        The third step finishes after the cancel, so its version is stored as ready, and the cancellation raised after
+        it passes the handlers that record a failed page, which leaves the third page without a record of the stage.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        _, _, pages, job = await interrupted_book(fx_kit)
+        records = [await found_stage(fx_kit, page, Stage.GEOMETRY) for page in pages]
+        versions = [await stage_versions(fx_kit, page, Stage.GEOMETRY) for page in pages]
+        expect(stored_job(fx_kit, job.id).state is JobState.CANCELLED)
+        expect(
+            [None if record is None else record.state for record in records]
+            == [StageState.FRESH, StageState.FRESH, None]
+        )
+        expect(
+            [[version.state for version in listed.items] for listed in versions]
+            == [[VersionState.READY]] * INTERRUPTED_BOOK_PAGES
+        )
+        expect(fx_kit.fake.runs == INTERRUPTED_BOOK_PAGES)
+        assert_expectations()
+
+
+class TestRestart:
+    """Tests for a run asked for after the process restarted, whose board holds none of the jobs of the one before."""
+
+    async def test_whole_book_run_after_a_restart_goes_over_the_page_that_was_left_and_makes_its_running_version_again(
+        self, fx_kit: ProcessingKit, fx_asset_store: LocalAssetStore
+    ) -> None:
+        """Verify only the third page gets tasks, and its version that a crash left running is made again.
+
+        The run is interrupted after its second page, and the version of the third page is put back in the state a
+        crash in the middle of its step leaves, which is running and without its files. The new board stands for the
+        process after the restart: it holds no job, and the database and the files are the ones the first left.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        :param fx_asset_store: Asset store the two kits share.
+        :type fx_asset_store: LocalAssetStore
+        """
+        actor, project, pages, interrupted = await interrupted_book(fx_kit)
+        [left] = (await stage_versions(fx_kit, pages[-1], Stage.GEOMETRY)).items
+        await change_versions(
+            fx_kit,
+            left,
+            lambda versions: versions.update(
+                evolve(left, state=VersionState.RUNNING, renditions=None, tiles_ready=False)
+            ),
+        )
+        restarted = ProcessingKit(fx_asset_store, database=fx_kit.database)
+        job = await restarted.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        await restarted.work_queue()
+        stored = stored_job(restarted, job.id)
+        made_again = await restarted.stored_version(left.id)
+        record = await found_stage(restarted, pages[-1], Stage.GEOMETRY)
+        with pytest.raises(NotFoundError):
+            restarted.board.get(interrupted.id)
+        expect((stored.state, stored.progress.done, stored.progress.total) == (JobState.SUCCEEDED, 1, 1))
+        expect(restarted.fake.runs == 1)
+        expect((made_again.state, made_again.renditions is not None) == (VersionState.READY, True))
+        expect(record is not None and (record.state, record.head_version_id) == (StageState.FRESH, left.id))
         assert_expectations()
 
 

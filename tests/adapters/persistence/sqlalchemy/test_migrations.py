@@ -28,7 +28,6 @@ from sqlalchemy.orm import Session
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccessTokenTable, AccountTable
 from bookreviver.adapters.persistence.sqlalchemy.database import MIGRATIONS_DIR, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
-    JobRow,
     PageRow,
     PageStepStateRow,
     PageVersionRow,
@@ -44,13 +43,20 @@ from bookreviver.app.container import build_container
 from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND
 from bookreviver.app.settings import PersistenceBackend
-from bookreviver.domain.enums import EditorKind, OrderMode, RecipeKind, Rendition, ResultMark
+from bookreviver.domain.enums import (
+    EditorKind,
+    OrderMode,
+    RecipeKind,
+    RejectionReason,
+    Rendition,
+    ResultMark,
+    SourceStatus,
+)
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.ids import PageVersionId, RecipeId, RecipeProfileId
 from bookreviver.domain.values import Renditions
 from tests.helpers.builders import (
     EPOCH,
-    make_job,
     make_page,
     make_page_version,
     make_project,
@@ -235,6 +241,20 @@ INSERT_MARGIN_CHANGE: str = (
 ACCOUNT_TYPES_REVISION: str = '674f0fbcad00'
 # The revision that drops the revision counter of the pages, and the name of the column it drops
 PAGE_REVISION_REMOVED_REVISION: str = 'a6cd07915dcf'
+# The revision that drops the jobs table and records the status of every uploaded file, and what it drops
+JOBS_DROPPED_REVISION: str = '15e015051f5c'
+JOBS_TABLE: str = 'jobs'
+IMPORT_JOB_COLUMN: str = 'import_job_id'
+INSERT_OLD_JOB: TextClause = text(
+    'INSERT INTO jobs (id, project_id, kind, state, progress_done, progress_total, error, params, created_at)'
+    " VALUES (:id, :project_id, 'import-source', 'succeeded', 0, 0, '', '{}', :moment)"
+)
+LINK_OLD_SOURCES: TextClause = text('UPDATE sources SET import_job_id = :job_id')
+SELECT_SOURCE_STATUSES: TextClause = text(
+    'SELECT file_name, kind, file_type, status, rejection, detail FROM sources ORDER BY file_name'
+)
+SELECT_SOURCE_NAMES: TextClause = text('SELECT file_name FROM sources ORDER BY file_name')
+COUNT_JOBS: TextClause = text('SELECT count(*) FROM jobs')
 PAGE_REVISION_COLUMN: str = 'revision'
 # Value the counter of a page holds before the revision drops it, which a downgrade does not bring back
 COUNTED_REVISION: int = 7
@@ -261,7 +281,7 @@ INSERT_OLD_PLACE: TextClause = text(
     " VALUES (:account_id, :project_id, 'workspace', 'geometry', 'page', 'off', 'all', :zoom, :x, :y, :moment)"
 )
 # The tables holding the rows of a book, each of which refers to the project or to a row that does
-BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (ProjectRow, SourceRow, ScanRow, PageRow, PageVersionRow, JobRow)
+BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (ProjectRow, SourceRow, ScanRow, PageRow, PageVersionRow)
 
 
 @pytest.fixture
@@ -324,7 +344,7 @@ async def _migrate(database: SqlDatabase, command: Callable[..., None], *args: s
 
 
 async def _commit_book(database: SqlDatabase) -> ProjectId:
-    """Commit a project whose cover is a page cut from a scan, with its source, the page's version and a job.
+    """Commit a project whose cover is a page cut from a scan, with its source and the page's version.
 
     :param database: Migrated database to commit into.
     :type database: SqlDatabase
@@ -344,12 +364,7 @@ async def _commit_book(database: SqlDatabase) -> ProjectId:
         scans=[scan],
         versions=[make_page_version(page_id=page.id)],
     )
-    await uow.change(
-        lambda repos: (
-            repos.jobs.add(make_job(project_id=project.id)),
-            repos.projects.update(evolve(project, cover_page_id=page.id)),
-        )
-    )
+    await uow.change(lambda repos: repos.projects.update(evolve(project, cover_page_id=page.id)))
     return project.id
 
 
@@ -975,8 +990,8 @@ class TestEnv:
     ) -> None:
         """Verify a revision rebuilding projects in batch mode leaves every row of the book and the project's cover.
 
-        With foreign keys on, dropping the old projects table would cascade to the sources, scans, pages, versions
-        and jobs.
+        With foreign keys on, dropping the old projects table would cascade to the sources, scans, pages and
+        versions.
 
         :param fx_empty_database: Database with no table.
         :type fx_empty_database: SqlDatabase
@@ -2226,4 +2241,105 @@ class TestPageRevisionRemovedRevision:
             [{name: value for name, value in page.items() if name != PAGE_REVISION_COLUMN} for page in restored] == kept
         )
         expect(self._versions(fx_empty_database) == versions)
+        assert_expectations()
+
+
+class TestJobsDroppedRevision:
+    """Tests for the revision that drops the jobs table and records the status of every uploaded file."""
+
+    @staticmethod
+    def _tables_and_columns(database: SqlDatabase) -> tuple[list[str], set[str]]:
+        """Read the names of the tables and of the columns of ``sources``.
+
+        :param database: Migrated database.
+        :type database: SqlDatabase
+        :returns: The names of the tables, and the names of the columns of the sources.
+        :rtype: tuple[list[str], set[str]]
+        """
+        with database.engine.connect() as connection:
+            inspector = inspect(connection)
+            return inspector.get_table_names(), {column['name'] for column in inspector.get_columns('sources')}
+
+    async def test_existing_sources_stay_as_imported_ones_and_the_jobs_go(self, fx_empty_database: SqlDatabase) -> None:
+        """Verify the upgrade keeps every source row, one of them linked to a job, as an imported source with no reason.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, PAGE_REVISION_REMOVED_REVISION)
+        project = make_project(owner_id=await commit_account(fx_empty_database))
+        await SqlAlchemyUnitOfWork(fx_empty_database).change(lambda repos: repos.projects.add(project))
+        job_id = uuid4().bytes
+        names = ['first.pdf', 'second.pdf']
+        with _session(fx_empty_database) as session:
+            session.execute(INSERT_OLD_JOB, {'id': job_id, 'project_id': project.id.bytes, 'moment': EPOCH})
+            for position, name in enumerate(names):
+                session.execute(
+                    INSERT_OLD_SOURCE,
+                    {
+                        'id': uuid4().bytes,
+                        'project_id': project.id.bytes,
+                        'file_name': name,
+                        'sha256': str(position) * 64,
+                        'moment': EPOCH,
+                        'suggestion': '{}',
+                    },
+                )
+            session.execute(LINK_OLD_SOURCES, {'job_id': job_id})
+            session.commit()
+
+        await _migrate(fx_empty_database, migrations.upgrade, JOBS_DROPPED_REVISION)
+
+        with _session(fx_empty_database) as session:
+            stored = [tuple(row) for row in session.execute(SELECT_SOURCE_STATUSES)]
+        tables, columns = self._tables_and_columns(fx_empty_database)
+        expect(stored == [(name, 'pdf', 'pdf', 'imported', None, '') for name in names])
+        expect(JOBS_TABLE not in tables)
+        expect(IMPORT_JOB_COLUMN not in columns)
+        assert_expectations()
+
+    async def test_downgrade_deletes_the_files_no_import_took_in_and_brings_the_jobs_back_empty(
+        self, fx_empty_database: SqlDatabase
+    ) -> None:
+        """Verify a downgrade keeps the imported sources only, since the old schema has no place for the others.
+
+        The rejected file repeats the digest of the imported one and the skipped file has no type, so either would
+        break the unique key or the not-null column the old schema returns to.
+
+        :param fx_empty_database: Database with no table.
+        :type fx_empty_database: SqlDatabase
+        """
+        migrations = fx_empty_database.migrations
+        await _migrate(fx_empty_database, migrations.upgrade, 'head')
+        project = make_project(owner_id=await commit_account(fx_empty_database))
+        imported = make_source(project_id=project.id, name='imported.pdf')
+        rejected = evolve(
+            make_source(project_id=project.id, name='rejected.pdf'),
+            sha256=imported.sha256,
+            scan_count=0,
+            status=SourceStatus.REJECTED,
+            rejection=RejectionReason.DUPLICATE,
+            detail='The project already has this file as imported.pdf.',
+        )
+        skipped = evolve(
+            make_source(project_id=project.id, name='skipped.pdf'),
+            kind=None,
+            file_type=None,
+            scan_count=0,
+            status=SourceStatus.SKIPPED,
+        )
+        await store_project(SqlAlchemyUnitOfWork(fx_empty_database), project, sources=[imported, rejected, skipped])
+
+        await _migrate(fx_empty_database, migrations.downgrade, PAGE_REVISION_REMOVED_REVISION)
+
+        with _session(fx_empty_database) as session:
+            names = [row[0] for row in session.execute(SELECT_SOURCE_NAMES)]
+            jobs = session.scalar(COUNT_JOBS)
+        tables, columns = self._tables_and_columns(fx_empty_database)
+        expect(names == [imported.file_name])
+        expect(jobs == 0)
+        expect(JOBS_TABLE in tables)
+        expect({IMPORT_JOB_COLUMN} <= columns)
+        expect(not {'status', 'rejection', 'detail'} & columns)
         assert_expectations()

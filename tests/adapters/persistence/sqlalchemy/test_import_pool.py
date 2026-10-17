@@ -20,11 +20,11 @@ from bookreviver.domain.enums import JobState
 from bookreviver.domain.values import SliceRequest
 from tests.helpers.builders import make_project
 from tests.helpers.connections import checked_out_connections
-from tests.helpers.fakes_imports import IMPORT_TIMEOUT_SECONDS, ImportRig, pdf_upload
+from tests.helpers.fakes_imports import IMPORT_TIMEOUT_SECONDS, pdf_upload
 from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from sqlalchemy.engine.interfaces import DBAPIConnection
@@ -32,12 +32,12 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.ids import AccountId
+    from tests.helpers.fakes_imports import ImportRig
 
 pytestmark = pytest.mark.anyio
 
 PARALLEL_SCANS: int = 4
 BOOK_PDF: str = 'book.pdf'
-STORAGE_DIRECTORY: str = 'storage'
 SAMPLES_DIRECTORY: str = 'samples'
 POOL_CHECKOUT: str = 'checkout'
 POOL_CHECKIN: str = 'checkin'
@@ -112,6 +112,7 @@ class TestRunImportConnections:
         fx_database: SqlDatabase,
         fx_owner_id: AccountId,
         fx_connection_peak: ConnectionPeak,
+        fx_import_rig: Callable[..., ImportRig],
         tmp_path: Path,
     ) -> None:
         """Verify an import with four cutters at once checks out one writer connection at a time, with all scans ready.
@@ -129,10 +130,12 @@ class TestRunImportConnections:
         :type fx_owner_id: AccountId
         :param fx_connection_peak: Counter of the connections checked out of the pool of the writer.
         :type fx_connection_peak: ConnectionPeak
-        :param tmp_path: Temporary directory of the test, holding the storage root and the sample file.
+        :param fx_import_rig: Function building the import rig whose board runs an import on the database.
+        :type fx_import_rig: Callable[..., ImportRig]
+        :param tmp_path: Temporary directory of the test, holding the sample file.
         :type tmp_path: Path
         """
-        rig = ImportRig.build(tmp_path / STORAGE_DIRECTORY)
+        rig = fx_import_rig(PARALLEL_SCANS)
         all_writing = anyio.Event()
 
         async def hold_until_all_write(_number: int) -> None:
@@ -157,13 +160,11 @@ class TestRunImportConnections:
         )
 
         with anyio.fail_after(IMPORT_TIMEOUT_SECONDS):
-            await rig.service(uow=uow, parallel_scans=PARALLEL_SCANS).run_import(job.id)
+            await rig.fakes.board.run_queued()
 
-        stored, scans = await uow.read(
-            lambda repos: (
-                repos.jobs.get(job.id),
-                repos.scans.list_for_project(project.id, SliceRequest(limit=PARALLEL_SCANS)).items,
-            )
+        stored = rig.stored_job(job)
+        scans = await uow.read(
+            lambda repos: repos.scans.list_for_project(project.id, SliceRequest(limit=PARALLEL_SCANS)).items
         )
         # A file database gets a queue pool, which an in-memory one does not, so the limit of the pool is the real one
         expect(isinstance(fx_database.engine.pool, QueuePool))

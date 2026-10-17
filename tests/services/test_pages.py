@@ -3,7 +3,6 @@
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-import anyio
 import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
@@ -33,6 +32,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Page, PageVersion, Project
     from bookreviver.ports.persistence import Repositories
     from bookreviver.services.pages import PageService
+    from tests.helpers.fake_board import FakeJobBoard
 
 pytestmark = pytest.mark.anyio
 
@@ -462,36 +462,28 @@ class TestOpenAsset:
 
 
 class TestJobsQueuedTogether:
-    """Tests for the check of the active jobs and the insert of a job, which one change of the unit of work makes."""
+    """Tests for the check of the active jobs and the put of a job, which are one step of the event loop."""
 
     @pytest.mark.parametrize('requests', [2, 5], ids=['two', 'five'])
     async def test_requests_asking_for_the_detection_together_queue_one_job(
-        self,
-        requests: int,
-        fx_service: Callable[[], PageService],
-        fx_database: InMemoryDatabase,
-        fx_actor: Actor,
+        self, requests: int, fx_service: Callable[[], PageService], fx_board: FakeJobBoard, fx_actor: Actor
     ) -> None:
-        """Verify the requests that pass the check at the same time are told apart by the change, so one job is stored.
+        """Verify the requests for the detection of one book put one job on the board and the others find it active.
 
-        Each request builds its own unit of work, and all of them start before any has finished, so the unique index
-        would be the only guard without the change that holds the check and the insert together.
+        Each request builds its own service, and none of them awaits between the check of the board and the put.
 
         :param requests: How many requests ask for the detection together.
         :type requests: int
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_board: Board that records the jobs put on it.
+        :type fx_board: FakeJobBoard
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
         project = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, project)
 
-        async with anyio.create_task_group() as group:
-            for _ in range(requests):
-                group.start_soon(fx_service().detect_new_pages, project.id)
+        for _ in range(requests):
+            fx_service().detect_new_pages(project.id)
 
-        jobs = [job for job in fx_database.tables.jobs.values() if job.project_id == project.id]
-        assert [job.kind for job in jobs] == [JobKind.DETECT_CONTENT]
+        assert [job.kind for job in fx_board.put_jobs if job.project_id == project.id] == [JobKind.DETECT_CONTENT]

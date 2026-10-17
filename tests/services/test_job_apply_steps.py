@@ -19,7 +19,7 @@ from bookreviver.domain.values import StageRun
 from bookreviver.services.processing_jobs import NO_PAGE_PROCESSED
 from bookreviver.services.stage_runs import RecipeRun
 from bookreviver.services.steps import StepRunner
-from tests.helpers.processing import change_versions
+from tests.helpers.processing import change_versions, stored_job
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -139,10 +139,10 @@ class TestCutTiles:
 
         monkeypatch.setattr(StepRunner, 'cut_tiles', cut_then_change)
 
-        await fx_kit.jobs().cut_tiles(job.id)
+        await fx_kit.work_queue()
 
         stored = await fx_kit.uow().read(lambda repos: repos.page_versions.find(untiled.id))
-        expect((await fx_kit.uow().read(lambda repos: repos.jobs.get(job.id))).state is JobState.SUCCEEDED)
+        expect(stored_job(fx_kit, job.id).state is JobState.SUCCEEDED)
         expect((stored and (stored.state, stored.tiles_ready)) == kept)
         expect(not any(isinstance(event, PageVersionReady) for event in fx_kit.events.published))
         if stored is None:
@@ -194,9 +194,9 @@ class TestRunPage:
         monkeypatch.setattr(RecipeRun, 'run', delete_the_page_and_fail)
         job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
 
-        await fx_kit.jobs().run_stage(job.id)
+        await fx_kit.work_queue()
 
-        stored = await fx_kit.uow().read(lambda repos: repos.jobs.get(job.id))
+        stored = stored_job(fx_kit, job.id)
         expect((stored.state, stored.error) == (JobState.FAILED, NO_PAGE_PROCESSED))
         expect(not any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
         assert_expectations()

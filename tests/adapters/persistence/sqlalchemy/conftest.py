@@ -7,12 +7,17 @@ the writer, a second database over the same file whose blocks give up almost at 
 from typing import TYPE_CHECKING
 
 import pytest
+from attrs import evolve
 
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.app.container import build_container
 from bookreviver.app.settings import PersistenceBackend
+from bookreviver.domain.enums import JobKind, JobState
+from bookreviver.domain.values import JobEnd
 from tests.helpers.builders import make_project
+from tests.helpers.fakes_imports import DEFAULT_PARALLEL_SCANS, ImportRig
+from tests.helpers.fakes_jobs import JobFakes
 from tests.helpers.schema import create_schema
 from tests.helpers.seeding import commit_account, store_project
 from tests.helpers.tracers import AskingTracer
@@ -20,13 +25,16 @@ from tests.helpers.wait_limits import IMPATIENT_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
+    from pathlib import Path
 
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import Project
+    from bookreviver.domain.entities import Job, Project
     from bookreviver.domain.ids import AccountId
+    from bookreviver.ports.runtime import JobControl
 
 # Long enough that a block which wrongly waits for a lock that is never given fails the test, and does not hang it
 TRACED_WAIT_SECONDS: float = 10.0
+STORAGE_DIRECTORY: str = 'storage'
 
 
 @pytest.fixture
@@ -57,6 +65,56 @@ async def fx_owner_id(fx_database: SqlDatabase) -> AccountId:
     :rtype: AccountId
     """
     return await commit_account(fx_database)
+
+
+@pytest.fixture
+def fx_import_rig(fx_database: SqlDatabase, tmp_path: Path) -> Callable[..., ImportRig]:
+    """Give a function that builds the import rig over the database, whose board runs its import jobs on that database.
+
+    The board of an ``ImportRig`` runs a job on a service over the in-memory database of the rig. The rig this
+    function builds runs it on a unit of work of the SQL database instead, which is the one a test then reads, and lets
+    any job that is not an import end at once, since the split an import queues is not the subject of these tests.
+
+    :param fx_database: Fresh SQLite database with every table created.
+    :type fx_database: SqlDatabase
+    :param tmp_path: Temporary directory of the test, which holds the storage root of the rig.
+    :type tmp_path: Path
+    :returns: Function taking the largest number of scans cut at once and returning the rig.
+    :rtype: Callable[..., ImportRig]
+    """
+
+    def build(parallel_scans: int = DEFAULT_PARALLEL_SCANS) -> ImportRig:
+        """Build the rig over a new storage root and a unit of work of the database.
+
+        :param parallel_scans: Largest number of scans the import cuts at once.
+        :type parallel_scans: int
+        :returns: The rig, whose board runs an import on the database.
+        :rtype: ImportRig
+        """
+        base = ImportRig.build(tmp_path / STORAGE_DIRECTORY)
+        uow = SqlAlchemyUnitOfWork(fx_database)
+        # The runner needs the service of the rig and the rig needs the runner, so the rig is found when a job runs
+        built: list[ImportRig] = []
+
+        async def run(job: Job, control: JobControl) -> JobEnd:
+            """Run an import job on the database, and let any other job succeed at once.
+
+            :param job: The job the board took from its queue.
+            :type job: Job
+            :param control: What the job reports through.
+            :type control: JobControl
+            :returns: How the job ended.
+            :rtype: JobEnd
+            """
+            if job.kind is not JobKind.IMPORT_SOURCE:
+                return JobEnd(state=JobState.SUCCEEDED)
+            return await built[0].service(uow=uow, parallel_scans=parallel_scans).run_import(job, control)
+
+        rig = evolve(base, fakes=JobFakes(events=base.events, clock=base.fakes.clock, runner=run))
+        built.append(rig)
+        return rig
+
+    return build
 
 
 @pytest.fixture

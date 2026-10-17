@@ -50,7 +50,7 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   database, file, imaging, job and event technology lives in an adapter under `adapters/`, selected in `app`.
 - Swapping a technology is a new adapter of an existing port plus configuration in `app`. If a service, a route or a
   service test has to change for it, the port is wrong: fix the port first.
-- `services` and `domain` never import SQLAlchemy, advanced-alchemy, FastAPI, fastapi-users, Pydantic, Taskiq,
+- `services` and `domain` never import SQLAlchemy, advanced-alchemy, FastAPI, fastapi-users, Pydantic,
   pydantic-ai, PyMuPDF, Pillow, pyvips or OpenCV. `api`, `adapters` and `plugins` never import each other. Adapter families never import each other. `import-linter` in the gate enforces
   all of this, and a contract failure is fixed by moving code, never by editing the contract.
 - A route validates input, calls one service method and returns a typed response: the resource schema, or

@@ -9,16 +9,23 @@ from delayed_assert import assert_expectations, expect
 from fastapi import status
 from fastapi_pagination import Page
 
+from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.enums import ContentSource, ContentType, JobKind, JobState, PageKind
 from bookreviver.domain.values import ContentDetection
-from tests.helpers.builders import make_job, make_page, make_project, new_account_id
+from tests.helpers.builders import EPOCH, make_job, make_page, make_project, new_account_id
+from tests.helpers.fake_board import FakeJobBoard
+from tests.helpers.fakes_jobs import FakeBoardProvider, RecordingEventBus
+from tests.helpers.scripted_runner import ScriptedRunner
 from tests.helpers.seeding import commit_project
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import httpx
+    from dishka import Provider
 
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.domain.entities import Actor, Project
@@ -60,6 +67,28 @@ class Book(NamedTuple):
     def detect_path(self) -> str:
         """The path of the detection of the content of pages."""
         return f'{PROJECTS_PATH}/{self.project.id}{DETECT_SUFFIX}'
+
+
+@pytest.fixture
+def fx_board() -> FakeJobBoard:
+    """Build the board the application of these tests puts its jobs on, which runs none until a test says so.
+
+    :returns: A fake board with no job.
+    :rtype: FakeJobBoard
+    """
+    return FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus(), clock=FixedClock(EPOCH))
+
+
+@pytest.fixture
+def fx_extra_providers(fx_board: FakeJobBoard) -> Sequence[Provider]:
+    """Replace the application's job board with ``fx_board``, so a detection stays queued.
+
+    :param fx_board: Board of the test.
+    :type fx_board: FakeJobBoard
+    :returns: One provider that supplies the board.
+    :rtype: Sequence[Provider]
+    """
+    return (FakeBoardProvider(fx_board),)
 
 
 @pytest.fixture
@@ -185,48 +214,45 @@ class TestDetectContent:
         assert_expectations()
 
     async def test_a_request_that_names_pages_queues_a_job_for_those(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_board: FakeJobBoard
     ) -> None:
-        """Verify the pages named are the parameters the job is stored with.
+        """Verify the pages named are the parameters the job is put on the board with.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_board: Board of the application.
+        :type fx_board: FakeJobBoard
         """
         named = [str(fx_book.pages[0].id), str(fx_book.pages[1].id)]
 
         response = await fx_client.post(fx_book.detect_path, json={PAGE_IDS_FIELD: named})
 
         job = JobSchema.model_validate_json(response.content)
-        stored = ContentDetection.from_map(fx_database.tables.jobs[job.id].params)
+        stored = ContentDetection.from_map(fx_board.get(job.id).params)
         expect(response.status_code == status.HTTP_202_ACCEPTED)
         expect(stored == ContentDetection(page_ids=(fx_book.pages[0].id, fx_book.pages[1].id)))
         assert_expectations()
 
     async def test_a_second_request_while_the_job_is_queued_is_a_409_problem(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_book: Book
+        self, fx_client: httpx.AsyncClient, fx_board: FakeJobBoard, fx_book: Book
     ) -> None:
         """Verify one detection of the project at a time, which the request is told of while one is queued.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_board: Board of the application.
+        :type fx_board: FakeJobBoard
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        # The queue of the application runs a detection of three pages before a second request would arrive, so the
-        # first detection is stored as queued instead of asked for
-        queued = make_job(project_id=fx_book.project.id, kind=JobKind.DETECT_CONTENT)
-        fx_database.tables.jobs[queued.id] = queued
+        queued = fx_board.put(make_job(project_id=fx_book.project.id, kind=JobKind.DETECT_CONTENT))
 
         response = await fx_client.post(fx_book.detect_path, json={})
 
         expect(response.status_code == status.HTTP_409_CONFLICT)
-        expect([job.id for job in fx_database.tables.jobs.values()] == [queued.id])
+        expect([job.id for job in fx_board.put_jobs] == [queued.id])
         assert_expectations()
 
     @pytest.mark.parametrize(

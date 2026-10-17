@@ -13,6 +13,7 @@ from bookreviver.domain.enums import (
     ContributorRole,
     EditorKind,
     JobKind,
+    JobState,
     NewPageOrigin,
     NumberDisplay,
     OrderMode,
@@ -48,7 +49,6 @@ if TYPE_CHECKING:
         OrderRuleKind,
         PageKind,
         PlaceMode,
-        RejectionReason,
         ResultMark,
         Side,
         SourceKind,
@@ -863,31 +863,29 @@ class ImportRequest:
 
 
 @frozen(kw_only=True)
-class RejectedFile:
-    """A file of an upload that was not imported, with the reason shown to the user.
+class JobEnd:
+    """How a job came to its end when its tasks ran to the last one, which an entry point returns to the board.
 
-    :ivar file_name: Name of the staged file, or of the main file of its source.
-    :ivar reason: Why the file was not imported.
-    :ivar detail: Text for the user that says more than the reason, such as the name of the existing source.
+    A cancellation is no end of this kind: it unwinds as ``JobCancelledError``, so the board records it itself.
+
+    :cvar UNEXPECTED_FAILURE: The reason a job gives when it stopped on an error nobody expected, which was logged.
+    :ivar state: The final state, succeeded or failed.
+    :ivar error: Why the job failed, shown to the user, or empty for a job that succeeded.
     """
 
-    file_name: str = field(validator=validators.min_len(1))
-    reason: RejectionReason
-    detail: str = ''
+    UNEXPECTED_FAILURE: ClassVar[str] = 'The job stopped because of an unexpected error. It has been logged.'
 
+    state: JobState = field(validator=validators.in_((JobState.SUCCEEDED, JobState.FAILED)))
+    error: str = ''
 
-@frozen(kw_only=True)
-class ImportResult:
-    """What an import job did with the files of its upload.
+    @classmethod
+    def unexpected(cls) -> Self:
+        """Build the end of a job that stopped on an error nobody expected, after the error was logged.
 
-    :ivar imported: Sources the job committed to the project, in book order.
-    :ivar rejected: Files no check let through, each with its reason.
-    :ivar skipped: Names of the files a cancelled job never reached, which no check rejected.
-    """
-
-    imported: Sequence[SourceId] = ()
-    rejected: Sequence[RejectedFile] = ()
-    skipped: Sequence[str] = ()
+        :returns: A failed end with the standard reason.
+        :rtype: Self
+        """
+        return cls(state=JobState.FAILED, error=cls.UNEXPECTED_FAILURE)
 
 
 @frozen(kw_only=True)

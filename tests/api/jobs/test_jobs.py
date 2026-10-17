@@ -20,7 +20,7 @@ from bookreviver.domain.events import (
     SourceImported,
 )
 from bookreviver.domain.ids import PageId
-from bookreviver.domain.values import StageRun
+from bookreviver.domain.values import JobEnd, StageRun
 from tests.helpers.builders import (
     make_job,
     make_page_stage,
@@ -30,6 +30,7 @@ from tests.helpers.builders import (
     make_source,
     new_account_id,
 )
+from tests.helpers.scripted_runner import TASKS_PER_JOB
 from tests.helpers.sse import EVENT_STREAM_TYPE, STREAM_TIMEOUT_SECONDS, EventStreamReader, StreamedEvent
 
 if TYPE_CHECKING:
@@ -42,15 +43,25 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 JOB_PATH: str = '/api/v1/jobs/{job_id}'
-# Fields of the job and project-changed schemas in a JSON body
+JOBS_PATH: str = '/api/v1/projects/{project_id}/jobs'
+ACTIVE_PARAMETER: str = 'active'
+CONTENT_TYPE_HEADER: str = 'content-type'
+PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
+# Fields of the job, the page of jobs and project-changed schemas in a JSON body
 JOB_ID_FIELD: str = 'id'
 JOB_STATE_FIELD: str = 'state'
 PROJECT_ID_FIELD: str = 'project_id'
+PROGRESS_FIELD: str = 'progress'
+DONE_FIELD: str = 'done'
+TOTAL_FIELD: str = 'total'
+FRACTION_FIELD: str = 'fraction'
+ERROR_FIELD: str = 'error'
+ITEMS_FIELD: str = 'items'
 
 
 @pytest.fixture
 async def fx_queued_job(fx_fakes: JobFakes, fx_actor: Actor) -> Job:
-    """Store a project of the signed-in account with a queued job that no worker picks up.
+    """Store a project of the signed-in account with a queued job that nothing runs.
 
     :param fx_fakes: Adapters the application runs on.
     :type fx_fakes: JobFakes
@@ -60,9 +71,8 @@ async def fx_queued_job(fx_fakes: JobFakes, fx_actor: Actor) -> Job:
     :rtype: Job
     """
     project = make_project(owner_id=fx_actor.account_id)
-    job = make_job(project_id=project.id)
-    await fx_fakes.store(project, job)
-    return job
+    await fx_fakes.store(project)
+    return fx_fakes.board.put(make_job(project_id=project.id))
 
 
 @pytest.fixture
@@ -75,9 +85,8 @@ async def fx_strangers_job(fx_fakes: JobFakes) -> Job:
     :rtype: Job
     """
     project = make_project(owner_id=new_account_id())
-    job = make_job(project_id=project.id)
-    await fx_fakes.store(project, job)
-    return job
+    await fx_fakes.store(project)
+    return fx_fakes.board.put(make_job(project_id=project.id))
 
 
 class TestReadJob:
@@ -95,7 +104,7 @@ class TestReadJob:
         expect(response.status_code == HTTPStatus.OK)
         body = response.json()
         expect((body[JOB_ID_FIELD], body[JOB_STATE_FIELD]) == (str(fx_queued_job.id), JobState.QUEUED))
-        expect(body['progress'] == {'done': 0, 'total': 0, 'fraction': 0.0})
+        expect(body[PROGRESS_FIELD] == {DONE_FIELD: 0, TOTAL_FIELD: 0, FRACTION_FIELD: 0.0})
         assert_expectations()
 
     async def test_run_stage_job_names_its_stage_and_an_import_job_does_not(
@@ -113,8 +122,10 @@ class TestReadJob:
         :type fx_queued_job: Job
         """
         project = make_project(owner_id=fx_actor.account_id)
-        run = make_job(project_id=project.id, kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.GEOMETRY).to_map())
-        await fx_fakes.store(project, run)
+        await fx_fakes.store(project)
+        run = fx_fakes.board.put(
+            make_job(project_id=project.id, kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.GEOMETRY).to_map())
+        )
         run_body = (await fx_client.get(JOB_PATH.format(job_id=run.id))).json()
         import_body = (await fx_client.get(JOB_PATH.format(job_id=fx_queued_job.id))).json()
         expect((run_body['kind'], run_body['stage']) == (JobKind.RUN_STAGE, Stage.GEOMETRY))
@@ -133,6 +144,42 @@ class TestReadJob:
         """
         response = await fx_client.get(JOB_PATH.format(job_id=fx_strangers_job.id))
         assert response.status_code == HTTPStatus.NOT_FOUND
+
+    async def test_job_the_process_does_not_hold_is_a_404_problem(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify a job the board does not hold, such as one of before a restart, answers 404 as a problem document.
+
+        :param fx_client: Client of the signed-in account.
+        :type fx_client: httpx.AsyncClient
+        """
+        response = await fx_client.get(JOB_PATH.format(job_id=uuid4()))
+        expect(response.status_code == HTTPStatus.NOT_FOUND)
+        expect(response.headers[CONTENT_TYPE_HEADER] == PROBLEM_MEDIA_TYPE)
+        assert_expectations()
+
+
+class TestListJobs:
+    """Tests for GET /projects/{project_id}/jobs."""
+
+    async def test_lists_the_jobs_of_the_project_newest_first_and_the_active_ones_alone(
+        self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_queued_job: Job
+    ) -> None:
+        """Verify the list answers the jobs of the project the board holds, newest first, and ``active`` drops the ended.
+
+        :param fx_client: Client of the signed-in account.
+        :type fx_client: httpx.AsyncClient
+        :param fx_fakes: Adapters the application runs on.
+        :type fx_fakes: JobFakes
+        :param fx_queued_job: Queued job of the signed-in account.
+        :type fx_queued_job: Job
+        """
+        await fx_fakes.board.run_queued()
+        later = fx_fakes.board.put(make_job(project_id=fx_queued_job.project_id, minutes=1))
+        path = JOBS_PATH.format(project_id=fx_queued_job.project_id)
+        everything = (await fx_client.get(path)).json()
+        active = (await fx_client.get(path, params={ACTIVE_PARAMETER: 'true'})).json()
+        expect([job[JOB_ID_FIELD] for job in everything[ITEMS_FIELD]] == [str(later.id), str(fx_queued_job.id)])
+        expect([job[JOB_ID_FIELD] for job in active[ITEMS_FIELD]] == [str(later.id)])
+        assert_expectations()
 
 
 class TestCancelJob:
@@ -162,7 +209,7 @@ class TestCancelJob:
         await fx_client.delete(JOB_PATH.format(job_id=fx_queued_job.id))
         response = await fx_client.delete(JOB_PATH.format(job_id=fx_queued_job.id))
         expect(response.status_code == HTTPStatus.CONFLICT)
-        expect(response.headers['content-type'] == 'application/problem+json')
+        expect(response.headers[CONTENT_TYPE_HEADER] == PROBLEM_MEDIA_TYPE)
         assert_expectations()
 
     async def test_job_of_another_account_is_not_found(
@@ -179,7 +226,7 @@ class TestCancelJob:
         """
         response = await fx_client.delete(JOB_PATH.format(job_id=fx_strangers_job.id))
         expect(response.status_code == HTTPStatus.NOT_FOUND)
-        expect((await fx_fakes.stored_job(fx_strangers_job)).state is JobState.QUEUED)
+        expect(fx_fakes.board.get(fx_strangers_job.id).state is JobState.QUEUED)
         assert_expectations()
 
 
@@ -217,6 +264,86 @@ class TestStreamProjectEvents:
         expect(reader.events[0].data[JOB_STATE_FIELD] == JobState.CANCELLED)
         expect(reader.events[1].data == {PROJECT_ID_FIELD: str(project_id)})
         expect(fx_fakes.events.open_subscriptions == 0)
+        assert_expectations()
+
+    async def test_stream_delivers_the_progress_of_a_running_job(
+        self, fx_app: FastAPI, fx_fakes: JobFakes, fx_queued_job: Job
+    ) -> None:
+        """Verify a job that runs is announced as running, and the tasks it plans reach the stream as its progress.
+
+        :param fx_app: The running application.
+        :type fx_app: FastAPI
+        :param fx_fakes: Adapters the application runs on.
+        :type fx_fakes: JobFakes
+        :param fx_queued_job: Queued job of the signed-in account, which a runner holds inside its first task.
+        :type fx_queued_job: Job
+        """
+        release = fx_fakes.scripted.hold(fx_queued_job)
+        reader = EventStreamReader(count=2)
+        async with anyio.create_task_group() as group:
+            group.start_soon(
+                reader.read, fx_app, fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=fx_queued_job.project_id)
+            )
+            await fx_fakes.events.subscribed.wait()
+            group.start_soon(fx_fakes.board.run_queued)
+            # The runner holds the job inside its first task, once the board has announced it and its plan
+            await anyio.wait_all_tasks_blocked()
+            release.set()
+        running, planned = (event.data for event in reader.events)
+        expect([event.name for event in reader.events] == [EventName.JOB_CHANGED] * 2)
+        expect((running[JOB_ID_FIELD], running[JOB_STATE_FIELD]) == (str(fx_queued_job.id), JobState.RUNNING))
+        expect(planned[PROGRESS_FIELD][TOTAL_FIELD] == TASKS_PER_JOB)
+        assert_expectations()
+
+    async def test_stream_delivers_the_end_of_a_job(
+        self, fx_app: FastAPI, fx_fakes: JobFakes, fx_queued_job: Job
+    ) -> None:
+        """Verify every task of a job reaches the stream, and the last event is the job as succeeded with its tasks done.
+
+        :param fx_app: The running application.
+        :type fx_app: FastAPI
+        :param fx_fakes: Adapters the application runs on.
+        :type fx_fakes: JobFakes
+        :param fx_queued_job: Queued job of the signed-in account.
+        :type fx_queued_job: Job
+        """
+        # The running state, the three tasks, and the end
+        reader = EventStreamReader(count=TASKS_PER_JOB + 2)
+        async with anyio.create_task_group() as group:
+            group.start_soon(
+                reader.read, fx_app, fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=fx_queued_job.project_id)
+            )
+            await fx_fakes.events.subscribed.wait()
+            await fx_fakes.board.run_queued()
+        done = [event.data[PROGRESS_FIELD][DONE_FIELD] for event in reader.events]
+        expect(done == [0, *range(1, TASKS_PER_JOB + 1), TASKS_PER_JOB])
+        expect(reader.events[-1].data[JOB_STATE_FIELD] == JobState.SUCCEEDED)
+        expect(reader.events[-1].data[PROGRESS_FIELD][FRACTION_FIELD] == pytest.approx(1.0))
+        assert_expectations()
+
+    async def test_stream_delivers_the_failure_of_a_job_with_its_reason(
+        self, fx_app: FastAPI, fx_fakes: JobFakes, fx_queued_job: Job
+    ) -> None:
+        """Verify a job that stops on an error nobody expected reaches the stream as failed, with the standard reason.
+
+        :param fx_app: The running application.
+        :type fx_app: FastAPI
+        :param fx_fakes: Adapters the application runs on.
+        :type fx_fakes: JobFakes
+        :param fx_queued_job: Queued job of the signed-in account, which the runner is told to break.
+        :type fx_queued_job: Job
+        """
+        fx_fakes.scripted.fail(fx_queued_job)
+        reader = EventStreamReader(count=2)
+        async with anyio.create_task_group() as group:
+            group.start_soon(
+                reader.read, fx_app, fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=fx_queued_job.project_id)
+            )
+            await fx_fakes.events.subscribed.wait()
+            await fx_fakes.board.run_queued()
+        failed = reader.events[-1].data
+        expect(failed[JOB_STATE_FIELD] == JobState.FAILED)
+        expect(failed[ERROR_FIELD] == JobEnd.UNEXPECTED_FAILURE)
         assert_expectations()
 
     async def test_stream_names_the_changes_of_the_book(

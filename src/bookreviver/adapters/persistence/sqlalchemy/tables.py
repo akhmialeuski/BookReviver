@@ -1,6 +1,6 @@
 """Tables of the books feature, private to the SQLAlchemy persistence adapter.
 
-The module declares the ``projects``, ``jobs``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
+The module declares the ``projects``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
 ``page_step_states``, ``page_step_changes``, ``step_values``, ``result_mark_changes``, ``pagination_sections``,
 ``book_places``, ``recipes`` and ``recipe_profiles`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped``
 annotations, ``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from advanced-alchemy's
@@ -12,14 +12,14 @@ application, so no column or index carries a variant for another database.
 Rows never leave the adapter. The mappers in :mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turn them into
 frozen domain entities, so nothing outside this package depends on the shape of a table.
 
-A project owns its sources, scans, pages, recipes and jobs, a source owns its scans, and a page owns its versions,
+A project owns its sources, scans, pages and recipes, a source owns its scans, and a page owns its versions,
 its stage records, its step states and its history. The foreign keys carry ``ON DELETE CASCADE``, so the database
 removes them with their owner. An optional reference carries ``ON DELETE SET NULL`` instead: a page keeps its row
-when its scan is deleted, a source when its import job is, a version when its input version is, and a stage record
-when its head version or its recipe is, a recipe when its profile is, because a page of the book holds its own copy of
-its image. The relationships use ``passive_deletes=True`` to leave that deletion to the database, and ``lazy="raise"``
-so that no query runs unseen on attribute access, inside a transaction or after its session has closed. Unique keys are
-declared with their table, and the shared naming convention names them.
+when its scan is deleted, a version when its input version is, and a stage record when its head version or its recipe
+is, a recipe when its profile is, because a page of the book holds its own copy of its image. The relationships use
+``passive_deletes=True`` to leave that deletion to the database, and ``lazy="raise"`` so that no query runs unseen on
+attribute access, inside a transaction or after its session has closed. Unique keys are declared with their table, and
+the shared naming convention names them.
 
 The owner of a project refers to the ``user`` table of fastapi-users with ``ON DELETE RESTRICT``. A cascade would
 remove the rows of the owner's projects but not their files, so an account is deleted only after its projects have
@@ -45,8 +45,6 @@ from bookreviver.domain.enums import (
     EditorKind,
     FileType,
     ImagePolicy,
-    JobKind,
-    JobState,
     LabelStyle,
     NumberDisplay,
     OrderMode,
@@ -56,12 +54,14 @@ from bookreviver.domain.enums import (
     PageOrigin,
     PlaceMode,
     RecipeKind,
+    RejectionReason,
     Rendition,
     ResultMark,
     ReviewReason,
     RightsStatus,
     Script,
     SourceKind,
+    SourceStatus,
     Stage,
     StageState,
     StepLayer,
@@ -105,32 +105,8 @@ VERSION_ID_LENGTH: Final = 16
 EMPTY_OBJECT: Final = '{}'
 # The rows of the partial unique index of ``recipe_profiles``: the default profile of a stage of an account
 DEFAULT_PROFILE: Final = text('is_default')
-# The rows of the partial unique index of ``jobs``: the imports that are queued or running
-ACTIVE_IMPORT: Final = text(
-    f"kind = '{JobKind.IMPORT_SOURCE}' AND state IN ('{JobState.QUEUED}', '{JobState.RUNNING}')"
-)
-# The rows of the partial unique index that keeps a project to one job writing page images: those queued or running
-ACTIVE_PREPARE: Final = text(
-    f"kind = '{JobKind.PREPARE_PAGES}' AND state IN ('{JobState.QUEUED}', '{JobState.RUNNING}')"
-)
-# The rows of the partial unique index that keeps a project to one run, preview or measure that is queued or running
-ACTIVE_REQUESTED: Final = text(
-    'kind IN ('
-    + ', '.join(f"'{kind}'" for kind in sorted(JobKind.requested()))
-    + f") AND state IN ('{JobState.QUEUED}', '{JobState.RUNNING}')"
-)
-# The rows of the partial unique index that keeps a project to one tile cutting or collection that is queued or running
-ACTIVE_HOUSEKEEPING: Final = text(
-    'kind IN ('
-    + ', '.join(f"'{kind}'" for kind in sorted(JobKind.housekeeping()))
-    + f") AND state IN ('{JobState.QUEUED}', '{JobState.RUNNING}')"
-)
-# The rows of the partial unique index that keeps a project to one job processing its versions at a time: the running
-RUNNING_PROCESSING: Final = text(
-    'kind IN ('
-    + ', '.join(f"'{kind}'" for kind in sorted(JobKind.processing()))
-    + f") AND state = '{JobState.RUNNING}'"
-)
+# The rows of the partial unique index of ``sources``: the imported sources, which are the ones that join the book
+IMPORTED_SOURCE: Final = text(f"status = '{SourceStatus.IMPORTED}'")
 
 
 class Relation(enum.StrEnum):
@@ -140,7 +116,6 @@ class Relation(enum.StrEnum):
     SCANS = 'scans'
     PAGES = 'pages'
     VERSIONS = 'versions'
-    JOBS = 'jobs'
     RECIPES = 'recipes'
     STAGES = 'stages'
     STEP_STATES = 'step_states'
@@ -213,7 +188,6 @@ class ProjectRow(DefaultBase):
     :ivar sources: Sources of the project, never loaded implicitly.
     :ivar pages: Pages of the project, never loaded implicitly.
     :ivar recipes: Recipes of the project, never loaded implicitly.
-    :ivar jobs: Background jobs of the project, never loaded implicitly.
     """
 
     __tablename__ = 'projects'
@@ -270,116 +244,45 @@ class ProjectRow(DefaultBase):
     recipes: Mapped[list[RecipeRow]] = relationship(
         back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
-    jobs: Mapped[list[JobRow]] = relationship(
-        back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
-    )
-
-
-class JobRow(DefaultBase):
-    """Row of one background job of a project and how far it has come.
-
-    :ivar id: Job identifier, assigned by the domain.
-    :ivar project_id: Project the job works on.
-    :ivar kind: What the job does, stored by value.
-    :ivar state: Where the job is in its lifecycle, stored by value.
-    :ivar progress_done: Number of finished units of work.
-    :ivar progress_total: Number of units of work in the job.
-    :ivar error: Message of the failure, empty unless the job failed.
-    :ivar request: The files an import job was asked to import, as JSON, or null for a job that takes none.
-    :ivar params: What a processing job was asked to do, as a JSON object, empty for a job without.
-    :ivar result: What an import job did with them, as JSON, or null until it has finished.
-    :ivar created_at: Time the job was queued.
-    :ivar started_at: Time the job started, or null while queued.
-    :ivar finished_at: Time the job ended, or null while it runs.
-    :ivar project: Project owning the job, never loaded implicitly.
-    """
-
-    __tablename__ = 'jobs'
-    # A project runs one import at a time, and only the database can keep two uploads that both passed a check
-    # before either committed from being both stored. It writes the images of its pages with one job at a time for the
-    # same reason: two jobs that both passed the check would write the files of one version at once. It also runs one
-    # job at a time that processes the versions of its pages, since a collection deletes the versions a run may be
-    # reusing and two runs write the same files
-    __table_args__ = (
-        Index(
-            'ix_jobs_one_active_import',
-            PROJECT_ID_COLUMN,
-            unique=True,
-            sqlite_where=ACTIVE_IMPORT,
-        ),
-        Index(
-            'ix_jobs_one_active_prepare',
-            PROJECT_ID_COLUMN,
-            unique=True,
-            sqlite_where=ACTIVE_PREPARE,
-        ),
-        Index(
-            'ix_jobs_one_active_requested',
-            PROJECT_ID_COLUMN,
-            unique=True,
-            sqlite_where=ACTIVE_REQUESTED,
-        ),
-        Index(
-            'ix_jobs_one_active_housekeeping',
-            PROJECT_ID_COLUMN,
-            unique=True,
-            sqlite_where=ACTIVE_HOUSEKEEPING,
-        ),
-        Index(
-            'ix_jobs_one_running_processing',
-            PROJECT_ID_COLUMN,
-            unique=True,
-            sqlite_where=RUNNING_PROCESSING,
-        ),
-    )
-
-    id: Mapped[UUID] = mapped_column(primary_key=True)
-    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), index=True)
-    kind: Mapped[JobKind] = mapped_column(enum_by_value(JobKind))
-    state: Mapped[JobState] = mapped_column(enum_by_value(JobState))
-    progress_done: Mapped[int]
-    progress_total: Mapped[int]
-    error: Mapped[str]
-    request: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    params: Mapped[dict[str, Any]] = mapped_column(JSON, server_default=EMPTY_OBJECT)
-    result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime]
-    started_at: Mapped[datetime | None]
-    finished_at: Mapped[datetime | None]
-
-    project: Mapped[ProjectRow] = relationship(back_populates=Relation.JOBS, lazy=NO_IMPLICIT_LOAD)
 
 
 class SourceRow(DefaultBase):
-    """Row of one source of a project, unique within the project by the digest of its main file.
+    """Row of one uploaded file of a project: an imported source, or a file the import rejected or skipped.
 
     The stored files and the description values the source suggests are value objects in the domain and JSON here,
-    since no query looks inside them.
+    since no query looks inside them. An imported source is unique within the project by the digest of its main file,
+    which a partial unique index keeps, so a rejected or skipped file may repeat a digest, as a duplicate does.
 
     :ivar id: Source identifier, assigned by the domain.
     :ivar project_id: Project owning the source.
-    :ivar kind: Kind of the source, stored by value.
-    :ivar file_type: Exact format of the main file, stored by value.
+    :ivar kind: Kind of the source, stored by value, or null for a rejected or skipped file of an unknown type.
+    :ivar file_type: Exact format of the main file, stored by value, or null for a file of an unknown type.
     :ivar file_name: Name the browser sent for the main file.
-    :ivar files: Name, size and digest of every stored file, the main file first, as JSON.
+    :ivar files: Name, size and digest of every staged file, the main file first, as JSON.
     :ivar size_bytes: Total size of the files in bytes.
     :ivar sha256: SHA-256 digest of the main file.
     :ivar scan_count: Number of scans the source holds.
     :ivar metadata_: Technical metadata of the format, as JSON in the ``metadata`` column.
     :ivar suggestion: Description values found in the file, as JSON.
-    :ivar import_job_id: Import job that created the source, emptied when that job is deleted.
-    :ivar imported_at: Time the source became part of the project.
+    :ivar status: Whether the file was imported, rejected or skipped, stored by value.
+    :ivar rejection: Why a rejected file was refused, stored by value, or null.
+    :ivar detail: Text for the reader that says more than the reason, or empty.
+    :ivar imported_at: Time the file was recorded, which for an imported source is when it became part of the project.
     :ivar project: Project owning the source, never loaded implicitly.
     :ivar scans: Scans of the source, never loaded implicitly.
     """
 
     __tablename__ = 'sources'
-    __table_args__ = (UniqueConstraint(PROJECT_ID_COLUMN, 'sha256'),)
+    __table_args__ = (
+        Index(
+            'ix_sources_one_imported_per_digest', PROJECT_ID_COLUMN, 'sha256', unique=True, sqlite_where=IMPORTED_SOURCE
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), index=True)
-    kind: Mapped[SourceKind] = mapped_column(enum_by_value(SourceKind))
-    file_type: Mapped[FileType] = mapped_column(enum_by_value(FileType))
+    kind: Mapped[SourceKind | None] = mapped_column(enum_by_value(SourceKind))
+    file_type: Mapped[FileType | None] = mapped_column(enum_by_value(FileType))
     file_name: Mapped[str]
     files: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
     size_bytes: Mapped[int]
@@ -387,7 +290,11 @@ class SourceRow(DefaultBase):
     scan_count: Mapped[int]
     metadata_: Mapped[dict[str, Any]] = mapped_column(METADATA_COLUMN, JSON)
     suggestion: Mapped[dict[str, Any]] = mapped_column(JSON)
-    import_job_id: Mapped[UUID | None] = mapped_column(ForeignKey(JobRow.id, ondelete=SET_NULL), index=True)
+    status: Mapped[SourceStatus] = mapped_column(
+        enum_by_value(SourceStatus), server_default=SourceStatus.IMPORTED.value
+    )
+    rejection: Mapped[RejectionReason | None] = mapped_column(enum_by_value(RejectionReason))
+    detail: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     imported_at: Mapped[datetime]
 
     project: Mapped[ProjectRow] = relationship(back_populates=Relation.SOURCES, lazy=NO_IMPLICIT_LOAD)

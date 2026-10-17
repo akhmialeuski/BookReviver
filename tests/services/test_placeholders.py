@@ -28,15 +28,14 @@ from bookreviver.domain.errors import ConflictError, NotAPlaceholderError, NotFo
 from bookreviver.domain.events import JobChanged, PagesChanged, PageVersionReady
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import NewPage, PageAnchor, PageSize, Renditions
-from bookreviver.ports.runtime import JobQueue
+from bookreviver.domain.values import JobEnd, NewPage, PageAnchor, PageSize, Renditions
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
-from bookreviver.services.pages import NOT_QUEUED, UNEXPECTED_FAILURE
+from bookreviver.services.pages import PAGES_FAILED, UNEXPECTED_FAILURE
 from tests.helpers.acting_renditions import ActingRenditionWriter
 from tests.helpers.books import IMAGE
 from tests.helpers.builders import EPOCH, make_job, make_page, make_project, make_scan, make_source, new_account_id
+from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import FakeRenditionWriter
-from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.page_services import PREVIEW_CONTENT, THUMBNAIL_CONTENT, make_page_service
 from tests.helpers.seeding import commit_project
 
@@ -45,16 +44,16 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.adapters.clock.system import FixedClock
-    from bookreviver.adapters.jobs.recording import RecordingJobQueue
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.adapters.storage import LocalAssetStore
-    from bookreviver.domain.entities import Actor, Page, PageOverview, PageVersion, Project, Scan, Source
+    from bookreviver.domain.entities import Actor, Job, Page, PageOverview, PageVersion, Project, Scan, Source
     from bookreviver.domain.enums import ColorMode
-    from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.values import RenditionInfo
     from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
     from tests.helpers.book_gate import GatedUnitOfWork
+    from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 
@@ -121,21 +120,6 @@ class FlakyRenditionWriter(FakeRenditionWriter):
             err_msg = 'No space left on device'
             raise OSError(err_msg)
         return await super().write(image, target_dir, full=full, color_mode=color_mode)
-
-
-class BrokenQueue(JobQueue):
-    """A job queue that cannot take a job."""
-
-    @override
-    async def enqueue(self, job: object) -> None:
-        """Refuse the job.
-
-        :param job: Job to enqueue.
-        :type job: object
-        :raises ConnectionError: Always.
-        """
-        err_msg = 'The broker is down'
-        raise ConnectionError(err_msg)
 
 
 async def _commit_book(
@@ -244,15 +228,59 @@ def _stored_versions(database: InMemoryDatabase, page: Page) -> list[PageVersion
     return [version for version in database.tables.page_versions.values() if version.page_id == page.id]
 
 
-def _job_kinds(database: InMemoryDatabase) -> list[tuple[JobKind, JobState]]:
-    """Read the kind and state of every committed job.
+def _job_kinds(board: FakeJobBoard) -> list[tuple[JobKind, JobState]]:
+    """Read the kind and the state, as the board holds it now, of every job put on the board.
 
-    :param database: In-memory database to read.
-    :type database: InMemoryDatabase
-    :returns: Kind and state of each job.
+    :param board: Board that records the jobs put on it.
+    :type board: FakeJobBoard
+    :returns: Kind and state of each job, in the order the jobs were put.
     :rtype: list[tuple[JobKind, JobState]]
     """
-    return [(job.kind, job.state) for job in database.tables.jobs.values()]
+    return [(job.kind, board.get(job.id).state) for job in board.put_jobs]
+
+
+def _prepare_jobs(board: FakeJobBoard) -> list[Job]:
+    """Read the ``prepare-pages`` jobs put on the board, as the board holds them now.
+
+    :param board: Board that records the jobs put on it.
+    :type board: FakeJobBoard
+    :returns: The jobs, in the order they were put.
+    :rtype: list[Job]
+    """
+    return [board.get(job.id) for job in board.put_jobs if job.kind is JobKind.PREPARE_PAGES]
+
+
+def _board_that_runs(service: Callable[[], PageService], events: RecordingEventBus, clock: FixedClock) -> FakeJobBoard:
+    """Build a board that runs a ``prepare-pages`` job through the page service a test built, and ends any other at once.
+
+    The service puts its jobs on a board, and the board runs them through the service, so a test builds the service
+    over the board this function returns, which the function it passes in reaches when a job runs.
+
+    :param service: Function building the page service that runs a job.
+    :type service: Callable[[], PageService]
+    :param events: Bus the board announces its jobs to.
+    :type events: RecordingEventBus
+    :param clock: Clock stamping the jobs.
+    :type clock: FixedClock
+    :returns: The board, which runs its queues when a test calls ``run_queued``.
+    :rtype: FakeJobBoard
+    """
+
+    async def run(job: Job, control: JobControl) -> JobEnd:
+        """Run a job the way the application would, over the page service of the test.
+
+        :param job: The job the board took from its queue.
+        :type job: Job
+        :param control: What the job reports through.
+        :type control: JobControl
+        :returns: How the job ended.
+        :rtype: JobEnd
+        """
+        if job.kind is not JobKind.PREPARE_PAGES:
+            return JobEnd(state=JobState.SUCCEEDED)
+        return await service().prepare_images(job, control)
+
+    return FakeJobBoard(runner=run, publisher=events, clock=clock)
 
 
 class TestAddPlaceholder:
@@ -264,7 +292,7 @@ class TestAddPlaceholder:
         fx_database: InMemoryDatabase,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
-        fx_events: RecordingEventBus,
+        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
     ) -> None:
         """Verify a placeholder is a page with its fields and no version, after the last page, announced once.
 
@@ -276,9 +304,10 @@ class TestAddPlaceholder:
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_events: Recording event bus of the test.
-        :type fx_events: RecordingEventBus
+        :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
+        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         """
+        events, _, board = fx_runtime
         book = await _commit_book(fx_database, fx_asset_store, fx_actor)
         new = NewPage(origin=NewPageOrigin.PLACEHOLDER, kind=PageKind.TITLE, label='[3]', notes='Lost')
 
@@ -292,10 +321,9 @@ class TestAddPlaceholder:
         expect(page.order_key > book.pages[0].order_key)
         expect((overview.position, overview.image_version) == (1, None))
         expect(_stored_versions(fx_database, page) == [])
-        expect(_job_kinds(fx_database) == [])
+        expect(_job_kinds(board) == [])
         expect(
-            fx_events.published
-            == [PagesChanged(project_id=book.project.id, page_ids=[page.id], change=PageChange.ADDED)]
+            events.published == [PagesChanged(project_id=book.project.id, page_ids=[page.id], change=PageChange.ADDED)]
         )
         assert_expectations()
 
@@ -374,7 +402,7 @@ class TestAddBlank:
         fx_database: InMemoryDatabase,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
-        fx_queue: RecordingJobQueue,
+        fx_board: FakeJobBoard,
     ) -> None:
         """Verify width, height and resolution are medians taken apart, in a pending ``pages.blank`` version.
 
@@ -388,8 +416,8 @@ class TestAddBlank:
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_queue: Recording job queue.
-        :type fx_queue: RecordingJobQueue
+        :param fx_board: Board that records the jobs put on it.
+        :type fx_board: FakeJobBoard
         """
         book = await _commit_book(fx_database, fx_asset_store, fx_actor, SIZES)
         new = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.ENDPAPER)
@@ -405,8 +433,7 @@ class TestAddBlank:
         expect(PageSize.from_data(version.data) == PageSize(width_px=200, height_px=300, dpi=200.0))
         expect(version.renditions == Renditions(ready=False, full=Rendition.FULL_PNG))
         expect(len(_stored_versions(fx_database, second.page)) == 1)
-        expect(_job_kinds(fx_database) == [(JobKind.PREPARE_PAGES, JobState.QUEUED)])
-        expect([job.kind for job in fx_queue.enqueued] == [JobKind.PREPARE_PAGES])
+        expect(_job_kinds(fx_board) == [(JobKind.PREPARE_PAGES, JobState.QUEUED)])
         assert_expectations()
 
     async def test_median_of_an_even_number_of_pages_is_rounded_and_leaves_out_what_is_not_counted(
@@ -475,7 +502,7 @@ class TestAddBlank:
         fx_service: Callable[[], PageService],
         fx_database: InMemoryDatabase,
         fx_actor: Actor,
-        fx_queue: RecordingJobQueue,
+        fx_board: FakeJobBoard,
     ) -> None:
         """Verify an empty book gives a blank leaf no size to take, so nothing is stored or queued.
 
@@ -485,8 +512,8 @@ class TestAddBlank:
         :type fx_database: InMemoryDatabase
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_queue: Recording job queue.
-        :type fx_queue: RecordingJobQueue
+        :param fx_board: Board that records the jobs put on it.
+        :type fx_board: FakeJobBoard
         """
         project = make_project(owner_id=fx_actor.account_id)
         await commit_project(fx_database, project, make_page(project_id=project.id))
@@ -495,79 +522,7 @@ class TestAddBlank:
             await fx_service().add(fx_actor, project.id, NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK))
 
         expect(len(fx_database.tables.pages) == 1)
-        expect(fx_queue.enqueued == [])
-        assert_expectations()
-
-    async def test_a_queue_that_refuses_the_job_does_not_fail_the_request_that_made_the_page(
-        self,
-        fx_service: Callable[[], PageService],
-        fx_database: InMemoryDatabase,
-        fx_asset_store: LocalAssetStore,
-        fx_actor: Actor,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
-    ) -> None:
-        """Verify the page is committed and answered, the failed job is stored and announced, and the project is free.
-
-        The page exists once the request commits it, so an error would make a client add it a second time. The
-        refused job is failed, which leaves the next page able to queue a job that takes this page's version too.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param fx_runtime: The recording bus, the clock and the queue of the test.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
-        """
-        book = await _commit_book(fx_database, fx_asset_store, fx_actor)
-        events, clock, queue = fx_runtime
-        broken = make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, (events, clock, BrokenQueue()))
-        new = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
-
-        first = await broken.add(fx_actor, book.project.id, new)
-
-        failed_events = [
-            event.job for event in events.published if isinstance(event, JobChanged) and event.job.state.is_final
-        ]
-        expect(_job_kinds(fx_database) == [(JobKind.PREPARE_PAGES, JobState.FAILED)])
-        expect([(job.state, job.error) for job in failed_events] == [(JobState.FAILED, NOT_QUEUED)])
-        expect(first.page.id in fx_database.tables.pages and len(_stored_versions(fx_database, first.page)) == 1)
-        second = await fx_service().add(fx_actor, book.project.id, new)
-        expect([job.kind for job in queue.enqueued] == [JobKind.PREPARE_PAGES])
-        expect(len(_stored_versions(fx_database, second.page)) == 1)
-        assert_expectations()
-
-    async def test_a_bound_scan_is_answered_too_when_the_queue_refuses_the_job(
-        self,
-        fx_database: InMemoryDatabase,
-        fx_asset_store: LocalAssetStore,
-        fx_actor: Actor,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
-    ) -> None:
-        """Verify binding a scan keeps its page and its pending version when the queue refuses the job.
-
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param fx_runtime: The recording bus, the clock and the queue of the test.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
-        """
-        book, placeholder = await _placeholder_book(fx_database, fx_asset_store, fx_actor)
-        scan = await _spare_scan(fx_database, fx_asset_store, book)
-        events, clock, _ = fx_runtime
-        broken = make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, (events, clock, BrokenQueue()))
-
-        overview = await broken.attach_scan(fx_actor, book.project.id, placeholder.id, scan.id)
-
-        expect(overview.page.scan_id == scan.id)
-        expect([version.state for version in _stored_versions(fx_database, placeholder)] == [VersionState.PENDING])
-        expect(_job_kinds(fx_database) == [(JobKind.PREPARE_PAGES, JobState.FAILED)])
+        expect(fx_board.put_jobs == [])
         assert_expectations()
 
 
@@ -580,7 +535,7 @@ class TestAttachScan:
         fx_database: InMemoryDatabase,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
-        fx_queue: RecordingJobQueue,
+        fx_board: FakeJobBoard,
     ) -> None:
         """Verify the page shows the whole scan, keeps its kind and notes, takes the scan's label, and waits for a job.
 
@@ -592,8 +547,8 @@ class TestAttachScan:
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_queue: Recording job queue.
-        :type fx_queue: RecordingJobQueue
+        :param fx_board: Board that records the jobs put on it.
+        :type fx_board: FakeJobBoard
         """
         book, placeholder = await _placeholder_book(fx_database, fx_asset_store, fx_actor)
         scan = await _spare_scan(fx_database, fx_asset_store, book)
@@ -609,7 +564,7 @@ class TestAttachScan:
         )
         expect(version.renditions == Renditions(ready=False, full=Rendition.FULL_JPEG))
         expect(PageSize.from_data(version.data) == PageSize(width_px=2200, height_px=1561, dpi=None))
-        expect([job.kind for job in fx_queue.enqueued] == [JobKind.PREPARE_PAGES])
+        expect([job.kind for job in fx_board.put_jobs] == [JobKind.PREPARE_PAGES])
         assert_expectations()
 
     async def test_binds_the_scan_after_a_printed_number_written_before_it_in_the_queue_of_the_book(
@@ -617,7 +572,7 @@ class TestAttachScan:
         fx_database: InMemoryDatabase,
         fx_gated_uow: Callable[[], GatedUnitOfWork],
         fx_asset_store: LocalAssetStore,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         fx_actor: Actor,
     ) -> None:
         """Verify a printed number written by a change asked for before the scan is bound is kept, and the scan bound.
@@ -632,8 +587,8 @@ class TestAttachScan:
         :type fx_gated_uow: Callable[[], GatedUnitOfWork]
         :param fx_asset_store: Local asset store of the test.
         :type fx_asset_store: LocalAssetStore
-        :param fx_runtime: The recording bus, the clock and the queue the service reports through.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_runtime: The recording bus, the clock and the job board the service reports through.
+        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
@@ -1002,7 +957,7 @@ class TestPrepareImages:
         fx_service: Callable[[], PageService],
         fx_database: InMemoryDatabase,
         fx_actor: Actor,
-        fx_queue: RecordingJobQueue,
+        fx_board: FakeJobBoard,
         fx_storage_root: Path,
     ) -> None:
         """Verify the job leaves a ready ``pages.blank`` version whose full image is a white 1-bit PNG, and its renditions.
@@ -1013,8 +968,8 @@ class TestPrepareImages:
         :type fx_database: InMemoryDatabase
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_queue: Recording job queue.
-        :type fx_queue: RecordingJobQueue
+        :param fx_board: Board that records the jobs put on it.
+        :type fx_board: FakeJobBoard
         :param fx_storage_root: Storage root of the test.
         :type fx_storage_root: Path
         """
@@ -1025,7 +980,7 @@ class TestPrepareImages:
             fx_actor, project.id, NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.ENDPAPER, size=size)
         )
 
-        await fx_service().prepare_images(fx_queue.enqueued[0].id)
+        await fx_board.run_queued()
 
         [version] = _stored_versions(fx_database, overview.page)
         directory = fx_storage_root / ProjectKeys(project.id).version_directory(version)
@@ -1039,31 +994,31 @@ class TestPrepareImages:
 
     async def test_copies_the_scan_of_a_bound_page_into_its_own_directory(
         self,
-        fx_service: Callable[[], PageService],
         fx_database: InMemoryDatabase,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
+        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         fx_storage_root: Path,
     ) -> None:
         """Verify the version of a page bound to a scan holds a byte copy of the scan's full image, and is ready.
 
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
         :param fx_database: In-memory database of the test.
         :type fx_database: InMemoryDatabase
         :param fx_asset_store: Local asset store of the test.
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
+        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         :param fx_storage_root: Storage root of the test.
         :type fx_storage_root: Path
         """
         book, placeholder = await _placeholder_book(fx_database, fx_asset_store, fx_actor)
         scan = await _spare_scan(fx_database, fx_asset_store, book)
-        await fx_service().attach_scan(fx_actor, book.project.id, placeholder.id, scan.id)
+        service = make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime)
+        await service.attach_scan(fx_actor, book.project.id, placeholder.id, scan.id)
 
-        [job] = fx_database.tables.jobs.values()
-        await fx_service().prepare_images(job.id)
+        await fx_runtime[2].run_queued()
 
         [version] = _stored_versions(fx_database, placeholder)
         copy = fx_storage_root / ProjectKeys(book.project.id).version_rendition(version, Rendition.FULL_JPEG)
@@ -1077,7 +1032,7 @@ class TestPrepareImages:
         fx_service: Callable[[], PageService],
         fx_database: InMemoryDatabase,
         fx_actor: Actor,
-        fx_queue: RecordingJobQueue,
+        fx_board: FakeJobBoard,
         fx_events: RecordingEventBus,
     ) -> None:
         """Verify the viewer is told of every version as it is ready, and the job's progress and state end complete.
@@ -1088,8 +1043,8 @@ class TestPrepareImages:
         :type fx_database: InMemoryDatabase
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_queue: Recording job queue.
-        :type fx_queue: RecordingJobQueue
+        :param fx_board: Board that records the jobs put on it.
+        :type fx_board: FakeJobBoard
         :param fx_events: Recording event bus of the test.
         :type fx_events: RecordingEventBus
         """
@@ -1100,10 +1055,10 @@ class TestPrepareImages:
         first = await fx_service().add(fx_actor, project.id, new)
         second = await fx_service().add(fx_actor, project.id, new)
 
-        await fx_service().prepare_images(fx_queue.enqueued[0].id)
+        await fx_board.run_queued()
 
         ready = [event.version.page_id for event in fx_events.published if isinstance(event, PageVersionReady)]
-        job = fx_database.tables.jobs[fx_queue.enqueued[0].id]
+        [job] = _prepare_jobs(fx_board)
         # The clock is stopped, so the two versions are told apart by their identifiers, which are hashes
         expect(sorted(ready) == sorted([first.page.id, second.page.id]))
         expect((job.state, job.progress.done, job.progress.total) == (JobState.SUCCEEDED, 2, 2))
@@ -1118,7 +1073,8 @@ class TestPrepareImages:
         fx_database: InMemoryDatabase,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_events: RecordingEventBus,
+        fx_clock: FixedClock,
     ) -> None:
         """Verify a version the maker failed on is stored as failed, the job ends failed, and a later job makes it.
 
@@ -1128,40 +1084,46 @@ class TestPrepareImages:
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_runtime: The recording bus, the stopped clock and the recording queue of the test.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_events: Recording event bus of the test.
+        :type fx_events: RecordingEventBus
+        :param fx_clock: Clock stopped at the epoch.
+        :type fx_clock: FixedClock
         """
         flaky = FlakyRenditionWriter(fail_first=1)
-        queue = fx_runtime[2]
 
         def service() -> PageService:
-            """Build a service whose maker of blank leaves fails once.
+            """Build a service whose maker of blank leaves fails once, over the board that runs its jobs.
 
             :returns: The page service of a new unit of work.
             :rtype: PageService
             """
-            return make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime, renditions=flaky)
+            return make_page_service(
+                InMemoryUnitOfWork(fx_database), fx_asset_store, (fx_events, fx_clock, board), renditions=flaky
+            )
 
+        board = _board_that_runs(service, fx_events, fx_clock)
         project = make_project(owner_id=fx_actor.account_id)
         await commit_project(fx_database, project)
         new = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=PageSize(width_px=8, height_px=8))
         first = await service().add(fx_actor, project.id, new)
 
-        await service().prepare_images(queue.enqueued[0].id)
+        await board.run_queued()
 
         [failed] = _stored_versions(fx_database, first.page)
+        [failed_job] = _prepare_jobs(board)
         expect(failed.state is VersionState.FAILED)
         expect(
             VersionData.ERROR in failed.data and failed.renditions == Renditions(ready=False, full=Rendition.FULL_PNG)
         )
-        expect(fx_database.tables.jobs[queue.enqueued[0].id].state is JobState.FAILED)
+        expect((failed_job.state, failed_job.error) == (JobState.FAILED, PAGES_FAILED.format(count=1)))
         second = await service().add(fx_actor, project.id, new)
-        await service().prepare_images(queue.enqueued[1].id)
+        await board.run_queued()
         [again] = _stored_versions(fx_database, first.page)
+        [_, later_job] = _prepare_jobs(board)
         expect(again.state is VersionState.READY)
         expect(VersionData.ERROR not in again.data)
         expect(_stored_versions(fx_database, second.page)[0].state is VersionState.READY)
-        expect(fx_database.tables.jobs[queue.enqueued[1].id].state is JobState.SUCCEEDED)
+        expect(later_job.state is JobState.SUCCEEDED)
         assert_expectations()
 
     async def test_page_whose_scan_was_deleted_fails_with_that_reason(
@@ -1170,7 +1132,7 @@ class TestPrepareImages:
         fx_database: InMemoryDatabase,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
-        fx_queue: RecordingJobQueue,
+        fx_board: FakeJobBoard,
     ) -> None:
         """Verify a bound page whose source was deleted before the job ran has nothing to copy, and says so.
 
@@ -1182,8 +1144,8 @@ class TestPrepareImages:
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_queue: Recording job queue.
-        :type fx_queue: RecordingJobQueue
+        :param fx_board: Board that records the jobs put on it.
+        :type fx_board: FakeJobBoard
         """
         book, placeholder = await _placeholder_book(fx_database, fx_asset_store, fx_actor)
         scan = await _spare_scan(fx_database, fx_asset_store, book)
@@ -1192,7 +1154,7 @@ class TestPrepareImages:
             book.project.id, lambda repos, _project: repos.sources.delete(scan.source_id)
         )
 
-        await fx_service().prepare_images(fx_queue.enqueued[0].id)
+        await fx_board.run_queued()
 
         [version] = _stored_versions(fx_database, placeholder)
         expect(version.state is VersionState.FAILED)
@@ -1204,10 +1166,10 @@ class TestPrepareImages:
         fx_service: Callable[[], PageService],
         fx_database: InMemoryDatabase,
         fx_actor: Actor,
-        fx_queue: RecordingJobQueue,
+        fx_board: FakeJobBoard,
         fx_events: RecordingEventBus,
     ) -> None:
-        """Verify a job that is cancelled before a worker takes it leaves its versions pending.
+        """Verify a job that is cancelled before the board takes it never runs and leaves its versions pending.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -1215,8 +1177,8 @@ class TestPrepareImages:
         :type fx_database: InMemoryDatabase
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_queue: Recording job queue.
-        :type fx_queue: RecordingJobQueue
+        :param fx_board: Board that records the jobs put on it.
+        :type fx_board: FakeJobBoard
         :param fx_events: Recording event bus of the test.
         :type fx_events: RecordingEventBus
         """
@@ -1226,41 +1188,36 @@ class TestPrepareImages:
         overview = await fx_service().add(
             fx_actor, project.id, NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=size)
         )
-        job = fx_queue.enqueued[0]
-        await InMemoryUnitOfWork(fx_database).change(
-            lambda repos: repos.jobs.update(evolve(job, state=JobState.CANCELLED))
-        )
+        [job] = fx_board.put_jobs
+        await fx_board.cancel(job.id)
         published = len(fx_events.published)
 
-        await fx_service().prepare_images(job.id)
+        await fx_board.run_queued()
 
+        expect(fx_board.get(job.id).state is JobState.CANCELLED)
         expect(_stored_versions(fx_database, overview.page)[0].state is VersionState.PENDING)
         expect(len(fx_events.published) == published)
         assert_expectations()
 
     async def test_job_with_nothing_to_prepare_succeeds(
-        self,
-        fx_service: Callable[[], PageService],
-        fx_database: InMemoryDatabase,
-        fx_actor: Actor,
+        self, fx_database: InMemoryDatabase, fx_actor: Actor, fx_board: FakeJobBoard
     ) -> None:
         """Verify a job that finds no pending or failed version ends succeeded with no steps.
 
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
         :param fx_database: In-memory database of the test.
         :type fx_database: InMemoryDatabase
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_board: Board that records the jobs put on it.
+        :type fx_board: FakeJobBoard
         """
         project = make_project(owner_id=fx_actor.account_id)
-        job = evolve(make_job(project_id=project.id), kind=JobKind.PREPARE_PAGES)
         await commit_project(fx_database, project)
-        await InMemoryUnitOfWork(fx_database).change(lambda repos: repos.jobs.add(job))
+        job = fx_board.put(make_job(project_id=project.id, kind=JobKind.PREPARE_PAGES))
 
-        await fx_service().prepare_images(job.id)
+        await fx_board.run_queued()
 
-        stored = fx_database.tables.jobs[job.id]
+        stored = fx_board.get(job.id)
         assert (stored.state, stored.progress.done, stored.progress.total) == (JobState.SUCCEEDED, 0, 0)
 
 
@@ -1275,23 +1232,6 @@ class TwoLeaves(NamedTuple):
     project: Project
     pages: list[Page]
     root: Path
-
-
-class FailingBus(RecordingEventBus):
-    """An event bus that cannot publish that a version is ready, as a broken connection would not."""
-
-    @override
-    async def publish(self, event: DomainEvent) -> None:
-        """Refuse a ready version, and record anything else.
-
-        :param event: Event to deliver.
-        :type event: DomainEvent
-        :raises ConnectionError: For ``PageVersionReady``.
-        """
-        if isinstance(event, PageVersionReady):
-            err_msg = 'The event bus is down'
-            raise ConnectionError(err_msg)
-        await super().publish(event)
 
 
 async def _add_leaves(service: Callable[[], PageService], actor: Actor, project: Project, count: int) -> list[Page]:
@@ -1321,7 +1261,7 @@ class TestPrepareImagesWhileTheBookChanges:
         fx_database: InMemoryDatabase,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         fx_storage_root: Path,
     ) -> TwoLeaves:
         """Commit a project with two blank leaves, each queued for its image.
@@ -1332,8 +1272,8 @@ class TestPrepareImagesWhileTheBookChanges:
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account owning the project.
         :type fx_actor: Actor
-        :param fx_runtime: The recording bus, the stopped clock and the recording queue of the test.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
+        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         :param fx_storage_root: Storage root of the test.
         :type fx_storage_root: Path
         :returns: The project, its two pages and the storage root.
@@ -1354,7 +1294,7 @@ class TestPrepareImagesWhileTheBookChanges:
         self,
         fx_database: InMemoryDatabase,
         fx_asset_store: LocalAssetStore,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         fx_leaves: TwoLeaves,
         victim: str,
     ) -> None:
@@ -1368,14 +1308,14 @@ class TestPrepareImagesWhileTheBookChanges:
         :type fx_database: InMemoryDatabase
         :param fx_asset_store: Local asset store of the test.
         :type fx_asset_store: LocalAssetStore
-        :param fx_runtime: The recording bus, the stopped clock and the recording queue of the test.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
+        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         :param fx_leaves: The project and its two leaves.
         :type fx_leaves: TwoLeaves
         :param victim: Whether the page deleted is the one being written or the other one.
         :type victim: str
         """
-        events, _, queue = fx_runtime
+        events, clock, board = fx_runtime
         project, pages, root = fx_leaves
         deleted: list[PageId] = []
 
@@ -1398,11 +1338,14 @@ class TestPrepareImagesWhileTheBookChanges:
             renditions=ActingRenditionWriter(delete_in_another_transaction),
         )
 
-        await service.prepare_images(queue.enqueued[0].id)
+        # The board of the fixture holds the job of the two leaves, and it runs here through the service that deletes
+        runner_board = _board_that_runs(lambda: service, events, clock)
+        queued = runner_board.put(board.put_jobs[0])
+        await runner_board.run_queued()
 
         [gone] = deleted
         [kept] = [page for page in pages if page.id != gone]
-        job = fx_database.tables.jobs[queue.enqueued[0].id]
+        job = runner_board.get(queued.id)
         expect((job.state, job.error, job.progress.done, job.progress.total) == (JobState.SUCCEEDED, '', 2, 2))
         expect([version.state for version in _stored_versions(fx_database, kept)] == [VersionState.READY])
         expect(_stored_versions(fx_database, next(page for page in pages if page.id == gone)) == [])
@@ -1412,16 +1355,18 @@ class TestPrepareImagesWhileTheBookChanges:
         expect(not (root / ProjectKeys(project.id).page(gone)).exists())
         assert_expectations()
 
-    async def test_unexpected_error_ends_the_job_failed_so_the_project_can_queue_another(
+    async def test_unexpected_error_in_the_files_of_a_version_fails_the_version_and_the_job_and_frees_the_project(
         self,
         fx_database: InMemoryDatabase,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_events: RecordingEventBus,
+        fx_clock: FixedClock,
     ) -> None:
-        """Verify an error nobody expected ends the job as failed with its reason, and frees the project.
+        """Verify an error nobody expected stores the version as failed with its reason, ends the job failed, and frees the project.
 
-        A job left running would stop every later page from queueing an image job.
+        The job does not catch an error of its own, so the one of a version is caught where the version is made. A job
+        left active would stop every later page from queueing an image job.
 
         :param fx_database: In-memory database of the test.
         :type fx_database: InMemoryDatabase
@@ -1429,33 +1374,37 @@ class TestPrepareImagesWhileTheBookChanges:
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_runtime: The recording bus, the stopped clock and the recording queue of the test.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_events: Recording event bus of the test.
+        :type fx_events: RecordingEventBus
+        :param fx_clock: Clock stopped at the epoch.
+        :type fx_clock: FixedClock
         """
-        _, clock, queue = fx_runtime
-        project = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, project)
+        flaky = FlakyRenditionWriter(fail_first=1)
 
-        def service(bus: RecordingEventBus) -> PageService:
-            """Build a service that reports to the given bus.
+        def service() -> PageService:
+            """Build a service whose maker of blank leaves fails once, over the board that runs its jobs.
 
-            :param bus: Event bus of the service.
-            :type bus: RecordingEventBus
             :returns: The page service of a new unit of work.
             :rtype: PageService
             """
-            return make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, (bus, clock, queue))
+            return make_page_service(
+                InMemoryUnitOfWork(fx_database), fx_asset_store, (fx_events, fx_clock, board), renditions=flaky
+            )
 
-        [leaf] = await _add_leaves(lambda: service(RecordingEventBus()), fx_actor, project, 1)
+        board = _board_that_runs(service, fx_events, fx_clock)
+        project = make_project(owner_id=fx_actor.account_id)
+        await commit_project(fx_database, project)
+        [leaf] = await _add_leaves(service, fx_actor, project, 1)
 
-        await service(FailingBus()).prepare_images(queue.enqueued[0].id)
+        await board.run_queued()
 
-        job = fx_database.tables.jobs[queue.enqueued[0].id]
-        expect((job.state, job.error) == (JobState.FAILED, UNEXPECTED_FAILURE))
+        [job] = _prepare_jobs(board)
+        [version] = _stored_versions(fx_database, leaf)
+        expect((version.state, version.data[VersionData.ERROR]) == (VersionState.FAILED, UNEXPECTED_FAILURE))
+        expect((job.state, job.error) == (JobState.FAILED, PAGES_FAILED.format(count=1)))
         expect(job.finished_at is not None)
-        await _add_leaves(lambda: service(RecordingEventBus()), fx_actor, project, 1)
-        expect(len(queue.enqueued) == FAILED_AND_NEXT_JOBS)
-        expect(leaf.id in fx_database.tables.pages)
+        await _add_leaves(service, fx_actor, project, 1)
+        expect(len(_prepare_jobs(board)) == FAILED_AND_NEXT_JOBS)
         assert_expectations()
 
     async def test_a_page_added_while_a_job_runs_gets_no_second_job_and_a_follow_up_when_it_ends(
@@ -1463,12 +1412,14 @@ class TestPrepareImagesWhileTheBookChanges:
         fx_database: InMemoryDatabase,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_events: RecordingEventBus,
+        fx_clock: FixedClock,
     ) -> None:
         """Verify one job runs at a time, and the version committed meanwhile is not missed.
 
         A leaf is added in another request while the first job writes its leaf. That request finds the job running
-        and queues none, and the job, which had read its versions before, queues one more when it ends.
+        and puts none, and the job, which had read its versions before, puts one more when it ends, which the board
+        runs after it.
 
         :param fx_database: In-memory database of the test.
         :type fx_database: InMemoryDatabase
@@ -1476,56 +1427,67 @@ class TestPrepareImagesWhileTheBookChanges:
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_runtime: The recording bus, the stopped clock and the recording queue of the test.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_events: Recording event bus of the test.
+        :type fx_events: RecordingEventBus
+        :param fx_clock: Clock stopped at the epoch.
+        :type fx_clock: FixedClock
         """
-        queue = fx_runtime[2]
-        project = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, project)
+        queued_while_running: list[int] = []
+        added: list[Page] = []
 
         def request_service() -> PageService:
-            """Build the service of a new request.
+            """Build the service of a new request, which puts its jobs on the board that runs them.
 
             :returns: The page service of a new unit of work.
             :rtype: PageService
             """
-            return make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime)
-
-        [first] = await _add_leaves(request_service, fx_actor, project, 1)
-        queued_while_running: list[int] = []
-        added: list[Page] = []
+            return make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, (fx_events, fx_clock, board))
 
         async def add_a_leaf(_: PageId) -> None:
-            """Add a leaf in a request of its own, and note how many jobs are queued afterwards.
+            """Add a leaf in a request of its own, and note how many jobs are put afterwards.
 
             :param _: The page whose leaf the job is writing.
             :type _: PageId
             """
             added.extend(await _add_leaves(request_service, fx_actor, project, 1))
-            queued_while_running.append(len(queue.enqueued))
+            queued_while_running.append(len(_prepare_jobs(board)))
 
-        service = make_page_service(
-            InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime, renditions=ActingRenditionWriter(add_a_leaf)
-        )
+        acting = ActingRenditionWriter(add_a_leaf)
 
-        await service.prepare_images(queue.enqueued[0].id)
+        def job_service() -> PageService:
+            """Build the service a job runs through, whose first leaf is written while another request adds one.
+
+            :returns: The page service of a new unit of work.
+            :rtype: PageService
+            """
+            return make_page_service(
+                InMemoryUnitOfWork(fx_database), fx_asset_store, (fx_events, fx_clock, board), renditions=acting
+            )
+
+        board = _board_that_runs(job_service, fx_events, fx_clock)
+        project = make_project(owner_id=fx_actor.account_id)
+        await commit_project(fx_database, project)
+        [first] = await _add_leaves(request_service, fx_actor, project, 1)
+
+        await board.run_queued()
 
         expect(queued_while_running == [1])
-        expect([job.kind for job in queue.enqueued] == [JobKind.PREPARE_PAGES, JobKind.PREPARE_PAGES])
-        await make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, fx_runtime).prepare_images(
-            queue.enqueued[1].id
-        )
+        expect([job.kind for job in _prepare_jobs(board)] == [JobKind.PREPARE_PAGES, JobKind.PREPARE_PAGES])
         expect(
             [_stored_versions(fx_database, page)[0].state for page in (first, *added)]
             == [VersionState.READY, VersionState.READY]
         )
-        expect({job.state for job in fx_database.tables.jobs.values()} == {JobState.SUCCEEDED})
+        expect({board.get(job.id).state for job in board.put_jobs} == {JobState.SUCCEEDED})
         assert_expectations()
 
     async def test_second_leaf_while_a_job_is_queued_queues_no_second_job(
-        self, fx_service: Callable[[], PageService], fx_database: InMemoryDatabase, fx_actor: Actor
+        self,
+        fx_service: Callable[[], PageService],
+        fx_database: InMemoryDatabase,
+        fx_actor: Actor,
+        fx_board: FakeJobBoard,
     ) -> None:
-        """Verify a job queued or running is waited for by later pages, which is what the unique key asks of them.
+        """Verify a job queued or running is waited for by later pages, since a book has one such job at a time.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -1533,13 +1495,15 @@ class TestPrepareImagesWhileTheBookChanges:
         :type fx_database: InMemoryDatabase
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_board: Board that records the jobs put on it.
+        :type fx_board: FakeJobBoard
         """
         project = make_project(owner_id=fx_actor.account_id)
         await commit_project(fx_database, project)
 
         await _add_leaves(fx_service, fx_actor, project, 3)
 
-        assert _job_kinds(fx_database) == [(JobKind.PREPARE_PAGES, JobState.QUEUED)]
+        assert _job_kinds(fx_board) == [(JobKind.PREPARE_PAGES, JobState.QUEUED)]
 
 
 class TestAddBlankWithoutSizedPages:
@@ -1642,7 +1606,7 @@ class TestAddMany:
         self,
         fx_database: InMemoryDatabase,
         fx_asset_store: LocalAssetStore,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         fx_actor: Actor,
         fx_events: RecordingEventBus,
     ) -> None:
@@ -1652,8 +1616,8 @@ class TestAddMany:
         :type fx_database: InMemoryDatabase
         :param fx_asset_store: Local asset store of the test.
         :type fx_asset_store: LocalAssetStore
-        :param fx_runtime: The recording bus, the stopped clock and the recording queue.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_runtime: The recording bus, the stopped clock and the job board.
+        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_events: Recording event bus of the test.
@@ -1684,7 +1648,7 @@ class TestAddMany:
         self,
         fx_database: InMemoryDatabase,
         fx_asset_store: LocalAssetStore,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         fx_actor: Actor,
     ) -> None:
         """Verify a run starts at its anchor, continues after the page before it, and keeps the order listed.
@@ -1693,8 +1657,8 @@ class TestAddMany:
         :type fx_database: InMemoryDatabase
         :param fx_asset_store: Local asset store of the test.
         :type fx_asset_store: LocalAssetStore
-        :param fx_runtime: The recording bus, the stopped clock and the recording queue.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_runtime: The recording bus, the stopped clock and the job board.
+        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
@@ -1727,7 +1691,7 @@ class TestAddMany:
         fx_database: InMemoryDatabase,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
-        fx_queue: RecordingJobQueue,
+        fx_board: FakeJobBoard,
     ) -> None:
         """Verify blank leaves take the median size once, a given size is kept, and one job is queued for all.
 
@@ -1739,8 +1703,8 @@ class TestAddMany:
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_queue: Recording job queue.
-        :type fx_queue: RecordingJobQueue
+        :param fx_board: Board that records the jobs put on it.
+        :type fx_board: FakeJobBoard
         """
         book = await _commit_book(fx_database, fx_asset_store, fx_actor, SIZES)
         sized = PageSize(width_px=8, height_px=9)
@@ -1755,7 +1719,7 @@ class TestAddMany:
         sizes = [PageSize.from_data(_stored_versions(fx_database, added[i].page)[0].data) for i in (0, 2)]
         expect(sizes == [PageSize(width_px=200, height_px=300, dpi=200.0), sized])
         expect(_stored_versions(fx_database, added[1].page) == [])
-        expect([job.kind for job in fx_queue.enqueued] == [JobKind.PREPARE_PAGES])
+        expect([job.kind for job in fx_board.put_jobs] == [JobKind.PREPARE_PAGES])
         assert_expectations()
 
     async def test_a_bad_anchor_in_the_middle_names_its_index_and_stores_nothing(

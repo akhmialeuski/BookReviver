@@ -64,7 +64,6 @@ function jobOf(id: string, state: JobSchema['state'] = 'running'): JobSchema {
     state,
     progress: { done: 0, total: 1, fraction: 0 },
     error: '',
-    result: null,
     created_at: '2026-10-01T00:00:00Z',
     started_at: null,
     finished_at: null,

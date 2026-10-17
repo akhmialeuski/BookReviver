@@ -266,13 +266,15 @@ export function usePreview(
   });
   const jobState = job.data?.state;
   const jobError = job.data?.error ?? '';
+  // The server keeps its jobs in memory, so one it restarted without is not found, and it will never end
+  const jobGone = job.error instanceof ProblemError && job.error.status === HttpStatus.NotFound;
   useEffect(() => {
     if (inflight === null) {
       return;
     }
     // A run or a measure of the book takes the project from a preview by cancelling it, which is no failure of the preview,
-    // so the hook says nothing and asks again once that job has ended
-    if (jobState === 'cancelled') {
+    // so the hook says nothing and asks again once that job has ended. A job that is gone ended the same way
+    if (jobState === 'cancelled' || jobGone) {
       dispatch({ type: 'cancelled' });
       return;
     }
@@ -297,7 +299,7 @@ export function usePreview(
     return () => {
       current = false;
     };
-  }, [inflight, jobState, jobError, projectId, stage]);
+  }, [inflight, jobState, jobError, jobGone, projectId, stage]);
 
   const matches = on && key !== null && state.shown?.key === key;
   return {

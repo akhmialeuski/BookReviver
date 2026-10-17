@@ -12,11 +12,12 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
-from bookreviver.domain.enums import NormalizeParam, Stage, TransformKind, VersionData
+from bookreviver.domain.enums import NormalizeParam, SpanName, Stage, TransformKind, VersionData
 from bookreviver.domain.geometry import ContentBox, Rect
 from bookreviver.domain.margins import NOMINAL_BLOCK_MM
-from bookreviver.domain.values import NewPageEdit, RecipeDraft, StageRun, Step
+from bookreviver.domain.values import NewPageEdit, Progress, RecipeDraft, StageRun, Step
 from tests.helpers.page_batches import PageValues
+from tests.helpers.processing import stored_job
 from tests.helpers.samples import PAPER, png_bytes, text_page
 from tests.helpers.spreads import book_of, head_of, run_stage, use_recipe
 
@@ -42,6 +43,9 @@ CHANGED: int = 0
 # How far a measure by the box may be from the pixels a block takes, which keep a little paper round the ink
 BOX_TOLERANCE_PX: float = 12.0
 MARGIN_TOP_BY_HAND: float = 30.0
+# The versions a page makes in a run of the book by one step that leaves its size to the book: the measuring pass, and
+# the run by the size
+TASKS_PER_PAGE: int = 2
 MANUAL_BOX: ContentBox = ContentBox(left=150, top=170, width=200, height=300)
 # The frame of Select content that the user gave, which is smaller than the block of the page that is changed
 HAND_FRAME: Rect = Rect(left=130, top=160, width=140, height=420)
@@ -133,6 +137,24 @@ class TestOnePageSizeForTheBook:
         expect(abs(height - (largest.height + vertical * pixels_per_mm)) <= BOX_TOLERANCE_PX)
         # The size is not written into the recipe, so it follows the pages when they change
         expect(params[NormalizeParam.PAGE_WIDTH] == 0 and params[NormalizeParam.PAGE_HEIGHT] == 0)
+        assert_expectations()
+
+    async def test_progress_counts_the_pass_that_measures_the_book_as_tasks(self, fx_cv_kit: ProcessingKit) -> None:
+        """Verify a run of three pages plans a task for each step it makes, the first pass that measures them included.
+
+        A page whose step leaves the page size to the book is taken as far as that step once to find its box, and then
+        run by the size of the book, so every page makes two versions and the run has twice as many tasks as pages.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project, pages = await seed_book(fx_cv_kit)
+        fx_cv_kit.tracer.finished.clear()
+        job = await fx_cv_kit.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        await fx_cv_kit.work_queue()
+        tasks = len(pages) * TASKS_PER_PAGE
+        expect(stored_job(fx_cv_kit, job.id).progress == Progress(done=tasks, total=tasks))
+        expect(len(fx_cv_kit.tracer.named(SpanName.STEP)) == tasks)
         assert_expectations()
 
     async def test_the_block_is_placed_and_not_the_sheet_it_lies_on(self, fx_cv_kit: ProcessingKit) -> None:

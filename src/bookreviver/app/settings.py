@@ -40,13 +40,6 @@ class StorageBackend(enum.StrEnum):
     LOCAL = 'local'
 
 
-class JobBroker(enum.StrEnum):
-    """Which Taskiq broker runs background jobs."""
-
-    IN_PROCESS = 'in-process'
-    REDIS = 'redis'
-
-
 class OAuthClient(BaseModel):
     """Credentials of one OAuth application; a provider is enabled when both are set.
 
@@ -168,6 +161,15 @@ class ProcessingSettings(BaseModel):
         return self
 
 
+class JobsSettings(BaseModel):
+    """The board of background jobs, which lives in the memory of the API process.
+
+    :ivar kept_ended: Most ended jobs the board holds for each book, the latest ones, which the activity list shows.
+    """
+
+    kept_ended: PositiveInt = 20
+
+
 class TracingSettings(BaseModel):
     """Measurements of the backend, written as OpenTelemetry spans into a file; off by default.
 
@@ -229,8 +231,6 @@ class Settings(BaseSettings):
     :ivar database_url: SQLAlchemy URL of an SQLite database, or empty for an SQLite file in ``data_dir``.
     :ivar persistence: Persistence backend the container builds.
     :ivar storage: Storage backend the container builds for sources and derived files.
-    :ivar job_broker: Taskiq broker that runs background jobs.
-    :ivar redis_url: Redis address of the Redis job broker.
     :ivar max_upload_bytes: Largest total size of one upload, 4 GiB by default.
     :ivar max_upload_files: Largest number of files in one upload, 10000 by default.
     :ivar event_queue_size: Undelivered events each event subscriber keeps before dropping the oldest.
@@ -240,6 +240,7 @@ class Settings(BaseSettings):
     :ivar mail: Outgoing mail.
     :ivar imaging: Page extraction and tiling.
     :ivar processing: Processing of pages by plugins.
+    :ivar jobs: The board of background jobs.
     :ivar tracing: Measurements of the backend, written as spans into a file.
     """
 
@@ -256,8 +257,6 @@ class Settings(BaseSettings):
     database_url: str = ''
     persistence: PersistenceBackend = PersistenceBackend.SQLALCHEMY
     storage: StorageBackend = StorageBackend.LOCAL
-    job_broker: JobBroker = JobBroker.IN_PROCESS
-    redis_url: str = 'redis://localhost:6379/0'
     max_upload_bytes: PositiveInt = 4 * 1024**3
     max_upload_files: PositiveInt = 10_000
     event_queue_size: PositiveInt = 256
@@ -266,6 +265,7 @@ class Settings(BaseSettings):
     mail: MailSettings = MailSettings()
     imaging: ImagingSettings = ImagingSettings()
     processing: ProcessingSettings = ProcessingSettings()
+    jobs: JobsSettings = JobsSettings()
     tracing: TracingSettings = TracingSettings()
 
     @cached_property

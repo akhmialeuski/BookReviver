@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { ArrowDownUpIcon, FileImageIcon, FileTextIcon, ListOrderedIcon } from 'lucide-react';
-import type { PageSchema, ProjectSchema, ScanSchema, SourceSchema } from '@/api';
+import type { PageSchema, ProjectSchema, ScanSchema } from '@/api';
 import {
   projectApiV1ProjectsProjectIdGetQueryKey,
   updateProjectApiV1ProjectsProjectIdPatchMutation,
@@ -10,6 +10,7 @@ import { planSave, toFields } from '@/features/about/fields';
 import { SuggestionBox } from '@/features/about/SuggestionBanners';
 import { planSuggestion } from '@/features/about/suggestion';
 import { formatRuns, pageRunsOf, resolutionOf } from '@/features/import/facts';
+import type { ImportedSource } from '@/features/import/queries';
 import { DeleteSourceDialog } from '@/features/projects/DeleteSourceDialog';
 import { invalidateProjectList } from '@/features/projects/queries';
 import { FactList } from '@/features/workspace/FactList';
@@ -40,7 +41,7 @@ export function FilePanel({
   pages,
 }: {
   project: ProjectSchema;
-  source: SourceSchema;
+  source: ImportedSource;
   /** The scans of the file that are loaded, from which its resolution is read. */
   scans: readonly ScanSchema[];
   /** Every page of the book. */

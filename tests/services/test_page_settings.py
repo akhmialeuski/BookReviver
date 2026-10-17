@@ -701,7 +701,10 @@ class TestUndoOfAValueForParts:
             actor, project.id, strength_field(step_id, on(ValueScope.GROUP, label=GROUP)), STRONGER
         )
         await put_in_group(fx_kit, pages[2], GROUP)
-        await run_stage(fx_kit, actor, project, GEOMETRY_RUN)
+        # The run names the pages, since the page that joined the group has no stale mark and a run of the whole book
+        # would leave it out, though it is the page that must run with the value of the group
+        every_page = StageRun(stage=Stage.GEOMETRY, page_ids=tuple(page.id for page in pages))
+        await run_stage(fx_kit, actor, project, every_page)
         before = await stages_of(fx_kit, pages)
         await fx_kit.page_history().undo(actor, project.id, PageStepKey(pages[0].id, Stage.GEOMETRY, step_id), None)
         expect(before == [StageState.FRESH] * len(pages))
@@ -836,8 +839,8 @@ class TestRunWithPageSettings:
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         form = evolve(step, params={STRENGTH_PARAMETER: STRONGEST})
         preview = StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=(form,), step_index=0)
-        job = await fx_kit.service().start_preview(actor, project.id, preview)
-        await fx_kit.jobs().preview_step(job.id)
+        await fx_kit.service().start_preview(actor, project.id, preview)
+        await fx_kit.work_queue()
         previews = await fx_kit.uow().read(
             lambda repos: repos.page_versions.list_for_stage(page.id, Stage.GEOMETRY, VersionScale.PREVIEW, EVERYTHING)
         )

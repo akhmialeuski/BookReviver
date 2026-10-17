@@ -1,21 +1,26 @@
-"""The work of the processing jobs a worker takes from the queue: a run of a stage, a preview, tiles and a collection.
+"""The work of the processing jobs the board runs: a run of a stage, a preview, tiles, a collection and a measure.
 
-Each entry point reads its job back, moves it to running, does its work and leaves it in a final state, as every job
-that reports its progress does, through ``JobTracker``. The parameters of a job are read into the value of its kind, and
-a job whose parameters are not valid fails with the reason.
+Each entry point takes its job and the control the job reports through, does the tasks of the job one after the other,
+and returns how the job ended. A task is the processing of one page by one plugin, which is one step of a recipe on one
+page; a tile cutting counts a version, a collection a batch of deletions, a measure of the book the one reading of
+every page's box, and the detection of content a page. The control tells the board after each task, which is where the
+job learns that it was cancelled, so a cancelled job stops between two tasks and never inside one. The parameters of a
+job are read into the value of its kind, and a job whose parameters are not valid ends as failed with the reason. An
+error nobody expected passes to the board, which logs it and fails the job.
 
-A run goes by the pages of the stage and the steps of the recipe, which is the recipe of the kind of each page. The mode
-of the run
-says what it does first with the settings and the manual edits of the pages (``RunPlan``), which it keeps unless it was
-asked to take them away. A recipe whose normalize step leaves the page size to the book is run twice over: the pages
-are first taken as far as the step to find their content boxes, then the size of the book is worked out once from all
-of them, and the pages are run by it, so every page comes out of one size without a press of the button of the measure.
-The run reads the current version of the nearest earlier stage of a page, finds the versions it made before by their
-identifier, makes only what is new, and makes the last version the current one of the stage. A page that fails is
-recorded as failed and the job goes on to the next, and the job succeeds when it processed at least one page. When it
-ends it queues a collection of the project's versions that are no longer current, so their files go as soon as the run
-has replaced them, without the user asking. The collection is stored in the same block as the end of the run, so the
-project is never free between the two.
+A run goes by the pages of the stage and the steps of the recipe, which is the recipe of the kind of each page. A run of
+the whole book leaves out the pages whose result of the stage is fresh already (``RunPlan``), so a run after an
+interruption or a restart of the process makes only what is missing. The mode of the run says what it does first with
+the settings and the manual edits of the pages, which it keeps unless it was asked to take them away. A recipe whose
+normalize step leaves the page size to the book is run twice over: the pages are first taken as far as the step to find
+their content boxes, then the size of the book is worked out once from all of them, and the pages are run by it, so
+every page comes out of one size without a press of the button of the measure. The run reads the current version of the
+nearest earlier stage of a page, finds the versions it made before by their identifier, makes only what is new, and
+makes the last version the current one of the stage. A page that fails is recorded as failed and the job goes on to the
+next, and the job succeeds when it processed at least one page. When it ends well it queues a collection of the
+project's versions that are no longer current, behind itself, so their files go as soon as the run has replaced them,
+without the user asking. A run of the page split that made pages is followed by the detection of the content of the
+pages that have none.
 
 A measure of the book reads the content boxes the normalize step recorded on every page and writes the parameters of
 that step of every Geometry recipe, which marks the pages of those recipes stale.
@@ -32,11 +37,11 @@ import logging
 from itertools import batched
 from typing import TYPE_CHECKING, ClassVar
 
-from bookreviver.domain.enums import JobState, Rendition, RunOutcome, SpanAttribute, SpanName, VersionState
+from bookreviver.domain.enums import JobState, Rendition, RunOutcome, SpanAttribute, SpanName, Stage, VersionState
 from bookreviver.domain.errors import DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.values import StageRun, StepPreview, TileCut, VersionCollection
+from bookreviver.domain.values import JobEnd, StageRun, StepPreview, TileCut, VersionCollection
 from bookreviver.domain.version_chains import readers_first
 from bookreviver.services.book_measure import BookMeasure
 from bookreviver.services.content_detection import ContentDetector
@@ -48,16 +53,17 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bookreviver.domain.entities import Job, Page, PageStage, PageVersion, Project, Recipe
-    from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId
+    from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
     from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.storage import AssetStore
     from bookreviver.services.book_measure import BlockMeasure
+    from bookreviver.services.pages import PageService
     from bookreviver.services.processing_parts import ProcessingParts
     from bookreviver.services.stage_runs import StageRuntime
 
 NO_PAGE_PROCESSED: str = 'No page could be processed. The state of the stage of each page says why.'
 NO_CONTENT_DETECTED: str = 'The content of no page could be detected. The log of the worker says why.'
-UNEXPECTED_FAILURE: str = 'The job stopped because of an unexpected error. It has been logged.'
 VERSIONS_LEFT: str = (
     '{count} versions could not be deleted, because their files could not be removed. The log says why.'
 )
@@ -66,14 +72,22 @@ logger = logging.getLogger(__name__)
 
 
 class ProcessingJobs:
-    """Does the work of the processing jobs for the worker that took them.
+    """Does the work of the processing jobs for the board that runs them.
 
-    :cvar COLLECTION_BATCH_SIZE: How many versions a collection deletes before it commits and reports its progress.
+    :cvar COLLECTION_BATCH_SIZE: How many versions a collection deletes before it commits and counts a task.
     """
 
     COLLECTION_BATCH_SIZE: ClassVar[int] = 100
 
-    def __init__(self, *, uow: UnitOfWork, assets: AssetStore, runtime: StageRuntime, parts: ProcessingParts) -> None:
+    def __init__(
+        self,
+        *,
+        uow: UnitOfWork,
+        assets: AssetStore,
+        runtime: StageRuntime,
+        parts: ProcessingParts,
+        pages: PageService,
+    ) -> None:
         """Work over the ports of one job.
 
         :param uow: Unit of work of the job, whose blocks hold the work as it goes.
@@ -82,210 +96,184 @@ class ProcessingJobs:
         :type assets: AssetStore
         :param runtime: The runner, the catalogue, the publisher, the clock and the size of a preview.
         :type runtime: StageRuntime
-        :param parts: The recipes, the stage records, the job tracker and the job starter over the unit of work.
+        :param parts: The recipes, the stage records and the job starter over the unit of work.
         :type parts: ProcessingParts
+        :param pages: The page service, which queues the detection of the content of the pages a split made.
+        :type pages: PageService
         """
         self._uow = uow
         self._assets = assets
         self._runtime = runtime
+        self._parts = parts
         self._recipes = parts.recipes
         self._records = parts.records
         self._clock = parts.clock
         self._measure = BookMeasure(uow=uow, recipes=parts.recipes, records=parts.records)
-        self._detector = ContentDetector(uow=uow, runtime=runtime, records=parts.records, tracker=parts.tracker)
-        self._tracker = parts.tracker
+        self._detector = ContentDetector(uow=uow, runtime=runtime, records=parts.records)
         self._starter = parts.starter
+        self._pages = pages
 
-    async def run_stage(self, job_id: JobId) -> Job | None:
+    async def run_stage(self, job: Job, control: JobControl) -> JobEnd:
         """Run a ``run-stage`` job: the recipe over the pages, one page after the other.
-
-        :param job_id: Identifier of the job.
-        :type job_id: JobId
-        :returns: The job when the run made at least one page, which the worker follows with the detection of the
-                  content of new pages after the page split, or None when it made none or did not run.
-        :rtype: Job | None
-        :raises NotFoundError: If there is no such job.
-        """
-        if (job := await self._tracker.start(job_id)) is None:
-            return None
-        try:
-            outcomes = await self._run_pages(job)
-        except DomainError as error:
-            await self._tracker.finish(job, JobState.FAILED, error=str(error))
-        except Exception:
-            logger.exception('The run-stage job %s stopped', job_id)
-            await self._tracker.finish(job, JobState.FAILED, error=UNEXPECTED_FAILURE)
-        else:
-            if outcomes is None:
-                return None
-            done, failed, total = outcomes
-            no_page = bool(failed) and not done
-            # The collection is stored with the end of the run, so the project is never free in between
-            await self._tracker.finish(
-                job,
-                JobState.FAILED if no_page else JobState.SUCCEEDED,
-                error=NO_PAGE_PROCESSED if no_page else '',
-                total=total,
-                follow_up=self._starter.new_collection(job.project_id),
-            )
-            return job if done else None
-        return None
-
-    async def preview_step(self, job_id: JobId) -> None:
-        """Run a ``preview-step`` job: the steps of a form on the previews of a page, up to one of them.
-
-        :param job_id: Identifier of the job.
-        :type job_id: JobId
-        :raises NotFoundError: If there is no such job.
-        """
-        if (job := await self._tracker.start(job_id)) is None:
-            return
-        try:
-            await self._preview(job)
-        except DomainError as error:
-            await self._tracker.finish(job, JobState.FAILED, error=str(error))
-        except Exception:
-            logger.exception('The preview-step job %s stopped', job_id)
-            await self._tracker.finish(job, JobState.FAILED, error=UNEXPECTED_FAILURE)
-        else:
-            await self._tracker.finish(job, JobState.SUCCEEDED, total=1)
-
-    async def cut_tiles(self, job_id: JobId) -> None:
-        """Run a ``cut-tiles`` job: the tile pyramids of some versions, each announced when it is cut.
-
-        :param job_id: Identifier of the job.
-        :type job_id: JobId
-        :raises NotFoundError: If there is no such job.
-        """
-        if (job := await self._tracker.start(job_id)) is None:
-            return
-        try:
-            total = await self._cut(job)
-        except DomainError as error:
-            await self._tracker.finish(job, JobState.FAILED, error=str(error))
-        except Exception:
-            logger.exception('The cut-tiles job %s stopped', job_id)
-            await self._tracker.finish(job, JobState.FAILED, error=UNEXPECTED_FAILURE)
-        else:
-            if total is not None:
-                await self._tracker.finish(job, JobState.SUCCEEDED, total=total)
-
-    async def collect_versions(self, job_id: JobId) -> None:
-        """Run a ``collect-versions`` job: delete the old versions that nothing needs, with their files.
-
-        :param job_id: Identifier of the job.
-        :type job_id: JobId
-        :raises NotFoundError: If there is no such job.
-        """
-        if (job := await self._tracker.start(job_id)) is None:
-            return
-        try:
-            outcome = await self._collect(job)
-        except DomainError as error:
-            await self._tracker.finish(job, JobState.FAILED, error=str(error))
-        except Exception:
-            logger.exception('The collect-versions job %s stopped', job_id)
-            await self._tracker.finish(job, JobState.FAILED, error=UNEXPECTED_FAILURE)
-        else:
-            if outcome is not None:
-                deleted, left = outcome
-                await self._tracker.finish(
-                    job,
-                    JobState.FAILED if left else JobState.SUCCEEDED,
-                    error=VERSIONS_LEFT.format(count=left) if left else '',
-                    total=deleted + left,
-                )
-
-    async def measure_book(self, job_id: JobId) -> None:
-        """Run a ``measure-book`` job: the median line height and page size of the book, written into its recipe.
-
-        :param job_id: Identifier of the job.
-        :type job_id: JobId
-        :raises NotFoundError: If there is no such job.
-        """
-        if (job := await self._tracker.start(job_id)) is None:
-            return
-        try:
-            total = await self._measure.run(job.project_id)
-        except DomainError as error:
-            await self._tracker.finish(job, JobState.FAILED, error=str(error))
-        except Exception:
-            logger.exception('The measure-book job %s stopped', job_id)
-            await self._tracker.finish(job, JobState.FAILED, error=UNEXPECTED_FAILURE)
-        else:
-            await self._tracker.finish(job, JobState.SUCCEEDED, total=total)
-
-    async def detect_content(self, job_id: JobId) -> None:
-        """Run a ``detect-content`` job: what each page shows, written into the pages as a proposal.
-
-        :param job_id: Identifier of the job.
-        :type job_id: JobId
-        :raises NotFoundError: If there is no such job.
-        """
-        if (job := await self._tracker.start(job_id)) is None:
-            return
-        try:
-            outcome = await self._detector.run(job)
-        except DomainError as error:
-            await self._tracker.finish(job, JobState.FAILED, error=str(error))
-        except Exception:
-            logger.exception('The detect-content job %s stopped', job_id)
-            await self._tracker.finish(job, JobState.FAILED, error=UNEXPECTED_FAILURE)
-        else:
-            if outcome is None:
-                return
-            read, failed = outcome
-            no_page = bool(failed) and not read
-            await self._tracker.finish(
-                job,
-                JobState.FAILED if no_page else JobState.SUCCEEDED,
-                error=NO_CONTENT_DETECTED if no_page else '',
-                total=read + failed,
-            )
-
-    async def _run_pages(self, job: Job) -> tuple[int, int, int] | None:
-        """Run the recipe of a ``run-stage`` job over its pages, recording the progress as it goes.
 
         :param job: The running job.
         :type job: Job
-        :returns: How many pages were processed, how many failed and how many the job went through, or None when the job
-                  was cancelled.
-        :rtype: tuple[int, int, int] | None
+        :param control: What the job reports through, and learns of its cancellation from, after each task.
+        :type control: JobControl
+        :returns: How the job ended: failed when no page could be processed or the job is not valid, else succeeded.
+        :rtype: JobEnd
+        :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
+        """
+        try:
+            outcomes = await self._run_pages(job, control)
+        except DomainError as error:
+            return JobEnd(state=JobState.FAILED, error=str(error))
+        done, failed = outcomes.count(RunOutcome.DONE), outcomes.count(RunOutcome.FAILED)
+        if failed and not done:
+            return JobEnd(state=JobState.FAILED, error=NO_PAGE_PROCESSED)
+        # The collection is put behind this job, so the project is never free between the two
+        self._starter.queue_collection(job.project_id)
+        if done and job.stage is Stage.PAGE_SPLIT:
+            self._pages.detect_new_pages(job.project_id)
+        return JobEnd(state=JobState.SUCCEEDED)
+
+    async def preview_step(self, job: Job, control: JobControl) -> JobEnd:
+        """Run a ``preview-step`` job: the steps of a form on the previews of a page, up to one of them.
+
+        :param job: The running job.
+        :type job: Job
+        :param control: What the job reports through, and learns of its cancellation from, after each task.
+        :type control: JobControl
+        :returns: How the job ended: failed with the reason when a step cannot be made, else succeeded.
+        :rtype: JobEnd
+        :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
+        """
+        try:
+            await self._preview(job, control)
+        except DomainError as error:
+            return JobEnd(state=JobState.FAILED, error=str(error))
+        return JobEnd(state=JobState.SUCCEEDED)
+
+    async def cut_tiles(self, job: Job, control: JobControl) -> JobEnd:
+        """Run a ``cut-tiles`` job: the tile pyramids of some versions, each announced when it is cut.
+
+        :param job: The running job.
+        :type job: Job
+        :param control: What the job reports through, and learns of its cancellation from, after each task.
+        :type control: JobControl
+        :returns: How the job ended: failed when its parameters are not valid, else succeeded.
+        :rtype: JobEnd
+        :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
+        """
+        try:
+            cut = TileCut.from_map(job.params)
+        except DomainError as error:
+            return JobEnd(state=JobState.FAILED, error=str(error))
+        control.plan(len(cut.version_ids))
+        for version_id in cut.version_ids:
+            await self._cut_version(job.project_id, version_id)
+            await control.task_done()
+        return JobEnd(state=JobState.SUCCEEDED)
+
+    async def collect_versions(self, job: Job, control: JobControl) -> JobEnd:
+        """Run a ``collect-versions`` job: delete the old versions that nothing needs, with their files.
+
+        :param job: The running job.
+        :type job: Job
+        :param control: What the job reports through, and learns of its cancellation from, after each task.
+        :type control: JobControl
+        :returns: How the job ended: failed with the number of versions left when some could not be deleted, or when
+                  its parameters are not valid, else succeeded.
+        :rtype: JobEnd
+        :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
+        """
+        try:
+            left = await self._collect(job, control)
+        except DomainError as error:
+            return JobEnd(state=JobState.FAILED, error=str(error))
+        if left:
+            return JobEnd(state=JobState.FAILED, error=VERSIONS_LEFT.format(count=left))
+        return JobEnd(state=JobState.SUCCEEDED)
+
+    async def measure_book(self, job: Job, control: JobControl) -> JobEnd:
+        """Run a ``measure-book`` job: the median line height and page size of the book, written into its recipe.
+
+        The measure reads the boxes the pages were placed by and writes one result, so it is one task of its own.
+
+        :param job: The running job.
+        :type job: Job
+        :param control: What the job reports through, and learns of its cancellation from, after each task.
+        :type control: JobControl
+        :returns: How the job ended: failed with the reason when the book cannot be measured, else succeeded.
+        :rtype: JobEnd
+        :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
+        """
+        control.plan(1)
+        try:
+            await self._measure.run(job.project_id)
+        except DomainError as error:
+            return JobEnd(state=JobState.FAILED, error=str(error))
+        await control.task_done()
+        return JobEnd(state=JobState.SUCCEEDED)
+
+    async def detect_content(self, job: Job, control: JobControl) -> JobEnd:
+        """Run a ``detect-content`` job: what each page shows, written into the pages as a proposal.
+
+        :param job: The running job.
+        :type job: Job
+        :param control: What the job reports through, and learns of its cancellation from, after each task.
+        :type control: JobControl
+        :returns: How the job ended: failed when no page could be read, else succeeded.
+        :rtype: JobEnd
+        :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
+        """
+        try:
+            read, failed = await self._detector.run(job, control)
+        except DomainError as error:
+            return JobEnd(state=JobState.FAILED, error=str(error))
+        if failed and not read:
+            return JobEnd(state=JobState.FAILED, error=NO_CONTENT_DETECTED)
+        return JobEnd(state=JobState.SUCCEEDED)
+
+    async def _run_pages(self, job: Job, control: JobControl) -> list[RunOutcome]:
+        """Run the recipe of a ``run-stage`` job over its pages, a task for each step of each page.
+
+        :param job: The running job.
+        :type job: Job
+        :param control: What the job reports through.
+        :type control: JobControl
+        :returns: What the run came to on each page it went over, in book order.
+        :rtype: list[RunOutcome]
         :raises DomainError: If the parameters of the job are not valid, or the recipe or a page it names is gone.
+        :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         run = StageRun.from_map(job.params)
         project = await self._uow.read(lambda repos: repos.projects.get(job.project_id))
         plan = RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, project_id=project.id, run=run)
         pages = await plan.pages()
-        executor = RecipeRun(
-            project=project, uow=self._uow, runtime=self._runtime, recipes=self._recipes, records=self._records
-        )
+        executor = RecipeRun(project=project, uow=self._uow, runtime=self._runtime, control=control, parts=self._parts)
         recipes = await plan.recipes()
         # The work the mode takes away goes first, as one batch, so one undo gives it back on every page
         await plan.apply_mode()
+        control.plan(
+            sum(
+                executor.task_count([step for _, step in recipes[page.id].indexed_steps_through(run.through_step)])
+                for page in pages
+            )
+        )
         measured = [page for page in pages if executor.wants_book(recipes[page.id], through_step=run.through_step)]
         if measured:
-            if (saved := await self._measure_book(job, executor, measured, recipes, run)) is None:
-                return None
-            job = saved
-        total = len(pages) + len(measured)
-        outcomes: list[RunOutcome] = []
-        for page in pages:
-            if (saved := await self._tracker.advance(job, done=len(measured) + len(outcomes), total=total)) is None:
-                return None
-            job = saved
-            outcomes.append(await self._run_page(executor, page, recipes[page.id], run))
-        return outcomes.count(RunOutcome.DONE), outcomes.count(RunOutcome.FAILED), len(pages)
+            await self._measure_book(executor, measured, recipes, run)
+        return [await self._run_page(executor, page, recipes[page.id], run) for page in pages]
 
     async def _measure_book(
-        self, job: Job, executor: RecipeRun, pages: Sequence[Page], recipes: Mapping[PageId, Recipe], run: StageRun
-    ) -> Job | None:
+        self, executor: RecipeRun, pages: Sequence[Page], recipes: Mapping[PageId, Recipe], run: StageRun
+    ) -> None:
         """Take the pages as far as the normalize step, and work out the page size of the book from their content boxes.
 
-        A page that fails on the way is left for the run to fail with its reason, and has no box.
+        A page that fails on the way is left for the run to fail with its reason, and has no box. Every step of the
+        pass is a task of the job, which the executor counts as it makes the versions.
 
-        :param job: The running job.
-        :type job: Job
         :param executor: Runner of recipes of the project, which holds the size it works out for the pages of a recipe.
         :type executor: RecipeRun
         :param pages: The pages whose recipe leaves a field of the normalize step to the book.
@@ -294,16 +282,10 @@ class ProcessingJobs:
         :type recipes: Mapping[PageId, Recipe]
         :param run: What the job was asked to run, whose last step the pages are taken as far as.
         :type run: StageRun
-        :returns: The job as the progress left it, or None when it was cancelled.
-        :rtype: Job | None
+        :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         boxes: dict[RecipeId, dict[PageId, BlockMeasure]] = {}
-        # The measure is a step of progress for each page it goes over, and the run another for each page
-        total = len(recipes) + len(pages)
-        for done, page in enumerate(pages):
-            if (saved := await self._tracker.advance(job, done=done, total=total)) is None:
-                return None
-            job = saved
+        for page in pages:
             try:
                 box = await executor.measure(page, recipes[page.id], through_step=run.through_step)
             except Exception:
@@ -313,10 +295,12 @@ class ProcessingJobs:
                 boxes.setdefault(recipes[page.id].id, {})[page.id] = box
         for recipe in {recipes[page.id].id: recipes[page.id] for page in pages}.values():
             await executor.settle_book(recipe, boxes.get(recipe.id, {}), through_step=run.through_step)
-        return job
 
     async def _run_page(self, executor: RecipeRun, page: Page, recipe: Recipe, run: StageRun) -> RunOutcome:
         """Run the recipe on one page, so that whatever goes wrong on it fails the page and not the job.
+
+        A cancellation is no fault of the page: ``JobCancelledError`` is no ``Exception``, so it passes this handler and
+        the page keeps the state it had.
 
         :param executor: Runner of recipes of the project.
         :type executor: RecipeRun
@@ -361,43 +345,29 @@ class ProcessingJobs:
             span.set_attribute(SpanAttribute.RUN_OUTCOME, outcome)
             return outcome
 
-    async def _preview(self, job: Job) -> None:
+    async def _preview(self, job: Job, control: JobControl) -> None:
         """Run the steps of a ``preview-step`` job.
 
         :param job: The running job.
         :type job: Job
+        :param control: What the job reports through.
+        :type control: JobControl
         :raises DomainError: If the parameters are not valid, the page is gone, or a step fails.
+        :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         preview = StepPreview.from_map(job.params)
         project, page = await self._uow.read(
             lambda repos: (repos.projects.get(job.project_id), repos.pages.get(preview.page_id))
         )
-        executor = PreviewRun(project=project, uow=self._uow, runtime=self._runtime)
+        executor = PreviewRun(project=project, uow=self._uow, runtime=self._runtime, control=control)
         await executor.run(page, preview.stage, preview.steps, preview.step_index)
 
-    async def _cut(self, job: Job) -> int | None:
-        """Cut the pyramids of a ``cut-tiles`` job.
+    async def _cut_version(self, project_id: ProjectId, version_id: PageVersionId) -> None:
+        """Cut the pyramid of one version, and mark the version as cut when it is still as it was read.
 
         A pyramid is cut with no change open, and the version is marked in a short ``change_book`` that reads it again.
         A version that is gone or has changed since it was read keeps no mark, and a pyramid left for a version that is
         gone is removed.
-
-        :param job: The running job.
-        :type job: Job
-        :returns: The number of versions the job went through, or None when it was cancelled.
-        :rtype: int | None
-        :raises DomainError: If the parameters of the job are not valid.
-        """
-        cut = TileCut.from_map(job.params)
-        for done, version_id in enumerate(cut.version_ids):
-            if (saved := await self._tracker.advance(job, done=done, total=len(cut.version_ids))) is None:
-                return None
-            job = saved
-            await self._cut_version(job.project_id, version_id)
-        return len(cut.version_ids)
-
-    async def _cut_version(self, project_id: ProjectId, version_id: PageVersionId) -> None:
-        """Cut the pyramid of one version, and mark the version as cut when it is still as it was read.
 
         :param project_id: Project owning the version.
         :type project_id: ProjectId
@@ -437,31 +407,33 @@ class ProcessingJobs:
         elif current is None:
             await self._assets.delete_prefix(keys.version_rendition(version, Rendition.TILES))
 
-    async def _collect(self, job: Job) -> tuple[int, int] | None:
+    async def _collect(self, job: Job, control: JobControl) -> int:
         """Delete the versions that nothing needs, batch by batch, with their files and their rows.
 
         The versions go readers first and a batch never holds a version and one that reads it, so no version is left
         without the input it reads. Every batch is committed by ``VersionClearing``, so a version whose files cannot be
-        removed leaves the deletions of the others standing.
+        removed leaves the deletions of the others standing, and a batch is a task of the job.
 
         :param job: The running job.
         :type job: Job
-        :returns: How many versions were deleted and how many were left, because their files could not be removed or a
-                  version that stays reads them, or None when the job was cancelled.
-        :rtype: tuple[int, int] | None
+        :param control: What the job reports through.
+        :type control: JobControl
+        :returns: How many versions were left, because their files could not be removed or a version that stays reads
+                  them.
+        :rtype: int
         :raises DomainError: If the parameters of the job are not valid.
+        :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         collection = VersionCollection.from_map(job.params)
         old = await self._uow.read(
             lambda repos: repos.page_versions.collectable(job.project_id, collection.previews_older_than)
         )
+        groups = [list(batched(group, self.COLLECTION_BATCH_SIZE, strict=False)) for group in readers_first(old)]
+        control.plan(sum(len(batches) for batches in groups))
         clearing = VersionClearing(uow=self._uow, assets=self._assets, project_id=job.project_id)
         deleted = 0
-        for group in readers_first(old):
-            for batch in batched(group, self.COLLECTION_BATCH_SIZE, strict=False):
-                # The progress is recorded before the batch, which is also the check that the job was not cancelled
-                if (saved := await self._tracker.advance(job, done=deleted, total=len(old))) is None:
-                    return None
-                job = saved
+        for batches in groups:
+            for batch in batches:
                 deleted += await clearing.clear(batch)
-        return deleted, len(old) - deleted
+                await control.task_done()
+        return len(old) - deleted

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.imaging import RenditionWriter
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import UnitOfWork
-    from bookreviver.ports.runtime import Clock, EventPublisher, JobQueue
+    from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
     from bookreviver.ports.storage import AssetStore
 
 # What the fake tiler writes, so a test can tell that a rendition of a version was cut
@@ -84,7 +84,7 @@ class FakeTiler(Tiler):
 def make_page_service(
     uow: UnitOfWork,
     assets: AssetStore,
-    runtime: tuple[EventPublisher, Clock, JobQueue],
+    runtime: tuple[EventPublisher, Clock, JobBoard],
     *,
     order_keys: OrderKeys | None = None,
     renditions: RenditionWriter | None = None,
@@ -95,8 +95,8 @@ def make_page_service(
     :type uow: UnitOfWork
     :param assets: Asset store the service writes and reads files through.
     :type assets: AssetStore
-    :param runtime: The publisher, the clock and the job queue the service reports through.
-    :type runtime: tuple[EventPublisher, Clock, JobQueue]
+    :param runtime: The publisher, the clock and the job board the service reports through.
+    :type runtime: tuple[EventPublisher, Clock, JobBoard]
     :param order_keys: Order keys to build keys with, or None for the fractional-indexing adapter.
     :type order_keys: OrderKeys | None
     :param renditions: Writer of the files of a version, or None for one that copies the image and writes tokens.
@@ -105,13 +105,13 @@ def make_page_service(
               renditions write token files.
     :rtype: PageService
     """
-    publisher, clock, queue = runtime
+    publisher, clock, board = runtime
     tiler = FakeTiler()
     return PageService(
         uow=uow,
         assets=assets,
         runtime=PageRuntime(
-            publisher=publisher, clock=clock, order_keys=order_keys or FractionalOrderKeys(), queue=queue
+            publisher=publisher, clock=clock, order_keys=order_keys or FractionalOrderKeys(), board=board
         ),
         imaging=PageImaging(
             base_versions=BaseVersions(assets=assets, tiler=tiler, iiif_root=IIIF_ROOT),

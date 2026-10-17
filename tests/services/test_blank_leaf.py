@@ -17,6 +17,7 @@ from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.enums import (
     BlankFill,
     BlankParam,
+    JobKind,
     JobState,
     NewPageOrigin,
     NormalizeParam,
@@ -49,6 +50,7 @@ from tests.helpers.builders import (
     make_source,
     new_account_id,
 )
+from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.page_services import make_page_service
 from tests.helpers.samples import pixel, ruled_page, same_colour
 from tests.helpers.seeding import commit_project
@@ -58,13 +60,14 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.adapters.clock.system import FixedClock
-    from bookreviver.adapters.jobs.recording import RecordingJobQueue
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.adapters.storage import LocalAssetStore
-    from bookreviver.domain.entities import Actor, Page, PageStage, PageVersion, Project
+    from bookreviver.domain.entities import Actor, Job, Page, PageOverview, PageStage, PageVersion, Project
     from bookreviver.domain.ids import PageId
+    from bookreviver.domain.values import JobEnd
     from bookreviver.ports.imaging import RenditionWriter
     from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
     from tests.helpers.fakes_jobs import RecordingEventBus
 
@@ -114,7 +117,7 @@ class LeafDesk:
     :ivar database: In-memory database the requests and the jobs share.
     :ivar assets: Asset store of the test.
     :ivar actor: Account acting.
-    :ivar queue: Queue recording the jobs the service hands to the workers.
+    :ivar board: Board recording the jobs the service puts on it, which runs them when a test says so.
     :ivar events: Bus recording what the service published.
     :ivar storage_root: Directory the asset store keeps its files under.
     """
@@ -124,7 +127,7 @@ class LeafDesk:
         database: InMemoryDatabase,
         assets: LocalAssetStore,
         actor: Actor,
-        runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         storage_root: Path,
     ) -> None:
         """Keep the parts a request is built from.
@@ -135,8 +138,8 @@ class LeafDesk:
         :type assets: LocalAssetStore
         :param actor: Account the service acts for.
         :type actor: Actor
-        :param runtime: The recording bus, the stopped clock and the recording queue.
-        :type runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param runtime: The recording bus, the stopped clock and the job board.
+        :type runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         :param storage_root: Directory the asset store keeps its files under.
         :type storage_root: Path
         """
@@ -144,7 +147,7 @@ class LeafDesk:
         self.storage_root = storage_root
         self.assets = assets
         self.actor = actor
-        self.events, _, self.queue = runtime
+        self.events, self._clock, self.board = runtime
         self._runtime = runtime
 
     def service(self, *, renditions: RenditionWriter | None = None, uow: UnitOfWork | None = None) -> PageService:
@@ -215,9 +218,57 @@ class LeafDesk:
         ids = [book.pages[position].id for position in positions]
         await self.service().set_blank_fill(self.actor, book.project.id, ids, fill)
 
+    async def add_blank_page(self, book: LeafBook) -> PageOverview:
+        """Add a generated blank page at the end of the book, which asks for a ``prepare-pages`` job as a request does.
+
+        :param book: The book.
+        :type book: LeafBook
+        :returns: The page added.
+        :rtype: PageOverview
+        """
+        new_page = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
+        return await self.service().add(self.actor, book.project.id, new_page)
+
+    def prepare_jobs(self) -> list[Job]:
+        """Read the ``prepare-pages`` jobs put on the board, as the board holds them now, in the order they were put.
+
+        :returns: The jobs, queued, running or ended.
+        :rtype: list[Job]
+        """
+        return [self.board.get(job.id) for job in self.board.put_jobs if job.kind is JobKind.PREPARE_PAGES]
+
     async def prepare(self) -> None:
-        """Run the ``prepare-pages`` job that was queued last, as a worker would."""
-        await self.service().prepare_images(self.queue.enqueued[-1].id)
+        """Run the queues of the board, which runs every ``prepare-pages`` job put on it through a page service."""
+        await self.board.run_queued()
+
+    async def prepare_with(self, renditions: RenditionWriter) -> Job:
+        """Run the ``prepare-pages`` job that was put last through a page service that writes with the given writer.
+
+        The job runs on a board of its own, so the jobs the service puts meanwhile stay on the board of the desk.
+
+        :param renditions: Writer of the files of a version the job uses.
+        :type renditions: RenditionWriter
+        :returns: The job as it ended.
+        :rtype: Job
+        """
+        job = self.prepare_jobs()[-1]
+
+        async def run(queued: Job, control: JobControl) -> JobEnd:
+            """Run the job over a page service whose files are written by the given writer.
+
+            :param queued: The job the board took from its queue.
+            :type queued: Job
+            :param control: What the job reports through.
+            :type control: JobControl
+            :returns: How the job ended.
+            :rtype: JobEnd
+            """
+            return await self.service(renditions=renditions).prepare_images(queued, control)
+
+        board = FakeJobBoard(runner=run, publisher=self.events, clock=self._clock)
+        board.put(job)
+        await board.run_queued()
+        return board.get(job.id)
 
     def announced(self) -> list[PagesChanged]:
         """Read the announcements of changed pages the service published, without the events of its jobs.
@@ -283,7 +334,7 @@ def fx_desk(
     fx_database: InMemoryDatabase,
     fx_asset_store: LocalAssetStore,
     fx_actor: Actor,
-    fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+    fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
     fx_storage_root: Path,
 ) -> LeafDesk:
     """Build the desk of a test over its database, its asset store and the account acting.
@@ -294,8 +345,8 @@ def fx_desk(
     :type fx_asset_store: LocalAssetStore
     :param fx_actor: Account the service acts for.
     :type fx_actor: Actor
-    :param fx_runtime: The recording bus, the stopped clock and the recording queue.
-    :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+    :param fx_runtime: The recording bus, the stopped clock and the job board.
+    :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
     :param fx_storage_root: Storage root of the test.
     :type fx_storage_root: Path
     :returns: The desk.
@@ -325,7 +376,7 @@ class TestChooseALeaf:
         expect((stored.blank_fill, stored.origin, stored.scan_id) == (BlankFill.WHITE, PageOrigin.SCAN, blank.scan_id))
         expect((leaf.stage, leaf.state, leaf.input_id) == (Stage.PAGE_ORDER, VersionState.PENDING, None))
         expect(leaf.params == leaf_params(SCAN_WIDTH_PX, SCAN_HEIGHT_PX))
-        expect(len(fx_desk.queue.enqueued) == 1)
+        expect(len(fx_desk.prepare_jobs()) == 1)
         expect(
             fx_desk.announced()
             == [PagesChanged(project_id=book.project.id, page_ids=[blank.id], change=PageChange.EDITED)]
@@ -390,7 +441,7 @@ class TestChooseALeaf:
         [event] = fx_desk.announced()
         expect(set(event.page_ids) == {book.pages[0].id, book.pages[2].id})
         expect([len(fx_desk.leaves(book.pages[position])) for position in range(3)] == [1, 0, 1])
-        expect(len(fx_desk.queue.enqueued) == 1)
+        expect(len(fx_desk.prepare_jobs()) == 1)
         assert_expectations()
 
     async def test_a_page_that_has_the_choice_already_is_left_alone(self, fx_desk: LeafDesk) -> None:
@@ -407,7 +458,7 @@ class TestChooseALeaf:
 
         expect(fx_desk.page(book.pages[1]) is written)
         expect(len(fx_desk.announced()) == 1)
-        expect(len(fx_desk.queue.enqueued) == 1)
+        expect(len(fx_desk.prepare_jobs()) == 1)
         assert_expectations()
 
     async def test_a_leaf_has_the_size_the_normalize_step_gives_the_pages_once_the_book_is_measured(
@@ -557,7 +608,7 @@ class TestGetTheScanBack:
 
         expect(fx_desk.leaves(blank) == [leaf])
         expect(fx_desk.heads(blank)[Stage.PAGE_ORDER].head_version_id == leaf.id)
-        expect(len(fx_desk.queue.enqueued) == 1)
+        expect(len(fx_desk.prepare_jobs()) == 1)
         assert_expectations()
 
     async def test_a_leaf_still_pending_when_the_scan_is_chosen_is_dropped_by_the_job(self, fx_desk: LeafDesk) -> None:
@@ -573,7 +624,7 @@ class TestGetTheScanBack:
 
         await fx_desk.prepare()
 
-        [job] = fx_desk.database.tables.jobs.values()
+        [job] = fx_desk.prepare_jobs()
         expect(fx_desk.leaves(blank) == [])
         expect(Stage.PAGE_ORDER not in fx_desk.heads(blank))
         expect(job.state is JobState.SUCCEEDED)
@@ -671,9 +722,10 @@ class TestRemakeOutdatedLeaves:
     async def test_a_leaf_of_an_older_version_is_drawn_again_with_the_paper_and_its_stage_is_fresh(
         self, fx_desk: LeafDesk
     ) -> None:
-        """Verify a stale record an earlier start left gets the leaf of the current version, by the same job.
+        """Verify a stale record an earlier start left gets the leaf of the current version, by the next job.
 
-        The service is given nothing but the database, so the page is found from its record alone.
+        The service is given nothing but the database, so the page is found from its record alone. The start queues
+        no job, so the pending leaf is written by the job that the next request for a blank page puts on the board.
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
@@ -683,15 +735,17 @@ class TestRemakeOutdatedLeaves:
         await fx_desk.choose(book, [1], BlankFill.PAPER)
         await fx_desk.prepare()
         await self.outdate(fx_desk, book, 1)
-        queued = len(fx_desk.queue.enqueued)
+        queued = len(fx_desk.prepare_jobs())
 
         await fx_desk.service().remake_outdated_leaves()
+        expect(len(fx_desk.prepare_jobs()) == queued)
+        await fx_desk.add_blank_page(book)
         await fx_desk.prepare()
 
         [leaf] = fx_desk.leaves(blank)
         record = fx_desk.heads(blank)[Stage.PAGE_ORDER]
         image = fx_desk.image(book, leaf)
-        expect(len(fx_desk.queue.enqueued) == queued + 1)
+        expect(len(fx_desk.prepare_jobs()) == queued + 1)
         expect((record.head_version_id, record.state) == (leaf.id, StageState.FRESH))
         expect((leaf.state, leaf.params[BlankParam.FILL]) == (VersionState.READY, PaperFill.PAPER))
         expect(same_colour(pixel(image, (0, 0)), PAPER))
@@ -699,7 +753,7 @@ class TestRemakeOutdatedLeaves:
         assert_expectations()
 
     async def test_a_start_that_ended_before_the_job_ran_is_finished_by_the_next_one(self, fx_desk: LeafDesk) -> None:
-        """Verify the pending leaf stays the only one and the job is queued again when the leaf was not written yet.
+        """Verify the pending leaf stays the only one when a start ends before it was written, and the next job writes it.
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
@@ -711,10 +765,9 @@ class TestRemakeOutdatedLeaves:
         await self.outdate(fx_desk, book, 1)
         await fx_desk.service().remake_outdated_leaves()
         [pending] = fx_desk.leaves(blank)
-        [first_job] = fx_desk.queue.enqueued[-1:]
-        fx_desk.database.tables.jobs[first_job.id] = evolve(first_job, state=JobState.FAILED)
 
         await fx_desk.service().remake_outdated_leaves()
+        await fx_desk.add_blank_page(book)
         await fx_desk.prepare()
 
         [leaf] = fx_desk.leaves(blank)
@@ -734,11 +787,11 @@ class TestRemakeOutdatedLeaves:
         blank = book.pages[1]
         await fx_desk.choose(book, [1], BlankFill.WHITE)
         await fx_desk.prepare()
-        queued, leaves = len(fx_desk.queue.enqueued), fx_desk.leaves(blank)
+        queued, leaves = len(fx_desk.prepare_jobs()), fx_desk.leaves(blank)
 
         await fx_desk.service().remake_outdated_leaves()
 
-        expect(len(fx_desk.queue.enqueued) == queued)
+        expect(len(fx_desk.prepare_jobs()) == queued)
         expect(fx_desk.leaves(blank) == leaves)
         assert_expectations()
 
@@ -762,7 +815,7 @@ class TestRefusals:
         expect([fx_desk.page(page).blank_fill for page in book.pages] == [BlankFill.SCAN, BlankFill.SCAN])
         expect(fx_desk.leaves(book.pages[0]) == [])
         expect(fx_desk.events.published == [])
-        expect(fx_desk.queue.enqueued == [])
+        expect(fx_desk.board.put_jobs == [])
         assert_expectations()
 
     @pytest.mark.parametrize('fill', [BlankFill.WHITE, BlankFill.SCAN])
@@ -856,10 +909,8 @@ class TestJobsReCheckWhatTheyApply:
             """
             await fx_desk.choose(book, [1], BlankFill.SCAN)
 
-        service = fx_desk.service(renditions=ActingRenditionWriter(take_the_scan_back))
-        await service.prepare_images(fx_desk.queue.enqueued[-1].id)
+        job = await fx_desk.prepare_with(ActingRenditionWriter(take_the_scan_back))
 
-        [job] = fx_desk.database.tables.jobs.values()
         expect(job.state is JobState.SUCCEEDED)
         expect(fx_desk.leaves(blank) == [])
         expect(Stage.PAGE_ORDER not in fx_desk.heads(blank))
@@ -885,7 +936,7 @@ class TestJobsReCheckWhatTheyApply:
         await fx_desk.choose(book, [1], BlankFill.PAPER)
         await fx_desk.prepare()
         await TestRemakeOutdatedLeaves().outdate(fx_desk, book, 1)
-        queued, leaves = len(fx_desk.queue.enqueued), fx_desk.leaves(blank)
+        queued, leaves = len(fx_desk.prepare_jobs()), fx_desk.leaves(blank)
         uow = InMemoryUnitOfWork(fx_desk.database)
         read = uow.read
         raced = False
@@ -908,7 +959,7 @@ class TestJobsReCheckWhatTheyApply:
         monkeypatch.setattr(uow, 'read', read_then_take_the_scan_back)
         await fx_desk.service(uow=uow).remake_outdated_leaves()
 
-        expect(len(fx_desk.queue.enqueued) == queued)
+        expect(len(fx_desk.prepare_jobs()) == queued)
         expect(fx_desk.leaves(blank) == leaves)
         expect(fx_desk.page(blank).blank_fill is BlankFill.SCAN)
         assert_expectations()

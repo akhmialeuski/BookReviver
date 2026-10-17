@@ -6,7 +6,13 @@ import { EmptyImport, ImportTips } from '@/features/import/EmptyImport';
 import { FileList } from '@/features/import/FileList';
 import { FilePanel } from '@/features/import/FilePanel';
 import { importJobsOf } from '@/features/import/jobs';
-import { useJobs, useScans, useSources } from '@/features/import/queries';
+import {
+  useCloseImportReport,
+  useImportReport,
+  useJobs,
+  useScans,
+  useSources,
+} from '@/features/import/queries';
 import { ScanGrid } from '@/features/import/ScanGrid';
 import { ScanViewer } from '@/features/import/ScanViewer';
 import { useManifest } from '@/features/pages/manifest';
@@ -43,6 +49,8 @@ export function ImportScreen({
   );
   const sources = useSources(projectId);
   const jobs = useJobs(projectId);
+  const report = useImportReport(projectId);
+  const closeReport = useCloseImportReport(projectId);
   const manifest = useManifest(projectId);
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
   const [grid, setGrid] = useState<{ sourceId: string | undefined; page: number }>({
@@ -58,7 +66,7 @@ export function ImportScreen({
   const loaded = scans.data?.items ?? [];
   const opened = loaded.find((scan) => scan.id === search.scan);
 
-  const failure = [project, sources, jobs, manifest].find((query) => query.isError);
+  const failure = [project, sources, jobs, report, manifest].find((query) => query.isError);
   if (failure?.error) {
     return <ErrorAlert message={describeError(failure.error)} />;
   }
@@ -66,19 +74,34 @@ export function ImportScreen({
     project.data === undefined ||
     sources.data === undefined ||
     jobs.data === undefined ||
+    report.data === undefined ||
     manifest.data === undefined
   ) {
     return <p className="p-4 text-sm text-muted-foreground">{MESSAGES.common.loading}</p>;
   }
 
-  const { active, report } = importJobsOf(jobs.data, dismissed);
-  const reportBox =
-    report === undefined ? null : (
+  const { active, failed } = importJobsOf(jobs.data, dismissed);
+  // The report of an import that still runs is not closed, since the server refuses to delete the files it is writing
+  const tellsSomething = active.length === 0 && (failed !== undefined || report.data.length > 0);
+  const dismissReport = (): void => {
+    if (failed !== undefined) {
+      setDismissed(new Set(dismissed).add(failed.id));
+    }
+    if (report.data.length > 0) {
+      closeReport.mutate({ path: { project_id: projectId } });
+    }
+  };
+  const reportBox = tellsSomething ? (
+    <>
       <ImportStatus
-        job={report}
-        onDismiss={() => setDismissed(new Set(dismissed).add(report.id))}
+        failed={failed}
+        files={report.data}
+        closing={closeReport.isPending}
+        onDismiss={dismissReport}
       />
-    );
+      {closeReport.isError ? <ErrorAlert message={describeError(closeReport.error)} /> : null}
+    </>
+  ) : null;
 
   let canvas: React.ReactNode;
   if (files.length === 0 && active.length === 0) {

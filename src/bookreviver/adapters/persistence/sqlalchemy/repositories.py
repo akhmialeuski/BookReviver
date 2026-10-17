@@ -29,13 +29,12 @@ from advanced_alchemy.exceptions import NotFoundError as MissingRowError
 from advanced_alchemy.filters import CollectionFilter, LimitOffset
 from advanced_alchemy.repository import DEFAULT_ERROR_MESSAGE_TEMPLATES, SQLAlchemySyncRepository
 from attrs import evolve
-from sqlalchemy import Table, UniqueConstraint, and_, case, delete, exists, func, inspect, or_, select, update
+from sqlalchemy import Table, UniqueConstraint, and_, case, delete, exists, func, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from bookreviver.adapters.persistence.sqlalchemy.database import SQLITE_DIALECT
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     BookPlaceMapper,
-    JobMapper,
     PageMapper,
     PageStageMapper,
     PageStepChangeMapper,
@@ -53,7 +52,6 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     EMPTY_TEXT,
     BookPlaceRow,
-    JobRow,
     PageRow,
     PageStageRow,
     PageStepChangeRow,
@@ -70,7 +68,6 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
 )
 from bookreviver.domain.entities import (
     BookPlace,
-    Job,
     Page,
     PageStage,
     PageStepChange,
@@ -91,6 +88,7 @@ from bookreviver.domain.enums import (
     RecipeKind,
     ResultMark,
     Side,
+    SourceStatus,
     Stage,
     StageState,
     ValueScope,
@@ -99,7 +97,6 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import (
-    JobId,
     PageId,
     PageStepChangeId,
     PageVersionId,
@@ -117,7 +114,6 @@ from bookreviver.domain.values import BookPlaceKey, PageSize, PageStageKey, Page
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
     BookPlaceRepository,
-    JobRepository,
     KeyedRepository,
     PageRepository,
     PageStageRepository,
@@ -148,7 +144,6 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import InstrumentedAttribute, QueryableAttribute, Session
 
     from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
-    from bookreviver.domain.enums import JobState
     from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
     from bookreviver.domain.values import ProcessorRef, SliceRequest
 
@@ -333,12 +328,16 @@ class RowRepository[RowT: ModelProtocol](SQLAlchemySyncRepository[RowT]):
                 yield
         except DuplicateKeyError as error:
             mapper, table = self.model_type.__mapper__, self.model_type.__table__
-            # A declarative class maps one Table, the kind of FromClause that carries constraints
+            # A declarative class maps one Table, the kind of FromClause that carries constraints and indexes. A value
+            # that is unique only among some rows is a partial unique index, not a constraint, and is named too
             constraints = table.constraints if isinstance(table, Table) else set()
+            indexes = table.indexes if isinstance(table, Table) else set()
+            unique_columns = [
+                *(constraint.columns for constraint in constraints if isinstance(constraint, UniqueConstraint)),
+                *(index.columns for index in indexes if index.unique),
+            ]
             unique_keys = [
-                [mapper.get_property_by_column(column).key for column in constraint.columns]
-                for constraint in constraints
-                if isinstance(constraint, UniqueConstraint)
+                [mapper.get_property_by_column(column).key for column in columns] for columns in unique_columns
             ]
             candidates = [
                 candidate
@@ -483,12 +482,6 @@ class RecipeProfileRows(RowRepository[RecipeProfileRow]):
     """Rows of the ``recipe_profiles`` table."""
 
     model_type = RecipeProfileRow
-
-
-class JobRows(RowRepository[JobRow]):
-    """Rows of the ``jobs`` table."""
-
-    model_type = JobRow
 
 
 class SqlAlchemyRepository[EntityT, IdT, RowT: ModelProtocol](Repository[EntityT, IdT]):
@@ -709,7 +702,7 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
     def _book_counts(
         project_id: QueryableAttribute[UUID] | ProjectId,
     ) -> tuple[ScalarSelect[int], ScalarSelect[int], ScalarSelect[int], ScalarSelect[int]]:
-        """Return the scalar subqueries counting a project's included pages, sources and scans.
+        """Return the scalar subqueries counting a project's included pages, imported sources and scans.
 
         :param project_id: The project's identifier, or the identifier column of the enclosing query's project rows,
                            which the subqueries then correlate with.
@@ -721,7 +714,7 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
             select(func.count()).where(*conditions).correlate(ProjectRow).scalar_subquery()
             for conditions in (
                 (PageRow.project_id == project_id, PageRow.included.is_(True)),
-                (SourceRow.project_id == project_id,),
+                (SourceRow.project_id == project_id, SourceRow.status == SourceStatus.IMPORTED),
                 (ScanRow.project_id == project_id,),
                 (PageRow.project_id == project_id, PageRow.origin != PageOrigin.PLACEHOLDER),
             )
@@ -742,28 +735,59 @@ class SqlAlchemySourceRepository(SqlAlchemyRepository[Source, SourceId, SourceRo
 
     @override
     def list_for_project(self, project_id: ProjectId) -> Sequence[Source]:
-        """Return the project's sources, the earliest import first, ties by identifier.
+        """Return the project's imported sources, the earliest import first, ties by identifier.
 
         :param project_id: Project owning the sources.
         :type project_id: ProjectId
-        :returns: Every source of the project in import order.
+        :returns: Every imported source of the project in import order.
         :rtype: Sequence[Source]
         """
-        rows = self._rows.get_many(order_by=[SourceRow.imported_at.asc(), SourceRow.id.asc()], project_id=project_id)
+        rows = self._rows.get_many(
+            order_by=[SourceRow.imported_at.asc(), SourceRow.id.asc()],
+            project_id=project_id,
+            status=SourceStatus.IMPORTED,
+        )
         return [self._mapper.to_entity(row) for row in rows]
 
     @override
+    def list_unimported(self, project_id: ProjectId) -> Sequence[Source]:
+        """Return the project's rejected and skipped files, the earliest first, ties by identifier.
+
+        :param project_id: Project owning the sources.
+        :type project_id: ProjectId
+        :returns: Every rejected or skipped source of the project in the order it was recorded.
+        :rtype: Sequence[Source]
+        """
+        rows = self._rows.get_many(
+            CollectionFilter(field_name=SourceRow.status, values=[SourceStatus.REJECTED, SourceStatus.SKIPPED]),
+            order_by=[SourceRow.imported_at.asc(), SourceRow.id.asc()],
+            project_id=project_id,
+        )
+        return [self._mapper.to_entity(row) for row in rows]
+
+    @override
+    def delete_unimported(self, project_id: ProjectId) -> None:
+        """Delete the project's rejected and skipped sources with one statement.
+
+        :param project_id: Project owning the sources.
+        :type project_id: ProjectId
+        """
+        self._rows.session.execute(
+            delete(SourceRow).where(SourceRow.project_id == project_id, SourceRow.status != SourceStatus.IMPORTED)
+        )
+
+    @override
     def find_by_sha256(self, project_id: ProjectId, sha256: str) -> Source | None:
-        """Return the project's source with this digest, found through the unique key of the pair.
+        """Return the project's imported source with this digest, found through the partial unique index.
 
         :param project_id: Project owning the sources.
         :type project_id: ProjectId
         :param sha256: SHA-256 digest of a main file.
         :type sha256: str
-        :returns: The source with this digest, or None.
+        :returns: The imported source with this digest, or None.
         :rtype: Source | None
         """
-        row = self._rows.get_one_or_none(project_id=project_id, sha256=sha256)
+        row = self._rows.get_one_or_none(project_id=project_id, sha256=sha256, status=SourceStatus.IMPORTED)
         return None if row is None else self._mapper.to_entity(row)
 
 
@@ -1979,87 +2003,6 @@ class SqlAlchemyRecipeProfileRepository(
         return counted
 
 
-class SqlAlchemyJobRepository(SqlAlchemyRepository[Job, JobId, JobRow], JobRepository):
-    """Jobs, listed per project and state."""
-
-    def __init__(self, session: Session) -> None:
-        """Create the repository over the ``jobs`` table.
-
-        :param session: Session of the unit of work.
-        :type session: Session
-        """
-        super().__init__(rows=JobRows(session=session), mapper=JobMapper())
-
-    @override
-    def list_for_project(self, project_id: ProjectId, states: Collection[JobState]) -> Sequence[Job]:
-        """Return the project's jobs in one of the given states, newest first.
-
-        :param project_id: Project whose jobs are listed.
-        :type project_id: ProjectId
-        :param states: States a listed job may be in.
-        :type states: Collection[JobState]
-        :returns: Matching jobs, newest first.
-        :rtype: Sequence[Job]
-        """
-        rows = self._rows.get_many(
-            CollectionFilter(field_name=JobRow.state, values=states),
-            order_by=JobRow.created_at.desc(),
-            project_id=project_id,
-        )
-        return [self._mapper.to_entity(row) for row in rows]
-
-    @override
-    def list_for_projects(self, project_ids: Collection[ProjectId], states: Collection[JobState]) -> Sequence[Job]:
-        """Return the jobs of several projects in one of the given states with one query, newest first.
-
-        :param project_ids: Projects whose jobs are listed.
-        :type project_ids: Collection[ProjectId]
-        :param states: States a listed job may be in.
-        :type states: Collection[JobState]
-        :returns: Matching jobs of all the projects, newest first.
-        :rtype: Sequence[Job]
-        """
-        if not project_ids:
-            return list[Job]()
-        rows = self._rows.get_many(
-            CollectionFilter(field_name=JobRow.state, values=states),
-            CollectionFilter(field_name=JobRow.project_id, values=project_ids),
-            order_by=JobRow.created_at.desc(),
-        )
-        return [self._mapper.to_entity(row) for row in rows]
-
-    @override
-    def update_if_state(self, entity: Job, *, expected: Collection[JobState]) -> Job | None:
-        """Replace the stored job with one ``UPDATE ... WHERE state IN`` statement.
-
-        The database evaluates the condition against the latest committed row, and the write lock of the transaction
-        keeps every other transaction from changing the job between the check and the write. ``RETURNING`` reloads the
-        row into the session, replacing a copy an earlier read left there.
-
-        :param entity: Job with its new state.
-        :type entity: Job
-        :param expected: States the stored job must be in for the replacement to happen.
-        :type expected: Collection[JobState]
-        :returns: The job as stored, or None when its stored state is not one of ``expected``.
-        :rtype: Job | None
-        :raises NotFoundError: If the job is not stored.
-        """
-        row = self._mapper.to_row(entity)
-        statement = (
-            update(JobRow)
-            .where(JobRow.id == entity.id, JobRow.state.in_(expected))
-            .values({column.key: getattr(row, column.key) for column in inspect(JobRow).column_attrs})
-            .returning(JobRow)
-            .execution_options(populate_existing=True)
-        )
-        if (updated := self._rows.session.execute(statement).scalar_one_or_none()) is None:
-            # A query rather than the session's copy tells a job in another state from one deleted meanwhile
-            if not self._rows.exists(id=entity.id):
-                raise NotFoundError(entity.id)
-            return None
-        return self._mapper.to_entity(updated)
-
-
 class SqlAlchemyRepositories(Repositories):
     """Every repository of the port, bound to the session of one transaction.
 
@@ -2079,7 +2022,6 @@ class SqlAlchemyRepositories(Repositories):
     :ivar result_mark_changes: Result mark change repository bound to the session.
     :ivar recipes: Recipe repository bound to the session.
     :ivar recipe_profiles: Recipe profile repository bound to the session.
-    :ivar jobs: Job repository bound to the session.
     :ivar book_places: Book place repository bound to the session.
     """
 
@@ -2102,5 +2044,4 @@ class SqlAlchemyRepositories(Repositories):
         self.result_mark_changes = SqlAlchemyResultMarkChangeRepository(session)
         self.recipes = SqlAlchemyRecipeRepository(session)
         self.recipe_profiles = SqlAlchemyRecipeProfileRepository(session)
-        self.jobs = SqlAlchemyJobRepository(session)
         self.book_places = SqlAlchemyBookPlaceRepository(session)

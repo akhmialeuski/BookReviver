@@ -1,7 +1,8 @@
 """Background job state, cancellation and the event stream of a project.
 
 The job routes live under ``/jobs`` and the event stream under ``/projects/{project_id}/events``, so the module holds
-one router per prefix and joins them under the ``jobs`` tag.
+one router per prefix and joins them under the ``jobs`` tag. The jobs live in the memory of the API process, so a job
+the process does not hold, such as one that ended before the process started, is answered with 404.
 
 The subscription is held by a dependency with ``yield`` rather than inside the endpoint. FastAPI sends the response
 headers as soon as a streaming endpoint starts, so a refusal raised inside it could no longer become a problem
@@ -76,7 +77,7 @@ async def read_job(job_id: JobIdPath, actor: ActorDep, service: JobServiceDep) -
 
 @jobs.delete('/{job_id}')
 async def cancel_job(job_id: JobIdPath, actor: ActorDep, service: JobServiceDep) -> JobSchema:
-    """Cancel a queued or running job and return it; a running job stops before its next step.
+    """Cancel a queued or running job and return it; a running job stops at the boundary of its current task.
 
     \N{FORM FEED}
     :param job_id: Identifier of the job.

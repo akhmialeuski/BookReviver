@@ -1,14 +1,14 @@
 """Fixtures of the import API tests: the application runs on the job fakes' database, event bus and clock.
 
-The stores, the imaging adapters and the in-process broker are the application's own, so a test uploads real files
-and the import runs to the end in the background, as it does for a user.
+The stores, the imaging adapters and the job board are the application's own, so a test uploads real files and the
+import runs to the end in the background, as it does for a user.
 """
 
 from typing import TYPE_CHECKING
 
 import pytest
-from taskiq import AsyncBroker, InMemoryBroker
 
+from tests.api.imports.watch import ImportWatch, JobEndBus
 from tests.helpers.builders import EPOCH, make_project
 from tests.helpers.fakes_imports import TickingClock
 from tests.helpers.fakes_jobs import JobFakes, JobFakesProvider
@@ -16,24 +16,37 @@ from tests.helpers.fakes_jobs import JobFakes, JobFakesProvider
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from dishka import AsyncContainer, Provider
+    import httpx
+    from dishka import Provider
 
     from bookreviver.domain.entities import Actor, Project
 
 
 @pytest.fixture
-def fx_fakes() -> JobFakes:
+def fx_events() -> JobEndBus:
+    """Build the event bus of the application, which tells a test when a job has ended.
+
+    :returns: A bus with nothing published.
+    :rtype: JobEndBus
+    """
+    return JobEndBus()
+
+
+@pytest.fixture
+def fx_fakes(fx_events: JobEndBus) -> JobFakes:
     """Build the adapters the application runs on, with a clock that gives every source its own import time.
 
+    :param fx_events: Event bus of the application.
+    :type fx_events: JobEndBus
     :returns: Fakes with an empty database and nothing published.
     :rtype: JobFakes
     """
-    return JobFakes(clock=TickingClock(EPOCH))
+    return JobFakes(clock=TickingClock(EPOCH), events=fx_events)
 
 
 @pytest.fixture
 def fx_extra_providers(fx_fakes: JobFakes) -> Sequence[Provider]:
-    """Replace the application's database, event bus and clock with ``fx_fakes``.
+    """Replace the application's database, event bus and clock with ``fx_fakes``, and keep its job board.
 
     :param fx_fakes: Adapters of the test.
     :type fx_fakes: JobFakes
@@ -60,14 +73,14 @@ async def fx_project(fx_fakes: JobFakes, fx_actor: Actor) -> Project:
 
 
 @pytest.fixture
-async def fx_broker(fx_container: AsyncContainer) -> InMemoryBroker:
-    """Return the broker the application runs its jobs on, which a test waits on until they have finished.
+def fx_import(fx_client: httpx.AsyncClient, fx_events: JobEndBus) -> ImportWatch:
+    """Return the reader of the imports the application runs, which a test waits on until they have ended.
 
-    :param fx_container: Container of the running application.
-    :type fx_container: AsyncContainer
-    :returns: The started in-process broker, the one the test settings select.
-    :rtype: InMemoryBroker
+    :param fx_client: Client of the signed-in account.
+    :type fx_client: httpx.AsyncClient
+    :param fx_events: Event bus of the application.
+    :type fx_events: JobEndBus
+    :returns: The reader of the jobs and of the report of the imports.
+    :rtype: ImportWatch
     """
-    broker = await fx_container.get(AsyncBroker)
-    assert isinstance(broker, InMemoryBroker)
-    return broker
+    return ImportWatch(fx_client, fx_events)

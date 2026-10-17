@@ -29,12 +29,12 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.adapters.clock.system import FixedClock
-    from bookreviver.adapters.jobs.recording import RecordingJobQueue
     from bookreviver.adapters.persistence.memory import InMemoryDatabase
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Page, Project, Source
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.services.pages import PageService
+    from tests.helpers.fake_board import FakeJobBoard
     from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
@@ -308,7 +308,7 @@ class TestMove:
         fx_database: InMemoryDatabase,
         fx_actor: Actor,
         fx_asset_store: LocalAssetStore,
-        fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue],
+        fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
     ) -> None:
         """Verify a move that would give a page the key of another page is refused, as a lost race is.
 
@@ -318,8 +318,8 @@ class TestMove:
         :type fx_actor: Actor
         :param fx_asset_store: Local asset store over the test's storage root.
         :type fx_asset_store: LocalAssetStore
-        :param fx_runtime: The recording bus, the stopped clock and the recording queue of the test.
-        :type fx_runtime: tuple[RecordingEventBus, FixedClock, RecordingJobQueue]
+        :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
+        :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         """
         book = await _commit_book(fx_database, fx_actor)
         service = make_page_service(

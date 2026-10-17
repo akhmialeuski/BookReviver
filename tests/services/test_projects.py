@@ -18,7 +18,10 @@ from bookreviver.domain.values import BookDetails, SliceRequest
 from bookreviver.services.projects import ProjectService
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import EPOCH, make_page, make_project, make_scan, make_source, new_account_id
+from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import FakeCatalogue
+from tests.helpers.fakes_jobs import RecordingEventBus
+from tests.helpers.scripted_runner import ScriptedRunner
 from tests.helpers.seeding import commit_project
 from tests.helpers.storage import BookFiles
 
@@ -41,7 +44,7 @@ NEW_TITLE: str = 'Renamed'
 
 
 def _service(database: InMemoryDatabase, sources: LocalSourceStore, assets: LocalAssetStore) -> ProjectService:
-    """Build the project service for one request, over a new unit of work and a catalogue with no processors.
+    """Build the project service for one request, over a new unit of work, a catalogue with no processors and no jobs.
 
     :param database: In-memory database every request of the test shares.
     :type database: InMemoryDatabase
@@ -53,8 +56,10 @@ def _service(database: InMemoryDatabase, sources: LocalSourceStore, assets: Loca
     :rtype: ProjectService
     """
     uow = InMemoryUnitOfWork(database)
-    stages = StageSummaries(catalogue=FakeCatalogue([]))
-    return ProjectService(uow=uow, clock=FixedClock(NOW), sources=sources, assets=assets, stages=stages)
+    clock = FixedClock(NOW)
+    board = FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus(), clock=clock)
+    stages = StageSummaries(catalogue=FakeCatalogue([]), board=board)
+    return ProjectService(uow=uow, clock=clock, sources=sources, assets=assets, stages=stages)
 
 
 @pytest.fixture

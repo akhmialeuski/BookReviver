@@ -29,7 +29,7 @@ from tests.helpers.builders import make_page_step_state, make_result_mark_change
 from tests.helpers.page_batches import PageValues
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import run_stage
-from tests.services.test_processing_versions import ran_geometry, ran_two_steps
+from tests.services.test_processing_versions import previewed, ran_geometry, ran_two_steps
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -526,9 +526,9 @@ class TestClear:
         """
         actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
         expect(not made[0].tiles_ready)
-        queued = len(fx_kit.recording.enqueued)
+        queued = len(fx_kit.board.put_jobs)
         await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
-        cutting = fx_kit.recording.enqueued[queued:]
+        cutting = fx_kit.board.put_jobs[queued:]
         expect([job.kind for job in cutting] == [JobKind.CUT_TILES])
         expect([TileCut.from_map(job.params).version_ids for job in cutting] == [(made[0].id,)])
         assert_expectations()
@@ -545,10 +545,10 @@ class TestClear:
         await fx_kit.uow().change_book(
             project.id, lambda repos, _project: repos.page_versions.update(evolve(made[0], tiles_ready=True))
         )
-        queued = len(fx_kit.recording.enqueued)
+        queued = len(fx_kit.board.put_jobs)
         await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
         await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[0]))
-        expect(fx_kit.recording.enqueued[queued:] == [])
+        expect(fx_kit.board.put_jobs[queued:] == [])
         assert_expectations()
 
     async def test_a_page_run_by_another_recipe_stands_on_the_step_before_in_the_recipe_that_ran_it(
@@ -833,24 +833,22 @@ class TestClear:
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param state: Whether the preview is queued, or a worker has taken it and it is running.
+        :param state: Whether the preview is queued, or the board has taken it and a task of it is under way.
         :type state: JobState
         """
         actor, project, page, version = await ran_geometry(fx_kit)
         key = await step_key(fx_kit, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        parts = fx_kit.parts(fx_kit.uow())
-        preview = await parts.starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
-        if state is JobState.RUNNING:
-            assert await parts.tracker.start(preview.id) is not None
-        cleared = await fx_kit.page_history().clear(actor, project.id, key)
+        # The preview is of another page, so the version it makes while its step is held is none of those the clear deletes
+        other, _ = await fx_kit.seed_scan_page(project, order_key=OTHER_ORDER_KEY)
+        await fx_kit.seed_base_version(other)
+        async with previewed(fx_kit, actor, project, other, state) as preview:
+            cleared = await fx_kit.page_history().clear(actor, project.id, key)
         announced = [
             (event.job.id, event.job.state) for event in fx_kit.events.published if isinstance(event, JobChanged)
         ]
-        job, left = await fx_kit.uow().read(
-            lambda repos: (repos.jobs.get(preview.id), repos.page_step_states.find(key))
-        )
-        expect(job.state is JobState.CANCELLED)
+        left = await fx_kit.uow().read(lambda repos: repos.page_step_states.find(key))
+        expect(fx_kit.board.get(preview.id).state is JobState.CANCELLED)
         expect((preview.id, JobState.CANCELLED) in announced)
         expect([deleted.id for deleted in cleared.versions] == [version.id])
         expect(await history_of(fx_kit, actor, project, key) == [])
@@ -879,10 +877,8 @@ class TestClear:
         )
         with pytest.raises(ConflictError, match=BUSY_MESSAGE):
             await fx_kit.page_history().clear(actor, project.id, key)
-        queued, kept = await fx_kit.uow().read(
-            lambda repos: (repos.jobs.get(job.id), repos.page_versions.find(version.id))
-        )
-        expect(queued.state is JobState.QUEUED)
+        kept = await fx_kit.uow().read(lambda repos: repos.page_versions.find(version.id))
+        expect(fx_kit.board.get(job.id).state is JobState.QUEUED)
         expect(len(await history_of(fx_kit, actor, project, key)) == written)
         expect(kept is not None)
         assert_expectations()
@@ -898,7 +894,7 @@ class TestClear:
         preview = await fx_kit.parts(fx_kit.uow()).starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
         with pytest.raises(NotFoundError):
             await fx_kit.page_history().clear(actor, project.id, evolve(key, step_id=StepId(uuid4())))
-        assert (await fx_kit.uow().read(lambda repos: repos.jobs.get(preview.id))).state is JobState.QUEUED
+        assert fx_kit.board.get(preview.id).state is JobState.QUEUED
 
     async def test_a_step_that_no_recipe_of_the_stage_has_is_not_found_and_deletes_nothing(
         self, fx_kit: ProcessingKit

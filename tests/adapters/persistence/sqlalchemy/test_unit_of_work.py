@@ -20,13 +20,13 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
-from bookreviver.domain.enums import BlockKind, JobState
+from bookreviver.domain.enums import BlockKind
 from bookreviver.domain.errors import BookBusyError
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import SliceRequest
 from bookreviver.ports.persistence import NoChangeOpenError
 from tests.helpers.book_gate import HOLD_LIMIT_SECONDS, hold_book_in_thread
-from tests.helpers.builders import make_job, make_page_version, make_project
+from tests.helpers.builders import make_page_version, make_project
 from tests.helpers.seeding import store_project
 from tests.helpers.wait_limits import IMPATIENT_SECONDS
 
@@ -57,9 +57,6 @@ WRITES: dict[str, Callable[[Repositories, Project], object]] = {
         evolve(project, details=evolve(project.details, title=NEW_TITLE))
     ),
     'bulk-delete': lambda repos, _project: repos.page_versions.delete_many([MISSING_VERSION.id]),
-    'bulk-update': lambda repos, project: repos.jobs.update_if_state(
-        make_job(project_id=project.id), expected=[JobState.RUNNING]
-    ),
 }
 
 

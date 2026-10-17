@@ -16,13 +16,11 @@ storage concerns.
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, override
-from uuid import UUID
 
 from attrs import asdict
 
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     BookPlaceRow,
-    JobRow,
     PageRow,
     PageStageRow,
     PageStepChangeRow,
@@ -39,7 +37,6 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
 )
 from bookreviver.domain.entities import (
     BookPlace,
-    Job,
     Page,
     PageEdit,
     PageStage,
@@ -54,12 +51,11 @@ from bookreviver.domain.entities import (
     Scan,
     Source,
 )
-from bookreviver.domain.enums import ContributorRole, IdentifierScheme, PageKind, RejectionReason, TransformKind
+from bookreviver.domain.enums import ContributorRole, IdentifierScheme, PageKind, TransformKind
 from bookreviver.domain.geometry import Point, Quad, Transform, geometry_from_data
 from bookreviver.domain.ids import (
     AccountId,
     ChangeBatchId,
-    JobId,
     PageId,
     PageStepChangeId,
     PageVersionId,
@@ -79,12 +75,8 @@ from bookreviver.domain.values import (
     BookIdentifier,
     CanvasPosition,
     Contributor,
-    ImportRequest,
-    ImportResult,
     MetadataSuggestion,
     ProcessorRef,
-    Progress,
-    RejectedFile,
     Renditions,
     ScanFacts,
     SourceFile,
@@ -93,21 +85,6 @@ from bookreviver.domain.values import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-
-
-def json_value(_owner: object, _field: object, value: object) -> object:
-    """Turn a value of a stored value object into one JSON can hold, as ``attrs.asdict`` calls it for every value.
-
-    :param _owner: Instance the value belongs to, which ``asdict`` passes and this rule does not need.
-    :type _owner: object
-    :param _field: Field of the instance that holds the value, likewise unused.
-    :type _field: object
-    :param value: The value to store.
-    :type value: object
-    :returns: The text of an identifier, which JSON has no type for, and any other value unchanged.
-    :rtype: object
-    """
-    return str(value) if isinstance(value, UUID) else value
 
 
 def contributors_to_json(contributors: Sequence[Contributor]) -> list[dict[str, str]]:
@@ -510,7 +487,9 @@ class SourceMapper(RowMapper[Source, SourceRow]):
                 identifiers=identifiers_from_json(row.suggestion['identifiers']),
                 subjects=tuple(row.suggestion['subjects']),
             ),
-            import_job_id=None if row.import_job_id is None else JobId(row.import_job_id),
+            status=row.status,
+            rejection=row.rejection,
+            detail=row.detail,
             imported_at=row.imported_at,
         )
 
@@ -543,7 +522,9 @@ class SourceMapper(RowMapper[Source, SourceRow]):
                 'identifiers': identifiers_to_json(entity.suggestion.identifiers),
                 'subjects': list(entity.suggestion.subjects),
             },
-            import_job_id=entity.import_job_id,
+            status=entity.status,
+            rejection=entity.rejection,
+            detail=entity.detail,
             imported_at=entity.imported_at,
         )
 
@@ -613,74 +594,6 @@ class ScanMapper(RowMapper[Scan, ScanRow]):
             renditions_ready=entity.renditions.ready,
             renditions_version=entity.renditions.version,
             renditions_full=entity.renditions.full,
-        )
-
-
-class JobMapper(RowMapper[Job, JobRow]):
-    """Translation of a job, whose progress is flattened into job columns and whose request and result are JSON."""
-
-    @override
-    def to_entity(self, row: JobRow) -> Job:
-        """Build the job stored in ``row``.
-
-        :param row: Job row loaded from the database.
-        :type row: JobRow
-        :returns: Job with its state, progress, request, result and timestamps.
-        :rtype: Job
-        """
-        request, result = row.request, row.result
-        return Job(
-            id=JobId(row.id),
-            project_id=ProjectId(row.project_id),
-            kind=row.kind,
-            state=row.state,
-            progress=Progress(done=row.progress_done, total=row.progress_total),
-            error=row.error,
-            params=row.params,
-            request=None if request is None else ImportRequest(files=[SourceFile(**file) for file in request['files']]),
-            result=None
-            if result is None
-            else ImportResult(
-                imported=[SourceId(UUID(source_id)) for source_id in result['imported']],
-                rejected=[
-                    RejectedFile(
-                        file_name=rejected['file_name'],
-                        reason=RejectionReason(rejected['reason']),
-                        detail=rejected['detail'],
-                    )
-                    for rejected in result['rejected']
-                ],
-                skipped=result['skipped'],
-            ),
-            created_at=row.created_at,
-            started_at=row.started_at,
-            finished_at=row.finished_at,
-        )
-
-    @override
-    def to_row(self, entity: Job) -> JobRow:
-        """Build the row of ``entity``.
-
-        :param entity: Job to store.
-        :type entity: Job
-        :returns: Transient job row.
-        :rtype: JobRow
-        """
-        return JobRow(
-            id=entity.id,
-            project_id=entity.project_id,
-            kind=entity.kind,
-            state=entity.state,
-            progress_done=entity.progress.done,
-            progress_total=entity.progress.total,
-            error=entity.error,
-            params=dict(entity.params),
-            request=None if entity.request is None else asdict(entity.request),
-            # A source identifier is a UUID, which JSON has no type for
-            result=None if entity.result is None else asdict(entity.result, value_serializer=json_value),
-            created_at=entity.created_at,
-            started_at=entity.started_at,
-            finished_at=entity.finished_at,
         )
 
 

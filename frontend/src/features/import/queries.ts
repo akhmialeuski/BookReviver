@@ -1,21 +1,45 @@
-import { queryOptions, type UseQueryResult, useQuery } from '@tanstack/react-query';
+import {
+  queryOptions,
+  type UseQueryResult,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import {
   type JobSchema,
   listSourcesApiV1ProjectsProjectIdSourcesGet,
   type SourceSchema,
+  type SourceStatus,
 } from '@/api';
 import {
+  deleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteMutation,
   listScansApiV1ProjectsProjectIdScansGetOptions,
   listSourcesApiV1ProjectsProjectIdSourcesGetQueryKey,
 } from '@/api/@tanstack/react-query.gen';
 import { isActiveJob } from '@/features/projects/events';
+import { invalidateSources } from '@/features/projects/queries';
 import { jobsOptions } from '@/features/workspace/queries';
 
 /**
- * The queries behind the Import stage: every file of the book as one list, and the jobs that import files into it.
+ * The queries behind the Import stage: every file of the book as one list, the report of the files an import did not
+ * take in, and the jobs that import files into it.
  *
- * Both are marked stale by the event stream through the generated keys, as the manifest of pages is.
+ * All are marked stale by the event stream through the generated keys, as the manifest of pages is.
  */
+
+/** A file that joined the book, which always has its kind and its type, unlike a file of the report. */
+export type ImportedSource = SourceSchema & {
+  kind: NonNullable<SourceSchema['kind']>;
+  file_type: NonNullable<SourceSchema['file_type']>;
+};
+
+/** The statuses of the files the report of an import lists: those a check rejected and those a cancel never reached. */
+const REPORTED_STATUSES: SourceStatus[] = ['rejected', 'skipped'];
+
+/** Narrow a file the server listed as imported, which the list of the sources holds alone, to one with its type. */
+function isImported(source: SourceSchema): source is ImportedSource {
+  return source.kind !== null && source.file_type !== null;
+}
 
 /** Files asked for per request; the route accepts at most this many. */
 const SOURCES_PAGE_SIZE = 100;
@@ -38,8 +62,8 @@ function sourcesOptions(projectId: string) {
       ...listSourcesApiV1ProjectsProjectIdSourcesGetQueryKey({ path: { project_id: projectId } }),
       'all',
     ],
-    queryFn: async ({ signal }): Promise<SourceSchema[]> => {
-      const sources: SourceSchema[] = [];
+    queryFn: async ({ signal }): Promise<ImportedSource[]> => {
+      const sources: ImportedSource[] = [];
       let page = 1;
       let total = 1;
       while (page <= total) {
@@ -49,7 +73,7 @@ function sourcesOptions(projectId: string) {
           signal,
           throwOnError: true,
         });
-        sources.push(...data.items);
+        sources.push(...data.items.filter(isImported));
         total = data.pages;
         page += 1;
       }
@@ -59,8 +83,54 @@ function sourcesOptions(projectId: string) {
 }
 
 /** Read every file of the book in the order of the book. */
-export function useSources(projectId: string): UseQueryResult<SourceSchema[]> {
+export function useSources(projectId: string): UseQueryResult<ImportedSource[]> {
   return useQuery(sourcesOptions(projectId));
+}
+
+/**
+ * Query options of the report of the imports: every file that was rejected or skipped and not yet closed.
+ *
+ * The key extends the generated key of the list, as that of the files does, so the invalidation of the sources reaches
+ * it too: a source that was imported, an import that ended and the closing of the report all read it again.
+ */
+function reportOptions(projectId: string) {
+  return queryOptions({
+    queryKey: [
+      ...listSourcesApiV1ProjectsProjectIdSourcesGetQueryKey({ path: { project_id: projectId } }),
+      'report',
+    ],
+    queryFn: async ({ signal }): Promise<SourceSchema[]> => {
+      const files: SourceSchema[] = [];
+      let page = 1;
+      let total = 1;
+      while (page <= total) {
+        const { data } = await listSourcesApiV1ProjectsProjectIdSourcesGet({
+          path: { project_id: projectId },
+          query: { page, size: SOURCES_PAGE_SIZE, status: REPORTED_STATUSES },
+          signal,
+          throwOnError: true,
+        });
+        files.push(...data.items);
+        total = data.pages;
+        page += 1;
+      }
+      return files;
+    },
+  });
+}
+
+/** Read the files the imports of the book rejected or skipped, in the order they were recorded. */
+export function useImportReport(projectId: string): UseQueryResult<SourceSchema[]> {
+  return useQuery(reportOptions(projectId));
+}
+
+/** Close the report of the imports, which deletes the rejected and skipped files on the server. */
+export function useCloseImportReport(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...deleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteMutation(),
+    onSuccess: () => invalidateSources(queryClient, projectId),
+  });
 }
 
 /**

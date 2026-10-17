@@ -10,15 +10,14 @@ from bookreviver.domain.enums import JobState, RejectionReason, UploadProblem
 
 if TYPE_CHECKING:
     import httpx
-    from taskiq import InMemoryBroker
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Project
+    from tests.api.imports.watch import ImportWatch
 
 pytestmark = pytest.mark.anyio
 
 SOURCES_PATH: str = '/api/v1/projects/{project_id}/sources'
-JOB_PATH: str = '/api/v1/jobs/{job_id}'
 FILES_FIELD: str = 'files'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
@@ -57,14 +56,14 @@ class TestUploadLimits:
     """Tests for the limits of POST /projects/{project_id}/sources."""
 
     async def test_upload_of_more_files_than_the_parser_accepts_by_default_is_accepted(
-        self, fx_client: httpx.AsyncClient, fx_broker: InMemoryBroker, fx_project: Project
+        self, fx_client: httpx.AsyncClient, fx_import: ImportWatch, fx_project: Project
     ) -> None:
         """Verify an upload may hold more than 1000 files, as the upload rule allows, and each one is answered for.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_broker: In-process broker running the import job.
-        :type fx_broker: InMemoryBroker
+        :param fx_import: Reader of the imports the application runs.
+        :type fx_import: ImportWatch
         :param fx_project: Project of the signed-in account.
         :type fx_project: Project
         """
@@ -72,12 +71,13 @@ class TestUploadLimits:
             SOURCES_PATH.format(project_id=fx_project.id), files=_text_files(PARSER_DEFAULT_FILES + 1, size=1)
         )
         assert response.status_code == HTTPStatus.ACCEPTED, response.text
-        await fx_broker.wait_all()
 
-        finished = (await fx_client.get(JOB_PATH.format(job_id=response.json()['id']))).json()
+        finished = await fx_import.finished(response.json()['id'])
+
+        report = await fx_import.report(fx_project.id)
         expect(finished['state'] == JobState.FAILED)
-        expect(len(finished['result']['rejected']) == PARSER_DEFAULT_FILES + 1)
-        expect({file['reason'] for file in finished['result']['rejected']} == {RejectionReason.UNSUPPORTED_TYPE})
+        expect(len(report) == PARSER_DEFAULT_FILES + 1)
+        expect({file['rejection'] for file in report} == {RejectionReason.UNSUPPORTED_TYPE})
         assert_expectations()
 
     async def test_upload_of_one_file_more_than_the_rule_allows_is_a_413_problem(

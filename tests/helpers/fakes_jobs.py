@@ -9,24 +9,28 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, override
 
 import anyio
-from attrs import field, frozen
+from attrs import Factory, field, frozen
 from dishka import AnyOf, Provider, Scope, provide
 
 from bookreviver.adapters.clock.system import FixedClock
 from bookreviver.adapters.events.broadcast import InProcessEventBus
 from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
-from bookreviver.ports.runtime import Clock, EventPublisher, EventStream
+from bookreviver.ports.runtime import Clock, EventPublisher, EventStream, JobBoard
 from bookreviver.services.jobs import JobService
 from tests.helpers.book_gate import BookGate, GatedUnitOfWork
 from tests.helpers.builders import EPOCH
+from tests.helpers.fake_board import FakeJobBoard
+from tests.helpers.scripted_runner import ScriptedRunner
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
 
-    from bookreviver.domain.entities import Job, Project
+    from bookreviver.adapters.jobs.board import JobRunner
+    from bookreviver.domain.entities import Project
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import ProjectId
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.storage import SourceStore
 
 EVENT_QUEUE_SIZE: int = 16
 
@@ -96,12 +100,25 @@ class JobFakes:
     :ivar events: Event bus serving both publishers and subscribers.
     :ivar clock: Clock stopped at ``EPOCH``.
     :ivar gate: Gate a test holds a book with, which the units of work from ``gated_uow`` wait at.
+    :ivar scripted: Scripted runner a test can hold or make fail, which the board runs its jobs with unless ``runner``
+                    is given.
+    :ivar runner: What the fake board runs its jobs with instead of the scripted runner, or None.
+    :ivar board: Board that records the jobs put on it and runs them when a test calls ``run_queued``.
     """
 
     database: InMemoryDatabase = field(factory=InMemoryDatabase)
     events: RecordingEventBus = field(factory=RecordingEventBus)
     clock: FixedClock = field(factory=lambda: FixedClock(EPOCH))
     gate: BookGate = field(factory=BookGate)
+    scripted: ScriptedRunner = field(factory=ScriptedRunner)
+    runner: JobRunner | None = None
+    board: FakeJobBoard = field(
+        init=False,
+        default=Factory(
+            lambda self: FakeJobBoard(runner=self.runner or self.scripted, publisher=self.events, clock=self.clock),
+            takes_self=True,
+        ),
+    )
 
     def gated_uow(self) -> UnitOfWork:
         """Open a unit of work over the database whose changes wait at the gate, as a new request or job would get.
@@ -111,46 +128,47 @@ class JobFakes:
         """
         return GatedUnitOfWork(InMemoryUnitOfWork(self.database), self.gate)
 
-    def job_service(self) -> JobService:
+    def job_service(self, sources: SourceStore) -> JobService:
         """Build a job service over a new unit of work, as a new request would get.
 
+        :param sources: Store of the uploads, which a cancelled import that never began is removed from.
+        :type sources: SourceStore
         :returns: The job service.
         :rtype: JobService
         """
-        return JobService(
-            uow=InMemoryUnitOfWork(self.database), publisher=self.events, stream=self.events, clock=self.clock
-        )
+        return JobService(uow=InMemoryUnitOfWork(self.database), board=self.board, stream=self.events, sources=sources)
 
-    async def store(self, project: Project, *jobs: Job) -> None:
-        """Commit a project and jobs of it to the database.
+    async def store(self, project: Project) -> None:
+        """Commit a project to the database.
 
         :param project: Project to store.
         :type project: Project
-        :param jobs: Jobs of the project to store.
-        :type jobs: Job
         """
+        await InMemoryUnitOfWork(self.database).change(lambda repos: repos.projects.add(project))
 
-        def add_rows(repos: Repositories) -> None:
-            """Add the project and its jobs, which are writes outside the content of a book.
 
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            """
-            repos.projects.add(project)
-            for job in jobs:
-                repos.jobs.add(job)
+class FakeBoardProvider(Provider):
+    """Replaces the application's job board with a given one, such as a fake that runs a job only when told to."""
 
-        await InMemoryUnitOfWork(self.database).change(add_rows)
+    scope = Scope.APP
 
-    async def stored_job(self, job: Job) -> Job:
-        """Read a job back as committed.
+    def __init__(self, board: JobBoard) -> None:
+        """Provide ``board`` in place of the application's own.
 
-        :param job: Job to read, identified by its identifier.
-        :type job: Job
-        :returns: The job as the database holds it now.
-        :rtype: Job
+        :param board: Board the application puts its jobs on and reads them from.
+        :type board: JobBoard
         """
-        return await InMemoryUnitOfWork(self.database).read(lambda repos: repos.jobs.get(job.id))
+        super().__init__()
+        self._board = board
+
+    @provide(override=True)
+    def job_board(self) -> JobBoard:
+        """Return the given board, so the application sees the jobs a test puts on it.
+
+        :returns: The board given to the constructor.
+        :rtype: JobBoard
+        """
+        return self._board
 
 
 class JobFakesProvider(Provider):

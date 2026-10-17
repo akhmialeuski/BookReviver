@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import type { JobSchema, SourceSchema } from '@/api';
+import type { JobSchema } from '@/api';
 import { FileList } from '@/features/import/FileList';
 import { job, source } from '@/features/import/fixtures';
+import type { ImportedSource } from '@/features/import/queries';
 
 /**
  * The list of files: a row for each with its facts, the chosen one marked, and a row with a progress bar for every
@@ -11,7 +12,7 @@ import { job, source } from '@/features/import/fixtures';
  */
 
 function render(
-  sources: SourceSchema[],
+  sources: ImportedSource[],
   imports: JobSchema[] = [],
   selectedId: string | undefined = undefined,
 ): string {

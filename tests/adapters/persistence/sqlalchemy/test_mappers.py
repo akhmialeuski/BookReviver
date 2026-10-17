@@ -16,11 +16,12 @@ from bookreviver.domain.enums import (
     FileType,
     IdentifierScheme,
     ImagePolicy,
-    JobState,
     PageKind,
+    RejectionReason,
     Rendition,
     ReviewReason,
     SourceKind,
+    SourceStatus,
     TransformKind,
     VersionState,
 )
@@ -31,7 +32,6 @@ from bookreviver.domain.values import (
     Contributor,
     MetadataSuggestion,
     ProcessorRef,
-    Progress,
     Renditions,
     ScanFacts,
     SourceFile,
@@ -39,7 +39,6 @@ from bookreviver.domain.values import (
 from tests.helpers.builders import (
     EPOCH,
     FULL_DETAILS,
-    make_job,
     make_page,
     make_page_version,
     make_project,
@@ -104,7 +103,8 @@ FULL_SUGGESTION: MetadataSuggestion = MetadataSuggestion(
     ),
     subjects=('Фольклор', 'Казкі'),
 )
-FULL_PROGRESS: Progress = Progress(done=7, total=12)
+# The text for the reader that says more than the reason of a file that was not imported
+SOURCE_DETAIL: str = 'The file type is not accepted as a source.'
 
 
 class TestProjectMapper:
@@ -241,7 +241,7 @@ class TestSourceMapper:
     """Tests for SourceMapper."""
 
     async def test_every_field_survives_the_database(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
-        """Verify an indirect DjVu source with its files, metadata, suggestion and import job reads back unchanged.
+        """Verify an indirect DjVu source with its files, metadata and suggestion reads back unchanged.
 
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
@@ -249,7 +249,6 @@ class TestSourceMapper:
         :type fx_owner_id: AccountId
         """
         project = make_project(owner_id=fx_owner_id)
-        job = make_job(project_id=project.id)
         source = evolve(
             make_source(project_id=project.id),
             kind=SourceKind.DJVU,
@@ -261,11 +260,45 @@ class TestSourceMapper:
             scan_count=2,
             metadata=FULL_METADATA,
             suggestion=FULL_SUGGESTION,
-            import_job_id=job.id,
         )
         uow = SqlAlchemyUnitOfWork(fx_database)
-        await uow.change(lambda repos: (repos.projects.add(project), repos.jobs.add(job)))
-        await uow.change_book(project.id, lambda repos, _project: repos.sources.add(source))
+        await store_project(uow, project, sources=[source])
+        assert await uow.read(lambda repos: repos.sources.get(source.id)) == source
+
+    @pytest.mark.parametrize(
+        ('status', 'rejection'),
+        [(SourceStatus.REJECTED, RejectionReason.UNSUPPORTED_TYPE), (SourceStatus.SKIPPED, None)],
+    )
+    async def test_a_file_of_an_unknown_type_that_was_not_imported_survives_the_database(
+        self,
+        fx_database: SqlDatabase,
+        fx_owner_id: AccountId,
+        status: SourceStatus,
+        rejection: RejectionReason | None,
+    ) -> None:
+        """Verify a rejected or skipped file with no kind and no type, a reason and a detail reads back unchanged.
+
+        :param fx_database: Fresh SQLite database with every table created.
+        :type fx_database: SqlDatabase
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
+        :param status: Whether the file was rejected or skipped.
+        :type status: SourceStatus
+        :param rejection: The reason of a rejected file, and None for a skipped one.
+        :type rejection: RejectionReason | None
+        """
+        project = make_project(owner_id=fx_owner_id)
+        source = evolve(
+            make_source(project_id=project.id),
+            kind=None,
+            file_type=None,
+            scan_count=0,
+            status=status,
+            rejection=rejection,
+            detail=SOURCE_DETAIL,
+        )
+        uow = SqlAlchemyUnitOfWork(fx_database)
+        await store_project(uow, project, sources=[source])
         assert await uow.read(lambda repos: repos.sources.get(source.id)) == source
 
 
@@ -291,27 +324,3 @@ class TestScanMapper:
         uow = SqlAlchemyUnitOfWork(fx_database)
         await store_project(uow, project, sources=[source], scans=[scan])
         assert await uow.read(lambda repos: repos.scans.get(scan.id)) == scan
-
-
-class TestJobMapper:
-    """Tests for JobMapper."""
-
-    async def test_every_field_survives_the_database(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
-        """Verify a finished job with progress, an error and its timestamps reads back equal to what was stored.
-
-        :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
-        :param fx_owner_id: Committed account owning the project.
-        :type fx_owner_id: AccountId
-        """
-        project = make_project(owner_id=fx_owner_id)
-        job = evolve(
-            make_job(project_id=project.id, state=JobState.FAILED),
-            progress=FULL_PROGRESS,
-            error='Page 8 could not be rasterised',
-            started_at=EPOCH + timedelta(minutes=1),
-            finished_at=EPOCH + timedelta(minutes=5),
-        )
-        uow = SqlAlchemyUnitOfWork(fx_database)
-        await uow.change(lambda repos: (repos.projects.add(project), repos.jobs.add(job)))
-        assert await uow.read(lambda repos: repos.jobs.get(job.id)) == job

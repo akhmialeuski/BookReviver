@@ -405,7 +405,7 @@
           "sources"
         ],
         "summary": "List Sources",
-        "description": "List the sources of a project in the order they were imported.",
+        "description": "List the sources of a project in the order they were recorded, the imported ones unless ``status`` says more.\n\nThe rejected and skipped files are the report of an import: the files no check let through, with their reasons, and\nthe files a cancelled import never reached.",
         "operationId": "list_sources_api_v1_projects__project_id__sources_get",
         "parameters": [
           {
@@ -419,6 +419,24 @@
               "title": "Project Id"
             },
             "description": "Identifier of the project"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/components/schemas/SourceStatus"
+              },
+              "description": "List the files in these statuses; the imported sources by default",
+              "default": [
+                "imported"
+              ],
+              "title": "Status"
+            },
+            "description": "List the files in these statuses; the imported sources by default"
           },
           {
             "name": "page",
@@ -504,7 +522,7 @@
           "imports"
         ],
         "summary": "Upload Sources",
-        "description": "Receive the files of an upload and import them in the background, each one as a source of the project.\n\nThe response is the queued job. Its result, once it has finished, lists the files that were rejected and why.\nA project imports one upload at a time.",
+        "description": "Receive the files of an upload and import them in the background, each one as a source of the project.\n\nThe response is the queued job. Every file of the upload becomes a source of the project, and the ones the import\nrejected, with the reason, or skipped when it was cancelled, are listed by the sources of the project until the\nreader closes the report. A project imports one upload at a time.",
         "operationId": "upload_sources_api_v1_projects__project_id__sources_post",
         "parameters": [
           {
@@ -598,6 +616,77 @@
                 ],
                 "title": "UploadForm",
                 "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/sources/unimported": {
+      "delete": {
+        "tags": [
+          "sources"
+        ],
+        "summary": "Delete Unimported Sources",
+        "description": "Delete the rejected and skipped files of a project, which is closing the report of an import.\n\nThe imported sources stay. The project answers 409 while it imports.",
+        "operationId": "delete_unimported_sources_api_v1_projects__project_id__sources_unimported_delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
               }
             }
           }
@@ -7063,7 +7152,7 @@
           "jobs"
         ],
         "summary": "Cancel Job",
-        "description": "Cancel a queued or running job and return it; a running job stops before its next step.",
+        "description": "Cancel a queued or running job and return it; a running job stops at the boundary of its current task.",
         "operationId": "cancel_job_api_v1_jobs__job_id__delete",
         "parameters": [
           {
@@ -9739,40 +9828,6 @@
         "title": "ImagePolicy",
         "description": "How a project stores the ``full`` image of its scans and page versions.\n\nA bilevel image is a lossless PNG under either policy. The policy decides only gray and colour images, and a change\napplies to images written afterwards, so nothing stored is encoded again."
       },
-      "ImportResultSchema": {
-        "properties": {
-          "imported": {
-            "items": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "type": "array",
-            "title": "Imported"
-          },
-          "rejected": {
-            "items": {
-              "$ref": "#/components/schemas/RejectedFileSchema"
-            },
-            "type": "array",
-            "title": "Rejected"
-          },
-          "skipped": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Skipped"
-          }
-        },
-        "type": "object",
-        "required": [
-          "imported",
-          "rejected",
-          "skipped"
-        ],
-        "title": "ImportResultSchema",
-        "description": "What an import job did with the files of its upload.\n\n:ivar imported: Identifiers of the sources the job committed to the project, in book order.\n:ivar rejected: Files no check let through, each with its reason.\n:ivar skipped: Names of the files a cancelled job never reached."
-      },
       "JobKind": {
         "type": "string",
         "enum": [
@@ -9823,16 +9878,6 @@
             "type": "string",
             "title": "Error"
           },
-          "result": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ImportResultSchema"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -9872,13 +9917,12 @@
           "state",
           "progress",
           "error",
-          "result",
           "created_at",
           "started_at",
           "finished_at"
         ],
         "title": "JobSchema",
-        "description": "A background job, its state and its progress; also the data of a ``job-changed`` event.\n\n:ivar id: Identifier of the job.\n:ivar project_id: Project the job works on.\n:ivar kind: What the job does.\n:ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.\n:ivar state: Where the job is in its life cycle.\n:ivar progress: How many of its steps are done.\n:ivar error: Why the job failed, shown to the user, or empty.\n:ivar result: What an import job did with the files of its upload, or None until it has finished.\n:ivar created_at: When the job was recorded.\n:ivar started_at: When a worker started the job, or None while it is queued.\n:ivar finished_at: When the job reached a final state, or None before."
+        "description": "A background job, its state and its progress; also the data of a ``job-changed`` event.\n\nA job lives in the memory of the API process, so a job the process does not hold, such as one that ended before the\nprocess started, is answered as not found.\n\n:ivar id: Identifier of the job.\n:ivar project_id: Project the job works on.\n:ivar kind: What the job does.\n:ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.\n:ivar state: Where the job is in its life cycle.\n:ivar progress: How many of its tasks are done; for an import the files dealt with and the scans cut.\n:ivar error: Why the job failed, shown to the user, or empty.\n:ivar created_at: When the job was queued.\n:ivar started_at: When its book began to run the job, or None while it is queued.\n:ivar finished_at: When the job reached a final state, or None before."
       },
       "JobState": {
         "type": "string",
@@ -13115,29 +13159,6 @@
         "title": "RecipeSchema",
         "description": "A recipe: the ordered steps of one stage for one kind of page.\n\n:ivar id: Identifier of the recipe.\n:ivar project_id: Project owning the recipe.\n:ivar stage: Stage the recipe processes.\n:ivar kind: Kind of the pages the recipe processes, which is also its name.\n:ivar steps: The steps in the order they run.\n:ivar profile_id: The profile of the account the recipe was made from, or null for a recipe that was not.\n:ivar created_at: When the recipe was created.\n:ivar updated_at: When the recipe was last changed.\n:ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual\n                    order. A required place appears here only for a recipe saved in the free order."
       },
-      "RejectedFileSchema": {
-        "properties": {
-          "file_name": {
-            "type": "string",
-            "title": "File Name"
-          },
-          "reason": {
-            "$ref": "#/components/schemas/RejectionReason"
-          },
-          "detail": {
-            "type": "string",
-            "title": "Detail"
-          }
-        },
-        "type": "object",
-        "required": [
-          "file_name",
-          "reason",
-          "detail"
-        ],
-        "title": "RejectedFileSchema",
-        "description": "A file of an upload that was not imported, with the reason shown to the user.\n\n:ivar file_name: Name of the file, or of the main file of its source.\n:ivar reason: Why the file was not imported.\n:ivar detail: Text that says more than the reason, such as the name of the source the file repeats."
-      },
       "RejectionReason": {
         "type": "string",
         "enum": [
@@ -13543,10 +13564,24 @@
             "title": "Id"
           },
           "kind": {
-            "$ref": "#/components/schemas/SourceKind"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "file_type": {
-            "$ref": "#/components/schemas/FileType"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FileType"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "file_name": {
             "type": "string",
@@ -13579,17 +13614,22 @@
           "suggestion": {
             "$ref": "#/components/schemas/MetadataSuggestionSchema"
           },
-          "import_job_id": {
+          "status": {
+            "$ref": "#/components/schemas/SourceStatus"
+          },
+          "rejection": {
             "anyOf": [
               {
-                "type": "string",
-                "format": "uuid"
+                "$ref": "#/components/schemas/RejectionReason"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Import Job Id"
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
           },
           "imported_at": {
             "type": "string",
@@ -13609,11 +13649,23 @@
           "scan_count",
           "metadata",
           "suggestion",
-          "import_job_id",
+          "status",
+          "rejection",
+          "detail",
           "imported_at"
         ],
         "title": "SourceSchema",
-        "description": "An uploaded file of a book, or the files of one indirect DjVu document, never changed after its import.\n\n:ivar id: Identifier of the source.\n:ivar kind: Kind of the source, which selects the format that reads it.\n:ivar file_type: Exact format of the main file.\n:ivar file_name: Name the browser sent for the main file.\n:ivar files: Stored files, the main file first; more than one only for an indirect DjVu document.\n:ivar size_bytes: Total size of the files in bytes.\n:ivar sha256: SHA-256 digest of the main file.\n:ivar scan_count: Number of scans the source holds.\n:ivar metadata: Technical metadata of the format, whose keys depend on the kind of source.\n:ivar suggestion: Values of the book description found in the file.\n:ivar import_job_id: Import job that created the source, or None once that job is deleted.\n:ivar imported_at: When the source became part of the project."
+        "description": "An uploaded file of a book, or the files of one indirect DjVu document, never changed after its import.\n\n:ivar id: Identifier of the source.\n:ivar kind: Kind of the source, which selects the format that reads it, or None for a rejected or skipped file of an\n            unknown type.\n:ivar file_type: Exact format of the main file, or None for a rejected or skipped file of an unknown type.\n:ivar file_name: Name the browser sent for the main file.\n:ivar files: Stored files, the main file first; more than one only for an indirect DjVu document.\n:ivar size_bytes: Total size of the files in bytes.\n:ivar sha256: SHA-256 digest of the main file.\n:ivar scan_count: Number of scans the source holds.\n:ivar metadata: Technical metadata of the format, whose keys depend on the kind of source.\n:ivar suggestion: Values of the book description found in the file.\n:ivar status: Whether the file was imported, rejected by the import, or skipped by a cancelled one.\n:ivar rejection: Why a rejected file was refused, or None for a file that was not.\n:ivar detail: Text that says more than the reason, such as the name of the source a duplicate repeats, or empty.\n:ivar imported_at: When the file was recorded, which for an imported source is when it became part of the project."
+      },
+      "SourceStatus": {
+        "type": "string",
+        "enum": [
+          "imported",
+          "rejected",
+          "skipped"
+        ],
+        "title": "SourceStatus",
+        "description": "What became of an uploaded file: it joined the book, an import refused it, or a cancelled import skipped it."
       },
       "Stage": {
         "type": "string",

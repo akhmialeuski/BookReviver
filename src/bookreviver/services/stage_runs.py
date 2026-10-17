@@ -24,6 +24,10 @@ two short ``change_book`` calls, the mark that it is running and then its result
 while the rest are made. Each of them reads the page again, so a page that was deleted while its steps ran gets nothing
 written, and the files of a version whose ``change_book`` failed are discarded. A page deleted before a run ends is
 reported as skipped, and nothing of the run is stored.
+
+A step on a page is a task of the job, which tells its control that the task is done once the version is stored,
+outside any transaction. The control raises ``JobCancelledError`` there when the job was cancelled, which is no failure
+of the page, so it passes every handler that records one.
 """
 
 import logging
@@ -67,11 +71,10 @@ if TYPE_CHECKING:
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import Repositories, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.ports.runtime import Clock, EventPublisher
+    from bookreviver.ports.runtime import Clock, EventPublisher, JobControl
     from bookreviver.ports.tracing import Tracer
-    from bookreviver.services.recipes import RecipeBook
+    from bookreviver.services.processing_parts import ProcessingParts
     from bookreviver.services.spread_splits import Unsplit
-    from bookreviver.services.stage_records import StageRecords
     from bookreviver.services.steps import StepRunner
 
 UNEXPECTED_FAILURE: str = 'The step failed because of an unexpected error. It has been logged.'
@@ -148,7 +151,7 @@ class StageRuntime:
 class StageWork:
     """What a run of a recipe and a preview have in common: reading the input of a stage and making one version."""
 
-    def __init__(self, *, project: Project, uow: UnitOfWork, runtime: StageRuntime) -> None:
+    def __init__(self, *, project: Project, uow: UnitOfWork, runtime: StageRuntime, control: JobControl) -> None:
         """Work over the ports of one job.
 
         :param project: Project owning the pages, whose image policy chooses the format of a version's ``full``.
@@ -157,9 +160,12 @@ class StageWork:
         :type uow: UnitOfWork
         :param runtime: The runner, the catalogue, the publisher, the clock and the size of a preview.
         :type runtime: StageRuntime
+        :param control: What the job reports through: every step of a page is a task, and the job stops between two.
+        :type control: JobControl
         """
         self._project = project
         self._uow = uow
+        self._control = control
         self._runner = runtime.runner
         self._catalogue = runtime.catalogue
         self._publisher = runtime.publisher
@@ -167,6 +173,20 @@ class StageWork:
         self._preview_long_side_px = runtime.preview_long_side_px
         self._tracer = runtime.tracer
         self._keys = ProjectKeys(project.id)
+
+    def task_count(self, steps: Sequence[Step]) -> int:
+        """Count the tasks of the steps a run or a preview goes over on one page.
+
+        Every step is a task. A page whose normalize step leaves a field to the book is also taken as far as that step
+        once more, to measure its content box, so those steps are tasks again.
+
+        :param steps: The steps the run goes over, which are on.
+        :type steps: Sequence[Step]
+        :returns: The number of tasks the page makes.
+        :rtype: int
+        """
+        measured = 0 if self._book_fields(steps) is None else self._normalize_position(steps) + 1
+        return len(steps) + measured
 
     async def _refresh(self, page: Page, stage: Stage) -> None:
         """Bring a stale earlier stage of a page up to date before a step reads it; a preview leaves it as it is.
@@ -347,6 +367,8 @@ class StageWork:
         layers = PageLayers(page)
         for step in steps:
             version = await self._make_version(stage, step, source, layers)
+            # A task is done whether the version was made, found made, or failed, and no transaction is open here
+            await self._control.task_done()
             if version.state is not VersionState.READY:
                 return version
             # A preview made of a preview is as large of the full image as the preview it read, so the ratio goes on
@@ -384,9 +406,20 @@ class StageWork:
         :returns: The box of the page, or None when a step failed or the page has no content to find a box by.
         :rtype: BlockMeasure | None
         """
-        position = next(index for index, step in enumerate(steps) if step.processor_key == NORMALIZE_KEY)
+        position = self._normalize_position(steps)
         version = await self._make_chain(page, stage, steps[: position + 1], source)
         return None if version is None or version.state is not VersionState.READY else BlockMeasure.of(version)
+
+    @staticmethod
+    def _normalize_position(steps: Sequence[Step]) -> int:
+        """Find the place of the normalize step among steps.
+
+        :param steps: The steps a run or a preview goes over, one of which is the normalize step.
+        :type steps: Sequence[Step]
+        :returns: The index of the normalize step.
+        :rtype: int
+        """
+        return next(index for index, step in enumerate(steps) if step.processor_key == NORMALIZE_KEY)
 
     async def _book_of(self, page: Page, stage: Stage, steps: Sequence[Step], source: StepSource) -> MetadataMap:
         """Work out what the book gives the normalize step on a page that is run or previewed alone.
@@ -644,7 +677,7 @@ class RecipeRun(StageWork):
     """Runs a recipe on one page and makes its last version the current one of the stage."""
 
     def __init__(
-        self, *, project: Project, uow: UnitOfWork, runtime: StageRuntime, recipes: RecipeBook, records: StageRecords
+        self, *, project: Project, uow: UnitOfWork, runtime: StageRuntime, control: JobControl, parts: ProcessingParts
     ) -> None:
         """Work over the ports of one job.
 
@@ -654,15 +687,16 @@ class RecipeRun(StageWork):
         :type uow: UnitOfWork
         :param runtime: The runner, the catalogue, the publisher, the clock and the size of a preview.
         :type runtime: StageRuntime
-        :param recipes: The recipes of the project, which an earlier stage that is stale is run again by.
-        :type recipes: RecipeBook
-        :param records: Writer of the stage records.
-        :type records: StageRecords
+        :param control: What the job reports through: every step of a page is a task, and the job stops between two.
+        :type control: JobControl
+        :param parts: The recipes of the project, which an earlier stage that is stale is run again by, and the writer
+                      of the stage records.
+        :type parts: ProcessingParts
         """
-        super().__init__(project=project, uow=uow, runtime=runtime)
-        self._recipes = recipes
-        self._records = records
-        self._splits = SpreadSplit(project=project, uow=uow, runtime=runtime, records=records)
+        super().__init__(project=project, uow=uow, runtime=runtime, control=control)
+        self._recipes = parts.recipes
+        self._records = parts.records
+        self._splits = SpreadSplit(project=project, uow=uow, runtime=runtime, records=parts.records)
         self._books: dict[RecipeId, MetadataMap] = {}
 
     async def run(
@@ -703,12 +737,35 @@ class RecipeRun(StageWork):
             if (source := await self._source(page, stage, VersionScale.FULL)) is None:
                 return RunOutcome.SKIPPED
             if self._splits.splits(recipe):
-                outcome = await self._splits.split(page, recipe, source, confirmed=confirmed)
+                outcome = await self._split(page, recipe, source, confirmed=confirmed)
             else:
                 outcome = await self._process(page, recipe, source, confirmed=confirmed, through_step=through_step)
         except DomainError:
             return await self._fail(page, recipe)
         return await self._fail(page, recipe) if outcome is RunOutcome.FAILED else outcome
+
+    async def _split(self, page: Page, recipe: Recipe, source: StepSource, *, confirmed: bool) -> RunOutcome:
+        """Split the page by the recipe, which is a task of the job like any step.
+
+        The split is the only step of its recipe and makes its versions itself, outside the chain of steps that tells
+        the control after each of them, so the task is counted here.
+
+        :param page: Page to split.
+        :type page: Page
+        :param recipe: Recipe of the stage, whose one step splits.
+        :type recipe: Recipe
+        :param source: What the split reads.
+        :type source: StepSource
+        :param confirmed: Whether the user confirmed that undoing a split deletes the right half of a spread.
+        :type confirmed: bool
+        :returns: What the split came to.
+        :rtype: RunOutcome
+        :raises DomainError: If the split cannot be made.
+        :raises JobCancelledError: If the job was cancelled, which stops it before its next task.
+        """
+        outcome = await self._splits.split(page, recipe, source, confirmed=confirmed)
+        await self._control.task_done()
+        return outcome
 
     async def _process(
         self, page: Page, recipe: Recipe, source: StepSource, *, confirmed: bool, through_step: int | None
@@ -1029,6 +1086,7 @@ class PreviewRun(StageWork):
         if source is None:
             raise ConflictError(NO_PREVIEW_INPUT)
         enabled = [step for step in steps[: step_index + 1] if step.enabled]
+        self._control.plan(self.task_count(enabled))
         version = await self._make_chain(
             page, stage, enabled, evolve(source, book=await self._book_of(page, stage, enabled, source))
         )

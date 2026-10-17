@@ -56,11 +56,11 @@ class TestPreviewBudget:
             page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=DESKEW_KEY),), step_index=0
         )
         job = await fx_cv_kit.service().start_preview(actor, project.id, preview)
-        # The worker opens this span around the entry point of every job in app.worker.traced, which the kit has no
-        # broker to do, so it is opened here with the same name and attributes
+        # The application opens this span around the entry point of every job in app.jobs.job_runner, which the runner
+        # of the kit does not do, so it is opened here with the same name and attributes
         job_attributes = {SpanAttribute.JOB_KIND: JobKind.PREVIEW_STEP, SpanAttribute.JOB_ID: str(job.id)}
         with fx_cv_kit.tracer.span(SpanName.JOB, job_attributes, parent=SpanParent.NONE):
-            await fx_cv_kit.jobs().preview_step(job.id)
+            await fx_cv_kit.work_queue()
         [job_span] = fx_cv_kit.tracer.named(SpanName.JOB)
         [step_span] = [
             span

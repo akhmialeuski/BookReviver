@@ -1,15 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { ImportResultSchema } from '@/api';
 import { job } from '@/features/import/fixtures';
 import { importJobsOf } from '@/features/import/jobs';
 
 const NOBODY: ReadonlySet<string> = new Set();
-
-function result(overrides: Partial<ImportResultSchema> = {}): ImportResultSchema {
-  return { imported: ['f-1'], rejected: [], skipped: [], ...overrides };
-}
-
-const REJECTED = [{ file_name: 'broken.png', reason: 'unreadable', detail: '' }] as const;
 
 describe('importJobsOf', () => {
   it('keeps the imports that run, the oldest first', () => {
@@ -24,70 +17,43 @@ describe('importJobsOf', () => {
   });
 
   it('leaves out the jobs that are not imports', () => {
-    const { active, report } = importJobsOf(
+    const { active, failed } = importJobsOf(
       [job('run', { kind: 'run-stage' }), job('tiles', { kind: 'cut-tiles', state: 'failed' })],
       NOBODY,
     );
     expect(active).toEqual([]);
-    expect(report).toBeUndefined();
+    expect(failed).toBeUndefined();
   });
 
-  it('reports the latest ended import that rejected files', () => {
-    const { report } = importJobsOf(
+  it('reports the latest ended import when it failed', () => {
+    const { failed } = importJobsOf(
       [
-        job('first', {
-          state: 'succeeded',
-          created_at: '2026-10-02T10:00:00Z',
-          result: result({ skipped: ['x.png'] }),
-        }),
-        job('second', {
-          state: 'succeeded',
-          created_at: '2026-10-02T11:00:00Z',
-          result: result({ rejected: [...REJECTED] }),
-        }),
+        job('first', { state: 'failed', created_at: '2026-10-02T10:00:00Z' }),
+        job('second', { state: 'failed', created_at: '2026-10-02T11:00:00Z' }),
       ],
       NOBODY,
     );
-    expect(report?.id).toBe('second');
+    expect(failed?.id).toBe('second');
   });
 
-  it('reports a failed import and a cancelled one that skipped files', () => {
-    expect(importJobsOf([job('a', { state: 'failed' })], NOBODY).report?.id).toBe('a');
-    expect(
-      importJobsOf(
-        [job('b', { state: 'cancelled', result: result({ skipped: ['x.png'] }) })],
-        NOBODY,
-      ).report?.id,
-    ).toBe('b');
+  it('has no failure for an import that succeeded or was cancelled', () => {
+    expect(importJobsOf([job('a', { state: 'succeeded' })], NOBODY).failed).toBeUndefined();
+    expect(importJobsOf([job('b', { state: 'cancelled' })], NOBODY).failed).toBeUndefined();
   });
 
-  it('has nothing to report for an import that took every file', () => {
-    expect(
-      importJobsOf([job('a', { state: 'succeeded', result: result() })], NOBODY).report,
-    ).toBeUndefined();
-  });
-
-  it('does not fall back to an older report when the latest import was clean', () => {
-    const { report } = importJobsOf(
+  it('does not fall back to an older failure when the latest import ended well', () => {
+    const { failed } = importJobsOf(
       [
-        job('old', {
-          state: 'succeeded',
-          created_at: '2026-10-02T10:00:00Z',
-          result: result({ rejected: [...REJECTED] }),
-        }),
-        job('clean', {
-          state: 'succeeded',
-          created_at: '2026-10-02T11:00:00Z',
-          result: result(),
-        }),
+        job('old', { state: 'failed', created_at: '2026-10-02T10:00:00Z' }),
+        job('clean', { state: 'succeeded', created_at: '2026-10-02T11:00:00Z' }),
       ],
       NOBODY,
     );
-    expect(report).toBeUndefined();
+    expect(failed).toBeUndefined();
   });
 
-  it('drops the report the person closed', () => {
-    const failed = job('a', { state: 'failed' });
-    expect(importJobsOf([failed], new Set(['a'])).report).toBeUndefined();
+  it('drops the failure the person closed', () => {
+    const closed = job('a', { state: 'failed' });
+    expect(importJobsOf([closed], new Set(['a'])).failed).toBeUndefined();
   });
 });

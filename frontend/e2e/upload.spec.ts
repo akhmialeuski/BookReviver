@@ -148,12 +148,9 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
     await page.getByRole('button', { name: 'Upload 5 files' }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
 
-    // The report of the import stays under the list until it is closed
-    const status = page.getByTestId('import-status');
-    await expect(status.getByTestId('job-state')).toHaveText('Finished', { timeout: 60_000 });
-    await expect(status).toContainText('4 files imported into the book.');
+    // The report lists the files the import rejected and stays under the list until it is closed
     const rejected = page.getByTestId('rejected-files');
-    await expect(rejected).toContainText('book/vol2/broken.png');
+    await expect(rejected).toContainText('book/vol2/broken.png', { timeout: 60_000 });
     await expect(rejected).toContainText('Cannot be read');
     await expect(page.getByTestId('import-row')).toHaveCount(0);
   });
@@ -187,6 +184,10 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
 
   await test.step('close the report of the import', async () => {
     await page.getByTestId('import-status').getByRole('button', { name: 'Dismiss' }).click();
+    await expect(page.getByTestId('import-status')).toHaveCount(0);
+    // Closing deletes the rejected file on the server, so the report does not come back, and the book keeps its files
+    await page.reload();
+    await expect(page.getByTestId('source-row')).toHaveCount(5);
     await expect(page.getByTestId('import-status')).toHaveCount(0);
   });
 

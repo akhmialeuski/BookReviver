@@ -14,6 +14,7 @@ from bookreviver.services.run_plans import RunPlan
 from tests.helpers.builders import new_account_id
 from tests.helpers.page_batches import PageValues, run_impact
 from tests.helpers.processors import STRENGTH_PARAMETER, FakeProcessor
+from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -51,23 +52,6 @@ async def worked_book(kit: ProcessingKit) -> tuple[Actor, Project, list[Page], l
         await PageValues(kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
     await kit.edits().save(actor, project.id, keys[0], ROTATION, None)
     return actor, project, pages, keys
-
-
-async def run_stage(kit: ProcessingKit, actor: Actor, project: Project, run: StageRun) -> None:
-    """Start a run of a stage and let the worker do it.
-
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
-    :param actor: Account owning the project.
-    :type actor: Actor
-    :param project: Project to run in.
-    :type project: Project
-    :param run: The run.
-    :type run: StageRun
-    """
-    job = await kit.service().start_run(actor, project.id, run.stage, run)
-    await kit.jobs().run_stage(job.id)
-    await kit.work_queue()
 
 
 async def head_of(kit: ProcessingKit, page: Page) -> PageVersion:
@@ -241,7 +225,7 @@ class TestConfirmation:
         run = StageRun(stage=Stage.GEOMETRY, mode=RunMode.DROP_OWN)
         with pytest.raises(ConflictError, match=r'takes the work of \d+ pages away'):
             await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, run)
-        expect(len(fx_kit.recording.enqueued) == 0)
+        expect(fx_kit.board.put_jobs == [])
         expect(await states_of(fx_kit, keys[:1]) != [None])
         assert_expectations()
 
@@ -316,9 +300,7 @@ class TestSkipOwn:
         """
         actor, project, pages, keys = await worked_book(fx_kit)
         run = StageRun(stage=Stage.GEOMETRY, mode=RunMode.SKIP_OWN)
-        job = await fx_kit.service().start_run(actor, project.id, Stage.GEOMETRY, run)
-        await fx_kit.jobs().run_stage(job.id)
-        await fx_kit.work_queue()
+        await run_stage(fx_kit, actor, project, run)
         first = await state_of(fx_kit, keys[0])
         records = await fx_kit.uow().read(
             lambda repos: [repos.page_stages.find(PageStageKey(page.id, Stage.GEOMETRY)) for page in pages]
