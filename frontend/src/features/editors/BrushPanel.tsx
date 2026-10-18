@@ -17,11 +17,7 @@ import { Slider } from '@/shared/ui/slider';
 
 const labels = MESSAGES.editors.brush;
 
-export function BrushPanel({
-  shape,
-  disabled,
-  onCommit,
-}: PanelProps<BrushShape>): React.JSX.Element {
+export function BrushPanel({ shape, onCommit }: PanelProps<BrushShape>): React.JSX.Element {
   const [percent, setPercent] = useBrushPercent();
   return (
     <div className="grid basis-full gap-2" data-testid="brush-panel">
@@ -33,7 +29,6 @@ export function BrushPanel({
             max={BRUSH_MAX_PERCENT}
             step={BRUSH_STEP_PERCENT}
             value={[percent]}
-            disabled={disabled}
             thumbLabel={labels.size}
             onValueChange={([next]) => next !== undefined && setPercent(next)}
           />
@@ -46,7 +41,7 @@ export function BrushPanel({
         variant="outline"
         size="sm"
         className="justify-self-start"
-        disabled={disabled || shape.strokes.length === 0}
+        disabled={shape.strokes.length === 0}
         data-testid="brush-clear"
         onClick={() => onCommit({ strokes: [] })}
       >

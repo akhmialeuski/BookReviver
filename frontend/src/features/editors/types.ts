@@ -76,8 +76,6 @@ export interface PanelProps<S> {
   processorKey: string;
   /** The settings of the step the editor sets, as the recipe saved them. */
   params: Readonly<Record<string, unknown>>;
-  /** Whether a change cannot be made now, such as while the last one is being saved. */
-  disabled: boolean;
   /** The size of the picture in the pixels of the edit, or null when the editor counts in the picture's own. */
   size: Size | null;
   /** The shape changed while the reader is still moving it, such as a slider that has not been let go. */
@@ -142,7 +140,6 @@ export interface GeometryPanelProps {
   geometry: Geometry;
   processorKey: string;
   params: Readonly<Record<string, unknown>>;
-  disabled: boolean;
   size: Size | null;
   onChange: (geometry: Geometry) => void;
   onCommit: (geometry: Geometry) => void;

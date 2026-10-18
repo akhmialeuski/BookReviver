@@ -42,11 +42,7 @@ describe('the panels of the cleanup editors', () => {
   });
 
   describe('RegionsPanel', () => {
-    function render(props: {
-      zones?: ReturnType<typeof newZone>[];
-      size?: typeof SIZE | null;
-      disabled?: boolean;
-    }) {
+    function render(props: { zones?: ReturnType<typeof newZone>[]; size?: typeof SIZE | null }) {
       const onCommit = vi.fn();
       act(() =>
         root.render(
@@ -54,7 +50,6 @@ describe('the panels of the cleanup editors', () => {
             shape={{ zones: props.zones ?? [] }}
             processorKey="cleanup.binarize"
             params={{}}
-            disabled={props.disabled ?? false}
             size={props.size === undefined ? SIZE : props.size}
             onChange={vi.fn()}
             onCommit={onCommit}
@@ -98,17 +93,16 @@ describe('the panels of the cleanup editors', () => {
       expect(onCommit).toHaveBeenCalledWith({ zones: [zones[1]] });
     });
 
-    it('offers no new zone while the size of the page is not known or a save is going', () => {
+    it('offers no new zone while the size of the page is not known', () => {
       render({ size: null });
-      expect(byTestId('regions-add')?.disabled).toBe(true);
 
-      render({ disabled: true });
+      expect(byTestId('regions-add')?.disabled).toBe(true);
       expect(byTestId('regions-remove')?.disabled).toBe(true);
     });
   });
 
   describe('BrushPanel', () => {
-    function render(strokes: number, disabled = false) {
+    function render(strokes: number) {
       const onCommit = vi.fn();
       act(() =>
         root.render(
@@ -121,7 +115,6 @@ describe('the panels of the cleanup editors', () => {
                 points: [{ x: 1, y: 1 }],
               })),
             }}
-            disabled={disabled}
             size={SIZE}
             onChange={vi.fn()}
             onCommit={onCommit}

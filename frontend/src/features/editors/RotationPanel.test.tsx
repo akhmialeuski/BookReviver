@@ -22,18 +22,13 @@ describe('RotationPanel', () => {
   const onChange = vi.fn();
   const onCommit = vi.fn();
 
-  function render(
-    degrees: number,
-    params: Record<string, unknown> = { max_angle: 5 },
-    disabled = false,
-  ): void {
+  function render(degrees: number, params: Record<string, unknown> = { max_angle: 5 }): void {
     act(() =>
       root.render(
         <RotationPanel
           shape={{ degrees }}
           processorKey="geometry.deskew"
           params={params}
-          disabled={disabled}
           size={null}
           onChange={onChange}
           onCommit={onCommit}
@@ -103,13 +98,5 @@ describe('RotationPanel', () => {
 
     render(0);
     expect(zero()?.disabled).toBe(true);
-  });
-
-  it('cannot be changed while a change is being saved', () => {
-    render(1, { max_angle: 5 }, true);
-
-    expect(zero()?.disabled).toBe(true);
-    expect(container.querySelector('input')?.disabled).toBe(true);
-    expect(thumb()?.getAttribute('data-disabled')).not.toBeNull();
   });
 });

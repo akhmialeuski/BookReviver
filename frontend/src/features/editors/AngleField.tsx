@@ -15,11 +15,9 @@ const labels = MESSAGES.editors.rotation;
 
 export function AngleField({
   degrees,
-  disabled,
   onCommit,
 }: {
   degrees: number;
-  disabled: boolean;
   onCommit: (degrees: number) => void;
 }): React.JSX.Element {
   const [typed, setTyped] = useState<string | null>(null);
@@ -54,7 +52,6 @@ export function AngleField({
         aria-label={labels.angle}
         data-testid="angle-field"
         className="px-9"
-        disabled={disabled}
         value={typed ?? formatAngle(degrees)}
         onFocus={(event) => event.currentTarget.select()}
         onChange={(event) => setTyped(event.target.value)}
