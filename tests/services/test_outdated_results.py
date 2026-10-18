@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Self
 import pytest
 from attrs import evolve
 
-from bookreviver.adapters.persistence.memory.unit_of_work import InMemoryPageVersionRepository
+from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyPageVersionRepository
 from bookreviver.domain.enums import Stage, StageState, VersionState
 from bookreviver.domain.values import PageStageKey, ProcessorRef
 from bookreviver.services.outdated_results import OutdatedResults
@@ -351,16 +351,16 @@ class TestMarkStale:
         page = await SeededPage.seed(fx_kit)
         geometry = await page.result(Stage.GEOMETRY, CURRENT_GEOMETRY)
         cleanup = await page.result(Stage.CLEANUP, CURRENT_CLEANUP, input_id=geometry.id)
-        read = InMemoryPageVersionRepository.list_by_ids
+        read = SqlAlchemyPageVersionRepository.list_by_ids
         asked: Counter[PageVersionId] = Counter()
 
         def counting_list_by_ids(
-            repository: InMemoryPageVersionRepository, version_ids: Collection[PageVersionId]
+            repository: SqlAlchemyPageVersionRepository, version_ids: Collection[PageVersionId]
         ) -> Sequence[PageVersion]:
             """Count every identifier the repository is asked for, then read as it does.
 
             :param repository: The repository of the transaction that reads.
-            :type repository: InMemoryPageVersionRepository
+            :type repository: SqlAlchemyPageVersionRepository
             :param version_ids: Identifiers of the versions to read.
             :type version_ids: Collection[PageVersionId]
             :returns: The versions found.
@@ -369,7 +369,7 @@ class TestMarkStale:
             asked.update(version_ids)
             return read(repository, version_ids)
 
-        monkeypatch.setattr(InMemoryPageVersionRepository, 'list_by_ids', counting_list_by_ids)
+        monkeypatch.setattr(SqlAlchemyPageVersionRepository, 'list_by_ids', counting_list_by_ids)
         fx_kit.clock.moment = CHECKED_AT
 
         await OutdatedResults(uow=fx_kit.uow(), catalogue=fx_kit.catalogue, clock=fx_kit.clock).mark_stale()

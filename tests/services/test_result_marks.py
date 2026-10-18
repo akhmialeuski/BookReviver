@@ -7,7 +7,6 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.enums import ResultMark, Stage, VersionScale
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import PageVersionId
@@ -37,7 +36,7 @@ def _marks(kit: ProcessingKit) -> ResultMarksService:
     :returns: The service.
     :rtype: ResultMarksService
     """
-    return ResultMarksService(uow=InMemoryUnitOfWork(kit.database), clock=kit.clock)
+    return ResultMarksService(uow=kit.uow(), clock=kit.clock)
 
 
 class TestSet:

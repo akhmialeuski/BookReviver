@@ -6,7 +6,6 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.execution.in_process import InProcessStepExecutor
 from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.domain.enums import (
     ColorMode,
@@ -28,6 +27,7 @@ from bookreviver.services.steps import StepRun, StepRunner
 from tests.helpers.books import IMAGE
 from tests.helpers.builders import EPOCH, make_page, make_project, make_scan, make_source, new_account_id
 from tests.helpers.fake_processing import PREVIEW_TOKEN, FakeCatalogue, FakeRenditionWriter
+from tests.helpers.in_process_executor import InProcessStepExecutor
 from tests.helpers.page_services import INFO_NAME, FakeTiler
 from tests.helpers.processors import FakeProcessor
 

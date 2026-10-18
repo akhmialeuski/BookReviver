@@ -1,4 +1,4 @@
-"""Tests for the project use cases, against in-memory persistence and the local stores over a temporary directory."""
+"""Tests for the project use cases, against the database of the test and the local stores over a temporary directory."""
 
 from datetime import timedelta
 from typing import TYPE_CHECKING, override
@@ -8,8 +8,6 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.clock.system import FixedClock
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.adapters.storage import LocalSourceStore
 from bookreviver.domain.changes import BookDetailsChanges, CoverChange, ProjectChanges
 from bookreviver.domain.enums import ImagePolicy, Orthography
@@ -18,6 +16,7 @@ from bookreviver.domain.values import BookDetails, SliceRequest
 from bookreviver.services.projects import ProjectService
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import EPOCH, make_page, make_project, make_scan, make_source, new_account_id
+from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.fakes_jobs import RecordingEventBus
@@ -29,12 +28,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Page, Project, ProjectOverview
     from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.values import Slice
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -43,11 +43,11 @@ PAGE_COUNT: int = 2
 NEW_TITLE: str = 'Renamed'
 
 
-def _service(database: InMemoryDatabase, sources: LocalSourceStore, assets: LocalAssetStore) -> ProjectService:
-    """Build the project service for one request, over a new unit of work, a catalogue with no processors and no jobs.
+def _service(uow: UnitOfWork, sources: LocalSourceStore, assets: LocalAssetStore) -> ProjectService:
+    """Build the project service for one request, over a unit of work, a catalogue with no processors and no jobs.
 
-    :param database: In-memory database every request of the test shares.
-    :type database: InMemoryDatabase
+    :param uow: Unit of work of the request.
+    :type uow: UnitOfWork
     :param sources: Source store of the test.
     :type sources: LocalSourceStore
     :param assets: Asset store of the test.
@@ -55,7 +55,6 @@ def _service(database: InMemoryDatabase, sources: LocalSourceStore, assets: Loca
     :returns: The service, with a clock standing at ``NOW``.
     :rtype: ProjectService
     """
-    uow = InMemoryUnitOfWork(database)
     clock = FixedClock(NOW)
     board = FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus(), clock=clock)
     stages = StageSummaries(catalogue=FakeCatalogue([]), board=board)
@@ -64,12 +63,12 @@ def _service(database: InMemoryDatabase, sources: LocalSourceStore, assets: Loca
 
 @pytest.fixture
 def fx_service(
-    fx_database: InMemoryDatabase, fx_source_store: LocalSourceStore, fx_asset_store: LocalAssetStore
+    fx_uow: UnitOfWorkFactory, fx_source_store: LocalSourceStore, fx_asset_store: LocalAssetStore
 ) -> Callable[[], ProjectService]:
     """Return a function building the service for one request, with a clock standing at ``NOW``.
 
-    :param fx_database: In-memory database every request of the test shares.
-    :type fx_database: InMemoryDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_source_store: Local source store over the test's storage root.
     :type fx_source_store: LocalSourceStore
     :param fx_asset_store: Local asset store over the test's storage root.
@@ -77,7 +76,7 @@ def fx_service(
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], ProjectService]
     """
-    return lambda: _service(fx_database, fx_source_store, fx_asset_store)
+    return lambda: _service(fx_uow(), fx_source_store, fx_asset_store)
 
 
 class StoreFailedError(OSError):
@@ -112,12 +111,12 @@ class SourceStoreFailingOnce(LocalSourceStore):
 
 @pytest.fixture
 def fx_flaky_service(
-    fx_database: InMemoryDatabase, fx_asset_store: LocalAssetStore, fx_storage_root: Path
+    fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore, fx_storage_root: Path
 ) -> Callable[[], ProjectService]:
     """Return a function building the service for one request over a source store whose first deletion fails.
 
-    :param fx_database: In-memory database every request of the test shares.
-    :type fx_database: InMemoryDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :param fx_storage_root: Storage root both stores share.
@@ -126,20 +125,20 @@ def fx_flaky_service(
     :rtype: Callable[[], ProjectService]
     """
     sources = SourceStoreFailingOnce(root=fx_storage_root)
-    return lambda: _service(fx_database, sources, fx_asset_store)
+    return lambda: _service(fx_uow(), sources, fx_asset_store)
 
 
-async def _stored(database: InMemoryDatabase, project: Project) -> Project:
+async def _stored(uow: UnitOfWork, project: Project) -> Project:
     """Read the committed state of a project.
 
-    :param database: In-memory database to read from.
-    :type database: InMemoryDatabase
+    :param uow: Unit of work to read through.
+    :type uow: UnitOfWork
     :param project: Project to read back.
     :type project: Project
     :returns: The project as committed.
     :rtype: Project
     """
-    return await InMemoryUnitOfWork(database).read(lambda repos: repos.projects.get(project.id))
+    return await uow.read(lambda repos: repos.projects.get(project.id))
 
 
 @pytest.fixture
@@ -162,14 +161,14 @@ class TestList:
     """Tests for ProjectService.list()."""
 
     async def test_lists_only_the_actors_projects_newest_first(
-        self, fx_service: Callable[[], ProjectService], fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_service: Callable[[], ProjectService], fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify another account's project is hidden and the actor's come most recently updated first.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
@@ -189,14 +188,14 @@ class TestCreate:
     """Tests for ProjectService.create()."""
 
     async def test_creates_an_empty_project_owned_by_the_actor(
-        self, fx_service: Callable[[], ProjectService], fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_service: Callable[[], ProjectService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify the project is committed with the actor as owner and the clock's time on both timestamps.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
@@ -204,7 +203,7 @@ class TestCreate:
 
         overview = await fx_service().create(fx_actor, details)
 
-        stored = await _stored(fx_database, overview.project)
+        stored = await _stored(fx_uow(), overview.project)
         expect(stored == overview.project)
         expect(stored.owner_id == fx_actor.account_id)
         expect(stored.details == details)
@@ -217,14 +216,14 @@ class TestGet:
     """Tests for ProjectService.get()."""
 
     async def test_returns_the_project_with_the_counts_of_its_book(
-        self, fx_service: Callable[[], ProjectService], fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_service: Callable[[], ProjectService], fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify the overview counts the included pages, the sources and the scans of the project.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
@@ -247,14 +246,14 @@ class TestGet:
         )
 
     async def test_another_accounts_project_is_not_found(
-        self, fx_service: Callable[[], ProjectService], fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_service: Callable[[], ProjectService], fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify a project of another account is reported as missing, not as forbidden.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
@@ -269,14 +268,14 @@ class TestUpdate:
     """Tests for ProjectService.update()."""
 
     async def test_sets_and_clears_the_cover_and_sets_the_image_policy(
-        self, fx_service: Callable[[], ProjectService], fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_service: Callable[[], ProjectService], fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify a page of the project becomes its cover, an empty cover change removes it, and the policy changes.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
@@ -294,14 +293,20 @@ class TestUpdate:
         assert_expectations()
 
     async def test_cover_outside_the_project_is_not_found_and_changes_nothing(
-        self, fx_service: Callable[[], ProjectService], fx_database: InMemoryDatabase, fx_actor: Actor
+        self,
+        fx_service: Callable[[], ProjectService],
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
     ) -> None:
         """Verify a page of another project cannot become the cover, and the project keeps its state.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
@@ -314,17 +319,23 @@ class TestUpdate:
         with pytest.raises(NotFoundError):
             await fx_service().update(fx_actor, project.id, ProjectChanges(cover=CoverChange(page_id=foreign.id)))
 
-        assert await _stored(fx_database, project) == project
+        assert await _stored(fx_uow(), project) == project
 
     async def test_changes_given_fields_and_touches_the_project(
-        self, fx_service: Callable[[], ProjectService], fx_database: InMemoryDatabase, fx_actor: Actor
+        self,
+        fx_service: Callable[[], ProjectService],
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
     ) -> None:
         """Verify the given fields change, the others stay, and only the update time moves.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
@@ -335,21 +346,27 @@ class TestUpdate:
             fx_actor, project.id, ProjectChanges(details=BookDetailsChanges(title=NEW_TITLE))
         )
 
-        stored = await _stored(fx_database, project)
+        stored = await _stored(fx_uow(), project)
         expect(stored == overview.project)
         expect(stored.details == BookDetails(title=NEW_TITLE))
         expect((stored.created_at, stored.updated_at) == (project.created_at, NOW))
         assert_expectations()
 
     async def test_another_accounts_project_is_not_found_and_unchanged(
-        self, fx_service: Callable[[], ProjectService], fx_database: InMemoryDatabase, fx_actor: Actor
+        self,
+        fx_service: Callable[[], ProjectService],
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
     ) -> None:
         """Verify the actor cannot change another account's project.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
@@ -359,7 +376,7 @@ class TestUpdate:
         with pytest.raises(NotFoundError):
             await fx_service().update(fx_actor, project.id, ProjectChanges(details=BookDetailsChanges(title=NEW_TITLE)))
 
-        assert await _stored(fx_database, project) == project
+        assert await _stored(fx_uow(), project) == project
 
 
 class TestDelete:
@@ -368,7 +385,8 @@ class TestDelete:
     async def test_removes_the_project_then_all_its_files(
         self,
         fx_service: Callable[[], ProjectService],
-        fx_database: InMemoryDatabase,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_files: BookFiles,
         fx_actor: Actor,
     ) -> None:
@@ -376,8 +394,10 @@ class TestDelete:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_files: Files of imported books in the stores the service deletes from.
         :type fx_files: BookFiles
         :param fx_actor: Account the service acts for.
@@ -404,7 +424,7 @@ class TestDelete:
                 repos.pages.list_for_project(doomed.id, SliceRequest()),
             )
 
-        remaining, doomed_pages = await InMemoryUnitOfWork(fx_database).read(read_book)
+        remaining, doomed_pages = await fx_uow().read(read_book)
         expect([item.project.id for item in remaining.items] == [kept.id])
         expect(doomed_pages.total == 0)
         expect(fx_files.gone(doomed.id))
@@ -414,7 +434,8 @@ class TestDelete:
     async def test_failed_deletion_can_be_repeated_until_nothing_is_left(
         self,
         fx_flaky_service: Callable[[], ProjectService],
-        fx_database: InMemoryDatabase,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_files: BookFiles,
         fx_actor: Actor,
     ) -> None:
@@ -422,8 +443,10 @@ class TestDelete:
 
         :param fx_flaky_service: Function building the service over a source store whose first deletion fails.
         :type fx_flaky_service: Callable[[], ProjectService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_files: Files of imported books in the stores the service deletes from.
         :type fx_files: BookFiles
         :param fx_actor: Account the service acts for.
@@ -437,18 +460,19 @@ class TestDelete:
         with pytest.raises(StoreFailedError):
             await fx_flaky_service().delete(fx_actor, project.id)
 
-        expect(await _stored(fx_database, project) == project)
+        expect(await _stored(fx_uow(), project) == project)
         assert_expectations()
         await fx_flaky_service().delete(fx_actor, project.id)
 
         with pytest.raises(NotFoundError):
-            await _stored(fx_database, project)
+            await _stored(fx_uow(), project)
         assert fx_files.gone(project.id)
 
     async def test_another_accounts_project_is_not_found_and_kept(
         self,
         fx_service: Callable[[], ProjectService],
-        fx_database: InMemoryDatabase,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_files: BookFiles,
         fx_actor: Actor,
     ) -> None:
@@ -456,8 +480,10 @@ class TestDelete:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_files: Files of imported books, among them the other account's.
         :type fx_files: BookFiles
         :param fx_actor: Account the service acts for.
@@ -471,7 +497,7 @@ class TestDelete:
         with pytest.raises(NotFoundError):
             await fx_service().delete(fx_actor, project.id)
 
-        expect(await _stored(fx_database, project) == project)
+        expect(await _stored(fx_uow(), project) == project)
         expect(fx_files.kept(page))
         assert_expectations()
 
@@ -482,7 +508,8 @@ class TestDeleteAll:
     async def test_removes_every_project_of_the_actor_with_its_files(
         self,
         fx_service: Callable[[], ProjectService],
-        fx_database: InMemoryDatabase,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_files: BookFiles,
         fx_actor: Actor,
     ) -> None:
@@ -490,8 +517,10 @@ class TestDeleteAll:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_files: Files of imported books in the stores the service deletes from.
         :type fx_files: BookFiles
         :param fx_actor: Account the service acts for.
@@ -506,12 +535,12 @@ class TestDeleteAll:
 
         await fx_service().delete_all(fx_actor)
 
-        remaining = await InMemoryUnitOfWork(fx_database).read(
+        remaining = await fx_uow().read(
             lambda repos: repos.projects.list_for_owner(fx_actor.account_id, SliceRequest())
         )
         expect(remaining.total == 0)
         expect(all(fx_files.gone(project.id) for project in owned))
-        expect(await _stored(fx_database, kept) == kept)
+        expect(await _stored(fx_uow(), kept) == kept)
         expect(fx_files.kept(pages[kept.id]))
         assert_expectations()
 
@@ -561,12 +590,19 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
     """Tests for the deletion of a project, whose files go outside any transaction and whose row goes in one."""
 
     async def test_a_change_of_the_book_opens_while_its_files_are_being_removed(
-        self, fx_database: InMemoryDatabase, fx_asset_store: LocalAssetStore, fx_storage_root: Path, fx_actor: Actor
+        self,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_asset_store: LocalAssetStore,
+        fx_storage_root: Path,
+        fx_actor: Actor,
     ) -> None:
         """Verify a change of the book is not kept waiting by a slow store, and the deletion ends the row after it.
 
-        :param fx_database: In-memory database of the test.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Local asset store over the test's storage root.
         :type fx_asset_store: LocalAssetStore
         :param fx_storage_root: Storage root both stores share.
@@ -592,10 +628,10 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
 
         async def open_a_change() -> None:
             """Open and leave a change of the book of the project, which has to be granted at once."""
-            await InMemoryUnitOfWork(fx_database).change_book(project.id, mark_opened)
+            await fx_uow().change_book(project.id, mark_opened)
 
         async with anyio.create_task_group() as group:
-            group.start_soon(_service(fx_database, sources, fx_asset_store).delete, fx_actor, project.id)
+            group.start_soon(_service(fx_uow(), sources, fx_asset_store).delete, fx_actor, project.id)
             await sources.reached.wait()
             group.start_soon(open_a_change)
             await anyio.wait_all_tasks_blocked()
@@ -603,5 +639,5 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
             sources.proceed.set()
 
         with pytest.raises(NotFoundError):
-            await _stored(fx_database, project)
+            await _stored(fx_uow(), project)
         assert_expectations()

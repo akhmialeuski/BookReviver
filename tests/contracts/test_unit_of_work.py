@@ -1,10 +1,10 @@
-"""Contract of the calls of the unit of work, run against every adapter registered in the conftest.
+"""Contract of the calls of the unit of work, run against the SQL adapter, the application's own.
 
 ``change_book`` and ``change`` run their work on one transaction, commit it when the work returns, roll it back when the
 work raises, and wait for any other change of the same book. ``read`` runs its work on one committed state and refuses
 every write. Concurrency is real: tasks of an ``anyio`` task group, ordered by a held book, by events and by
-``anyio.wait_all_tasks_blocked`` and never by a sleep. A book can be held only on the SQL backend, so the tests of
-waiting run against it alone, as ``TestChangeWait`` explains.
+``anyio.wait_all_tasks_blocked`` and never by a sleep. SQLite has one writer, so a held change holds every other change
+of every book.
 """
 
 from datetime import timedelta
@@ -16,11 +16,12 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.app.settings import ChangeWaitSettings, PersistenceBackend
+from bookreviver.app.settings import ChangeWaitSettings
 from bookreviver.domain.enums import ImagePolicy, Stage, ValueScope
 from bookreviver.domain.errors import BookBusyError, DomainError, NotFoundError
 from bookreviver.domain.values import PageStepKey
 from bookreviver.ports.persistence import NoChangeOpenError, Repositories, UnitOfWork
+from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import (
     make_book_place,
     make_page,
@@ -45,7 +46,8 @@ if TYPE_CHECKING:
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Project, RecipeProfile
     from bookreviver.domain.ids import AccountId, ProjectId
-    from tests.contracts.conftest import BookHolder, OwnerFactory, UnitOfWorkFactory
+    from tests.contracts.conftest import OwnerFactory
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -198,27 +200,27 @@ def fx_settings(fx_settings: Settings) -> Settings:
 
 
 @pytest.fixture
-async def fx_project(fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> Project:
+async def fx_project(fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> Project:
     """Store a project that the changes of the tests change.
 
-    :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-    :type fx_uow_factory: UnitOfWorkFactory
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_new_owner: Function creating an account the backend accepts as an owner.
     :type fx_new_owner: OwnerFactory
     :returns: The stored project.
     :rtype: Project
     """
     project = make_project(owner_id=await fx_new_owner())
-    await store_project(fx_uow_factory(), project)
+    await store_project(fx_uow(), project)
     return project
 
 
 @pytest.fixture
-async def fx_book_rows(fx_uow_factory: UnitOfWorkFactory, fx_project: Project) -> dict[str, Row]:
+async def fx_book_rows(fx_uow: UnitOfWorkFactory, fx_project: Project) -> dict[str, Row]:
     """Store one row in every repository that holds the content of a book, and build a changed copy and a new row.
 
-    :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-    :type fx_uow_factory: UnitOfWorkFactory
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_project: Stored project, whose book gets the rows.
     :type fx_project: Project
     :returns: The rows by the name of the repository that holds them.
@@ -257,7 +259,7 @@ async def fx_book_rows(fx_uow_factory: UnitOfWorkFactory, fx_project: Project) -
         repos.result_mark_changes.add(mark_change)
         repos.recipes.add(recipe)
 
-    await fx_uow_factory().change_book(project.id, add_rows)
+    await fx_uow().change_book(project.id, add_rows)
     return {
         'sources': Row(
             source,
@@ -313,13 +315,11 @@ async def fx_book_rows(fx_uow_factory: UnitOfWorkFactory, fx_project: Project) -
 
 
 @pytest.fixture
-async def fx_rows(
-    fx_uow_factory: UnitOfWorkFactory, fx_project: Project, fx_book_rows: dict[str, Row]
-) -> dict[str, Row]:
+async def fx_rows(fx_uow: UnitOfWorkFactory, fx_project: Project, fx_book_rows: dict[str, Row]) -> dict[str, Row]:
     """Store one row in every other repository too, and build a changed copy and a new row beside each.
 
-    :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-    :type fx_uow_factory: UnitOfWorkFactory
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_project: Stored project, which owns the places.
     :type fx_project: Project
     :param fx_book_rows: Rows of the repositories that hold the content of the book.
@@ -340,7 +340,7 @@ async def fx_rows(
         repos.recipe_profiles.add(profile)
         repos.book_places.add(place)
 
-    await fx_uow_factory().change(add_rows)
+    await fx_uow().change(add_rows)
     return {
         **fx_book_rows,
         'projects': Row(
@@ -382,30 +382,30 @@ class TestChangeEnd:
 
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)
     async def test_change_commits_when_the_work_returns(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_project: Project, kind: ChangeKind
+        self, fx_uow: UnitOfWorkFactory, fx_project: Project, kind: ChangeKind
     ) -> None:
         """Verify what the work wrote is visible to another unit of work once the change has returned.
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Stored project the change belongs to.
         :type fx_project: Project
         :param kind: The kind of change under test.
         :type kind: ChangeKind
         """
         profile = make_recipe_profile(account_id=fx_project.owner_id)
-        await kind.run(fx_uow_factory(), fx_project, lambda repos: repos.recipe_profiles.add(profile))
-        other = fx_uow_factory()
+        await kind.run(fx_uow(), fx_project, lambda repos: repos.recipe_profiles.add(profile))
+        other = fx_uow()
         assert await other.read(lambda repos: repos.recipe_profiles.get(profile.id)) == profile
 
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)
     async def test_change_returns_what_the_work_returns(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_project: Project, kind: ChangeKind
+        self, fx_uow: UnitOfWorkFactory, fx_project: Project, kind: ChangeKind
     ) -> None:
         """Verify the change hands back the value of its work, which is what a use case reads as its result.
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Stored project the change belongs to.
         :type fx_project: Project
         :param kind: The kind of change under test.
@@ -424,20 +424,20 @@ class TestChangeEnd:
             stored = repos.recipe_profiles.add(profile)
             return stored, len(repos.recipe_profiles.list_for_account(fx_project.owner_id))
 
-        assert await kind.run(fx_uow_factory(), fx_project, add_and_count) == (profile, 1)
+        assert await kind.run(fx_uow(), fx_project, add_and_count) == (profile, 1)
 
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)
     @pytest.mark.parametrize(ERROR_ARG, ERROR_TYPES, ids=[error.__name__ for error in ERROR_TYPES])
     async def test_change_rolls_back_everything_and_reraises_the_exception(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_project: Project, kind: ChangeKind, error_type: type[Exception]
+        self, fx_uow: UnitOfWorkFactory, fx_project: Project, kind: ChangeKind, error_type: type[Exception]
     ) -> None:
         """Verify an exception raised by the work discards every write of the work and reaches the caller as it is.
 
         The work writes in two repositories before it raises. The same unit of work then writes the same rows in a new
         change, which proves that the book is free again and that nothing of the first change was kept.
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Stored project the change belongs to.
         :type fx_project: Project
         :param kind: The kind of change under test.
@@ -448,7 +448,7 @@ class TestChangeEnd:
         place = make_book_place(account_id=fx_project.owner_id, project_id=fx_project.id)
         profile = make_recipe_profile(account_id=fx_project.owner_id)
         error = error_type(LEFT_THE_WORK)
-        uow = fx_uow_factory()
+        uow = fx_uow()
 
         def write_and_raise(repos: Repositories) -> None:
             """Add a place of the book and a recipe profile, and raise the exception of the test.
@@ -473,59 +473,57 @@ class TestChangeEnd:
         with pytest.raises(error_type, match=LEFT_THE_WORK) as raised:
             await kind.run(uow, fx_project, write_and_raise)
         expect(raised.value is error)
-        expect(await fx_uow_factory().read(lambda repos: repos.book_places.find(place.key)) is None)
-        expect(await stored_profiles(fx_uow_factory(), fx_project.owner_id) == [])
+        expect(await fx_uow().read(lambda repos: repos.book_places.find(place.key)) is None)
+        expect(await stored_profiles(fx_uow(), fx_project.owner_id) == [])
         await kind.run(uow, fx_project, add_both)
-        expect(await fx_uow_factory().read(lambda repos: repos.book_places.find(place.key)) == place)
-        expect(await stored_profiles(fx_uow_factory(), fx_project.owner_id) == [profile])
+        expect(await fx_uow().read(lambda repos: repos.book_places.find(place.key)) == place)
+        expect(await stored_profiles(fx_uow(), fx_project.owner_id) == [profile])
         assert_expectations()
 
 
 class TestChangeBook:
     """Contract of ChangeBook.change_book() on the project it hands its work."""
 
-    async def test_work_receives_the_stored_project(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_project: Project
-    ) -> None:
+    async def test_work_receives_the_stored_project(self, fx_uow: UnitOfWorkFactory, fx_project: Project) -> None:
         """Verify the work is handed the project as stored, beside the repos.
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Stored project the change belongs to.
         :type fx_project: Project
         """
-        received = await fx_uow_factory().change_book(fx_project.id, lambda _repos, project: project)
+        received = await fx_uow().change_book(fx_project.id, lambda _repos, project: project)
         assert received == fx_project
 
     async def test_missing_book_raises_not_found_and_runs_no_work(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify a change of a project that is not stored raises ``NotFoundError`` before its work runs.
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_new_owner: Function creating an account the backend accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
         missing = make_project(owner_id=await fx_new_owner())
         ran: list[bool] = []
-        uow = fx_uow_factory()
+        uow = fx_uow()
         with pytest.raises(NotFoundError):
             await uow.change_book(missing.id, lambda _repos, _project: ran.append(True))
         assert ran == []
 
     async def test_work_receives_the_project_as_the_previous_change_left_it(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_project: Project
+        self, fx_uow: UnitOfWorkFactory, fx_project: Project
     ) -> None:
         """Verify a change reads the project once the change before it has committed, not as it was stored first.
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Stored project both changes belong to.
         :type fx_project: Project
         """
         changed = evolve(fx_project, image_policy=ImagePolicy.LOSSLESS)
-        first, second = fx_uow_factory(), fx_uow_factory()
+        first, second = fx_uow(), fx_uow()
         await first.change_book(fx_project.id, lambda repos, _project: repos.projects.update(changed))
         received = await second.change_book(fx_project.id, lambda _repos, project: project)
         assert received == changed
@@ -534,33 +532,31 @@ class TestChangeBook:
 class TestRead:
     """Contract of UnitOfWork.read() on what it returns and what it sees."""
 
-    async def test_read_returns_what_the_work_returns(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_project: Project
-    ) -> None:
+    async def test_read_returns_what_the_work_returns(self, fx_uow: UnitOfWorkFactory, fx_project: Project) -> None:
         """Verify ``read`` hands back the value of its work.
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Stored project that is read.
         :type fx_project: Project
         """
-        read = await fx_uow_factory().read(lambda repos: repos.projects.get(fx_project.id))
+        read = await fx_uow().read(lambda repos: repos.projects.get(fx_project.id))
         assert read == fx_project
 
     async def test_read_sees_every_write_of_a_committed_change_and_none_of_a_rolled_back_one(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_project: Project
+        self, fx_uow: UnitOfWorkFactory, fx_project: Project
     ) -> None:
         """Verify a read sees the two rows of a change that committed, and nothing of a change that rolled back.
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Stored project the rows belong to.
         :type fx_project: Project
         """
         kept = make_recipe_profile(account_id=fx_project.owner_id)
         place = make_book_place(account_id=fx_project.owner_id, project_id=fx_project.id)
         lost = make_recipe_profile(account_id=fx_project.owner_id, minutes=1)
-        uow = fx_uow_factory()
+        uow = fx_uow()
 
         def add_kept(repos: Repositories) -> None:
             """Add a recipe profile and a place of the book.
@@ -595,31 +591,20 @@ class TestRead:
         await uow.change(add_kept)
         with pytest.raises(DomainError):
             await uow.change(add_lost)
-        assert await fx_uow_factory().read(read_both) == ([kept], place)
+        assert await fx_uow().read(read_both) == ([kept], place)
 
 
 class TestChangeWait:
     """Contract of what a change waits for: any other change of the same book, for as long as the limit.
 
-    The in-memory adapter runs the work of a change between two awaits, so it has no lock and a change of it never
-    waits. Holding a book needs a work that blocks its thread, which only the SQL adapter runs, so this class runs
-    against the SQL backend alone.
+    A book is held by a work that blocks the thread it runs in, and SQLite has one writer, so while it is held every
+    other change waits, whatever book it changes.
     """
-
-    @pytest.fixture
-    def fx_persistence_backend(self) -> PersistenceBackend:
-        """Select the SQL backend alone for every test of the class.
-
-        :returns: The SQL backend, in place of the backends the contract suite runs each test against.
-        :rtype: PersistenceBackend
-        """
-        return PersistenceBackend.SQLALCHEMY
 
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)
     async def test_change_waits_until_the_book_is_free(
         self,
-        fx_uow_factory: UnitOfWorkFactory,
-        fx_hold_book: BookHolder,
+        fx_uow: UnitOfWorkFactory,
         fx_project: Project,
         kind: ChangeKind,
     ) -> None:
@@ -627,16 +612,14 @@ class TestChangeWait:
 
         The test lets every task block, and checks that the work has not run, before it frees the book.
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_hold_book: Function holding the lock of a book.
-        :type fx_hold_book: BookHolder
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Stored project the changes belong to.
         :type fx_project: Project
         :param kind: The kind of change under test.
         :type kind: ChangeKind
         """
-        holder, waiter = fx_uow_factory(), fx_uow_factory()
+        holder, waiter = fx_uow(), fx_uow()
         ran: list[str] = []
         ran_while_held: list[str] = []
 
@@ -644,7 +627,7 @@ class TestChangeWait:
             """Ask for the change and note when its work runs."""
             await kind.run(waiter, fx_project, lambda _repos: ran.append(SECOND_IN))
 
-        async with anyio.create_task_group() as tasks, fx_hold_book(holder, kind.lock_of(fx_project)):
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder, kind.lock_of(fx_project)):
             tasks.start_soon(wait_and_run)
             await anyio.wait_all_tasks_blocked()
             ran_while_held.extend(ran)
@@ -655,8 +638,7 @@ class TestChangeWait:
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)
     async def test_change_reads_what_the_changes_before_it_committed(
         self,
-        fx_uow_factory: UnitOfWorkFactory,
-        fx_hold_book: BookHolder,
+        fx_uow: UnitOfWorkFactory,
         fx_project: Project,
         kind: ChangeKind,
     ) -> None:
@@ -664,10 +646,8 @@ class TestChangeWait:
 
         Each change is started only once every task is blocked, so the first asked before the second.
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_hold_book: Function holding the lock of a book.
-        :type fx_hold_book: BookHolder
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Stored project the changes belong to.
         :type fx_project: Project
         :param kind: The kind of change under test.
@@ -675,7 +655,7 @@ class TestChangeWait:
         """
         first_profile = make_recipe_profile(account_id=fx_project.owner_id)
         second_profile = make_recipe_profile(account_id=fx_project.owner_id, minutes=1)
-        holder, first, second = fx_uow_factory(), fx_uow_factory(), fx_uow_factory()
+        holder, first, second = fx_uow(), fx_uow(), fx_uow()
         seen: list[bool] = []
 
         def add_first(repos: Repositories) -> None:
@@ -696,32 +676,30 @@ class TestChangeWait:
             seen.append(first_profile.id in {profile.id for profile in listed})
             repos.recipe_profiles.add(second_profile)
 
-        async with anyio.create_task_group() as tasks, fx_hold_book(holder, kind.lock_of(fx_project)):
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder, kind.lock_of(fx_project)):
             tasks.start_soon(kind.run, first, fx_project, add_first)
             await anyio.wait_all_tasks_blocked()
             tasks.start_soon(kind.run, second, fx_project, add_second)
             await anyio.wait_all_tasks_blocked()
         expect(seen == [True])
-        expect(len(await stored_profiles(fx_uow_factory(), fx_project.owner_id)) == 2)
+        expect(len(await stored_profiles(fx_uow(), fx_project.owner_id)) == 2)
         assert_expectations()
 
     async def test_two_changes_of_a_book_that_read_and_write_one_page_keep_both_writes(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_hold_book: BookHolder, fx_project: Project
+        self, fx_uow: UnitOfWorkFactory, fx_project: Project
     ) -> None:
         """Verify two changes that each read a page and write another field of it both keep their writes.
 
         Both are started while the book is held, so each would write the page as it read it if the second were let in
         before the first had committed.
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_hold_book: Function holding the lock of a book.
-        :type fx_hold_book: BookHolder
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Stored project both changes belong to.
         :type fx_project: Project
         """
         page = make_page(project_id=fx_project.id)
-        holder, first, second = fx_uow_factory(), fx_uow_factory(), fx_uow_factory()
+        holder, first, second = fx_uow(), fx_uow(), fx_uow()
         await first.change_book(fx_project.id, lambda repos, _project: repos.pages.add(page))
 
         def label_page(repos: Repositories, _project: Project) -> None:
@@ -744,19 +722,18 @@ class TestChangeWait:
             """
             repos.pages.update(evolve(repos.pages.get(page.id), notes=STAMP))
 
-        async with anyio.create_task_group() as tasks, fx_hold_book(holder, fx_project.id):
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder, fx_project.id):
             tasks.start_soon(first.change_book, fx_project.id, label_page)
             await anyio.wait_all_tasks_blocked()
             tasks.start_soon(second.change_book, fx_project.id, note_page)
             await anyio.wait_all_tasks_blocked()
-        stored = await fx_uow_factory().read(lambda repos: repos.pages.get(page.id))
+        stored = await fx_uow().read(lambda repos: repos.pages.get(page.id))
         assert (stored.label, stored.notes) == (FIRST_LABEL, STAMP)
 
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)
     async def test_changes_waiting_for_one_holder_run_in_the_order_they_asked(
         self,
-        fx_uow_factory: UnitOfWorkFactory,
-        fx_hold_book: BookHolder,
+        fx_uow: UnitOfWorkFactory,
         fx_project: Project,
         kind: ChangeKind,
     ) -> None:
@@ -764,17 +741,15 @@ class TestChangeWait:
 
         Each waiter is started only once every task is blocked, so it asks after the one before it.
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_hold_book: Function holding the lock of a book.
-        :type fx_hold_book: BookHolder
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Stored project every change belongs to.
         :type fx_project: Project
         :param kind: The kind of change under test.
         :type kind: ChangeKind
         """
-        holder = fx_uow_factory()
-        waiters = [fx_uow_factory() for _ in range(WAITERS)]
+        holder = fx_uow()
+        waiters = [fx_uow() for _ in range(WAITERS)]
         ran: list[int] = []
 
         async def wait_and_run(number: int) -> None:
@@ -785,7 +760,7 @@ class TestChangeWait:
             """
             await kind.run(waiters[number], fx_project, lambda _repos: ran.append(number))
 
-        async with anyio.create_task_group() as tasks, fx_hold_book(holder, kind.lock_of(fx_project)):
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder, kind.lock_of(fx_project)):
             for number in range(WAITERS):
                 tasks.start_soon(wait_and_run, number)
                 await anyio.wait_all_tasks_blocked()
@@ -794,44 +769,43 @@ class TestChangeWait:
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)
     async def test_wait_longer_than_the_limit_raises_book_busy_and_runs_no_work(
         self,
-        fx_uow_factory: UnitOfWorkFactory,
-        fx_hold_book: BookHolder,
+        fx_uow: UnitOfWorkFactory,
         fx_project: Project,
         kind: ChangeKind,
     ) -> None:
         """Verify a change gives up with ``BookBusyError`` after the limit of its unit of work, and runs no work.
 
         The unit of work has the limit of a request, so the wait ends in a fraction of a second whatever the holder
-        does. Once the holder has let go, the same unit of work runs the change at once.
+        does. The refusal leaves the book of the holder as it was, and once the holder has let go, the same unit of
+        work runs the change at once.
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_hold_book: Function holding the lock of a book.
-        :type fx_hold_book: BookHolder
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Stored project the changes belong to.
         :type fx_project: Project
         :param kind: The kind of change under test.
         :type kind: ChangeKind
         """
-        holder, impatient = fx_uow_factory(), fx_uow_factory(wait_seconds=REQUEST_WAIT_SECONDS)
+        holder, impatient = fx_uow(), fx_uow(wait_seconds=REQUEST_WAIT_SECONDS)
         ran: list[str] = []
-        async with fx_hold_book(holder, kind.lock_of(fx_project)):
+        async with hold_book_in_thread(holder, kind.lock_of(fx_project)):
             started = perf_counter()
             with pytest.raises(BookBusyError):
                 await kind.run(impatient, fx_project, lambda _repos: ran.append(SECOND_IN))
             gave_up_after = perf_counter() - started
         ran_while_held = list(ran)
+        kept = await holder.read(lambda repos: repos.projects.get(fx_project.id))
         await kind.run(impatient, fx_project, lambda _repos: ran.append(SECOND_IN))
         expect(gave_up_after < REFUSAL_BOUND_SECONDS)
         expect(ran_while_held == [])
+        expect(kept == fx_project, 'the refusal left the book of the holder as it was')
         expect(ran == [SECOND_IN])
         assert_expectations()
 
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)
     async def test_wait_longer_than_the_limit_of_a_request_enters_under_the_limit_of_a_job(
         self,
-        fx_uow_factory: UnitOfWorkFactory,
-        fx_hold_book: BookHolder,
+        fx_uow: UnitOfWorkFactory,
         fx_project: Project,
         kind: ChangeKind,
     ) -> None:
@@ -842,19 +816,17 @@ class TestChangeWait:
         the request one, so it has waited at least as long, and runs after the holder instead of raising
         ``BookBusyError``.
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
-        :param fx_hold_book: Function holding the lock of a book.
-        :type fx_hold_book: BookHolder
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Stored project every change belongs to.
         :type fx_project: Project
         :param kind: The kind of change under test.
         :type kind: ChangeKind
         """
         holder, job, request = (
-            fx_uow_factory(),
-            fx_uow_factory(),
-            fx_uow_factory(wait_seconds=REQUEST_WAIT_SECONDS),
+            fx_uow(),
+            fx_uow(),
+            fx_uow(wait_seconds=REQUEST_WAIT_SECONDS),
         )
         order: list[str] = []
 
@@ -862,7 +834,7 @@ class TestChangeWait:
             """Ask for the change under the limit of a job and note when its work runs."""
             await kind.run(job, fx_project, lambda _repos: order.append(SECOND_IN))
 
-        async with anyio.create_task_group() as tasks, fx_hold_book(holder, kind.lock_of(fx_project)):
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder, kind.lock_of(fx_project)):
             tasks.start_soon(wait_as_a_job)
             await anyio.wait_all_tasks_blocked()
             with pytest.raises(BookBusyError):
@@ -884,12 +856,12 @@ class TestWriteGuard:
 
     @pytest.mark.parametrize(('repository', 'method'), WRITE_PARAMS)
     async def test_write_in_a_read_raises(
-        self, fx_uow_factory: UnitOfWorkFactory, fx_rows: dict[str, Row], repository: str, method: str
+        self, fx_uow: UnitOfWorkFactory, fx_rows: dict[str, Row], repository: str, method: str
     ) -> None:
         """Verify a repository refuses a write in the work of ``read``.
 
-        :param fx_uow_factory: Function opening a new unit of work of the backend under test.
-        :type fx_uow_factory: UnitOfWorkFactory
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_rows: Rows by the name of the repository that holds them.
         :type fx_rows: dict[str, Row]
         :param repository: Name of the repository of the port.
@@ -897,6 +869,6 @@ class TestWriteGuard:
         :param method: Name of the write method of the repository.
         :type method: str
         """
-        uow = fx_uow_factory()
+        uow = fx_uow()
         with pytest.raises(NoChangeOpenError):
             await uow.read(lambda repos: WRITES[method](getattr(repos, repository), fx_rows[repository]))

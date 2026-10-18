@@ -13,7 +13,7 @@ from delayed_assert import assert_expectations, expect
 from PIL import Image
 
 from bookreviver.adapters.imaging.common import FactKey
-from bookreviver.adapters.persistence.memory.unit_of_work import InMemoryScanRepository
+from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyScanRepository
 from bookreviver.domain.entities import Actor, VersionInputs
 from bookreviver.domain.enums import (
     ColorMode,
@@ -73,6 +73,7 @@ from tests.adapters.imaging.samples import (
     write_pdf,
     xmp_packet,
 )
+from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import make_job, make_project, make_source, new_account_id
 from tests.helpers.fakes_imports import (
     BOOK_WINDOW,
@@ -91,6 +92,7 @@ from tests.helpers.fakes_imports import (
 )
 from tests.helpers.fakes_jobs import JobFakes
 from tests.helpers.processors import AutoSplitProcessor
+from tests.helpers.seeding import commit_project
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
@@ -100,11 +102,13 @@ if TYPE_CHECKING:
 
     from fastapi import UploadFile
 
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Job, Page, PageVersion, PaginationSection, Project, Scan, Source
     from bookreviver.domain.ids import JobId, PageId, ProjectId, StorageKey
     from bookreviver.domain.values import SourceFile
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.storage import AssetStore, IncomingFile
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -205,15 +209,19 @@ DJVU_WIDTHS: list[int] = [page.size_px[0] for page in DJVU_PAGES]
 
 
 @pytest.fixture
-def fx_rig(fx_storage_root: Path) -> ImportRig:
-    """Build the adapters an import runs on, over the storage root of the test.
+def fx_rig(fx_storage_root: Path, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory) -> ImportRig:
+    """Build the adapters an import runs on, over the storage root and the database of the test.
 
     :param fx_storage_root: Storage root under the test's temporary directory.
     :type fx_storage_root: Path
+    :param fx_database: Database of the test.
+    :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :returns: The rig with an empty database and nothing stored.
     :rtype: ImportRig
     """
-    return ImportRig.build(fx_storage_root)
+    return ImportRig.build(fx_storage_root, fx_database, fx_uow)
 
 
 @pytest.fixture
@@ -252,7 +260,7 @@ async def fx_project(fx_rig: ImportRig, fx_owner: Actor) -> Project:
     :rtype: Project
     """
     project = make_project(owner_id=fx_owner.account_id)
-    await fx_rig.fakes.store(project)
+    await commit_project(fx_rig.database, project)
     return project
 
 
@@ -314,7 +322,7 @@ def _tuned(
             return JobEnd(state=JobState.SUCCEEDED)
         return await built[0].service(parallel_scans=parallel_scans).run_import(job, control)
 
-    fakes = JobFakes(database=rig.database, events=rig.events, clock=rig.fakes.clock, gate=rig.fakes.gate, runner=run)
+    fakes = JobFakes(events=rig.events, clock=rig.fakes.clock, runner=run)
     tuned = evolve(
         rig,
         fakes=fakes,
@@ -503,7 +511,7 @@ async def _project_with(rig: ImportRig, owner: Actor, policy: ImagePolicy) -> Pr
     :rtype: Project
     """
     project = evolve(make_project(owner_id=owner.account_id), image_policy=policy)
-    await rig.fakes.store(project)
+    await commit_project(rig.database, project)
     return project
 
 
@@ -1736,7 +1744,7 @@ class TestRunImportChecks:
         project = make_project(owner_id=fx_owner.account_id)
         owner_author = (Contributor(name='Owner Author', role=ContributorRole.AUTHOR),)
         described = evolve(project, details=evolve(project.details, contributors=owner_author))
-        await fx_rig.fakes.store(described)
+        await commit_project(fx_rig.database, described)
 
         await _import(
             fx_rig,
@@ -2084,7 +2092,7 @@ class TestRunImportFailures:
         :type fx_samples: Path
         """
         failure = UnsupportedSourceError(REFUSED_SCANS_ERROR)
-        with patch.object(InMemoryScanRepository, 'add_many', Mock(side_effect=failure)):
+        with patch.object(SqlAlchemyScanRepository, 'add_many', Mock(side_effect=failure)):
             job = await _import(fx_rig, fx_owner, fx_project.id, [pdf_upload(fx_samples, PDF_NAME, pages=THREE_PAGES)])
 
         expect((job.state, job.error) == (JobState.FAILED, REFUSED_SCANS_ERROR))
@@ -2197,7 +2205,7 @@ class TestRunImportQueue:
             async with anyio.create_task_group() as group:
                 group.start_soon(fx_rig.fakes.board.run_queued)
                 await both_extracting.wait()
-                async with fx_rig.fakes.gate.hold(fx_project.id):
+                async with hold_book_in_thread(fx_rig.open_uow(), fx_project.id):
                     proceed.set()
                     await anyio.wait_all_tasks_blocked()
                     expect(not any(scan.renditions.ready for scan in await _scans(fx_rig, fx_project.id)))

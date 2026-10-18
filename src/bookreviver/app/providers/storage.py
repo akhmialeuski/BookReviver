@@ -1,8 +1,7 @@
 """Providers of the source and asset storage adapters, one class per backend selectable in the settings.
 
-``STORAGE_PROVIDERS`` maps each ``StorageBackend`` to its provider, the same way ``PERSISTENCE_PROVIDERS`` does for
-persistence, so ``build_container`` selects the backend from ``Settings.storage`` and the port contract tests run
-against every registered backend.
+``STORAGE_PROVIDERS`` maps each ``StorageBackend`` to its provider, so ``build_container`` selects the backend from
+``Settings.storage`` and the port contract tests run against every registered backend.
 """
 
 from dishka import Provider, Scope, provide

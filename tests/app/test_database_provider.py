@@ -13,11 +13,12 @@ from sqlalchemy import Column, Integer, Table
 from sqlalchemy.orm import registry
 
 from bookreviver.app.main import create_app
+from tests.helpers.database import copy_schema_template, database_file
 from tests.helpers.processing import InProcessExecutorProvider
-from tests.helpers.schema import create_schema
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     from bookreviver.app.settings import Settings
 
@@ -46,16 +47,21 @@ class TestMappersAtStart:
     """Tests that the application leaves every mapper of the process configured when it starts."""
 
     async def test_start_configures_a_mapper_declared_right_before_it(
-        self, fx_settings: Settings, fx_probe_registry: registry
+        self, fx_settings: Settings, fx_schema_template: Path, fx_probe_registry: registry
     ) -> None:
         """Verify the start of the application configures a mapper that nothing configured before it.
 
+        The application opens the database of the settings itself, so the test copies the schema template to its file
+        and does not hand the application a database of its own.
+
         :param fx_settings: Settings with a fresh data directory.
         :type fx_settings: Settings
+        :param fx_schema_template: File with every table at the head revision.
+        :type fx_schema_template: Path
         :param fx_probe_registry: Fresh registry the probe class is mapped in.
         :type fx_probe_registry: registry
         """
-        await create_schema(fx_settings)
+        await copy_schema_template(fx_schema_template, database_file(fx_settings))
         table = Table(PROBE_TABLE, fx_probe_registry.metadata, Column('id', Integer, primary_key=True))
         mapper = fx_probe_registry.map_imperatively(MapperProbe, table)
         assert not mapper.configured, (

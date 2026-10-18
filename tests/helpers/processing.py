@@ -1,4 +1,4 @@
-"""Building the processing services of a test over in-memory persistence, the local asset store and fake processors.
+"""Building the processing services of a test over the test's database, the local asset store and fake processors.
 
 ``ProcessingKit`` holds what the services of one test share, and builds a service, the jobs of the workers, the edit
 service or the page settings service over a new unit of work, as a new request or job would get one. The processors
@@ -12,11 +12,8 @@ from typing import TYPE_CHECKING, cast
 from attrs import evolve
 from dishka import Provider, Scope, provide
 
-from bookreviver.adapters.clock.system import FixedClock
-from bookreviver.adapters.execution.in_process import InProcessStepExecutor
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
-from bookreviver.adapters.tracing.recording import RecordingTracer
+from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.domain.entities import Actor, PageStage
 from bookreviver.domain.enums import (
@@ -44,7 +41,6 @@ from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from bookreviver.services.stage_runs import StageRuntime
 from bookreviver.services.stage_summaries import StageSummaries
 from bookreviver.services.steps import StepRunner
-from tests.helpers.book_gate import BookGate, GatedUnitOfWork
 from tests.helpers.builders import (
     EPOCH,
     SPLIT_NONE,
@@ -53,8 +49,8 @@ from tests.helpers.builders import (
     make_project,
     make_scan,
     make_source,
-    new_account_id,
 )
+from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import (
     IMAGE_SIZE_PX,
@@ -62,12 +58,16 @@ from tests.helpers.fake_processing import (
     FakeRenditionWriter,
 )
 from tests.helpers.fakes_jobs import RecordingEventBus
+from tests.helpers.in_process_executor import InProcessStepExecutor
 from tests.helpers.page_services import FakeTiler, make_page_service
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
+from tests.helpers.recording_tracer import RecordingTracer
+from tests.helpers.seeding import commit_account
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Job, Page, PageVersion, Project, Recipe, ResultMarkChange, Scan
     from bookreviver.domain.ids import JobId, PageVersionId
     from bookreviver.domain.values import JobEnd, MetadataMap, RecipeDraft, Slice
@@ -106,8 +106,7 @@ JOB_METHODS: dict[JobKind, str] = {
 class ProcessingKit:
     """What the processing services of one test share, and a builder of the services over a new unit of work.
 
-    :ivar database: In-memory database every unit of work opens over.
-    :ivar gate: Gate a test holds a book with, which the changes of every unit of work of the kit wait at.
+    :ivar database: SQL database of the test, which stores the account of the actor and every unit of work opens over.
     :ivar assets: Asset store over a temporary directory.
     :ivar events: Event bus recording what is published.
     :ivar clock: Clock stopped at the epoch, which a test moves.
@@ -122,27 +121,28 @@ class ProcessingKit:
 
     def __init__(
         self,
+        database: SqlDatabase,
         assets: AssetStore,
         *,
         processors: Sequence[Processor] | None = None,
         defaults: DefaultRecipes = DEFAULTS,
-        database: InMemoryDatabase | None = None,
     ) -> None:
-        """Build the kit over an asset store.
+        """Build the kit over the database of the test and an asset store.
 
+        A second kit over the database and the assets of a first stands for the same process after a restart: its
+        board is new and empty, and its database and files are the ones the first left.
+
+        :param database: SQL database of the test, such as ``fx_database``.
+        :type database: SqlDatabase
         :param assets: Asset store of the test.
         :type assets: AssetStore
         :param processors: The processors of the catalogue, or None for the real ``split.none`` and the two fakes.
         :type processors: Sequence[Processor] | None
         :param defaults: The recipes the stages start with.
         :type defaults: DefaultRecipes
-        :param database: The database of another kit, which this kit then stands for the same process after a restart
-                         with: its board is new and empty and its database and files are the ones the other left.
-        :type database: InMemoryDatabase | None
         """
         self._defaults = defaults
-        self.database = InMemoryDatabase() if database is None else database
-        self.gate = BookGate()
+        self.database = database
         self.assets = assets
         self.events = RecordingEventBus()
         self.clock = FixedClock(EPOCH)
@@ -344,22 +344,22 @@ class ProcessingKit:
         return PageStepKey(page.id, stage, step.step_id)
 
     def uow(self) -> UnitOfWork:
-        """Open a unit of work over the kit's database, whose changes wait at the gate of the kit.
+        """Open a unit of work over the kit's database, as a new request or job would get.
 
         :returns: A new unit of work.
         :rtype: UnitOfWork
         """
-        return GatedUnitOfWork(InMemoryUnitOfWork(self.database), self.gate)
+        return SqlAlchemyUnitOfWork(self.database)
 
     async def seed_project(self, *, image_policy: ImagePolicy = ImagePolicy.COMPACT) -> tuple[Actor, Project]:
-        """Commit a project of a new account.
+        """Commit a new account and a project of it.
 
         :param image_policy: Image policy of the project.
         :type image_policy: ImagePolicy
         :returns: The actor owning the project, and the project.
         :rtype: tuple[Actor, Project]
         """
-        owner = new_account_id()
+        owner = await commit_account(self.database)
         project = evolve(make_project(owner_id=owner), image_policy=image_policy)
         await self.uow().change(lambda repos: repos.projects.add(project))
         return Actor(account_id=owner), project

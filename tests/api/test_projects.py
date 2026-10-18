@@ -1,4 +1,4 @@
-"""Tests for the project endpoints, on in-memory persistence and the local stores under the test's data directory."""
+"""Tests for the project endpoints, on the SQLite file and the local stores under the test's data directory."""
 
 import json
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     import httpx
     from pydantic import BaseModel
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor
     from tests.helpers.storage import BookFiles
 
@@ -184,14 +184,14 @@ class TestListProjects:
     """Tests for GET /projects."""
 
     async def test_pages_through_own_projects_newest_first(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify the list is paged, ordered by update time and limited to the signed-in account.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
@@ -209,14 +209,14 @@ class TestListProjects:
         assert_expectations()
 
     async def test_counts_the_book_of_each_project(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify every listed project carries the numbers of its pages, sources and scans.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
@@ -329,14 +329,14 @@ class TestGetProject:
 
     @pytest.mark.parametrize('owned_by_other', [True, False], ids=['other-account', 'unknown'])
     async def test_invisible_project_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, *, owned_by_other: bool
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, *, owned_by_other: bool
     ) -> None:
         """Verify another account's project answers exactly like a project that does not exist.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param owned_by_other: Whether the project is stored for another account, rather than not stored at all.
         :type owned_by_other: bool
         """
@@ -365,14 +365,14 @@ class TestUpdateProject:
     """Tests for PATCH /projects/{project_id}."""
 
     async def test_changes_only_the_fields_sent(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify a partial body changes its fields and keeps the rest of the description.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
@@ -388,14 +388,14 @@ class TestUpdateProject:
         assert_expectations()
 
     async def test_a_sent_list_replaces_the_whole_list_and_omitted_fields_keep_their_values(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify a list is replaced as a whole and a normalized identifier is stored, while unsent fields stay.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
@@ -421,14 +421,14 @@ class TestUpdateProject:
         assert_expectations()
 
     async def test_null_clears_lists_the_height_and_enums_and_omitted_fields_stay(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify null empties a list, clears the height and sets an enum to unknown, and other fields stay.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
@@ -454,14 +454,14 @@ class TestUpdateProject:
         assert_expectations()
 
     async def test_null_clears_a_field_as_a_merge_patch(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify a merge patch sent with its own media type clears the fields sent as null and keeps the omitted ones.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
@@ -483,14 +483,14 @@ class TestUpdateProject:
         assert_expectations()
 
     async def test_sets_the_cover_and_the_image_policy_and_null_clears_them(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify a page of the project becomes the cover and the policy changes, and null restores their defaults.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
@@ -513,14 +513,14 @@ class TestUpdateProject:
         assert_expectations()
 
     async def test_cover_that_is_not_a_page_of_the_project_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify a page identifier the project does not have is refused with 404 and the cover stays empty.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
@@ -535,14 +535,14 @@ class TestUpdateProject:
 
     @pytest.mark.parametrize(CASE_ARG, INVALID_UPDATE_CASES, ids=INVALID_UPDATE_IDS)
     async def test_invalid_body_is_a_problem_and_changes_nothing(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor, case: InvalidBody
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor, case: InvalidBody
     ) -> None:
         """Verify the title cannot be emptied or cleared, unknown fields are refused, and the project stays.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param case: Body breaking one constraint, and the field it breaks.
@@ -560,14 +560,14 @@ class TestUpdateProject:
         assert_expectations()
 
     async def test_another_accounts_project_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase
     ) -> None:
         """Verify another account's project cannot be changed.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         """
         project = make_project(owner_id=new_account_id())
         await commit_project(fx_database, project)
@@ -581,14 +581,14 @@ class TestDeleteProject:
     """Tests for DELETE /projects/{project_id}."""
 
     async def test_deletes_the_project_and_its_files(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_files: BookFiles, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_files: BookFiles, fx_actor: Actor
     ) -> None:
         """Verify the answer is 204, the project is gone, and nothing of it is left on disk.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_files: Files of imported books in the application's stores.
         :type fx_files: BookFiles
         :param fx_actor: The signed-in account.
@@ -607,14 +607,14 @@ class TestDeleteProject:
         assert_expectations()
 
     async def test_another_accounts_project_is_not_found_and_kept(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_files: BookFiles
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_files: BookFiles
     ) -> None:
         """Verify another account's project and files survive a delete request.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_files: Files of imported books in the application's stores.
         :type fx_files: BookFiles
         """

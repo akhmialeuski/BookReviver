@@ -1,4 +1,4 @@
-"""Tests for the endpoints that put the pages of a book in order, on in-memory persistence."""
+"""Tests for the endpoints that put the pages of a book in order, on the SQLite file of the test."""
 
 from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
@@ -10,7 +10,6 @@ from fastapi import status
 from fastapi_pagination import Page
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.errors import AnchorInsideMovedPagesError
 from tests.helpers.builders import make_page, make_project, make_scan, make_source, new_account_id
@@ -22,9 +21,10 @@ if TYPE_CHECKING:
 
     import httpx
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project, Source
     from bookreviver.domain.entities import Page as BookPage
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -67,11 +67,11 @@ class Book(NamedTuple):
 
 
 @pytest.fixture
-async def fx_book(fx_database: InMemoryDatabase, fx_actor: Actor) -> Book:
+async def fx_book(fx_database: SqlDatabase, fx_actor: Actor) -> Book:
     """Commit a book of five pages of two sources for the signed-in account.
 
-    :param fx_database: In-memory database of the application.
-    :type fx_database: InMemoryDatabase
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored book.
@@ -220,7 +220,7 @@ class TestMovePage:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_missing_anchor_and_page_of_another_account_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase
     ) -> None:
         """Verify an unknown anchor, and a project of another account, answer 404.
 
@@ -228,8 +228,8 @@ class TestMovePage:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         """
         stranger = make_project(owner_id=new_account_id())
         page = make_page(project_id=stranger.id)
@@ -317,7 +317,7 @@ class TestMovePages:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_page_of_another_project_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify a group that names a page of another project is answered 404.
 
@@ -325,8 +325,8 @@ class TestMovePages:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
@@ -403,7 +403,7 @@ class TestListIncludedPages:
     """Tests for the ``included`` filter of GET /projects/{project_id}/pages."""
 
     async def test_lists_only_the_pages_of_the_book_numbered_among_themselves(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify a viewer's request leaves out a page kept out of the book, and numbers the pages it lists.
 
@@ -411,10 +411,10 @@ class TestListIncludedPages:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
-        await InMemoryUnitOfWork(fx_database).change_book(
+        await fx_uow().change_book(
             fx_book.project.id, lambda repos, _project: repos.pages.update(evolve(fx_book.pages[1], included=False))
         )
 

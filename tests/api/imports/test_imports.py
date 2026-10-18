@@ -1,5 +1,6 @@
 """Tests for POST /projects/{project_id}/sources, from an upload to the sources, pages and events of the book."""
 
+from contextlib import asynccontextmanager
 from http import HTTPStatus
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
@@ -9,7 +10,6 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from fastapi import Request
 
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.api.auth import current_actor
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import EventName
@@ -18,18 +18,23 @@ from tests.adapters.imaging.samples import DjvuPage, requires_djvulibre, write_d
 from tests.helpers.builders import make_job, make_project, new_account_id
 from tests.helpers.fakes_imports import djvu_uploads, image_upload, pdf_upload, stored_book
 from tests.helpers.fakes_jobs import FakeBoardProvider, JobFakesProvider
+from tests.helpers.seeding import commit_project
 from tests.helpers.sse import EventStreamReader
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import AsyncGenerator, Callable, Sequence
+    from contextlib import AbstractAsyncContextManager
     from pathlib import Path
 
     import httpx
     from dishka import Provider
     from fastapi import FastAPI, UploadFile
 
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Project
+    from bookreviver.domain.ids import ProjectId
     from tests.api.imports.watch import ImportWatch
+    from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fakes_jobs import JobFakes
 
 pytestmark = pytest.mark.anyio
@@ -64,6 +69,42 @@ ONE_IMAGE_EVENTS: list[EventName] = [
 ]
 
 
+type EventListener = Callable[[ProjectId, int], AbstractAsyncContextManager[EventStreamReader]]
+
+
+@pytest.fixture
+def fx_listen(fx_app: FastAPI, fx_fakes: JobFakes) -> EventListener:
+    """Return a function that listens to the events of a project as a browser tab does, with the subscription in place.
+
+    :param fx_app: The running application.
+    :type fx_app: FastAPI
+    :param fx_fakes: Adapters the application runs on, whose event bus announces the subscription.
+    :type fx_fakes: JobFakes
+    :returns: Function taking the project and the number of events to collect, and returning a context manager whose
+              block runs while the stream is open and which ends when the events have arrived.
+    :rtype: EventListener
+    """
+
+    @asynccontextmanager
+    async def listen(project_id: ProjectId, count: int) -> AsyncGenerator[EventStreamReader]:
+        """Open the stream of a project, and wait at the end of the block until ``count`` events have arrived.
+
+        :param project_id: Project whose events are listened to.
+        :type project_id: ProjectId
+        :param count: Number of events to collect before the stream is closed.
+        :type count: int
+        :returns: Generator yielding the reader that collects the events.
+        :rtype: AsyncGenerator[EventStreamReader]
+        """
+        reader = EventStreamReader(count=count)
+        async with anyio.create_task_group() as group:
+            group.start_soon(reader.read, fx_app, fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=project_id))
+            await fx_fakes.events.subscribed.wait()
+            yield reader
+
+    return listen
+
+
 def _multipart(files: list[UploadFile]) -> list[tuple[str, tuple[str | None, bytes, str]]]:
     """Turn uploads into the parts of a multipart request body, the way a browser sends a chosen set of files.
 
@@ -82,7 +123,7 @@ class TestUploadSources:
         self,
         fx_client: httpx.AsyncClient,
         fx_import: ImportWatch,
-        fx_fakes: JobFakes,
+        fx_uow: UnitOfWorkFactory,
         fx_project: Project,
         tmp_path: Path,
     ) -> None:
@@ -95,8 +136,8 @@ class TestUploadSources:
         :type fx_client: httpx.AsyncClient
         :param fx_import: Reader of the imports the application runs.
         :type fx_import: ImportWatch
-        :param fx_fakes: Adapters the application runs on.
-        :type fx_fakes: JobFakes
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Project of the signed-in account.
         :type fx_project: Project
         :param tmp_path: Temporary directory of the test.
@@ -114,7 +155,7 @@ class TestUploadSources:
         queued = response.json()
         finished = await fx_import.finished(queued['id'])
 
-        book = await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)
+        book = await stored_book(fx_uow(), fx_project.id)
         sources, pages = book.sources, book.pages
         scans = {scan.id: scan for scan in book.scans}
         expect(response.status_code == HTTPStatus.ACCEPTED)
@@ -135,9 +176,9 @@ class TestUploadSources:
 
     async def test_stream_carries_the_events_of_an_import_and_its_result(
         self,
-        fx_app: FastAPI,
+        fx_listen: EventListener,
         fx_client: httpx.AsyncClient,
-        fx_fakes: JobFakes,
+        fx_uow: UnitOfWorkFactory,
         fx_project: Project,
         tmp_path: Path,
     ) -> None:
@@ -145,28 +186,23 @@ class TestUploadSources:
 
         There is no event per page, since the page manifest is read in one request.
 
-        :param fx_app: The running application.
-        :type fx_app: FastAPI
+        :param fx_listen: Function listening to the events of a project, as a browser tab does.
+        :type fx_listen: EventListener
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_fakes: Adapters the application runs on.
-        :type fx_fakes: JobFakes
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Project of the signed-in account.
         :type fx_project: Project
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        reader = EventStreamReader(count=len(ONE_IMAGE_EVENTS))
-        async with anyio.create_task_group() as group:
-            group.start_soon(
-                reader.read, fx_app, fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=fx_project.id)
-            )
-            await fx_fakes.events.subscribed.wait()
+        async with fx_listen(fx_project.id, len(ONE_IMAGE_EVENTS)) as reader:
             await fx_client.post(
                 SOURCES_PATH.format(project_id=fx_project.id), files=_multipart([image_upload(tmp_path, 'cover.jpg')])
             )
 
-        book = await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)
+        book = await stored_book(fx_uow(), fx_project.id)
         [source], [scan] = book.sources, book.scans
         queued, ended = reader.events[0].data, reader.events[-1].data
         expect([event.name for event in reader.events] == ONE_IMAGE_EVENTS)
@@ -215,7 +251,7 @@ class TestUploadSources:
         self,
         fx_client: httpx.AsyncClient,
         fx_import: ImportWatch,
-        fx_fakes: JobFakes,
+        fx_uow: UnitOfWorkFactory,
         fx_project: Project,
         tmp_path: Path,
     ) -> None:
@@ -227,8 +263,8 @@ class TestUploadSources:
         :type fx_client: httpx.AsyncClient
         :param fx_import: Reader of the imports the application runs.
         :type fx_import: ImportWatch
-        :param fx_fakes: Adapters the application runs on.
-        :type fx_fakes: JobFakes
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Project of the signed-in account.
         :type fx_project: Project
         :param tmp_path: Temporary directory of the test.
@@ -245,7 +281,7 @@ class TestUploadSources:
         ).json()
         finished = await fx_import.finished(queued['id'])
 
-        [source] = (await stored_book(InMemoryUnitOfWork(fx_fakes.database), fx_project.id)).sources
+        [source] = (await stored_book(fx_uow(), fx_project.id)).sources
         [rejected] = await fx_import.report(fx_project.id)
         expect(finished['state'] == JobState.SUCCEEDED)
         expect((source.file_name, source.scan_count) == ('a-index.djvu', len(DJVU_PAGES)))
@@ -255,19 +291,19 @@ class TestUploadSources:
         assert_expectations()
 
     async def test_project_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, tmp_path: Path
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, tmp_path: Path
     ) -> None:
         """Verify an upload to a project of another account answers 404, as if the project did not exist.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_fakes: Adapters the application runs on.
-        :type fx_fakes: JobFakes
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
         stranger_project = make_project(owner_id=new_account_id())
-        await fx_fakes.store(stranger_project)
+        await commit_project(fx_database, stranger_project)
 
         response = await fx_client.post(
             SOURCES_PATH.format(project_id=stranger_project.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])
@@ -361,19 +397,19 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
         return (JobFakesProvider(fx_fakes), FakeBoardProvider(fx_fakes.board))
 
     async def test_project_of_another_account_is_refused_unread(
-        self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, tmp_path: Path
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, tmp_path: Path
     ) -> None:
         """Verify a non-owner gets 404 without the server reading the files it sent.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_fakes: Adapters the application runs on.
-        :type fx_fakes: JobFakes
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
         stranger_project = make_project(owner_id=new_account_id())
-        await fx_fakes.store(stranger_project)
+        await commit_project(fx_database, stranger_project)
 
         response = await fx_client.post(
             SOURCES_PATH.format(project_id=stranger_project.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])

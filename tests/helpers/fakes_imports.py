@@ -14,8 +14,6 @@ from typing import TYPE_CHECKING, NamedTuple, override
 import anyio
 from attrs import field, frozen
 
-from bookreviver.adapters.clock.system import FixedClock
-from bookreviver.adapters.execution.in_process import InProcessStepExecutor
 from bookreviver.adapters.imaging import (
     DjvuFormat,
     DjvuLibreTools,
@@ -37,8 +35,10 @@ from bookreviver.services.processing_parts import ProcessingConfig, ProcessingPa
 from bookreviver.services.steps import StepRunner
 from tests.adapters.imaging.samples import PdfPage, ScanImage, write_image, write_pdf
 from tests.helpers.builders import EPOCH
+from tests.helpers.clock import FixedClock
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.fakes_jobs import JobFakes, RecordingEventBus
+from tests.helpers.in_process_executor import InProcessStepExecutor
 from tests.helpers.processing import DEFAULTS, PREVIEW_LONG_SIDE_PX, PREVIEW_RETENTION_HOURS
 from tests.helpers.storage import upload
 
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
     from fastapi import UploadFile
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Job, Page, PaginationSection, Scan, Source
     from bookreviver.domain.enums import Rendition, SourceKind
     from bookreviver.domain.events import DomainEvent
@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.storage import SourceStore
     from bookreviver.services.recipes import DefaultRecipes
+    from tests.helpers.database import UnitOfWorkFactory
 
 TICK: timedelta = timedelta(seconds=1)
 PAGE_WIDTH_PX: int = 200
@@ -428,8 +429,10 @@ class CrashingSourceStore(LocalSourceStore):
 class ImportRig:
     """Everything an import test runs on, built over one temporary storage root.
 
-    :ivar fakes: The database, the recording event bus, the clock and the board, which the job tests share. The board
-                 runs a job through the import service of the rig when a test calls ``run_queued``.
+    :ivar database: The SQL database of the test, which stores the account of the actor.
+    :ivar new_uow: Function opening a unit of work over ``database``, as a new request or job would get.
+    :ivar fakes: The recording event bus, the clock and the board, which the job tests share. The board runs a job
+                 through the import service of the rig when a test calls ``run_queued``.
     :ivar events: The event bus of ``fakes``, seen as the hooked bus it is.
     :ivar sources: Local source store, whose promotion can crash.
     :ivar assets: Local asset store.
@@ -440,6 +443,8 @@ class ImportRig:
     :ivar processors: The processors of the catalogue the recipes are checked against.
     """
 
+    database: SqlDatabase
+    new_uow: UnitOfWorkFactory
     fakes: JobFakes
     events: HookedEventBus
     sources: CrashingSourceStore
@@ -451,12 +456,16 @@ class ImportRig:
     processors: Sequence[Processor] = field(factory=lambda: [SplitNone()])
 
     @classmethod
-    def build(cls, root: Path) -> ImportRig:
+    def build(cls, root: Path, database: SqlDatabase, new_uow: UnitOfWorkFactory) -> ImportRig:
         """Build the rig over the adapters of the application, with the settings' defaults.
 
         :param root: Storage root of both stores.
         :type root: Path
-        :returns: The rig with an empty database and nothing stored.
+        :param database: SQL database of the test, such as ``fx_database``.
+        :type database: SqlDatabase
+        :param new_uow: Function opening a unit of work over ``database``, such as ``fx_uow``.
+        :type new_uow: UnitOfWorkFactory
+        :returns: The rig with nothing stored.
         :rtype: ImportRig
         """
         imaging = ImagingSettings()
@@ -495,6 +504,8 @@ class ImportRig:
             return await built[0].service().run_import(job, control)
 
         rig = cls(
+            database=database,
+            new_uow=new_uow,
             fakes=JobFakes(events=events, clock=TickingClock(EPOCH), runner=run),
             events=events,
             sources=CrashingSourceStore(root=root),
@@ -505,11 +516,6 @@ class ImportRig:
         )
         built.append(rig)
         return rig
-
-    @property
-    def database(self) -> InMemoryDatabase:
-        """The database every unit of work of the rig opens over."""
-        return self.fakes.database
 
     def runner(self) -> StepRunner:
         """Build the runner of ``split.none``, which makes the base version of a page, over the rig's assets and tiler.
@@ -530,12 +536,12 @@ class ImportRig:
         )
 
     def open_uow(self) -> UnitOfWork:
-        """Open a unit of work, as a new request or job would, whose changes wait at the gate of the fakes.
+        """Open a unit of work over the rig's database, as a new request or job would get.
 
-        :returns: A unit of work over the rig's database.
+        :returns: A new unit of work.
         :rtype: UnitOfWork
         """
-        return self.fakes.gated_uow()
+        return self.new_uow()
 
     def service(
         self,
@@ -548,7 +554,7 @@ class ImportRig:
     ) -> ImportService:
         """Build an import service over a new unit of work, as a new request or job would get.
 
-        :param uow: Unit of work the service works in, or None for a new in-memory one over the rig's database.
+        :param uow: Unit of work the service works in, or None for a new one over the rig's database.
         :type uow: UnitOfWork | None
         :param sources: Source store the service works with, or None for the rig's own.
         :type sources: SourceStore | None

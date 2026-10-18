@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 from attrs import evolve
 
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.domain.enums import Stage, StageState, VersionState
 from bookreviver.domain.values import PageStageKey, Renditions
 from tests.helpers.builders import (
@@ -27,8 +26,10 @@ if TYPE_CHECKING:
 
     from dishka import Provider
 
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Page, PageStage, PageVersion, Project, Scan, Source
     from bookreviver.ports.persistence import Repositories
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -57,9 +58,9 @@ class Book(NamedTuple):
 
 @pytest.fixture
 def fx_fakes() -> JobFakes:
-    """Build the adapters the application runs on, with an empty database.
+    """Build the adapters the application runs on besides its database.
 
-    :returns: Fakes with an empty database and nothing published.
+    :returns: Fakes with nothing published.
     :rtype: JobFakes
     """
     return JobFakes()
@@ -98,18 +99,24 @@ def fx_book() -> Book:
 
 
 @pytest.fixture
-async def fx_extra_providers(fx_fakes: JobFakes, fx_book: Book) -> Sequence[Provider]:
+async def fx_extra_providers(
+    fx_fakes: JobFakes, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_book: Book
+) -> Sequence[Provider]:
     """Store the book before the application starts, and give the application the fakes and the fake catalogue.
 
-    :param fx_fakes: Adapters of the test, whose database the application reads.
+    :param fx_fakes: Adapters of the test.
     :type fx_fakes: JobFakes
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_book: The book to store.
     :type fx_book: Book
     :returns: The providers of the fakes and of the fake processors.
     :rtype: Sequence[Provider]
     """
     await commit_project(
-        fx_fakes.database,
+        fx_database,
         fx_book.project,
         fx_book.page,
         sources=[fx_book.source],
@@ -128,7 +135,7 @@ async def fx_extra_providers(fx_fakes: JobFakes, fx_book: Book) -> Sequence[Prov
         for record in fx_book.records:
             repos.page_stages.save(record)
 
-    await InMemoryUnitOfWork(fx_fakes.database).change_book(fx_book.project.id, save_records)
+    await fx_uow().change_book(fx_book.project.id, save_records)
     return (JobFakesProvider(fx_fakes), ProcessingFakesProvider())
 
 
@@ -137,19 +144,21 @@ class TestStart:
 
     @pytest.mark.usefixtures('fx_app')
     async def test_marks_a_fresh_stage_of_an_outdated_processor_stale_before_the_first_request(
-        self, fx_fakes: JobFakes, fx_book: Book
+        self, fx_fakes: JobFakes, fx_uow: UnitOfWorkFactory, fx_book: Book
     ) -> None:
         """Verify the geometry record is stale once the application runs, and the record of the base version is not.
 
         The running application is only started, and no request is made, so the mark can only come from the start
         itself, and it is announced to nobody.
 
-        :param fx_fakes: Adapters of the test, whose database holds the book.
+        :param fx_fakes: Adapters of the test, whose event bus records what is announced.
         :type fx_fakes: JobFakes
+        :param fx_uow: Function opening a new unit of work over the database of the test, which holds the book.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_book: The stored book.
         :type fx_book: Book
         """
-        states = await InMemoryUnitOfWork(fx_fakes.database).read(
+        states = await fx_uow().read(
             lambda repos: [
                 repos.page_stages.get(PageStageKey(fx_book.page.id, stage)).state
                 for stage in (Stage.PAGE_SPLIT, Stage.GEOMETRY)

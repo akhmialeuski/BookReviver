@@ -1,4 +1,4 @@
-"""Tests for the recipe profile endpoints, on in-memory persistence with the fake processors of the tests."""
+"""Tests for the recipe profile endpoints, on the SQLite file of the test with the fake processors of the tests."""
 
 from typing import TYPE_CHECKING
 
@@ -6,7 +6,7 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from fastapi import status
 
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
+from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.api.schemas.processing import RecipeSchema
 from bookreviver.api.schemas.profiles import (
     AppliedProfileSchema,
@@ -18,7 +18,7 @@ from bookreviver.domain.enums import RecipeKind, Stage
 from bookreviver.domain.values import Step
 from tests.helpers.builders import make_project, make_recipe_profile, new_account_id
 from tests.helpers.processing import ProcessingFakesProvider
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import commit_project, ensure_account
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project, RecipeProfile
 
 pytestmark = pytest.mark.anyio
@@ -156,11 +156,11 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_project(fx_database: InMemoryDatabase, fx_actor: Actor) -> Project:
+async def fx_project(fx_database: SqlDatabase, fx_actor: Actor) -> Project:
     """Commit a book of the signed-in account.
 
-    :param fx_database: In-memory database of the application.
-    :type fx_database: InMemoryDatabase
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored project.
@@ -171,17 +171,18 @@ async def fx_project(fx_database: InMemoryDatabase, fx_actor: Actor) -> Project:
     return project
 
 
-async def _store(database: InMemoryDatabase, profile: RecipeProfile) -> RecipeProfile:
-    """Commit a profile as an earlier request would have.
+async def _store(database: SqlDatabase, profile: RecipeProfile) -> RecipeProfile:
+    """Commit a profile as an earlier request would have, and the account owning it unless the database stores it.
 
-    :param database: In-memory database of the application.
-    :type database: InMemoryDatabase
+    :param database: Database of the test, which the application runs on.
+    :type database: SqlDatabase
     :param profile: Profile to store.
     :type profile: RecipeProfile
     :returns: The profile as stored.
     :rtype: RecipeProfile
     """
-    return await InMemoryUnitOfWork(database).change(lambda repos: repos.recipe_profiles.add(profile))
+    await ensure_account(database, profile.account_id)
+    return await SqlAlchemyUnitOfWork(database).change(lambda repos: repos.recipe_profiles.add(profile))
 
 
 class TestProfiles:
@@ -251,14 +252,14 @@ class TestProfiles:
         assert_expectations()
 
     async def test_a_profile_of_another_account_is_a_404_problem(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_project: Project
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_project: Project
     ) -> None:
         """Verify another account's profile is not listed and cannot be changed or applied.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_project: A book of the signed-in account.
         :type fx_project: Project
         """
@@ -327,14 +328,14 @@ class TestApplyProfile:
         ]
 
     async def test_a_missing_processor_is_named_in_the_answer(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor, fx_project: Project
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor, fx_project: Project
     ) -> None:
         """Verify the steps that can run are applied and the processor that cannot is listed.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_project: A book of the signed-in account.
@@ -354,14 +355,14 @@ class TestApplyProfile:
         assert_expectations()
 
     async def test_a_new_book_starts_with_the_default_profile(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify the first request of a stage in a new book answers with the default profile.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
@@ -548,14 +549,14 @@ class TestLibrary:
     """Tests for the books of a profile, the copy of a profile and the file a profile is exchanged by."""
 
     async def test_the_listing_counts_the_books_that_use_each_profile(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor, fx_project: Project
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor, fx_project: Project
     ) -> None:
         """Verify applying a profile to two books makes the listing say two, and a profile never applied says none.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_project: A book of the signed-in account.
@@ -689,14 +690,14 @@ class TestLibrary:
         assert_expectations()
 
     async def test_a_profile_of_another_account_cannot_be_exported_or_copied(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase
     ) -> None:
         """Verify another account's profile answers 404 to the export and to the copy.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         """
         foreign = await _store(fx_database, make_recipe_profile(account_id=new_account_id(), steps=(_step(FAKE_KEY),)))
         responses = [

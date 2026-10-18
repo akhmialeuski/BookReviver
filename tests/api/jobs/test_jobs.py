@@ -31,12 +31,14 @@ from tests.helpers.builders import (
     new_account_id,
 )
 from tests.helpers.scripted_runner import TASKS_PER_JOB
+from tests.helpers.seeding import commit_project
 from tests.helpers.sse import EVENT_STREAM_TYPE, STREAM_TIMEOUT_SECONDS, EventStreamReader, StreamedEvent
 
 if TYPE_CHECKING:
     import httpx
     from fastapi import FastAPI
 
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Job
     from tests.helpers.fakes_jobs import JobFakes
 
@@ -51,6 +53,9 @@ PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 JOB_ID_FIELD: str = 'id'
 JOB_STATE_FIELD: str = 'state'
 PROJECT_ID_FIELD: str = 'project_id'
+PAGE_ID_FIELD: str = 'page_id'
+KIND_FIELD: str = 'kind'
+STAGE_FIELD: str = 'stage'
 PROGRESS_FIELD: str = 'progress'
 DONE_FIELD: str = 'done'
 TOTAL_FIELD: str = 'total'
@@ -60,32 +65,36 @@ ITEMS_FIELD: str = 'items'
 
 
 @pytest.fixture
-async def fx_queued_job(fx_fakes: JobFakes, fx_actor: Actor) -> Job:
+async def fx_queued_job(fx_fakes: JobFakes, fx_database: SqlDatabase, fx_actor: Actor) -> Job:
     """Store a project of the signed-in account with a queued job that nothing runs.
 
     :param fx_fakes: Adapters the application runs on.
     :type fx_fakes: JobFakes
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The queued job.
     :rtype: Job
     """
     project = make_project(owner_id=fx_actor.account_id)
-    await fx_fakes.store(project)
+    await commit_project(fx_database, project)
     return fx_fakes.board.put(make_job(project_id=project.id))
 
 
 @pytest.fixture
-async def fx_strangers_job(fx_fakes: JobFakes) -> Job:
+async def fx_strangers_job(fx_fakes: JobFakes, fx_database: SqlDatabase) -> Job:
     """Store a project of another account with a queued job.
 
     :param fx_fakes: Adapters the application runs on.
     :type fx_fakes: JobFakes
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
     :returns: The queued job of the other account.
     :rtype: Job
     """
     project = make_project(owner_id=new_account_id())
-    await fx_fakes.store(project)
+    await commit_project(fx_database, project)
     return fx_fakes.board.put(make_job(project_id=project.id))
 
 
@@ -108,7 +117,12 @@ class TestReadJob:
         assert_expectations()
 
     async def test_run_stage_job_names_its_stage_and_an_import_job_does_not(
-        self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_actor: Actor, fx_queued_job: Job
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_fakes: JobFakes,
+        fx_database: SqlDatabase,
+        fx_actor: Actor,
+        fx_queued_job: Job,
     ) -> None:
         """Verify the job of a stage run carries its stage and the import job carries none.
 
@@ -116,20 +130,22 @@ class TestReadJob:
         :type fx_client: httpx.AsyncClient
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_queued_job: Queued import job of the signed-in account.
         :type fx_queued_job: Job
         """
         project = make_project(owner_id=fx_actor.account_id)
-        await fx_fakes.store(project)
+        await commit_project(fx_database, project)
         run = fx_fakes.board.put(
             make_job(project_id=project.id, kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.GEOMETRY).to_map())
         )
         run_body = (await fx_client.get(JOB_PATH.format(job_id=run.id))).json()
         import_body = (await fx_client.get(JOB_PATH.format(job_id=fx_queued_job.id))).json()
-        expect((run_body['kind'], run_body['stage']) == (JobKind.RUN_STAGE, Stage.GEOMETRY))
-        expect((import_body['kind'], import_body['stage']) == (JobKind.IMPORT_SOURCE, None))
+        expect((run_body[KIND_FIELD], run_body[STAGE_FIELD]) == (JobKind.RUN_STAGE, Stage.GEOMETRY))
+        expect((import_body[KIND_FIELD], import_body[STAGE_FIELD]) == (JobKind.IMPORT_SOURCE, None))
         assert_expectations()
 
     async def test_job_of_another_account_is_not_found(
@@ -388,14 +404,14 @@ class TestStreamProjectEvents:
                 EventName.PAGES_CHANGED, {**project, 'page_ids': [str(page_id)], 'change': PageChange.MOVED.value}
             ),
             StreamedEvent(
-                EventName.PAGE_VERSION_READY, {**project, 'page_id': str(version.page_id), 'version_id': version.id}
+                EventName.PAGE_VERSION_READY, {**project, PAGE_ID_FIELD: str(version.page_id), 'version_id': version.id}
             ),
             StreamedEvent(
                 EventName.PAGE_STAGE_CHANGED,
                 {
                     **project,
-                    'page_id': str(page_id),
-                    'stage': Stage.GEOMETRY.value,
+                    PAGE_ID_FIELD: str(page_id),
+                    STAGE_FIELD: Stage.GEOMETRY.value,
                     'recipe_id': None,
                     'head_version_id': None,
                     'state': StageState.STALE.value,

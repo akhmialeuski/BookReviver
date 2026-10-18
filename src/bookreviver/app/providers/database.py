@@ -1,7 +1,8 @@
-"""Provider of the SQL database, used by the SQLAlchemy persistence backend and by the account tables.
+"""Provider of the SQL database and of the unit of work over it, which the persistence port and the accounts share.
 
 The database is one per application, and the unit of work over it is built per request or job, so that the books and
-the accounts share it.
+the accounts share it. The same unit of work is the ``UnitOfWork`` of the port, so the books add no second connection
+pool and no second unit of work.
 
 The application never changes the schema. Migrations are applied by hand, after a copy of the data directory if it
 matters, and the provider only compares the revision of the database with the head of the migrations the code
@@ -13,13 +14,13 @@ know that revision, so the message names the downgrade to run with the code that
 
 from collections.abc import AsyncIterator
 
-from dishka import Provider, Scope, provide
+from dishka import Provider, Scope, alias, provide
 from sqlalchemy.orm import configure_mappers
 
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.app.settings import Settings
-from bookreviver.ports.persistence import ChangeWaitSeconds
+from bookreviver.ports.persistence import ChangeWaitSeconds, UnitOfWork
 from bookreviver.ports.tracing import Tracer
 
 # The command applying the migrations to the database the settings name, a script of pyproject.toml
@@ -37,7 +38,10 @@ RUN: str = ': run `'
 
 
 class DatabaseProvider(Provider):
-    """One database per application whose schema is at the head revision, and one unit of work per request."""
+    """One database per application whose schema is at the head revision, and one unit of work per request.
+
+    :ivar unit_of_work_port: The unit of work of the request as the ``UnitOfWork`` port.
+    """
 
     @provide(scope=Scope.APP)
     async def database(self, settings: Settings, tracer: Tracer) -> AsyncIterator[SqlDatabase]:
@@ -88,8 +92,8 @@ class DatabaseProvider(Provider):
     def unit_of_work(self, database: SqlDatabase, wait_seconds: ChangeWaitSeconds) -> SqlAlchemyUnitOfWork:
         """Build the unit of work of a request or job, which keeps no state but the wait limit of its scope.
 
-        The repositories of the books and the account database both take this one, whatever backend the books are
-        stored in. It holds no session or connection, so it needs no closing.
+        The repositories of the books and the account database both take this one. It holds no session or connection,
+        so it needs no closing.
 
         :param database: The application's database, whose threads and connections the transactions use.
         :type database: SqlDatabase
@@ -99,3 +103,5 @@ class DatabaseProvider(Provider):
         :rtype: SqlAlchemyUnitOfWork
         """
         return SqlAlchemyUnitOfWork(database, wait_seconds=wait_seconds)
+
+    unit_of_work_port = alias(source=SqlAlchemyUnitOfWork, provides=UnitOfWork)

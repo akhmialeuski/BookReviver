@@ -166,7 +166,7 @@ class TestRunImportConnections:
         scans = await uow.read(
             lambda repos: repos.scans.list_for_project(project.id, SliceRequest(limit=PARALLEL_SCANS)).items
         )
-        # A file database gets a queue pool, which an in-memory one does not, so the limit of the pool is the real one
+        # A file database gets a queue pool, so the limit of the pool is the real one
         expect(isinstance(fx_database.engine.pool, QueuePool))
         expect(rig.rasterizer.peak == PARALLEL_SCANS)
         expect(stored.state is JobState.SUCCEEDED)

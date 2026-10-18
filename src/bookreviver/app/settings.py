@@ -27,13 +27,6 @@ STEP_PROCESSES_CORES_DENOMINATOR: int = 3
 MIN_STEP_PROCESSES: int = 2
 
 
-class PersistenceBackend(enum.StrEnum):
-    """Which persistence adapter the container builds."""
-
-    SQLALCHEMY = 'sqlalchemy'
-    MEMORY = 'memory'
-
-
 class StorageBackend(enum.StrEnum):
     """Which storage adapters the container builds for sources and derived files."""
 
@@ -229,7 +222,6 @@ class Settings(BaseSettings):
     :ivar frontend_dir: Directory of the built frontend, served at ``/`` when it exists; ``npm --prefix frontend run
                         build`` writes it.
     :ivar database_url: SQLAlchemy URL of an SQLite database, or empty for an SQLite file in ``data_dir``.
-    :ivar persistence: Persistence backend the container builds.
     :ivar storage: Storage backend the container builds for sources and derived files.
     :ivar max_upload_bytes: Largest total size of one upload, 4 GiB by default.
     :ivar max_upload_files: Largest number of files in one upload, 10000 by default.
@@ -255,7 +247,6 @@ class Settings(BaseSettings):
     data_dir: Path = Path('data')
     frontend_dir: Path = Path('frontend/dist')
     database_url: str = ''
-    persistence: PersistenceBackend = PersistenceBackend.SQLALCHEMY
     storage: StorageBackend = StorageBackend.LOCAL
     max_upload_bytes: PositiveInt = 4 * 1024**3
     max_upload_files: PositiveInt = 10_000

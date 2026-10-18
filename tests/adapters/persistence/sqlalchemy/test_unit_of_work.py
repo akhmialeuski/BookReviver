@@ -1,13 +1,11 @@
-"""Tests of what the SQLAlchemy unit of work promises beyond the contract suite: its threads, its readers and its queue.
+"""Tests of what the SQLAlchemy unit of work promises beyond the contract suite: its threads and its readers.
 
-The contract suite runs the promises every adapter of the port makes. These tests show how this adapter keeps them: a
-read refuses every form of write the repositories use, and sees one committed state while a change commits; the work of
-a change runs in a worker thread and different changes may run in different threads over the one connection of the
-writer; and changes that wait for the writer have it in the order they asked. They are ordered by events and by a held
-book, never by a sleep.
+The contract suite runs the promises of the port, the order of the changes that wait for the writer included. These
+tests show how this adapter keeps them: a read refuses every form of write the repositories use, and sees one committed
+state while a change commits; the work of a change runs in a worker thread and different changes may run in different
+threads over the one connection of the writer. They are ordered by events, never by a sleep.
 """
 
-import asyncio
 import threading
 from functools import partial
 from typing import TYPE_CHECKING
@@ -21,14 +19,12 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import BlockKind
-from bookreviver.domain.errors import BookBusyError
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import SliceRequest
 from bookreviver.ports.persistence import NoChangeOpenError
-from tests.helpers.book_gate import HOLD_LIMIT_SECONDS, hold_book_in_thread
+from tests.helpers.book_hold import HOLD_LIMIT_SECONDS
 from tests.helpers.builders import make_page_version, make_project
 from tests.helpers.seeding import store_project
-from tests.helpers.wait_limits import IMPATIENT_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -39,15 +35,12 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import PageVersion, Project
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.persistence import Repositories
-    from tests.helpers.tracers import AskingTracer
 
 pytestmark = pytest.mark.anyio
 
 NEW_TITLE: str = 'Renamed'
 # A version of no page, which no row holds
 MISSING_VERSION: PageVersion = make_page_version(page_id=PageId(uuid4()))
-# How many changes queue behind a held book in the test of the order they run in
-WAITERS: int = 4
 WRITE_ARG: str = 'write'
 # A write of each form the repositories use, which a read refuses, by the name of the test case; each takes the
 # repositories and the stored project of the test
@@ -152,7 +145,6 @@ class TestChangeThreads:
         :param fx_database: Fresh SQLite database with every table created.
         :type fx_database: SqlDatabase
         """
-        loop = asyncio.get_running_loop()
         inside, release = anyio.Event(), threading.Event()
         occupied: list[int] = []
 
@@ -172,7 +164,7 @@ class TestChangeThreads:
             :returns: The identifier of the thread.
             :rtype: int
             """
-            loop.call_soon_threadsafe(inside.set)
+            anyio.from_thread.run_sync(inside.set)
             release.wait(HOLD_LIMIT_SECONDS)
             return threading.get_ident()
 
@@ -194,49 +186,3 @@ class TestChangeThreads:
         expect(second_thread != first_thread, 'the second change ran on another thread')
         expect(second_connection == first_connection, 'both changes used the one connection of the writer')
         assert_expectations()
-
-
-class TestWriterQueue:
-    """Tests for the changes that wait for the writer, which gives it out in the order they asked."""
-
-    async def test_waiting_changes_have_the_writer_in_the_order_they_asked(
-        self, fx_traced_database: SqlDatabase, fx_project: Project, fx_tracer: AskingTracer
-    ) -> None:
-        """Verify changes that queue behind a held book run in the order their spans started, one by one.
-
-        Each change is started only once the span of the one before it has started, which happens before it waits, so
-        the order they asked in is known without a sleep. The book is held by a change whose work blocks its thread.
-
-        :param fx_traced_database: Database whose blocks are timed.
-        :type fx_traced_database: SqlDatabase
-        :param fx_project: Committed project of the database.
-        :type fx_project: Project
-        :param fx_tracer: Tracer of the test, which tells when a change has asked for the writer.
-        :type fx_tracer: AskingTracer
-        """
-        uow = SqlAlchemyUnitOfWork(fx_traced_database)
-        order: list[int] = []
-        # The hold ends first, when the block ends, and the group then waits for the changes that queued behind it
-        async with anyio.create_task_group() as group, hold_book_in_thread(uow, fx_project.id):
-            for number in range(WAITERS):
-                asked = fx_tracer.ask_after(1)
-                group.start_soon(uow.change, lambda _repos, taken=number: order.append(taken))
-                await asked.wait()
-        assert order == list(range(WAITERS))
-
-    async def test_change_that_does_not_have_the_writer_within_its_limit_is_refused_and_the_holder_commits(
-        self, fx_traced_database: SqlDatabase, fx_project: Project
-    ) -> None:
-        """Verify a change with a limit of a few milliseconds is refused behind a held book, and the book is kept.
-
-        :param fx_traced_database: Database whose blocks are timed.
-        :type fx_traced_database: SqlDatabase
-        :param fx_project: Committed project of the database.
-        :type fx_project: Project
-        """
-        holder = SqlAlchemyUnitOfWork(fx_traced_database)
-        asker = SqlAlchemyUnitOfWork(fx_traced_database, wait_seconds=IMPATIENT_SECONDS)
-        async with hold_book_in_thread(holder, fx_project.id):
-            with pytest.raises(BookBusyError):
-                await asker.change(lambda _repos: None)
-        assert await holder.read(lambda repos: repos.projects.get(fx_project.id)) == fx_project

@@ -1,22 +1,21 @@
-"""Fixtures of the service tests: in-memory persistence and the local stores over a temporary directory."""
+"""Fixtures of the service tests: the local stores over a temporary directory, on top of the root database."""
 
 from typing import TYPE_CHECKING
 
 import pytest
 
-from bookreviver.adapters.clock.system import FixedClock
-from bookreviver.adapters.persistence.memory import InMemoryDatabase, InMemoryUnitOfWork
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.values import JobEnd
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.services.pagination import PaginationService
-from tests.helpers.book_gate import BookGate, GatedUnitOfWork
 from tests.helpers.builders import EPOCH
+from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.page_services import make_page_service
 from tests.helpers.page_stage_writes import PageStageWrites
+from tests.helpers.page_writes import PageWrites
 from tests.helpers.processing import CV_DEFAULTS, ProcessingKit
 from tests.helpers.processors import (
     CleanupProcessor,
@@ -32,46 +31,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Job
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
-
-
-@pytest.fixture
-def fx_database() -> InMemoryDatabase:
-    """Build an empty in-memory database.
-
-    :returns: Database shared by every unit of work of the test.
-    :rtype: InMemoryDatabase
-    """
-    return InMemoryDatabase()
-
-
-@pytest.fixture
-def fx_gate() -> BookGate:
-    """Build the gate a test holds a book with, so the changes of that book queue behind it.
-
-    :returns: Gate shared by every gated unit of work of the test.
-    :rtype: BookGate
-    """
-    return BookGate()
-
-
-@pytest.fixture
-def fx_gated_uow(fx_database: InMemoryDatabase, fx_gate: BookGate) -> Callable[[], GatedUnitOfWork]:
-    """Return a function opening a unit of work over the test's database whose changes wait at the gate.
-
-    A test holds the book through the ``gate`` of any unit of work the function opens, since all of them share it.
-
-    :param fx_database: In-memory database every request of the test shares.
-    :type fx_database: InMemoryDatabase
-    :param fx_gate: Gate every unit of work opened here takes its semaphores from.
-    :type fx_gate: BookGate
-    :returns: Function opening a new gated unit of work.
-    :rtype: Callable[[], GatedUnitOfWork]
-    """
-    return lambda: GatedUnitOfWork(InMemoryUnitOfWork(fx_database), fx_gate)
+    from tests.helpers.database import UnitOfWorkFactory
 
 
 @pytest.fixture
@@ -143,16 +108,28 @@ def fx_page_stage_writes(monkeypatch: pytest.MonkeyPatch) -> PageStageWrites:
 
 
 @pytest.fixture
+def fx_page_writes(monkeypatch: pytest.MonkeyPatch) -> PageWrites:
+    """Build the record of the pages the page repository writes, which a test starts after it has seeded.
+
+    :param monkeypatch: Fixture that undoes the patch of the repository after the test.
+    :type monkeypatch: pytest.MonkeyPatch
+    :returns: Record that holds nothing until ``start`` is called.
+    :rtype: PageWrites
+    """
+    return PageWrites(monkeypatch)
+
+
+@pytest.fixture
 def fx_board(
-    fx_database: InMemoryDatabase, fx_asset_store: LocalAssetStore, fx_events: RecordingEventBus, fx_clock: FixedClock
+    fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore, fx_events: RecordingEventBus, fx_clock: FixedClock
 ) -> FakeJobBoard:
     """Build a job board that records what is put on it and runs it when a test says so.
 
     A ``prepare-pages`` job runs through the page service, as the application runs it, and a job of any other kind
     ends at once, since the page tests look at the queueing of those and not at their work.
 
-    :param fx_database: In-memory database every request of the test shares.
-    :type fx_database: InMemoryDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :param fx_events: Recording event bus.
@@ -175,7 +152,7 @@ def fx_board(
         """
         if job.kind is not JobKind.PREPARE_PAGES:
             return JobEnd(state=JobState.SUCCEEDED)
-        service = make_page_service(InMemoryUnitOfWork(fx_database), fx_asset_store, (fx_events, fx_clock, board))
+        service = make_page_service(fx_uow(), fx_asset_store, (fx_events, fx_clock, board))
         return await service.prepare_images(job, control)
 
     board = FakeJobBoard(runner=run, publisher=fx_events, clock=fx_clock)
@@ -204,7 +181,7 @@ def fx_runtime(
 def fx_service_over(
     fx_asset_store: LocalAssetStore, fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
 ) -> Callable[[UnitOfWork], PageService]:
-    """Return a function building the page service over a unit of work the test made, which a test may have gated.
+    """Return a function building the page service over a unit of work the test made.
 
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
@@ -218,23 +195,23 @@ def fx_service_over(
 
 @pytest.fixture
 def fx_service(
-    fx_database: InMemoryDatabase, fx_service_over: Callable[[UnitOfWork], PageService]
+    fx_uow: UnitOfWorkFactory, fx_service_over: Callable[[UnitOfWork], PageService]
 ) -> Callable[[], PageService]:
     """Return a function building the page service for one request or job.
 
-    :param fx_database: In-memory database every request of the test shares.
-    :type fx_database: InMemoryDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_service_over: Function building the page service over a unit of work.
     :type fx_service_over: Callable[[UnitOfWork], PageService]
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], PageService]
     """
-    return lambda: fx_service_over(InMemoryUnitOfWork(fx_database))
+    return lambda: fx_service_over(fx_uow())
 
 
 @pytest.fixture
 def fx_pagination_over(fx_events: RecordingEventBus, fx_clock: FixedClock) -> Callable[[UnitOfWork], PaginationService]:
-    """Return a function building the pagination service over a unit of work the test made, which a test may have gated.
+    """Return a function building the pagination service over a unit of work the test made.
 
     :param fx_events: Recording event bus the service publishes to.
     :type fx_events: RecordingEventBus
@@ -248,36 +225,40 @@ def fx_pagination_over(fx_events: RecordingEventBus, fx_clock: FixedClock) -> Ca
 
 @pytest.fixture
 def fx_pagination(
-    fx_database: InMemoryDatabase, fx_pagination_over: Callable[[UnitOfWork], PaginationService]
+    fx_uow: UnitOfWorkFactory, fx_pagination_over: Callable[[UnitOfWork], PaginationService]
 ) -> Callable[[], PaginationService]:
     """Return a function building the pagination service for one request.
 
-    :param fx_database: In-memory database every request of the test shares.
-    :type fx_database: InMemoryDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_pagination_over: Function building the pagination service over a unit of work.
     :type fx_pagination_over: Callable[[UnitOfWork], PaginationService]
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], PaginationService]
     """
-    return lambda: fx_pagination_over(InMemoryUnitOfWork(fx_database))
+    return lambda: fx_pagination_over(fx_uow())
 
 
 @pytest.fixture
-def fx_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
-    """Build what the processing services of a test share, over the test's asset store.
+def fx_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) -> ProcessingKit:
+    """Build what the processing services of a test share, over the database and the asset store of the test.
 
+    :param fx_database: Database of the test.
+    :type fx_database: SqlDatabase
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :returns: The kit that builds the processing service, the jobs of the workers and the edit service.
     :rtype: ProcessingKit
     """
-    return ProcessingKit(fx_asset_store)
+    return ProcessingKit(fx_database, fx_asset_store)
 
 
 @pytest.fixture
-def fx_cv_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
+def fx_cv_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) -> ProcessingKit:
     """Build the processing kit with the real OpenCV plugins, or skip the test where OpenCV is not installed.
 
+    :param fx_database: Database of the test.
+    :type fx_database: SqlDatabase
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :returns: The kit whose catalogue has ``split.none``, ``split.spread``, ``split.auto``, the five geometry
@@ -296,6 +277,7 @@ def fx_cv_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
     thickness = pytest.importorskip('bookreviver.plugins.thickness', reason=CV_MISSING).Thickness()
     eraser = pytest.importorskip('bookreviver.plugins.eraser', reason=CV_MISSING).Eraser()
     return ProcessingKit(
+        fx_database,
         fx_asset_store,
         processors=[
             SplitNone(),
@@ -316,9 +298,11 @@ def fx_cv_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
 
 
 @pytest.fixture
-def fx_ordered_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
+def fx_ordered_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) -> ProcessingKit:
     """Build the processing kit over processors that declare a place.
 
+    :param fx_database: Database of the test.
+    :type fx_database: SqlDatabase
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :returns: The kit whose catalogue holds the fakes of the tests and the processors that ask for a place.
@@ -332,18 +316,20 @@ def fx_ordered_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
         SecondProcessor(),
         ThirdProcessor(),
     ]
-    return ProcessingKit(fx_asset_store, processors=processors)
+    return ProcessingKit(fx_database, fx_asset_store, processors=processors)
 
 
 @pytest.fixture
-def fx_measuring_kit(fx_asset_store: LocalAssetStore) -> ProcessingKit:
+def fx_measuring_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) -> ProcessingKit:
     """Build the processing kit over a processor that finds an angle on each page.
 
+    :param fx_database: Database of the test.
+    :type fx_database: SqlDatabase
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :returns: The kit whose catalogue holds the fakes of the tests and ``geometry.measuring``.
     :rtype: ProcessingKit
     """
     return ProcessingKit(
-        fx_asset_store, processors=[SplitNone(), FakeProcessor(), CleanupProcessor(), MeasuringProcessor()]
+        fx_database, fx_asset_store, processors=[SplitNone(), FakeProcessor(), CleanupProcessor(), MeasuringProcessor()]
     )

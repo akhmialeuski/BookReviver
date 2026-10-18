@@ -42,7 +42,6 @@ from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.container import build_container
 from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND
-from bookreviver.app.settings import PersistenceBackend
 from bookreviver.domain.enums import (
     EditorKind,
     OrderMode,
@@ -286,14 +285,14 @@ BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (ProjectRow, SourceRow, S
 
 @pytest.fixture
 async def fx_container(fx_settings: Settings) -> AsyncIterator[AsyncContainer]:
-    """Yield the application's container on the SQL backend, with no schema created for it.
+    """Yield the application's container with its own database provider, with no schema created for it.
 
     :param fx_settings: Settings pointing at a fresh data directory of the test.
     :type fx_settings: Settings
     :returns: Iterator yielding the container and closing it afterwards.
     :rtype: AsyncIterator[AsyncContainer]
     """
-    container = build_container(fx_settings.model_copy(update={'persistence': PersistenceBackend.SQLALCHEMY}))
+    container = build_container(fx_settings)
     yield container
     await container.close()
 
@@ -919,7 +918,7 @@ class TestDatabaseProvider:
     async def test_refuses_a_database_no_revision_was_applied_to(self, fx_container: AsyncContainer) -> None:
         """Verify the application does not start on an unmigrated database and names the command that migrates it.
 
-        :param fx_container: The application's container on the SQL backend, with no schema.
+        :param fx_container: The application's container, with no schema.
         :type fx_container: AsyncContainer
         """
         head = ScriptDirectory(str(MIGRATIONS_DIR)).get_current_head()
@@ -934,7 +933,7 @@ class TestDatabaseProvider:
 
         ``upgrade head`` cannot help here: Alembic cannot locate the revision the database records.
 
-        :param fx_container: The application's container on the SQL backend.
+        :param fx_container: The application's container.
         :type fx_container: AsyncContainer
         :param fx_empty_database: The same database, which the test migrates with a revision the code does not ship.
         :type fx_empty_database: SqlDatabase
@@ -957,7 +956,7 @@ class TestDatabaseProvider:
     ) -> None:
         """Verify the application starts once the migrations are applied, and leaves the schema as they left it.
 
-        :param fx_container: The application's container on the SQL backend.
+        :param fx_container: The application's container.
         :type fx_container: AsyncContainer
         :param fx_empty_database: The same database, which the test migrates first.
         :type fx_empty_database: SqlDatabase

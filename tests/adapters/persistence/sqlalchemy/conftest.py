@@ -1,4 +1,4 @@
-"""Fixtures giving the SQLAlchemy adapter tests a fresh SQLite database at the head revision, and an owner.
+"""Fixtures giving the SQLAlchemy adapter tests an owner and the import rig over the root ``fx_database``.
 
 The tests of the write blocks get a database whose blocks are timed by a tracer that tells them when a block asks for
 the writer, a second database over the same file whose blocks give up almost at once, and a project to change.
@@ -11,14 +11,12 @@ from attrs import evolve
 
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
-from bookreviver.app.container import build_container
-from bookreviver.app.settings import PersistenceBackend
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.values import JobEnd
 from tests.helpers.builders import make_project
+from tests.helpers.database import copy_schema_template, database_file
 from tests.helpers.fakes_imports import DEFAULT_PARALLEL_SCANS, ImportRig
 from tests.helpers.fakes_jobs import JobFakes
-from tests.helpers.schema import create_schema
 from tests.helpers.seeding import commit_account, store_project
 from tests.helpers.tracers import AskingTracer
 from tests.helpers.wait_limits import IMPATIENT_SECONDS
@@ -31,28 +29,11 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Job, Project
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.runtime import JobControl
+    from tests.helpers.database import UnitOfWorkFactory
 
 # Long enough that a block which wrongly waits for a lock that is never given fails the test, and does not hang it
 TRACED_WAIT_SECONDS: float = 10.0
 STORAGE_DIRECTORY: str = 'storage'
-
-
-@pytest.fixture
-async def fx_database(fx_settings: Settings) -> AsyncIterator[SqlDatabase]:
-    """Open the database through the application's own container, built for the SQL backend.
-
-    Building the whole container, not only the database provider, also checks that the production dependency graph
-    with this backend resolves. The schema is created from the models and recorded at the head revision first.
-
-    :param fx_settings: Settings pointing at a fresh data directory of the test.
-    :type fx_settings: Settings
-    :returns: Iterator yielding the open database and closing it with the container afterwards.
-    :rtype: AsyncIterator[SqlDatabase]
-    """
-    await create_schema(fx_settings)
-    container = build_container(fx_settings.model_copy(update={'persistence': PersistenceBackend.SQLALCHEMY}))
-    yield await container.get(SqlDatabase)
-    await container.close()
 
 
 @pytest.fixture
@@ -68,15 +49,17 @@ async def fx_owner_id(fx_database: SqlDatabase) -> AccountId:
 
 
 @pytest.fixture
-def fx_import_rig(fx_database: SqlDatabase, tmp_path: Path) -> Callable[..., ImportRig]:
-    """Give a function that builds the import rig over the database, whose board runs its import jobs on that database.
+def fx_import_rig(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, tmp_path: Path) -> Callable[..., ImportRig]:
+    """Give a function that builds the import rig over the database, whose board runs only the import jobs.
 
-    The board of an ``ImportRig`` runs a job on a service over the in-memory database of the rig. The rig this
-    function builds runs it on a unit of work of the SQL database instead, which is the one a test then reads, and lets
-    any job that is not an import end at once, since the split an import queues is not the subject of these tests.
+    The board of an ``ImportRig`` runs every job as an import. The rig this function builds cuts as many scans at once
+    as a test asks for, and lets any job that is not an import end at once, since the split an import queues is not
+    the subject of these tests.
 
     :param fx_database: Fresh SQLite database with every table created.
     :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a unit of work over ``fx_database``.
+    :type fx_uow: UnitOfWorkFactory
     :param tmp_path: Temporary directory of the test, which holds the storage root of the rig.
     :type tmp_path: Path
     :returns: Function taking the largest number of scans cut at once and returning the rig.
@@ -84,15 +67,14 @@ def fx_import_rig(fx_database: SqlDatabase, tmp_path: Path) -> Callable[..., Imp
     """
 
     def build(parallel_scans: int = DEFAULT_PARALLEL_SCANS) -> ImportRig:
-        """Build the rig over a new storage root and a unit of work of the database.
+        """Build the rig over a new storage root and the database.
 
         :param parallel_scans: Largest number of scans the import cuts at once.
         :type parallel_scans: int
         :returns: The rig, whose board runs an import on the database.
         :rtype: ImportRig
         """
-        base = ImportRig.build(tmp_path / STORAGE_DIRECTORY)
-        uow = SqlAlchemyUnitOfWork(fx_database)
+        base = ImportRig.build(tmp_path / STORAGE_DIRECTORY, fx_database, fx_uow)
         # The runner needs the service of the rig and the rig needs the runner, so the rig is found when a job runs
         built: list[ImportRig] = []
 
@@ -108,7 +90,7 @@ def fx_import_rig(fx_database: SqlDatabase, tmp_path: Path) -> Callable[..., Imp
             """
             if job.kind is not JobKind.IMPORT_SOURCE:
                 return JobEnd(state=JobState.SUCCEEDED)
-            return await built[0].service(uow=uow, parallel_scans=parallel_scans).run_import(job, control)
+            return await built[0].service(parallel_scans=parallel_scans).run_import(job, control)
 
         rig = evolve(base, fakes=JobFakes(events=base.events, clock=base.fakes.clock, runner=run))
         built.append(rig)
@@ -128,17 +110,21 @@ def fx_tracer() -> AskingTracer:
 
 
 @pytest.fixture
-async def fx_traced_database(fx_settings: Settings, fx_tracer: AskingTracer) -> AsyncIterator[SqlDatabase]:
+async def fx_traced_database(
+    fx_settings: Settings, fx_schema_template: Path, fx_tracer: AskingTracer
+) -> AsyncIterator[SqlDatabase]:
     """Open a database over a fresh file, whose blocks are timed by the tracer of the test.
 
     :param fx_settings: Settings with a fresh data directory of the test.
     :type fx_settings: Settings
+    :param fx_schema_template: File with every table at the head revision.
+    :type fx_schema_template: Path
     :param fx_tracer: Tracer of the test.
     :type fx_tracer: AskingTracer
     :returns: Iterator yielding the database and disposing of its engine afterwards.
     :rtype: AsyncIterator[SqlDatabase]
     """
-    await create_schema(fx_settings)
+    await copy_schema_template(fx_schema_template, database_file(fx_settings))
     database = SqlDatabase(fx_settings.resolved_database_url, tracer=fx_tracer, wait_seconds=TRACED_WAIT_SECONDS)
     yield database
     await database.dispose()

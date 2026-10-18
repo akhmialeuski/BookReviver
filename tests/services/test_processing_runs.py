@@ -1026,7 +1026,7 @@ class TestRestart:
                 evolve(left, state=VersionState.RUNNING, renditions=None, tiles_ready=False)
             ),
         )
-        restarted = ProcessingKit(fx_asset_store, database=fx_kit.database)
+        restarted = ProcessingKit(fx_kit.database, fx_asset_store)
         job = await restarted.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         await restarted.work_queue()
         stored = stored_job(restarted, job.id)

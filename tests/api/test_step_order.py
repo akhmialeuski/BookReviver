@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     import httpx
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project
 
 pytestmark = pytest.mark.anyio
@@ -95,11 +95,11 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_project(fx_database: InMemoryDatabase, fx_actor: Actor) -> Project:
+async def fx_project(fx_database: SqlDatabase, fx_actor: Actor) -> Project:
     """Commit a book of the signed-in account.
 
-    :param fx_database: In-memory database of the application.
-    :type fx_database: InMemoryDatabase
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored project.

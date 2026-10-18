@@ -1,4 +1,4 @@
-"""Tests for the place endpoints, on in-memory persistence."""
+"""Tests for the place endpoints, on the SQLite file of the test."""
 
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -16,7 +16,7 @@ from tests.helpers.seeding import commit_project
 if TYPE_CHECKING:
     import httpx
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project
 
 pytestmark = pytest.mark.anyio
@@ -75,11 +75,11 @@ def _body() -> dict[str, Any]:
 
 
 @pytest.fixture
-async def fx_project(fx_database: InMemoryDatabase, fx_actor: Actor) -> Project:
+async def fx_project(fx_database: SqlDatabase, fx_actor: Actor) -> Project:
     """Commit a book of the signed-in account.
 
-    :param fx_database: In-memory database of the application.
-    :type fx_database: InMemoryDatabase
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored project.
@@ -128,14 +128,14 @@ class TestGetPlace:
         assert_expectations()
 
     async def test_the_book_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase
     ) -> None:
         """Verify the place of a book of another account answers 404, as a missing book does.
 
         :param fx_client: HTTP client of the application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         """
         strangers = make_project(owner_id=new_account_id())
         await commit_project(fx_database, strangers)
@@ -166,14 +166,14 @@ class TestPutPlace:
         assert_expectations()
 
     async def test_the_book_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase
     ) -> None:
         """Verify a place cannot be written into a book of another account.
 
         :param fx_client: HTTP client of the application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         """
         strangers = make_project(owner_id=new_account_id())
         await commit_project(fx_database, strangers)

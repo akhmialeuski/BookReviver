@@ -3,7 +3,6 @@
 from bookreviver.adapters.imaging.djvu import DjvuFormat, DjvuLibreTools
 from bookreviver.adapters.imaging.epub_page_list import EpubPageList
 from bookreviver.adapters.imaging.images import ImageFormat
-from bookreviver.adapters.imaging.memory_labels import MemoryPageLabelWriter
 from bookreviver.adapters.imaging.pdf import PdfFormat
 from bookreviver.adapters.imaging.pdf_labels import PdfLabelWriter
 from bookreviver.adapters.imaging.reader import SourceFormat, SourceReader
@@ -15,7 +14,6 @@ __all__ = [
     'DjvuLibreTools',
     'EpubPageList',
     'ImageFormat',
-    'MemoryPageLabelWriter',
     'PdfFormat',
     'PdfLabelWriter',
     'SourceFormat',

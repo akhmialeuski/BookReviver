@@ -1,4 +1,4 @@
-"""Tests for the endpoints that edit the fields of a page and number a range of pages, on in-memory persistence."""
+"""Tests for the endpoints that edit the fields of a page and number a range of pages, on the SQLite file of the test."""
 
 from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import uuid4
@@ -18,7 +18,7 @@ from tests.helpers.seeding import commit_project
 if TYPE_CHECKING:
     import httpx
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project
     from bookreviver.domain.entities import Page as BookPage
 
@@ -69,11 +69,11 @@ class Book(NamedTuple):
 
 
 @pytest.fixture
-async def fx_book(fx_database: InMemoryDatabase, fx_actor: Actor) -> Book:
+async def fx_book(fx_database: SqlDatabase, fx_actor: Actor) -> Book:
     """Commit a book of five pages, each labelled ``old``, for the signed-in account.
 
-    :param fx_database: In-memory database of the application.
-    :type fx_database: InMemoryDatabase
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored book.
@@ -240,7 +240,7 @@ class TestUpdatePage:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_missing_page_and_page_of_another_account_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase
     ) -> None:
         """Verify a page that does not exist and a page of another account's project both answer 404.
 
@@ -248,8 +248,8 @@ class TestUpdatePage:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         """
         stranger = make_project(owner_id=new_account_id())
         page = make_page(project_id=stranger.id)

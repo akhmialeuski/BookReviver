@@ -9,7 +9,7 @@ from bookreviver.app.providers.core import CoreProvider
 from bookreviver.app.providers.database import DatabaseProvider
 from bookreviver.app.providers.imaging import ImagingProvider
 from bookreviver.app.providers.imports import ImportsProvider
-from bookreviver.app.providers.persistence import PERSISTENCE_PROVIDERS, ChangeWaitProvider
+from bookreviver.app.providers.persistence import ChangeWaitProvider
 from bookreviver.app.providers.processing import ProcessingProvider
 from bookreviver.app.providers.projects import ProjectsProvider
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 def build_container(settings: Settings, extra_providers: Sequence[Provider] = ()) -> AsyncContainer:
     """Build the container with the adapters the settings select; ``extra_providers`` come last and override.
 
-    :param settings: Application settings, which select the persistence and storage backends.
+    :param settings: Application settings, which select the storage backend and the rest of the configuration.
     :type settings: Settings
     :param extra_providers: Providers added after the application's own, such as test fakes replacing an adapter.
     :type extra_providers: Sequence[Provider]
@@ -37,7 +37,6 @@ def build_container(settings: Settings, extra_providers: Sequence[Provider] = ()
         TracingProvider(),
         ChangeWaitProvider(),
         DatabaseProvider(),
-        PERSISTENCE_PROVIDERS[settings.persistence](),
         STORAGE_PROVIDERS[settings.storage](),
         ImagingProvider(),
         AccountsProvider(),

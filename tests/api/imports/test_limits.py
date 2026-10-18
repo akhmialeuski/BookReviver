@@ -44,7 +44,7 @@ def _text_files(count: int, *, size: int = 4) -> list[tuple[str, tuple[str, byte
 def fx_settings(fx_settings: Settings) -> Settings:
     """Override the suite's settings with the limits of these tests.
 
-    :param fx_settings: Settings of the whole suite, with in-memory persistence and a fresh data directory.
+    :param fx_settings: Settings of the whole suite, with a fresh data directory.
     :type fx_settings: Settings
     :returns: The same settings with a file limit above the parser's default and a small size limit.
     :rtype: Settings

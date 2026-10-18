@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Page, Project
 
 pytestmark = pytest.mark.anyio
@@ -92,13 +92,13 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_book(fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor) -> Book:
+async def fx_book(fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor) -> Book:
     """Commit a book of three pages and read the step of its geometry recipe.
 
     :param fx_client: Client of the running application.
     :type fx_client: httpx.AsyncClient
-    :param fx_database: In-memory database of the application.
-    :type fx_database: InMemoryDatabase
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored book.

@@ -18,7 +18,7 @@ from tests.helpers.seeding import commit_project
 if TYPE_CHECKING:
     import httpx
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project
     from bookreviver.domain.entities import Page as BookPage
 
@@ -61,11 +61,11 @@ class Book(NamedTuple):
 
 
 @pytest.fixture
-async def fx_book(fx_database: InMemoryDatabase, fx_actor: Actor) -> Book:
+async def fx_book(fx_database: SqlDatabase, fx_actor: Actor) -> Book:
     """Commit a book of four text pages for the signed-in account.
 
-    :param fx_database: In-memory database of the application.
-    :type fx_database: InMemoryDatabase
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored book.
@@ -213,7 +213,7 @@ class TestCreateSection:
         assert_expectations()
 
     async def test_page_of_another_project_and_project_of_another_account_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase
     ) -> None:
         """Verify a first page that is another project's, and a project of another account, both answer 404.
 
@@ -221,8 +221,8 @@ class TestCreateSection:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         """
         stranger = make_project(owner_id=new_account_id())
         page = make_page(project_id=stranger.id)
@@ -263,14 +263,14 @@ class TestListSections:
         assert_expectations()
 
     async def test_a_project_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase
     ) -> None:
         """Verify the sections of another account's project are answered not found.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         """
         stranger = make_project(owner_id=new_account_id())
         await commit_project(fx_database, stranger)

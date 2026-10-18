@@ -7,8 +7,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
-from bookreviver.adapters.persistence.memory.unit_of_work import InMemoryRecipeRepository
+from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyRecipeRepository
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobKind, JobState, PageKind, RecipeKind, Stage, StageState
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
@@ -30,7 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from bookreviver.domain.entities import Page, PageStage, Project, Recipe
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import Repositories, UnitOfWork
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -544,14 +543,14 @@ class ReadGate:
         self._parties = parties
         self._all_read = anyio.Event()
 
-    def watch(self, uow: InMemoryUnitOfWork, monkeypatch: pytest.MonkeyPatch) -> None:
+    def watch(self, uow: UnitOfWork, monkeypatch: pytest.MonkeyPatch) -> None:
         """Hold the first read of the recipes of a stage that the unit of work makes.
 
         The recipe book reads in a transaction that only reads before it opens a change, and a unit of work makes no
         other read while it asks for the recipes of a stage, so the first read of the unit of work is the one held.
 
         :param uow: Unit of work of one of the tasks.
-        :type uow: InMemoryUnitOfWork
+        :type uow: UnitOfWork
         :param monkeypatch: Fixture that restores the unit of work when the test ends.
         :type monkeypatch: pytest.MonkeyPatch
         """
@@ -596,18 +595,18 @@ class TestDefaultRecipesInChanges:
         :type monkeypatch: pytest.MonkeyPatch
         """
         _, project = await fx_kit.seed_project()
-        units = [InMemoryUnitOfWork(fx_kit.database) for _ in range(TASKS)]
+        units = [fx_kit.uow() for _ in range(TASKS)]
         gate = ReadGate(parties=TASKS)
         for unit in units:
             gate.watch(unit, monkeypatch)
         stored_sets: list[int] = []
-        add_many = InMemoryRecipeRepository.add_many
+        add_many = SqlAlchemyRecipeRepository.add_many
 
-        def counting(recipes: InMemoryRecipeRepository, entities: Sequence[Recipe]) -> Sequence[Recipe]:
+        def counting(recipes: SqlAlchemyRecipeRepository, entities: Sequence[Recipe]) -> Sequence[Recipe]:
             """Count the recipes each call of ``add_many`` stores, then store them.
 
             :param recipes: The repository the call was made on.
-            :type recipes: InMemoryRecipeRepository
+            :type recipes: SqlAlchemyRecipeRepository
             :param entities: The recipes to store.
             :type entities: Sequence[Recipe]
             :returns: The recipes as stored.
@@ -616,14 +615,14 @@ class TestDefaultRecipesInChanges:
             stored_sets.append(len(entities))
             return add_many(recipes, entities)
 
-        monkeypatch.setattr(InMemoryRecipeRepository, 'add_many', counting)
+        monkeypatch.setattr(SqlAlchemyRecipeRepository, 'add_many', counting)
         answers: list[list[Recipe]] = []
 
-        async def ask(unit: InMemoryUnitOfWork) -> None:
+        async def ask(unit: UnitOfWork) -> None:
             """Ask for the recipes of the geometry stage through the book of one task.
 
             :param unit: Unit of work of the task.
-            :type unit: InMemoryUnitOfWork
+            :type unit: UnitOfWork
             """
             answers.append(await fx_kit.parts(unit).recipes.recipes(project.id, Stage.GEOMETRY))
 

@@ -25,11 +25,12 @@ from tests.helpers.seeding import commit_project
 if TYPE_CHECKING:
     import httpx
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project, Scan
     from bookreviver.domain.entities import Page as BookPage
     from bookreviver.ports.storage import AssetStore
     from tests.helpers.board_idle import JobsIdle
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -78,11 +79,11 @@ def _jpeg() -> bytes:
 
 
 @pytest.fixture
-async def fx_book(fx_database: InMemoryDatabase, fx_asset_store: AssetStore, fx_actor: Actor) -> Book:
+async def fx_book(fx_database: SqlDatabase, fx_asset_store: AssetStore, fx_actor: Actor) -> Book:
     """Commit the book and store the full image of both scans as a real JPEG.
 
-    :param fx_database: In-memory database of the application.
-    :type fx_database: InMemoryDatabase
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
     :param fx_asset_store: Asset store of the application.
     :type fx_asset_store: AssetStore
     :param fx_actor: The signed-in account.
@@ -192,14 +193,14 @@ class TestCreatePage:
         assert_expectations()
 
     async def test_blank_leaf_without_a_size_in_a_book_without_images_is_a_conflict_problem(
-        self, fx_client: httpx.AsyncClient, fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify a leaf with no size given and no page to take the median of is answered with a 409 problem.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
@@ -278,7 +279,7 @@ class TestCreatePage:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_unknown_anchor_and_project_of_another_account_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase
     ) -> None:
         """Verify an anchor that is no page of the project, and a project of another account, answer 404.
 
@@ -286,8 +287,8 @@ class TestCreatePage:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         """
         stranger = make_project(owner_id=new_account_id())
         await commit_project(fx_database, stranger)
@@ -398,7 +399,7 @@ class TestDeletePage:
     """Tests for DELETE /projects/{project_id}/pages/{page_id}."""
 
     async def test_deletes_the_page_and_leaves_the_scan_to_be_bound_again(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify a deleted page answers 204 and is gone, while its scan and source stay.
 
@@ -406,15 +407,19 @@ class TestDeletePage:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
+        scan_id = fx_book.shown.scan_id
+        assert scan_id is not None
+
         response = await fx_client.delete(f'{fx_book.pages_path}/{fx_book.shown.id}')
 
         again = await fx_client.get(f'{fx_book.pages_path}/{fx_book.shown.id}')
+        kept = await fx_uow().read(lambda repos: repos.scans.list_by_ids([scan_id]))
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
         expect(again.status_code == status.HTTP_404_NOT_FOUND)
-        expect(fx_book.shown.scan_id in fx_database.tables.scans)
+        expect([scan.id for scan in kept] == [scan_id])
         assert_expectations()
 
     async def test_page_that_does_not_exist_is_not_found(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
@@ -531,7 +536,7 @@ class TestAttachScan:
         assert_expectations()
 
     async def test_scan_of_another_project_and_unknown_scan_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: InMemoryDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_actor: Actor
     ) -> None:
         """Verify a scan is bound only through the project that holds it.
 
@@ -539,8 +544,8 @@ class TestAttachScan:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_database: In-memory database of the application.
-        :type fx_database: InMemoryDatabase
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """

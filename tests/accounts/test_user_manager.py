@@ -1,4 +1,4 @@
-"""Tests for the rules of the user manager that reach beyond the account tables, on the SQL backend."""
+"""Tests for the rules of the user manager that reach beyond the account tables."""
 
 from typing import TYPE_CHECKING
 
@@ -12,14 +12,13 @@ from pwdlib.hashers.bcrypt import BcryptHasher
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.app.container import build_container
 from bookreviver.app.providers.accounts import UserManager
-from bookreviver.app.settings import PersistenceBackend
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import AccountId
 from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.storage import AssetStore, SourceStore
 from tests.helpers.builders import make_page, make_project
+from tests.helpers.database import SharedDatabaseProvider
 from tests.helpers.fakes_accounts import PASSWORD
-from tests.helpers.schema import create_schema
 from tests.helpers.seeding import commit_account, store_project
 from tests.helpers.storage import BookFiles
 
@@ -38,16 +37,17 @@ OWNED_PROJECTS: int = 3
 
 
 @pytest.fixture
-async def fx_container(fx_settings: Settings) -> AsyncIterator[AsyncContainer]:
-    """Yield the application's container on the SQL backend, where the owner key of a project is checked.
+async def fx_container(fx_settings: Settings, fx_database: SqlDatabase) -> AsyncIterator[AsyncContainer]:
+    """Yield the application's container on the database of the test, where the owner key of a project is checked.
 
     :param fx_settings: Settings pointing at a fresh data directory of the test.
     :type fx_settings: Settings
+    :param fx_database: Database of the test, which the container is given in place of one of its own.
+    :type fx_database: SqlDatabase
     :returns: Iterator yielding the container and closing it afterwards.
     :rtype: AsyncIterator[AsyncContainer]
     """
-    await create_schema(fx_settings)
-    container = build_container(fx_settings.model_copy(update={'persistence': PersistenceBackend.SQLALCHEMY}))
+    container = build_container(fx_settings, [SharedDatabaseProvider(fx_database)])
     yield container
     await container.close()
 
@@ -80,7 +80,7 @@ class TestDelete:
 
         The owner key of a project refuses to delete an account that still owns one, so the projects go first.
 
-        :param fx_container: The application's container on the SQL backend.
+        :param fx_container: The application's container.
         :type fx_container: AsyncContainer
         :param fx_settings: Settings of the test, whose storage root the stores share.
         :type fx_settings: Settings
@@ -122,7 +122,7 @@ class TestAuthenticate:
     async def test_outdated_hash_is_replaced_after_sign_in(self, fx_container: AsyncContainer) -> None:
         """Verify signing in with a password stored as a bcrypt hash writes the argon2id hash of the same password.
 
-        :param fx_container: The application's container on the SQL backend.
+        :param fx_container: The application's container.
         :type fx_container: AsyncContainer
         """
         outdated = PasswordHelper(PasswordHash((BcryptHasher(),))).hash(PASSWORD)

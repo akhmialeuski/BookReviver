@@ -14,7 +14,6 @@ from fastapi import status
 from fastapi_pagination import Page
 from PIL import Image
 
-from bookreviver.adapters.persistence.memory import InMemoryUnitOfWork
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.enums import BlankFill, JobKind, JobState, PageKind, Rendition, Stage, VersionState
@@ -27,12 +26,13 @@ from tests.helpers.seeding import commit_project
 if TYPE_CHECKING:
     import httpx
 
-    from bookreviver.adapters.persistence.memory import InMemoryDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project
     from bookreviver.domain.entities import Page as BookPage
     from bookreviver.ports.persistence import Repositories
     from bookreviver.ports.storage import AssetStore
     from tests.helpers.board_idle import JobsIdle
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -97,11 +97,15 @@ def _jpeg() -> bytes:
 
 
 @pytest.fixture
-async def fx_book(fx_database: InMemoryDatabase, fx_asset_store: AssetStore, fx_actor: Actor) -> Book:
+async def fx_book(
+    fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_actor: Actor
+) -> Book:
     """Commit the book and store the full image of every scan and of every base version as a real JPEG.
 
-    :param fx_database: In-memory database of the application.
-    :type fx_database: InMemoryDatabase
+    :param fx_database: Database of the test, which the application runs on.
+    :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_asset_store: Asset store of the application.
     :type fx_asset_store: AssetStore
     :param fx_actor: The signed-in account.
@@ -143,7 +147,7 @@ async def fx_book(fx_database: InMemoryDatabase, fx_asset_store: AssetStore, fx_
         for page, version in zip(pages, versions, strict=True):
             repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=version.id))
 
-    await InMemoryUnitOfWork(fx_database).change_book(project.id, save_heads)
+    await fx_uow().change_book(project.id, save_heads)
     keys = ProjectKeys(project.id)
     for scan in scans:
         async with fx_asset_store.writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
