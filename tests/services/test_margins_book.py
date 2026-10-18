@@ -47,6 +47,8 @@ MARGIN_TOP_BY_HAND: float = 30.0
 # the run by the size
 TASKS_PER_PAGE: int = 2
 MANUAL_BOX: ContentBox = ContentBox(left=150, top=170, width=200, height=300)
+# A box wider and taller than the block of every page, which makes the page of the book larger
+LARGE_BOX: ContentBox = ContentBox(left=40, top=60, width=820, height=1_080)
 # The frame of Select content that the user gave, which is smaller than the block of the page that is changed
 HAND_FRAME: Rect = Rect(left=130, top=160, width=140, height=420)
 
@@ -236,6 +238,30 @@ class TestWhatTheUserSetsOnAPage:
         largest = Rect.from_data(versions[LARGEST].data[VersionData.CONTENT_BOX])
         expect(len({size_of(version) for version in versions}) == 1)
         expect(size_of(versions[CHANGED])[0] > largest.width)
+        assert_expectations()
+
+    async def test_a_box_set_after_a_run_resizes_the_pages_whose_result_was_fresh(
+        self, fx_cv_kit: ProcessingKit
+    ) -> None:
+        """Verify a box larger than every block, set on one page after a run, gives the next run one size for the book.
+
+        The pages the box was not set on keep a fresh result of the first run, made by the old size of the book, so a run
+        that leaves them out as fresh would leave the book of two sizes.
+
+        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
+        :type fx_cv_kit: ProcessingKit
+        """
+        actor, project, pages = await seed_book(fx_cv_kit)
+        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        before = size_of(await margins_of(fx_cv_kit, pages[LARGEST]))
+        key = await fx_cv_kit.edit_key(pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
+        await fx_cv_kit.edits().save(
+            actor, project.id, key, NewPageEdit(kind=ContentBox.editor, geometry=LARGE_BOX), None
+        )
+        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
+        sizes = [size_of(await margins_of(fx_cv_kit, page)) for page in pages]
+        expect(len(set(sizes)) == 1, f'The sizes of the pages are {sizes}')
+        expect(sizes[LARGEST][0] > before[0], f'The book was {before} before the box, and is {sizes[LARGEST]} after')
         assert_expectations()
 
 

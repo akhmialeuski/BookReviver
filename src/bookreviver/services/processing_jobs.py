@@ -43,7 +43,7 @@ from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import JobEnd, StageRun, StepPreview, TileCut, VersionCollection
 from bookreviver.domain.version_chains import readers_first
-from bookreviver.services.book_measure import BookMeasure
+from bookreviver.services.book_measure import BookMeasure, leaves_to_the_book
 from bookreviver.services.content_detection import ContentDetector
 from bookreviver.services.run_plans import RunPlan
 from bookreviver.services.stage_runs import PreviewRun, RecipeRun
@@ -261,7 +261,7 @@ class ProcessingJobs:
                 for page in pages
             )
         )
-        measured = [page for page in pages if executor.wants_book(recipes[page.id], through_step=run.through_step)]
+        measured = [page for page in pages if leaves_to_the_book(recipes[page.id], through_step=run.through_step)]
         if measured:
             await self._measure_book(executor, measured, recipes, run)
         return [await self._run_page(executor, page, recipes[page.id], run) for page in pages]
