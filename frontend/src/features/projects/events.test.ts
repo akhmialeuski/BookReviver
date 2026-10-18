@@ -62,21 +62,35 @@ describe('applyProjectEvent', () => {
     invalidated = watchInvalidations(queryClient);
   });
 
-  it('leaves the pages alone on a pages-changed event while a change of the reader is in flight', () => {
-    // The change that is in flight reads the pages again when it ends, and by then sees what this event announces
-    void queryClient
-      .getMutationCache()
-      .build(queryClient, {
-        mutationFn: () => new Promise(() => undefined),
-        scope: pagesScope(PROJECT_ID),
-      })
-      .execute(undefined);
+  it.each([
+    [EventName.PagesChanged, {}, 'projectApiV1ProjectsProjectIdGet'],
+    [EventName.SourceImported, {}, 'listSourcesApiV1ProjectsProjectIdSourcesGet'],
+    [EventName.ScanReady, {}, 'listScansApiV1ProjectsProjectIdScansGet'],
+    [
+      EventName.PageVersionReady,
+      { project_id: PROJECT_ID, page_id: 'pg-1', version_id: 'abc' },
+      'listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet',
+    ],
+    [EventName.JobChanged, job('succeeded', 4), 'listScansApiV1ProjectsProjectIdScansGet'],
+  ])(
+    'leaves the pages alone on %s while a change of the reader is in flight',
+    async (name, data, alsoRead) => {
+      // The change that is in flight reads the pages again when it ends, and by then sees what this event announces
+      void queryClient
+        .getMutationCache()
+        .build(queryClient, {
+          mutationFn: () => new Promise(() => undefined),
+          scope: pagesScope(PROJECT_ID),
+        })
+        .execute(undefined);
 
-    applyProjectEvent(queryClient, PROJECT_ID, { event: EventName.PagesChanged, data: {} });
+      applyProjectEvent(queryClient, PROJECT_ID, { event: name, data });
+      await settled();
 
-    expect(invalidated()).not.toContain('listPagesApiV1ProjectsProjectIdPagesGet');
-    expect(invalidated()).toContain('projectApiV1ProjectsProjectIdGet');
-  });
+      expect(invalidated()).not.toContain('listPagesApiV1ProjectsProjectIdPagesGet');
+      expect(invalidated()).toContain(alsoRead);
+    },
+  );
 
   it('does not hold back the pages for a change of another book', () => {
     void queryClient

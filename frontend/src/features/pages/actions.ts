@@ -69,7 +69,7 @@ async function refreshPages(
     return;
   }
   await Promise.all([
-    invalidatePages(queryClient, projectId),
+    invalidatePages(queryClient, projectId, settling),
     // A page that leaves hands its section on, so a section can change with the pages
     invalidateSections(queryClient, projectId),
     invalidateProject(queryClient, projectId),

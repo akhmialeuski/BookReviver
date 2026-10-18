@@ -15,7 +15,6 @@ import {
   invalidateStageRowsFrom,
   invalidateStageSummary,
   invalidateVersions,
-  pageChangesInFlight,
   type VersionReady,
   versionReadyKey,
 } from '@/features/projects/queries';
@@ -146,11 +145,7 @@ export function applyProjectEvent(
       void invalidatePages(queryClient, projectId);
       break;
     case EventName.PagesChanged:
-      // A change of the reader's own is still queued or in flight, so the pages read now would lack it and flip the
-      // page order on screen back. That change reads the pages again when it ends, and sees this event's change too
-      if (pageChangesInFlight(queryClient, projectId) === 0) {
-        void invalidatePages(queryClient, projectId);
-      }
+      void invalidatePages(queryClient, projectId);
       // A section follows its first page, so it moves, is handed on or is renumbered with the pages
       void invalidateSections(queryClient, projectId);
       void invalidateProject(queryClient, projectId);

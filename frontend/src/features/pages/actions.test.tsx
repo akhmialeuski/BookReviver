@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageCreate, PageSchema } from '@/api';
 import { useCreatePages, useUpdatePages } from '@/features/pages/actions';
 import { manifestOptions } from '@/features/pages/manifest';
+import { applyProjectEvent, EventName } from '@/features/projects/events';
 import { page } from '@/features/workspace/fixtures';
 
 /**
@@ -113,6 +114,40 @@ describe('a change of pages while the manifest is being read', () => {
 
     answers[1]?.();
     await vi.waitFor(() => expect(invalidate).toHaveBeenCalled());
+  });
+
+  it('reads the pages once, after the change, when an event of a job asks for them while the change is in flight', async () => {
+    const invalidate = vi.spyOn(client, 'invalidateQueries').mockResolvedValue();
+    const pageReads = () =>
+      invalidate.mock.calls.filter(([filters]) => {
+        const head = filters?.queryKey?.[0];
+        return (
+          typeof head === 'object' &&
+          head !== null &&
+          '_id' in head &&
+          head._id === 'listPagesApiV1ProjectsProjectIdPagesGet'
+        );
+      }).length;
+    act(() =>
+      root.render(
+        <QueryClientProvider client={client}>
+          <Probe />
+        </QueryClientProvider>,
+      ),
+    );
+
+    await act(async () => change?.());
+    expect(answers).toHaveLength(1);
+    // A job cutting the scans of the book announces a scan while the change is on its way to the server
+    applyProjectEvent(client, PROJECT, { event: EventName.ScanReady, data: {} });
+    applyProjectEvent(client, PROJECT, { event: EventName.PageVersionReady, data: {} });
+    expect(pageReads()).toBe(0);
+
+    answers[0]?.();
+    await vi.waitFor(() => expect(pageReads()).toBe(1));
+    expect(client.getQueryData<PageSchema[]>(manifestOptions(PROJECT).queryKey)?.[0]?.kind).toBe(
+      'plate',
+    );
   });
 });
 
