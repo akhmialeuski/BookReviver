@@ -30,8 +30,9 @@ const SCROLL_STEPS = 10;
 const LONG_BOOK_TIMEOUT_MS = 180_000;
 // Enough files that their import is still running when the reader reaches the Stop button
 const STOPPED_IMPORT_FILES = 300;
-// Enough pages that a run of Geometry over the book is still going when the page has been reloaded
-const RELOADED_RUN_PAGES = 40;
+// Enough pages that a run of Geometry over the book is still going when the page has been reloaded, and few enough that
+// the run ends within the scenario while the other workers load the server
+const RELOADED_RUN_PAGES = 12;
 
 test('the strip of a book of a thousand pages keeps only the pages in sight', async ({ page }) => {
   test.setTimeout(LONG_BOOK_TIMEOUT_MS);
