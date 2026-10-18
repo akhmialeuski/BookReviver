@@ -12,6 +12,7 @@ from tests.api.imports.watch import ImportWatch, JobEndBus
 from tests.helpers.builders import EPOCH, make_project
 from tests.helpers.fakes_imports import TickingClock
 from tests.helpers.fakes_jobs import JobFakes, JobFakesProvider
+from tests.helpers.seeding import commit_project
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -58,11 +59,9 @@ def fx_extra_providers(fx_fakes: JobFakes) -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_project(fx_fakes: JobFakes, fx_database: SqlDatabase, fx_actor: Actor) -> Project:
+async def fx_project(fx_database: SqlDatabase, fx_actor: Actor) -> Project:
     """Store a project of the signed-in account with no sources.
 
-    :param fx_fakes: Adapters the application runs on.
-    :type fx_fakes: JobFakes
     :param fx_database: Database of the test, which the application runs on.
     :type fx_database: SqlDatabase
     :param fx_actor: The signed-in account.
@@ -71,7 +70,7 @@ async def fx_project(fx_fakes: JobFakes, fx_database: SqlDatabase, fx_actor: Act
     :rtype: Project
     """
     project = make_project(owner_id=fx_actor.account_id)
-    await fx_fakes.store(fx_database, project)
+    await commit_project(fx_database, project)
     return project
 
 

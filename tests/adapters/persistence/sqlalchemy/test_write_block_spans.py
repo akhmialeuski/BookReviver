@@ -21,7 +21,7 @@ from bookreviver.adapters.persistence.sqlalchemy.database import MILLISECONDS_PE
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import BlockKind, BlockOutcome, SpanAttribute, SpanName
 from bookreviver.domain.errors import BookBusyError
-from tests.helpers.book_gate import hold_book_in_thread
+from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import make_page
 from tests.helpers.wait_limits import IMPATIENT_SECONDS
 

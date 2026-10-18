@@ -18,6 +18,7 @@ from tests.adapters.imaging.samples import DjvuPage, requires_djvulibre, write_d
 from tests.helpers.builders import make_job, make_project, new_account_id
 from tests.helpers.fakes_imports import djvu_uploads, image_upload, pdf_upload, stored_book
 from tests.helpers.fakes_jobs import FakeBoardProvider, JobFakesProvider
+from tests.helpers.seeding import commit_project
 from tests.helpers.sse import EventStreamReader
 
 if TYPE_CHECKING:
@@ -290,21 +291,19 @@ class TestUploadSources:
         assert_expectations()
 
     async def test_project_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_database: SqlDatabase, tmp_path: Path
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, tmp_path: Path
     ) -> None:
         """Verify an upload to a project of another account answers 404, as if the project did not exist.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_fakes: Adapters the application runs on.
-        :type fx_fakes: JobFakes
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
         stranger_project = make_project(owner_id=new_account_id())
-        await fx_fakes.store(fx_database, stranger_project)
+        await commit_project(fx_database, stranger_project)
 
         response = await fx_client.post(
             SOURCES_PATH.format(project_id=stranger_project.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])
@@ -398,21 +397,19 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
         return (JobFakesProvider(fx_fakes), FakeBoardProvider(fx_fakes.board))
 
     async def test_project_of_another_account_is_refused_unread(
-        self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_database: SqlDatabase, tmp_path: Path
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, tmp_path: Path
     ) -> None:
         """Verify a non-owner gets 404 without the server reading the files it sent.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_fakes: Adapters the application runs on.
-        :type fx_fakes: JobFakes
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
         stranger_project = make_project(owner_id=new_account_id())
-        await fx_fakes.store(fx_database, stranger_project)
+        await commit_project(fx_database, stranger_project)
 
         response = await fx_client.post(
             SOURCES_PATH.format(project_id=stranger_project.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])

@@ -1,14 +1,13 @@
-"""Providers of the persistence port: the limit a unit of work waits with, and the SQL unit of work itself."""
+"""Provider of the limit a unit of work of the persistence port waits for the writer with, by its scope."""
 
-from dishka import Provider, Scope, alias, provide
+from dishka import Provider, Scope, provide
 
 # Neither exported by dishka's top level nor documented
 from dishka.entities.marker import HasContext
 from starlette.requests import Request
 
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.app.settings import Settings
-from bookreviver.ports.persistence import ChangeWaitSeconds, UnitOfWork
+from bookreviver.ports.persistence import ChangeWaitSeconds
 
 
 class ChangeWaitProvider(Provider):
@@ -45,13 +44,3 @@ class ChangeWaitProvider(Provider):
         :rtype: ChangeWaitSeconds
         """
         return ChangeWaitSeconds(settings.change_wait.request_seconds)
-
-
-class SqlAlchemyPersistenceProvider(Provider):
-    """SQL persistence: the unit of work of the request that ``DatabaseProvider`` builds is the port's.
-
-    The provider builds nothing. The engines and the unit of work come from ``DatabaseProvider``, which the account
-    tables share, so this provider adds no second connection pool and no second unit of work.
-    """
-
-    unit_of_work = alias(source=SqlAlchemyUnitOfWork, provides=UnitOfWork)

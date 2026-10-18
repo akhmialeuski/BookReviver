@@ -21,6 +21,7 @@ from bookreviver.domain.enums import ImagePolicy, Stage, ValueScope
 from bookreviver.domain.errors import BookBusyError, DomainError, NotFoundError
 from bookreviver.domain.values import PageStepKey
 from bookreviver.ports.persistence import NoChangeOpenError, Repositories, UnitOfWork
+from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import (
     make_book_place,
     make_page,
@@ -46,7 +47,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Project, RecipeProfile
     from bookreviver.domain.ids import AccountId, ProjectId
     from tests.contracts.conftest import OwnerFactory
-    from tests.helpers.database import BookHolder, UnitOfWorkFactory
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -604,7 +605,6 @@ class TestChangeWait:
     async def test_change_waits_until_the_book_is_free(
         self,
         fx_uow: UnitOfWorkFactory,
-        fx_hold_book: BookHolder,
         fx_project: Project,
         kind: ChangeKind,
     ) -> None:
@@ -614,8 +614,6 @@ class TestChangeWait:
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_hold_book: Function holding the lock of a book.
-        :type fx_hold_book: BookHolder
         :param fx_project: Stored project the changes belong to.
         :type fx_project: Project
         :param kind: The kind of change under test.
@@ -629,7 +627,7 @@ class TestChangeWait:
             """Ask for the change and note when its work runs."""
             await kind.run(waiter, fx_project, lambda _repos: ran.append(SECOND_IN))
 
-        async with anyio.create_task_group() as tasks, fx_hold_book(holder, kind.lock_of(fx_project)):
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder, kind.lock_of(fx_project)):
             tasks.start_soon(wait_and_run)
             await anyio.wait_all_tasks_blocked()
             ran_while_held.extend(ran)
@@ -641,7 +639,6 @@ class TestChangeWait:
     async def test_change_reads_what_the_changes_before_it_committed(
         self,
         fx_uow: UnitOfWorkFactory,
-        fx_hold_book: BookHolder,
         fx_project: Project,
         kind: ChangeKind,
     ) -> None:
@@ -651,8 +648,6 @@ class TestChangeWait:
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_hold_book: Function holding the lock of a book.
-        :type fx_hold_book: BookHolder
         :param fx_project: Stored project the changes belong to.
         :type fx_project: Project
         :param kind: The kind of change under test.
@@ -681,7 +676,7 @@ class TestChangeWait:
             seen.append(first_profile.id in {profile.id for profile in listed})
             repos.recipe_profiles.add(second_profile)
 
-        async with anyio.create_task_group() as tasks, fx_hold_book(holder, kind.lock_of(fx_project)):
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder, kind.lock_of(fx_project)):
             tasks.start_soon(kind.run, first, fx_project, add_first)
             await anyio.wait_all_tasks_blocked()
             tasks.start_soon(kind.run, second, fx_project, add_second)
@@ -691,7 +686,7 @@ class TestChangeWait:
         assert_expectations()
 
     async def test_two_changes_of_a_book_that_read_and_write_one_page_keep_both_writes(
-        self, fx_uow: UnitOfWorkFactory, fx_hold_book: BookHolder, fx_project: Project
+        self, fx_uow: UnitOfWorkFactory, fx_project: Project
     ) -> None:
         """Verify two changes that each read a page and write another field of it both keep their writes.
 
@@ -700,8 +695,6 @@ class TestChangeWait:
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_hold_book: Function holding the lock of a book.
-        :type fx_hold_book: BookHolder
         :param fx_project: Stored project both changes belong to.
         :type fx_project: Project
         """
@@ -729,7 +722,7 @@ class TestChangeWait:
             """
             repos.pages.update(evolve(repos.pages.get(page.id), notes=STAMP))
 
-        async with anyio.create_task_group() as tasks, fx_hold_book(holder, fx_project.id):
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder, fx_project.id):
             tasks.start_soon(first.change_book, fx_project.id, label_page)
             await anyio.wait_all_tasks_blocked()
             tasks.start_soon(second.change_book, fx_project.id, note_page)
@@ -741,7 +734,6 @@ class TestChangeWait:
     async def test_changes_waiting_for_one_holder_run_in_the_order_they_asked(
         self,
         fx_uow: UnitOfWorkFactory,
-        fx_hold_book: BookHolder,
         fx_project: Project,
         kind: ChangeKind,
     ) -> None:
@@ -751,8 +743,6 @@ class TestChangeWait:
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_hold_book: Function holding the lock of a book.
-        :type fx_hold_book: BookHolder
         :param fx_project: Stored project every change belongs to.
         :type fx_project: Project
         :param kind: The kind of change under test.
@@ -770,7 +760,7 @@ class TestChangeWait:
             """
             await kind.run(waiters[number], fx_project, lambda _repos: ran.append(number))
 
-        async with anyio.create_task_group() as tasks, fx_hold_book(holder, kind.lock_of(fx_project)):
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder, kind.lock_of(fx_project)):
             for number in range(WAITERS):
                 tasks.start_soon(wait_and_run, number)
                 await anyio.wait_all_tasks_blocked()
@@ -780,19 +770,17 @@ class TestChangeWait:
     async def test_wait_longer_than_the_limit_raises_book_busy_and_runs_no_work(
         self,
         fx_uow: UnitOfWorkFactory,
-        fx_hold_book: BookHolder,
         fx_project: Project,
         kind: ChangeKind,
     ) -> None:
         """Verify a change gives up with ``BookBusyError`` after the limit of its unit of work, and runs no work.
 
         The unit of work has the limit of a request, so the wait ends in a fraction of a second whatever the holder
-        does. Once the holder has let go, the same unit of work runs the change at once.
+        does. The refusal leaves the book of the holder as it was, and once the holder has let go, the same unit of
+        work runs the change at once.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_hold_book: Function holding the lock of a book.
-        :type fx_hold_book: BookHolder
         :param fx_project: Stored project the changes belong to.
         :type fx_project: Project
         :param kind: The kind of change under test.
@@ -800,15 +788,17 @@ class TestChangeWait:
         """
         holder, impatient = fx_uow(), fx_uow(wait_seconds=REQUEST_WAIT_SECONDS)
         ran: list[str] = []
-        async with fx_hold_book(holder, kind.lock_of(fx_project)):
+        async with hold_book_in_thread(holder, kind.lock_of(fx_project)):
             started = perf_counter()
             with pytest.raises(BookBusyError):
                 await kind.run(impatient, fx_project, lambda _repos: ran.append(SECOND_IN))
             gave_up_after = perf_counter() - started
         ran_while_held = list(ran)
+        kept = await holder.read(lambda repos: repos.projects.get(fx_project.id))
         await kind.run(impatient, fx_project, lambda _repos: ran.append(SECOND_IN))
         expect(gave_up_after < REFUSAL_BOUND_SECONDS)
         expect(ran_while_held == [])
+        expect(kept == fx_project, 'the refusal left the book of the holder as it was')
         expect(ran == [SECOND_IN])
         assert_expectations()
 
@@ -816,7 +806,6 @@ class TestChangeWait:
     async def test_wait_longer_than_the_limit_of_a_request_enters_under_the_limit_of_a_job(
         self,
         fx_uow: UnitOfWorkFactory,
-        fx_hold_book: BookHolder,
         fx_project: Project,
         kind: ChangeKind,
     ) -> None:
@@ -829,8 +818,6 @@ class TestChangeWait:
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_hold_book: Function holding the lock of a book.
-        :type fx_hold_book: BookHolder
         :param fx_project: Stored project every change belongs to.
         :type fx_project: Project
         :param kind: The kind of change under test.
@@ -847,7 +834,7 @@ class TestChangeWait:
             """Ask for the change under the limit of a job and note when its work runs."""
             await kind.run(job, fx_project, lambda _repos: order.append(SECOND_IN))
 
-        async with anyio.create_task_group() as tasks, fx_hold_book(holder, kind.lock_of(fx_project)):
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder, kind.lock_of(fx_project)):
             tasks.start_soon(wait_as_a_job)
             await anyio.wait_all_tasks_blocked()
             with pytest.raises(BookBusyError):

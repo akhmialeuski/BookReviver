@@ -711,7 +711,7 @@ class TestWiring:
     ) -> None:
         """Verify a request has one unit of work, whichever of its two names asks.
 
-        :param fx_container: The application's container on the SQL backend.
+        :param fx_container: The application's container.
         :type fx_container: AsyncContainer
         """
         async with fx_container() as scope:

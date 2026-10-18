@@ -1,4 +1,4 @@
-"""Fixtures giving the SQLAlchemy adapter tests a fresh SQLite database at the head revision, and an owner.
+"""Fixtures giving the SQLAlchemy adapter tests an owner and the import rig over the root ``fx_database``.
 
 The tests of the write blocks get a database whose blocks are timed by a tracer that tells them when a block asks for
 the writer, a second database over the same file whose blocks give up almost at once, and a project to change.
@@ -11,7 +11,6 @@ from attrs import evolve
 
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
-from bookreviver.app.container import build_container
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.values import JobEnd
 from tests.helpers.builders import make_project
@@ -35,26 +34,6 @@ if TYPE_CHECKING:
 # Long enough that a block which wrongly waits for a lock that is never given fails the test, and does not hang it
 TRACED_WAIT_SECONDS: float = 10.0
 STORAGE_DIRECTORY: str = 'storage'
-
-
-@pytest.fixture
-async def fx_database(fx_settings: Settings, fx_schema_template: Path) -> AsyncIterator[SqlDatabase]:
-    """Open the database through the application's own container.
-
-    Building the whole container, not only the database provider, also checks that the production dependency graph
-    resolves. The schema is copied from the template, which has every table at the head revision.
-
-    :param fx_settings: Settings pointing at a fresh data directory of the test.
-    :type fx_settings: Settings
-    :param fx_schema_template: File with every table at the head revision.
-    :type fx_schema_template: Path
-    :returns: Iterator yielding the open database and closing it with the container afterwards.
-    :rtype: AsyncIterator[SqlDatabase]
-    """
-    await copy_schema_template(fx_schema_template, database_file(fx_settings))
-    container = build_container(fx_settings)
-    yield await container.get(SqlDatabase)
-    await container.close()
 
 
 @pytest.fixture

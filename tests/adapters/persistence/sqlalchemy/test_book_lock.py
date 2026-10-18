@@ -4,7 +4,6 @@ The move is inside its ``change_book`` when the job asks for its own, so the job
 commit, and then reads the order the move wrote. Neither write is lost, which no revision of a row had to tell.
 """
 
-import asyncio
 import threading
 from functools import partial
 from typing import TYPE_CHECKING
@@ -17,7 +16,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import ContentType
 from bookreviver.domain.values import SliceRequest
-from tests.helpers.book_gate import HOLD_LIMIT_SECONDS
+from tests.helpers.book_hold import HOLD_LIMIT_SECONDS
 from tests.helpers.builders import make_page
 
 if TYPE_CHECKING:
@@ -59,7 +58,6 @@ class TestMoveAgainstJobWrite:
         pages = [make_page(project_id=fx_project.id, order_key=key) for key in ORDER_KEYS]
         await uow.change_book(fx_project.id, lambda repos, _project: repos.pages.add_many(pages))
         moved = [pages[0].id, pages[1].id]
-        loop = asyncio.get_running_loop()
         entered, proceed = anyio.Event(), threading.Event()
         seen_by_job: list[PageId] = []
 
@@ -72,7 +70,7 @@ class TestMoveAgainstJobWrite:
             :type project: Project
             """
             window = repos.pages.list_for_project(project.id, SliceRequest())
-            loop.call_soon_threadsafe(entered.set)
+            anyio.from_thread.run_sync(entered.set)
             proceed.wait(HOLD_LIMIT_SECONDS)
             by_id = {page.id: page for page in window.items}
             for page_id, key in zip(moved, MOVED_KEYS, strict=True):

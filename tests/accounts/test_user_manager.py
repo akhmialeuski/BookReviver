@@ -1,4 +1,4 @@
-"""Tests for the rules of the user manager that reach beyond the account tables, on the SQL backend."""
+"""Tests for the rules of the user manager that reach beyond the account tables."""
 
 from typing import TYPE_CHECKING
 
@@ -80,7 +80,7 @@ class TestDelete:
 
         The owner key of a project refuses to delete an account that still owns one, so the projects go first.
 
-        :param fx_container: The application's container on the SQL backend.
+        :param fx_container: The application's container.
         :type fx_container: AsyncContainer
         :param fx_settings: Settings of the test, whose storage root the stores share.
         :type fx_settings: Settings
@@ -122,7 +122,7 @@ class TestAuthenticate:
     async def test_outdated_hash_is_replaced_after_sign_in(self, fx_container: AsyncContainer) -> None:
         """Verify signing in with a password stored as a bcrypt hash writes the argon2id hash of the same password.
 
-        :param fx_container: The application's container on the SQL backend.
+        :param fx_container: The application's container.
         :type fx_container: AsyncContainer
         """
         outdated = PasswordHelper(PasswordHash((BcryptHasher(),))).hash(PASSWORD)

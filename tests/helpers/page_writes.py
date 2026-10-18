@@ -2,6 +2,11 @@
 
 A page written with the state it already had reads back the same, so only a record of the calls tells a needless write
 from none.
+
+The record wraps the methods by hand instead of with ``unittest.mock.patch.object(..., autospec=True)``, because the
+autospec of Python 3.14.3 evaluates the annotations of the repository, whose ``Sequence`` is imported only for type
+checking, and fails with ``NameError`` (https://github.com/python/cpython/issues/145754). Python 3.14.4 carries the
+fix, and once the project requires it the wrappers give way to the autospec.
 """
 
 from typing import TYPE_CHECKING

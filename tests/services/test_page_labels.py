@@ -14,7 +14,7 @@ from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.events import PagesChanged
 from bookreviver.domain.values import PageAnchor
 from bookreviver.services.projects import book_pages
-from tests.helpers.book_gate import hold_book_in_thread
+from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import EPOCH, make_page, make_project, new_account_id
 from tests.helpers.seeding import ensure_account, store_project
 

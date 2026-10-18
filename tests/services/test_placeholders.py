@@ -32,7 +32,7 @@ from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVers
 from bookreviver.services.pages import PAGES_FAILED, UNEXPECTED_FAILURE
 from bookreviver.services.projects import book_pages
 from tests.helpers.acting_renditions import ActingRenditionWriter
-from tests.helpers.book_gate import hold_book_in_thread
+from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.books import IMAGE
 from tests.helpers.builders import EPOCH, make_job, make_page, make_project, make_scan, make_source
 from tests.helpers.fake_board import FakeJobBoard

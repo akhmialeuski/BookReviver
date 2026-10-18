@@ -31,6 +31,7 @@ from tests.helpers.builders import (
     new_account_id,
 )
 from tests.helpers.scripted_runner import TASKS_PER_JOB
+from tests.helpers.seeding import commit_project
 from tests.helpers.sse import EVENT_STREAM_TYPE, STREAM_TIMEOUT_SECONDS, EventStreamReader, StreamedEvent
 
 if TYPE_CHECKING:
@@ -77,7 +78,7 @@ async def fx_queued_job(fx_fakes: JobFakes, fx_database: SqlDatabase, fx_actor: 
     :rtype: Job
     """
     project = make_project(owner_id=fx_actor.account_id)
-    await fx_fakes.store(fx_database, project)
+    await commit_project(fx_database, project)
     return fx_fakes.board.put(make_job(project_id=project.id))
 
 
@@ -93,7 +94,7 @@ async def fx_strangers_job(fx_fakes: JobFakes, fx_database: SqlDatabase) -> Job:
     :rtype: Job
     """
     project = make_project(owner_id=new_account_id())
-    await fx_fakes.store(fx_database, project)
+    await commit_project(fx_database, project)
     return fx_fakes.board.put(make_job(project_id=project.id))
 
 
@@ -137,7 +138,7 @@ class TestReadJob:
         :type fx_queued_job: Job
         """
         project = make_project(owner_id=fx_actor.account_id)
-        await fx_fakes.store(fx_database, project)
+        await commit_project(fx_database, project)
         run = fx_fakes.board.put(
             make_job(project_id=project.id, kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.GEOMETRY).to_map())
         )

@@ -20,7 +20,7 @@ from bookreviver.domain.values import (
     PaginationSectionDraft,
     SliceRequest,
 )
-from tests.helpers.book_gate import hold_book_in_thread
+from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import make_page, make_project, new_account_id
 from tests.helpers.seeding import ensure_account, store_project
 

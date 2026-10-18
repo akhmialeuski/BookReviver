@@ -918,7 +918,7 @@ class TestDatabaseProvider:
     async def test_refuses_a_database_no_revision_was_applied_to(self, fx_container: AsyncContainer) -> None:
         """Verify the application does not start on an unmigrated database and names the command that migrates it.
 
-        :param fx_container: The application's container on the SQL backend, with no schema.
+        :param fx_container: The application's container, with no schema.
         :type fx_container: AsyncContainer
         """
         head = ScriptDirectory(str(MIGRATIONS_DIR)).get_current_head()
@@ -933,7 +933,7 @@ class TestDatabaseProvider:
 
         ``upgrade head`` cannot help here: Alembic cannot locate the revision the database records.
 
-        :param fx_container: The application's container on the SQL backend.
+        :param fx_container: The application's container.
         :type fx_container: AsyncContainer
         :param fx_empty_database: The same database, which the test migrates with a revision the code does not ship.
         :type fx_empty_database: SqlDatabase
@@ -956,7 +956,7 @@ class TestDatabaseProvider:
     ) -> None:
         """Verify the application starts once the migrations are applied, and leaves the schema as they left it.
 
-        :param fx_container: The application's container on the SQL backend.
+        :param fx_container: The application's container.
         :type fx_container: AsyncContainer
         :param fx_empty_database: The same database, which the test migrates first.
         :type fx_empty_database: SqlDatabase

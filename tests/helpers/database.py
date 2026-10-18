@@ -21,10 +21,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import ProjectRow
 from bookreviver.adapters.tracing.null import NullTracer
 
 if TYPE_CHECKING:
-    from contextlib import AbstractAsyncContextManager
-
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.ids import ProjectId
     from bookreviver.ports.persistence import UnitOfWork
 
 NO_DATABASE_FILE: str = (
@@ -44,21 +41,6 @@ class UnitOfWorkFactory(Protocol):
         :type wait_seconds: float | None
         :returns: A new unit of work.
         :rtype: UnitOfWork
-        """
-
-
-class BookHolder(Protocol):
-    """A function holding a book, which every change waits for."""
-
-    def __call__(self, uow: UnitOfWork, project_id: ProjectId | None = None) -> AbstractAsyncContextManager[None]:
-        """Hold the book for the length of an ``async with`` block.
-
-        :param uow: Unit of work of the test, whose change holds the book by blocking the thread its work runs in.
-        :type uow: UnitOfWork
-        :param project_id: Project whose book is held, or None for the changes outside the content of a book.
-        :type project_id: ProjectId | None
-        :returns: Context manager that returns once the lock is held and releases it when the block ends.
-        :rtype: AbstractAsyncContextManager[None]
         """
 
 
@@ -93,6 +75,9 @@ class SharedDatabaseProvider(Provider):
 
 def create_schema_template(path: Path) -> None:
     """Create every table of the models in a new SQLite file, and record the file at the head revision.
+
+    The template is built once per test process, before any event loop runs, so both engines are disposed of here
+    directly. ``SqlDatabase.dispose`` is the same disposal moved to a worker thread to keep a running loop free.
 
     :param path: Where the file is created, which must not exist yet.
     :type path: Path

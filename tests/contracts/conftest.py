@@ -12,7 +12,6 @@ from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.settings import Settings
 from bookreviver.ports.storage import AssetStore, SourceStore
-from tests.helpers.book_gate import hold_book_in_thread
 from tests.helpers.job_boards import BoardAdapter
 from tests.helpers.seeding import commit_account
 from tests.helpers.step_executors import StepExecutorAdapter
@@ -26,22 +25,11 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.ordering import OrderKeys
-    from tests.helpers.database import BookHolder
 
 type OwnerFactory = Callable[[], Awaitable[AccountId]]
 
 # Every adapter of the OrderKeys port by name; each computes keys in memory, so none needs a provider
 ORDER_KEYS_ADAPTERS: dict[str, type[OrderKeys]] = {'fractional-indexing': FractionalOrderKeys}
-
-
-@pytest.fixture
-def fx_hold_book() -> BookHolder:
-    """Return a function holding a book by a change whose work blocks the thread it runs in.
-
-    :returns: Function returning a context manager that holds the book while its block runs.
-    :rtype: BookHolder
-    """
-    return hold_book_in_thread
 
 
 @pytest.fixture

@@ -73,7 +73,7 @@ from tests.adapters.imaging.samples import (
     write_pdf,
     xmp_packet,
 )
-from tests.helpers.book_gate import hold_book_in_thread
+from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import make_job, make_project, make_source, new_account_id
 from tests.helpers.fakes_imports import (
     BOOK_WINDOW,
@@ -92,6 +92,7 @@ from tests.helpers.fakes_imports import (
 )
 from tests.helpers.fakes_jobs import JobFakes
 from tests.helpers.processors import AutoSplitProcessor
+from tests.helpers.seeding import commit_project
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
@@ -259,7 +260,7 @@ async def fx_project(fx_rig: ImportRig, fx_owner: Actor) -> Project:
     :rtype: Project
     """
     project = make_project(owner_id=fx_owner.account_id)
-    await JobFakes.store(fx_rig.database, project)
+    await commit_project(fx_rig.database, project)
     return project
 
 
@@ -510,7 +511,7 @@ async def _project_with(rig: ImportRig, owner: Actor, policy: ImagePolicy) -> Pr
     :rtype: Project
     """
     project = evolve(make_project(owner_id=owner.account_id), image_policy=policy)
-    await JobFakes.store(rig.database, project)
+    await commit_project(rig.database, project)
     return project
 
 
@@ -1743,7 +1744,7 @@ class TestRunImportChecks:
         project = make_project(owner_id=fx_owner.account_id)
         owner_author = (Contributor(name='Owner Author', role=ContributorRole.AUTHOR),)
         described = evolve(project, details=evolve(project.details, contributors=owner_author))
-        await JobFakes.store(fx_rig.database, described)
+        await commit_project(fx_rig.database, described)
 
         await _import(
             fx_rig,

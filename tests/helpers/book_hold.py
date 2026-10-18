@@ -6,7 +6,6 @@ work of a change in a thread of its own, which ``hold_book_in_thread`` blocks, a
 change is held every other change of every book waits behind it.
 """
 
-import asyncio
 import threading
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
@@ -36,16 +35,18 @@ async def hold_book_in_thread(uow: UnitOfWork, project_id: ProjectId | None = No
     :returns: Iterator yielding once the work of the change has started, and letting it commit when the block ends.
     :rtype: AsyncIterator[None]
     """
-    loop = asyncio.get_running_loop()
     inside, release = anyio.Event(), threading.Event()
 
     def block(*_arguments: object) -> None:
         """Tell the test that the change has begun, then wait in this thread until the test lets it go.
 
+        The work runs in a worker thread of ``anyio.to_thread``, so it reaches the event loop through
+        ``anyio.from_thread``.
+
         :param _arguments: What the unit of work hands its work, which this work does not need.
         :type _arguments: object
         """
-        loop.call_soon_threadsafe(inside.set)
+        anyio.from_thread.run_sync(inside.set)
         release.wait(timeout=HOLD_LIMIT_SECONDS)
 
     async with anyio.create_task_group() as tasks:

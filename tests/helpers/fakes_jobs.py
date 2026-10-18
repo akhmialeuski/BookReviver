@@ -13,25 +13,18 @@ from attrs import Factory, field, frozen
 from dishka import AnyOf, Provider, Scope, provide
 
 from bookreviver.adapters.events.broadcast import InProcessEventBus
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.ports.runtime import Clock, EventPublisher, EventStream, JobBoard
-from bookreviver.services.jobs import JobService
 from tests.helpers.builders import EPOCH
 from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.scripted_runner import ScriptedRunner
-from tests.helpers.seeding import ensure_account
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
 
     from bookreviver.adapters.jobs.board import JobRunner
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Project
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import ProjectId
-    from bookreviver.ports.persistence import UnitOfWork
-    from bookreviver.ports.storage import SourceStore
 
 EVENT_QUEUE_SIZE: int = 16
 
@@ -98,7 +91,7 @@ class JobFakes:
     """The event bus, the clock and the job board a job test shares with the services and the application it builds.
 
     The database is not part of the fakes, since the application of an API test runs on the database of the test,
-    which a test reaches through ``fx_database`` and ``fx_uow``. The methods that need it take it as an argument.
+    which a test reaches through ``fx_database`` and ``fx_uow``.
 
     :ivar events: Event bus serving both publishers and subscribers.
     :ivar clock: Clock stopped at ``EPOCH``.
@@ -119,30 +112,6 @@ class JobFakes:
             takes_self=True,
         ),
     )
-
-    def job_service(self, uow: UnitOfWork, sources: SourceStore) -> JobService:
-        """Build a job service over a unit of work, as a new request would get.
-
-        :param uow: Unit of work the service works in, such as the one ``fx_uow`` opens.
-        :type uow: UnitOfWork
-        :param sources: Store of the uploads, which a cancelled import that never began is removed from.
-        :type sources: SourceStore
-        :returns: The job service.
-        :rtype: JobService
-        """
-        return JobService(uow=uow, board=self.board, stream=self.events, sources=sources)
-
-    @staticmethod
-    async def store(database: SqlDatabase, project: Project) -> None:
-        """Commit a project to the database, and the account owning the project when it is new.
-
-        :param database: Database to commit into.
-        :type database: SqlDatabase
-        :param project: Project to store.
-        :type project: Project
-        """
-        await ensure_account(database, project.owner_id)
-        await SqlAlchemyUnitOfWork(database).change(lambda repos: repos.projects.add(project))
 
 
 class FakeBoardProvider(Provider):
