@@ -560,7 +560,6 @@ export function useEditorSession({
           geometry={geometry}
           processorKey={processor.key}
           params={step?.params ?? {}}
-          disabled={saving}
           size={editor.size(context)}
           onChange={hold}
           onCommit={commit}

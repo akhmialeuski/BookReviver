@@ -77,6 +77,27 @@ def wants_the_book(params: MetadataMap) -> bool:
     return not all(params.get(name) for name in BOOK_FIELDS)
 
 
+def leaves_to_the_book(recipe: Recipe, *, through_step: int | None = None) -> bool:
+    """Tell whether a run of the recipe has a field of the normalize step to take from the book.
+
+    A page run by such a recipe is placed on a size that the boxes of every page of the book decide, so its result
+    changes when the box of another page does. The parameters are read as the recipe stores them: a field they lack
+    takes the default of the processor, which is 0 for every field the book fills in, as it is for a missing one.
+
+    :param recipe: Recipe of the stage.
+    :type recipe: Recipe
+    :param through_step: Index in the recipe of the last step the run goes over, or None for every step that is on.
+    :type through_step: int | None
+    :returns: Whether the normalize step is among the steps the run goes over and leaves the page size or the line
+              height to the book.
+    :rtype: bool
+    """
+    return any(
+        step.processor_key == NORMALIZE_KEY and wants_the_book(step.params)
+        for _, step in recipe.indexed_steps_through(through_step)
+    )
+
+
 @frozen(kw_only=True)
 class BlockMeasure:
     """What the normalize step recorded of the content box of one page.

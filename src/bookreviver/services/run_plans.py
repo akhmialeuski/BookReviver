@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from bookreviver.domain.enums import ChangeSource, PageOrigin, RunMode, StageState, VersionState
 from bookreviver.domain.values import RunImpact
+from bookreviver.services.book_measure import leaves_to_the_book
 from bookreviver.services.page_batches import PageBatch
 from bookreviver.services.projects import book_pages, owned_project
 
@@ -174,10 +175,13 @@ class RunPlan:
         what this run makes, so its page stays. So does a page whose head version is not ready, which a run makes
         again, and a page with a stale earlier stage, which the run brings up to date before it reads it. The flag of
         the record alone does not say either, since a change of an earlier stage leaves the later records as they are.
+        A page whose recipe takes the page size or the line height from the book stays too: the boxes of the other pages
+        decide its size, and a box changed on one of them leaves this record fresh. The run finds the versions it made
+        before by their identifier, so a page whose size did not change costs it no step.
 
         :param pages: Pages the run would go over.
         :type pages: Sequence[Page]
-        :returns: The pages that have no fresh result of the stage, in book order.
+        :returns: The pages that have no fresh result of the stage, or whose result depends on the book, in book order.
         :rtype: list[Page]
         :raises NotFoundError: If the stage has no recipe.
         """
@@ -209,13 +213,15 @@ class RunPlan:
 
             :param page: A page the run would go over.
             :type page: Page
-            :returns: Whether the result of the stage is fresh, ready and made from fresh earlier stages.
+            :returns: Whether the result of the stage is fresh, ready, made from fresh earlier stages and independent of
+                      the other pages of the book.
             :rtype: bool
             """
             stages = by_page.get(page.id, {})
             record = stages.get(stage)
             return (
-                self._is_fresh(record, picked[page.id], through_step=self._run.through_step)
+                not leaves_to_the_book(picked[page.id], through_step=self._run.through_step)
+                and self._is_fresh(record, picked[page.id], through_step=self._run.through_step)
                 and record is not None
                 and record.head_version_id in ready
                 and all(earlier.state is StageState.FRESH for key, earlier in stages.items() if key in stage.earlier)

@@ -10,8 +10,8 @@ describe('AngleField', () => {
   let root: Root;
   const commit = vi.fn();
 
-  function render(degrees = -2.4, disabled = false): void {
-    act(() => root.render(<AngleField degrees={degrees} disabled={disabled} onCommit={commit} />));
+  function render(degrees = -2.4): void {
+    act(() => root.render(<AngleField degrees={degrees} onCommit={commit} />));
   }
 
   const input = (): HTMLInputElement => {
@@ -109,11 +109,5 @@ describe('AngleField', () => {
 
     expect(commit).not.toHaveBeenCalled();
     expect(input().value).toBe('-2.4');
-  });
-
-  it('cannot be changed while a change is being saved', () => {
-    render(1, true);
-
-    expect(input().disabled).toBe(true);
   });
 });

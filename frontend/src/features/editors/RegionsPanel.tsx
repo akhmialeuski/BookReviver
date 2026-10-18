@@ -14,7 +14,6 @@ const labels = MESSAGES.editors.regions;
 
 export function RegionsPanel({
   shape,
-  disabled,
   size,
   onCommit,
 }: PanelProps<RegionsShape>): React.JSX.Element {
@@ -34,7 +33,7 @@ export function RegionsPanel({
         <Button
           variant="outline"
           size="sm"
-          disabled={disabled || size === null}
+          disabled={size === null}
           data-testid="regions-add"
           onClick={() => add(ZoneMode.Add)}
         >
@@ -44,7 +43,7 @@ export function RegionsPanel({
         <Button
           variant="outline"
           size="sm"
-          disabled={disabled || size === null}
+          disabled={size === null}
           data-testid="regions-remove"
           onClick={() => add(ZoneMode.Remove)}
         >
@@ -62,7 +61,6 @@ export function RegionsPanel({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                disabled={disabled}
                 aria-label={labels.deleteZone(name)}
                 data-testid="regions-delete"
                 onClick={() => onCommit(removeZone(shape, place))}

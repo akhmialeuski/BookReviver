@@ -952,18 +952,6 @@ class RecipeRun(StageWork):
             return None
         return await self._measure(page, recipe.stage, steps, source)
 
-    def wants_book(self, recipe: Recipe, *, through_step: int | None = None) -> bool:
-        """Tell whether a run of the recipe has a field of the normalize step to take from the book.
-
-        :param recipe: Recipe of the stage.
-        :type recipe: Recipe
-        :param through_step: Index in the recipe of the last step the run goes over, or None for every step that is on.
-        :type through_step: int | None
-        :returns: Whether the step is among those the run goes over and has the page size or the line height at 0.
-        :rtype: bool
-        """
-        return self._book_fields([step for _, step in recipe.indexed_steps_through(through_step)]) is not None
-
     async def _book_for(self, page: Page, recipe: Recipe, steps: Sequence[Step], source: StepSource) -> MetadataMap:
         """Give what the book gives the normalize step on a page: what the run worked out, or else the page's own.
 

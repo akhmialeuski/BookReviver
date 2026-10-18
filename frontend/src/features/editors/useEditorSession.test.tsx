@@ -586,6 +586,28 @@ describe('useEditorSession', () => {
     expect(sdk.run).not.toHaveBeenCalled();
   });
 
+  it('keeps the slider of the angle in the keys of the reader while a save of the angle is on its way', async () => {
+    // The save answers only when the test says so, so the slider is seen while it is in flight
+    const answers: ((answer: { data: PageEditSchema }) => void)[] = [];
+    sdk.put.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+    await render();
+    act(() => session?.open());
+    const thumb = (): HTMLElement | null => container.querySelector('[role="slider"]');
+
+    await act(async () => {
+      thumb()?.focus();
+      thumb()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    });
+    await settle();
+    expect(answers).toHaveLength(1);
+
+    // A thumb that is disabled leaves the tab order, and the next arrow would reach the window and turn the page
+    expect(document.activeElement).toBe(thumb());
+    expect(thumb()?.hasAttribute('data-disabled')).toBe(false);
+    answers[0]?.({ data: edit({ geometry: { degrees: -2.35 } }) });
+    await settle();
+  });
+
   describe('with an edit saved', () => {
     beforeEach(() => {
       sdk.edits.mockResolvedValue(listOf(edit({ geometry: { degrees: 1.5 } })));

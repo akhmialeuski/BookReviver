@@ -32,7 +32,6 @@ function limitOf(params: Readonly<Record<string, unknown>>): number {
 export function RotationPanel({
   shape,
   params,
-  disabled,
   onChange,
   onCommit,
 }: PanelProps<RotationShape>): React.JSX.Element {
@@ -48,7 +47,6 @@ export function RotationPanel({
             max={limit}
             step={ANGLE_KEY_STEP}
             value={[Math.min(Math.max(shape.degrees, -limit), limit)]}
-            disabled={disabled}
             thumbLabel={labels.slider}
             data-testid="angle-slider"
             // The page turns as the slider moves, and the angle is saved once the reader lets go of it
@@ -64,15 +62,11 @@ export function RotationPanel({
         <p className="text-xs text-muted-foreground">{labels.hint}</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <AngleField
-          degrees={shape.degrees}
-          disabled={disabled}
-          onCommit={(degrees) => onCommit({ degrees })}
-        />
+        <AngleField degrees={shape.degrees} onCommit={(degrees) => onCommit({ degrees })} />
         <Button
           variant="outline"
           size="sm"
-          disabled={disabled || shape.degrees === 0}
+          disabled={shape.degrees === 0}
           title={labels.zeroTitle}
           data-testid="angle-zero"
           onClick={() => onCommit({ degrees: 0 })}

@@ -79,9 +79,28 @@ export function pageChangesInFlight(queryClient: QueryClient, projectId: string)
   return queryClient.isMutating({ predicate: (mutation) => mutation.options.scope?.id === id });
 }
 
-/** Refresh the pages of a book, in every request shape the manifest has been read with. */
-export function invalidatePages(queryClient: QueryClient, projectId: string): Promise<void> {
-  return queryClient.invalidateQueries({
+/**
+ * Refresh the pages of a book, in every request shape the manifest has been read with, unless a change of the pages is
+ * still queued or in flight.
+ *
+ * A read made while a change is in flight lacks it and writes the pages without it over what the screen shows, so the
+ * grid flips a moved page back until the next read. Every read of the pages comes through here, the ones the events of
+ * the book ask for included, and the last change to end reads the pages and sees whatever the skipped reads would have.
+ *
+ * @param queryClient The client that holds the queries.
+ * @param projectId The book whose pages to refresh.
+ * @param settling How many of the changes in flight are the one that calls this, one for a change of the pages that
+ * reads them as it ends and none for anything else.
+ */
+export async function invalidatePages(
+  queryClient: QueryClient,
+  projectId: string,
+  settling = 0,
+): Promise<void> {
+  if (pageChangesInFlight(queryClient, projectId) > settling) {
+    return;
+  }
+  await queryClient.invalidateQueries({
     queryKey: listPagesApiV1ProjectsProjectIdPagesGetQueryKey({ path: { project_id: projectId } }),
   });
 }
