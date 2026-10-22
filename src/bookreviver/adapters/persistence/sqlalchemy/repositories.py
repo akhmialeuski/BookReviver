@@ -47,7 +47,6 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     ProjectMapper,
     RecipeMapper,
     RecipeProfileMapper,
-    ResultMarkChangeMapper,
     ScanMapper,
     SourceMapper,
     StepValuesMapper,
@@ -64,7 +63,6 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     PaginationSectionRow,
     ProjectRow,
     RecipeRow,
-    ResultMarkChangeRow,
     ScanRow,
     SourceRow,
     StepValuesRow,
@@ -81,7 +79,6 @@ from bookreviver.domain.entities import (
     ProjectOverview,
     Recipe,
     RecipeProfile,
-    ResultMarkChange,
     Scan,
     Source,
 )
@@ -108,7 +105,6 @@ from bookreviver.domain.ids import (
     ProjectId,
     RecipeId,
     RecipeProfileId,
-    ResultMarkChangeId,
     ScanId,
     SourceId,
 )
@@ -132,7 +128,6 @@ from bookreviver.ports.persistence import (
     RecipeProfileRepository,
     RecipeRepository,
     Repository,
-    ResultMarkChangeRepository,
     ScanRepository,
     SourceRepository,
     StepValuesRepository,
@@ -453,12 +448,6 @@ class PageStepChangeRows(RowRepository[PageStepChangeRow]):
     """Rows of the ``page_step_changes`` table."""
 
     model_type = PageStepChangeRow
-
-
-class ResultMarkChangeRows(RowRepository[ResultMarkChangeRow]):
-    """Rows of the ``result_mark_changes`` table."""
-
-    model_type = ResultMarkChangeRow
 
 
 class BookPlaceRows(RowRepository[BookPlaceRow]):
@@ -1698,48 +1687,6 @@ class SqlAlchemyPageStepChangeRepository(
         return cast('CursorResult[Any]', self._rows.session.execute(statement)).rowcount
 
 
-class SqlAlchemyResultMarkChangeRepository(
-    SqlAlchemyRepository[ResultMarkChange, ResultMarkChangeId, ResultMarkChangeRow], ResultMarkChangeRepository
-):
-    """The log of the marks and comments of the results."""
-
-    def __init__(self, session: Session) -> None:
-        """Create the repository over the ``result_mark_changes`` table.
-
-        :param session: Session of the unit of work.
-        :type session: Session
-        """
-        super().__init__(rows=ResultMarkChangeRows(session=session), mapper=ResultMarkChangeMapper())
-
-    @override
-    def add(self, entity: ResultMarkChange) -> ResultMarkChange:
-        """Store a change, numbering it after the last change of its version.
-
-        :param entity: Change to store.
-        :type entity: ResultMarkChange
-        :returns: The change as stored, with its sequence.
-        :rtype: ResultMarkChange
-        :raises ConflictError: If a change with this identifier is stored already.
-        :raises NotFoundError: If the version is not stored.
-        """
-        last = self._rows.session.scalar(
-            select(func.max(ResultMarkChangeRow.sequence)).where(ResultMarkChangeRow.version_id == entity.version_id)
-        )
-        return super().add(evolve(entity, sequence=(last or 0) + 1))
-
-    @override
-    def list_for_version(self, version_id: PageVersionId) -> Sequence[ResultMarkChange]:
-        """Return the changes of one version, by their sequence.
-
-        :param version_id: Version the changes were made on.
-        :type version_id: PageVersionId
-        :returns: The changes of the version.
-        :rtype: Sequence[ResultMarkChange]
-        """
-        rows = self._rows.get_many(order_by=[ResultMarkChangeRow.sequence.asc()], version_id=version_id)
-        return [self._mapper.to_entity(row) for row in rows]
-
-
 class SqlAlchemyBookPlaceRepository(BookPlaceRepository):
     """The one place the reader left the book at, the one row of ``book_places``.
 
@@ -1895,7 +1842,6 @@ class SqlAlchemyBookRepositories(BookRepositories):
     :ivar page_step_states: Page step state repository bound to the session.
     :ivar page_step_changes: Page step change repository bound to the session.
     :ivar step_values: Step values repository bound to the session.
-    :ivar result_mark_changes: Result mark change repository bound to the session.
     :ivar recipes: Recipe repository bound to the session.
     :ivar book_places: Book place repository bound to the session.
     """
@@ -1916,6 +1862,5 @@ class SqlAlchemyBookRepositories(BookRepositories):
         self.page_step_states = SqlAlchemyPageStepStateRepository(session)
         self.page_step_changes = SqlAlchemyPageStepChangeRepository(session)
         self.step_values = SqlAlchemyStepValuesRepository(session)
-        self.result_mark_changes = SqlAlchemyResultMarkChangeRepository(session)
         self.recipes = SqlAlchemyRecipeRepository(session)
         self.book_places = SqlAlchemyBookPlaceRepository(session)

@@ -41,7 +41,7 @@ from bookreviver.domain.values import (
 )
 from bookreviver.services.processing_jobs import VERSIONS_LEFT, ProcessingJobs
 from bookreviver.services.version_clearing import BEING_COLLECTED
-from tests.helpers.builders import EPOCH, make_page_stage, make_result_mark_change
+from tests.helpers.builders import EPOCH, make_page_stage
 from tests.helpers.held_steps import steps_held
 from tests.helpers.meanwhile import change_when_published
 from tests.helpers.processing import (
@@ -49,7 +49,6 @@ from tests.helpers.processing import (
     change_versions,
     found_stage,
     found_version,
-    mark_log,
     stage_versions,
     stored_job,
 )
@@ -584,7 +583,7 @@ class TestCollection:
     async def test_old_version_nothing_needs_is_deleted_with_its_files_its_row_and_the_log_of_its_marks(
         self, fx_kit: ProcessingKit
     ) -> None:
-        """Verify the collection deletes an old version with its directory, its row and the log of its marks.
+        """Verify the collection deletes an old version with its directory and its row.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -592,7 +591,7 @@ class TestCollection:
         actor, project, page, current, old = await self.collectable_book(fx_kit)
 
         def mark_old(repos: BookRepositories, _project: Project) -> None:
-            """Mark the old version bad, and log the mark.
+            """Mark the old version bad.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
@@ -600,7 +599,6 @@ class TestCollection:
             :type _project: Project
             """
             repos.page_versions.update(evolve(old, mark=ResultMark.BAD))
-            repos.result_mark_changes.add(make_result_mark_change(version_id=old.id, mark_after=ResultMark.BAD))
 
         await fx_kit.uow().change_book(project.id, mark_old)
         job = await fx_kit.service().start_collection(actor, project.id)
@@ -612,7 +610,6 @@ class TestCollection:
         expect(old.id not in {version.id for version in remaining})
         expect(len(remaining) == 2)
         expect(await found_version(fx_kit, project.id, current.id) is not None)
-        expect(await mark_log(fx_kit, project.id, old) == [])
         stored = stored_job(fx_kit, job.id)
         expect((stored.state, stored.error) == (JobState.SUCCEEDED, ''))
         assert_expectations()
@@ -776,7 +773,7 @@ class TestCollection:
             target.write_bytes(IMAGE_CONTENT)
 
         def add_other(repos: BookRepositories, _project: Project) -> None:
-            """Add the second old version, and a log entry for the first.
+            """Add the second old version.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
@@ -784,7 +781,6 @@ class TestCollection:
             :type _project: Project
             """
             repos.page_versions.add(other)
-            repos.result_mark_changes.add(make_result_mark_change(version_id=old.id))
 
         await fx_kit.uow().change_book(project.id, add_other)
         refused = keys.version_directory(old)
@@ -813,7 +809,6 @@ class TestCollection:
             pass
         expect(await found_version(fx_kit, project.id, other.id) is None)
         expect((stayed.state, stayed.data[VersionData.ERROR]) == (VersionState.FAILED, BEING_COLLECTED))
-        expect(len(await mark_log(fx_kit, project.id, old)) == 1)
         expect((stored.state, stored.error) == (JobState.FAILED, VERSIONS_LEFT.format(count=1)))
         assert_expectations()
 
@@ -859,9 +854,7 @@ class TestCollection:
         expect(stored_job(fx_kit, job.id).error == VERSIONS_LEFT.format(count=2))
         assert_expectations()
 
-    async def test_a_version_marked_good_or_commented_keeps_its_files_its_row_and_its_log(
-        self, fx_kit: ProcessingKit
-    ) -> None:
+    async def test_a_version_marked_good_or_commented_keeps_its_files_and_its_row(self, fx_kit: ProcessingKit) -> None:
         """Verify a collection deletes neither the version the user judged Good nor the one with a comment.
 
         :param fx_kit: What the processing services of the test share.
@@ -875,7 +868,7 @@ class TestCollection:
             target.write_bytes(IMAGE_CONTENT)
 
         def judge(repos: BookRepositories, _project: Project) -> None:
-            """Mark the old version good, add the commented one, and log an entry for the old one.
+            """Mark the old version good and add the commented one.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
@@ -884,7 +877,6 @@ class TestCollection:
             """
             repos.page_versions.update(good)
             repos.page_versions.add(commented)
-            repos.result_mark_changes.add(make_result_mark_change(version_id=old.id))
 
         await fx_kit.uow().change_book(project.id, judge)
         await fx_kit.service().start_collection(actor, project.id)
@@ -894,7 +886,6 @@ class TestCollection:
                 pass
         expect(await found_version(fx_kit, project.id, good.id) is not None)
         expect(await found_version(fx_kit, project.id, commented.id) is not None)
-        expect(len(await mark_log(fx_kit, project.id, good)) == 1)
         assert_expectations()
 
     async def test_the_versions_of_an_old_chain_go_together(self, fx_kit: ProcessingKit) -> None:

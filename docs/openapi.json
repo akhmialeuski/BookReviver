@@ -4410,7 +4410,7 @@
           "processing"
         ],
         "summary": "Collect Versions",
-        "description": "Delete the versions nothing needs, in the background, and answer with the queued job.\n\nA version goes when it is not current, not in the chain of inputs of a current version, not a base version, not\nmarked Good and without a comment, and, for a preview, older than its retention period. It goes with its files, its\nrow and the log of its marks. A collection that is queued or running already is the answer. A run queues one by\nitself when it ends.",
+        "description": "Delete the versions nothing needs, in the background, and answer with the queued job.\n\nA version goes when it is not current, not in the chain of inputs of a current version, not a base version, not\nmarked Good and without a comment, and, for a preview, older than its retention period. It goes with its files and\nits row. A collection that is queued or running already is the answer. A run queues one by itself when it ends.",
         "operationId": "collect_versions_api_v1_projects__project_id__versions_collect_post",
         "parameters": [
           {
@@ -6750,7 +6750,7 @@
           "result-marks"
         ],
         "summary": "Put Mark",
-        "description": "Replace the mark and the comment of a result, and write the change to its log.\n\nBoth are replaced together, so a body without a mark takes the mark off and an empty comment takes the comment off.\nA body equal to what is stored writes nothing. The answer is 409 for a preview.",
+        "description": "Replace the mark and the comment of a result.\n\nBoth are replaced together, so a body without a mark takes the mark off and an empty comment takes the comment off.\nA body equal to what is stored writes nothing. The answer is 409 for a preview.",
         "operationId": "put_mark_api_v1_projects__project_id__pages__page_id__versions__version_id__mark_put",
         "parameters": [
           {
@@ -6807,131 +6807,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PageVersionSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}/mark-changes": {
-      "get": {
-        "tags": [
-          "result-marks"
-        ],
-        "summary": "List Mark Changes",
-        "description": "List the changes of the mark and the comment of a result, the earliest first.",
-        "operationId": "list_mark_changes_api_v1_projects__project_id__pages__page_id__versions__version_id__mark_changes_get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the project",
-              "title": "Project Id"
-            },
-            "description": "Identifier of the project"
-          },
-          {
-            "name": "page_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the page",
-              "title": "Page Id"
-            },
-            "description": "Identifier of the page"
-          },
-          {
-            "name": "version_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{16}$",
-              "description": "Identifier of the page version",
-              "title": "Version Id"
-            },
-            "description": "Identifier of the page version"
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "default": 1,
-              "title": "Page"
-            }
-          },
-          {
-            "name": "size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 50,
-              "title": "Size"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Page_ResultMarkChangeSchema_"
                 }
               }
             }
@@ -11605,46 +11480,6 @@
         ],
         "title": "Page[RecipeSchema]"
       },
-      "Page_ResultMarkChangeSchema_": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ResultMarkChangeSchema"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "total": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Total"
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Page"
-          },
-          "size": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Size"
-          },
-          "pages": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Pages"
-          }
-        },
-        "type": "object",
-        "required": [
-          "items",
-          "total",
-          "page",
-          "size",
-          "pages"
-        ],
-        "title": "Page[ResultMarkChangeSchema]"
-      },
       "Page_ScanSchema_": {
         "properties": {
           "items": {
@@ -13154,63 +12989,6 @@
         ],
         "title": "ResultMark",
         "description": "What the user judged of a result, a page version, which a result without a judgement does not have."
-      },
-      "ResultMarkChangeSchema": {
-        "properties": {
-          "version_id": {
-            "type": "string",
-            "title": "Version Id"
-          },
-          "sequence": {
-            "type": "integer",
-            "title": "Sequence"
-          },
-          "mark_before": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ResultMark"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "mark_after": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ResultMark"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "comment_before": {
-            "type": "string",
-            "title": "Comment Before"
-          },
-          "comment_after": {
-            "type": "string",
-            "title": "Comment After"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "version_id",
-          "sequence",
-          "mark_before",
-          "mark_after",
-          "comment_before",
-          "comment_after",
-          "created_at"
-        ],
-        "title": "ResultMarkChangeSchema",
-        "description": "One change of the mark or the comment of a result.\n\n:ivar version_id: Version the change was made on.\n:ivar sequence: Place of the change in the log of the version, from one.\n:ivar mark_before: Mark before the change, or None.\n:ivar mark_after: Mark after the change, or None.\n:ivar comment_before: Comment before the change, or empty.\n:ivar comment_after: Comment after the change, or empty.\n:ivar created_at: When the change was made."
       },
       "ResultMarkForm": {
         "properties": {

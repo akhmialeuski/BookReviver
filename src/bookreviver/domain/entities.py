@@ -72,7 +72,6 @@ if TYPE_CHECKING:
         ProjectId,
         RecipeId,
         RecipeProfileId,
-        ResultMarkChangeId,
         ScanId,
         SourceId,
         StepId,
@@ -1099,28 +1098,3 @@ class PageStepChange:
             source=source,
             created_at=after.updated_at,
         )
-
-
-@frozen(kw_only=True)
-class ResultMarkChange:
-    """One change of the mark or the comment of a result, which the log of the result keeps and never rewrites.
-
-    :ivar id: Identifier of the change.
-    :ivar version_id: Version the mark and the comment belong to.
-    :ivar mark_before: Mark before the change, or None when the result had none.
-    :ivar mark_after: Mark after the change, or None when the change took it off.
-    :ivar comment_before: Comment before the change, or empty.
-    :ivar comment_after: Comment after the change, or empty.
-    :ivar created_at: When the change was made.
-    :ivar sequence: Place of the change in the log of its version, from one, which the repository gives it when it is
-                    added, so changes made at the same instant keep the order they were written in.
-    """
-
-    id: ResultMarkChangeId
-    version_id: PageVersionId
-    mark_before: ResultMark | None = None
-    mark_after: ResultMark | None = None
-    comment_before: str = ''
-    comment_after: str = ''
-    created_at: datetime
-    sequence: int = 0
