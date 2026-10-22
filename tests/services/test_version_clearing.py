@@ -37,18 +37,18 @@ class TestClear:
         :param fx_asset_store: Local asset store of the test.
         :type fx_asset_store: LocalAssetStore
         """
-        project = make_project(owner_id=new_account_id())
+        project = make_project()
         page = make_page(project_id=project.id)
         kept, deleted = (
             evolve(make_page_version(page_id=page.id, minutes=n), state=VersionState.READY) for n in (1, 2)
         )
-        await commit_project(fx_database, project, page, versions=[kept, deleted])
+        await commit_project(fx_database, fx_uow(), project, page, owner=new_account_id(), versions=[kept, deleted])
         await fx_uow().change_book(project.id, lambda repos, _project: repos.page_versions.delete_many([deleted.id]))
         clearing = VersionClearing(uow=fx_uow(), assets=fx_asset_store, project_id=project.id)
 
         await clearing.clear([kept, deleted])
 
-        remaining = await fx_uow().read(lambda repos: repos.page_versions.list_for_page(page.id))
+        remaining = await fx_uow().read_book(project.id, lambda repos: repos.page_versions.list_for_page(page.id))
         expect(remaining == [])
         assert_expectations()
 
@@ -72,10 +72,10 @@ class TestClear:
         :param monkeypatch: Fixture that restores the patched store after the test.
         :type monkeypatch: pytest.MonkeyPatch
         """
-        project = make_project(owner_id=new_account_id())
+        project = make_project()
         page = make_page(project_id=project.id)
         chosen = evolve(make_page_version(page_id=page.id), state=VersionState.READY)
-        await commit_project(fx_database, project, page, versions=[chosen])
+        await commit_project(fx_database, fx_uow(), project, page, owner=new_account_id(), versions=[chosen])
         await fx_uow().change_book(
             project.id, lambda repos, _project: repos.page_versions.update(evolve(chosen, comment=KEPT_COMMENT))
         )
@@ -85,7 +85,7 @@ class TestClear:
 
         await clearing.clear([chosen])
 
-        stored = await fx_uow().read(lambda repos: repos.page_versions.get(chosen.id))
+        stored = await fx_uow().read_book(project.id, lambda repos: repos.page_versions.get(chosen.id))
         expect((stored.state, stored.comment) == (VersionState.FAILED, KEPT_COMMENT))
         expect(stored.data[VersionData.ERROR] == BEING_COLLECTED)
         assert_expectations()

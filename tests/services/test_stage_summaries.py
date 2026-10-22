@@ -43,8 +43,9 @@ from tests.helpers.stage_reads import book_summaries, books_with_progress, stage
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Page, PageVersion, Project
+    from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.stage_summaries import StageSummary
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -98,7 +99,7 @@ async def seed_geometry(
     :type through_step: int | None
     """
     uow = kit.uow()
-    base = (await uow.read(lambda repos: repos.page_versions.list_for_page(page.id)))[0]
+    base = (await uow.read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id)))[0]
     version = evolve(
         make_page_version(page_id=page.id, minutes=1),
         stage=Stage.GEOMETRY,
@@ -107,11 +108,11 @@ async def seed_geometry(
         state=VersionState.READY,
     )
 
-    def work(repos: Repositories, _project: Project) -> None:
+    def work(repos: BookRepositories, _project: Project) -> None:
         """Add the version and the record of the stage that names it.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: The project of the page, which the change does not read.
         :type _project: Project
         """
@@ -122,19 +123,21 @@ async def seed_geometry(
     await uow.change_book(page.project_id, work)
 
 
-async def mark_version(kit: ProcessingKit, version: PageVersion, mark: ResultMark) -> None:
+async def mark_version(kit: ProcessingKit, project_id: ProjectId, version: PageVersion, mark: ResultMark) -> None:
     """Commit the mark of a stored version.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Project whose book holds the version.
+    :type project_id: ProjectId
     :param version: The version.
     :type version: PageVersion
     :param mark: The mark to set.
     :type mark: ResultMark
     """
-    uow = kit.uow()
-    project_id = (await uow.read(lambda repos: repos.pages.get(version.page_id))).project_id
-    await uow.change_book(project_id, lambda repos, _project: repos.page_versions.update(evolve(version, mark=mark)))
+    await kit.uow().change_book(
+        project_id, lambda repos, _project: repos.page_versions.update(evolve(version, mark=mark))
+    )
 
 
 async def seed_marked_chain(kit: ProcessingKit, page: Page, *, steps: int, marked_at: int) -> None:
@@ -152,13 +155,13 @@ async def seed_marked_chain(kit: ProcessingKit, page: Page, *, steps: int, marke
     :type marked_at: int
     """
     uow = kit.uow()
-    first = (await uow.read(lambda repos: repos.page_versions.list_for_page(page.id)))[0]
+    first = (await uow.read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id)))[0]
 
-    def work(repos: Repositories, _project: Project) -> None:
+    def work(repos: BookRepositories, _project: Project) -> None:
         """Add the chain of versions and the record of the stage that names the last one.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: The project of the page, which the change does not read.
         :type _project: Project
         """
@@ -297,11 +300,11 @@ class TestOfBook:
         actor, project, pages = await seed_book(fx_kit)
         uow = fx_kit.uow()
 
-        def retype(repos: Repositories, _project: Project) -> None:
+        def retype(repos: BookRepositories, _project: Project) -> None:
             """Turn the second page into a plate and the third into a blank page.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project, which the change does not read.
             :type _project: Project
             """
@@ -395,11 +398,11 @@ class TestRows:
         for page in pages:
             await seed_geometry(fx_kit, page, StageState.FRESH)
 
-        def geometry_heads(repos: Repositories) -> list[PageVersion]:
+        def geometry_heads(repos: BookRepositories) -> list[PageVersion]:
             """Read the geometry version of every page, in the order of the pages.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: The geometry version of each page.
             :rtype: list[PageVersion]
             """
@@ -410,9 +413,9 @@ class TestRows:
                 for page in pages
             ]
 
-        heads = await fx_kit.uow().read(geometry_heads)
-        await mark_version(fx_kit, heads[0], ResultMark.BAD)
-        await mark_version(fx_kit, heads[1], ResultMark.GOOD)
+        heads = await fx_kit.uow().read_book(project.id, geometry_heads)
+        await mark_version(fx_kit, project.id, heads[0], ResultMark.BAD)
+        await mark_version(fx_kit, project.id, heads[1], ResultMark.GOOD)
         rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest())
         assert [row.marked_bad for row in rows.items] == [True, False, False]
 
@@ -424,7 +427,7 @@ class TestRows:
         """
         _, project, pages = await seed_book(fx_kit)
         uow = fx_kit.uow()
-        base = (await uow.read(lambda repos: repos.page_versions.list_for_page(pages[0].id)))[0]
+        base = (await uow.read_book(project.id, lambda repos: repos.page_versions.list_for_page(pages[0].id)))[0]
         marked_base = evolve(base, review=ReviewReason.UNSURE_GUTTER)
         await uow.change_book(project.id, lambda repos, _project: repos.page_versions.update(marked_base))
         await seed_marked_chain(fx_kit, pages[0], steps=2, marked_at=0)
@@ -532,7 +535,9 @@ async def step_ids_of(kit: ProcessingKit, project: Project) -> list[StepId]:
     :returns: The identifiers of the steps.
     :rtype: list[StepId]
     """
-    stored = await kit.uow().read(lambda repos: repos.recipes.list_for_stage(project.id, Stage.GEOMETRY))
+    stored = await kit.uow().read_book(
+        project.id, lambda repos: repos.recipes.list_for_stage(project.id, Stage.GEOMETRY)
+    )
     recipe = next(recipe for recipe in stored if recipe.kind is RecipeKind.TEXT)
     return [step.step_id for step in recipe.steps]
 
@@ -593,7 +598,7 @@ class TestStepRows:
         """
         actor, project, text, _ = await seed_text_and_leaf(fx_kit)
         first, second = await step_ids_of(fx_kit, project)
-        base = (await fx_kit.uow().read(lambda repos: repos.page_versions.list_for_page(text.id)))[0]
+        base = (await fx_kit.uow().read_book(project.id, lambda repos: repos.page_versions.list_for_page(text.id)))[0]
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         by_first = (await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), first)).items[0].step
         by_second = (await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), second)).items[0].step
@@ -634,7 +639,7 @@ class TestStepRows:
         made = at_first.items[0].step
         assert made is not None
         assert made.version is not None
-        await mark_version(fx_kit, made.version, ResultMark.BAD)
+        await mark_version(fx_kit, project.id, made.version, ResultMark.BAD)
         by_first = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), first)
         by_second = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest(), second)
         of_stage = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest())

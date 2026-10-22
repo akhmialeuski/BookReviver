@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import JobId, ProjectId, SourceId
     from bookreviver.domain.values import JobEnd, SourceAnalysis, UploadedSource
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.storage import SourceStore
@@ -105,11 +105,11 @@ async def stored_book(uow: UnitOfWork, project_id: ProjectId) -> StoredBook:
     :rtype: StoredBook
     """
 
-    def work(repos: Repositories) -> StoredBook:
+    def work(repos: BookRepositories) -> StoredBook:
         """Read the four tables of the book.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :returns: The rows of the book.
         :rtype: StoredBook
         """
@@ -120,7 +120,7 @@ async def stored_book(uow: UnitOfWork, project_id: ProjectId) -> StoredBook:
             sections=list(repos.pagination_sections.list_for_project(project_id)),
         )
 
-    return await uow.read(work)
+    return await uow.read_book(project_id, work)
 
 
 def pdf_upload(

@@ -86,7 +86,7 @@ async def book_of(kit: ProcessingKit, project: Project) -> list[Page]:
     :returns: Its pages.
     :rtype: list[Page]
     """
-    listed = await kit.uow().read(lambda repos: repos.pages.list_for_project(project.id, EVERY_PAGE))
+    listed = await kit.uow().read_book(project.id, lambda repos: repos.pages.list_for_project(project.id, EVERY_PAGE))
     return list(listed.items)
 
 
@@ -102,7 +102,7 @@ async def stage_of(kit: ProcessingKit, page: Page, stage: Stage) -> PageStage:
     :returns: The record.
     :rtype: PageStage
     """
-    return await kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(page.id, stage)))
+    return await kit.uow().read_book(page.project_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, stage)))
 
 
 async def head_of(kit: ProcessingKit, page: Page, stage: Stage) -> PageVersion:
@@ -119,4 +119,4 @@ async def head_of(kit: ProcessingKit, page: Page, stage: Stage) -> PageVersion:
     """
     record = await stage_of(kit, page, stage)
     assert record.head_version_id is not None
-    return await kit.stored_version(record.head_version_id)
+    return await kit.stored_version(page.project_id, record.head_version_id)

@@ -20,8 +20,9 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Page, PageVersion
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import StepInput
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -49,11 +50,13 @@ class SidedProcessor(FakeProcessor):
 
 
 @pytest.fixture
-def fx_sided_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) -> ProcessingKit:
+def fx_sided_kit(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore) -> ProcessingKit:
     """Build a processing kit whose Geometry recipe is the one step that reads the side of the page.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :returns: The kit.
@@ -65,7 +68,9 @@ def fx_sided_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) -> P
             Stage.GEOMETRY: dict.fromkeys(RecipeKind, RecipeTemplate(processor_keys=(SIDED_KEY,))),
         }
     )
-    return ProcessingKit(fx_database, fx_asset_store, processors=[SplitNone(), SidedProcessor()], defaults=defaults)
+    return ProcessingKit(
+        fx_database, fx_uow, fx_asset_store, processors=[SplitNone(), SidedProcessor()], defaults=defaults
+    )
 
 
 async def head_of(kit: ProcessingKit, page: Page) -> PageVersion:
@@ -79,11 +84,11 @@ async def head_of(kit: ProcessingKit, page: Page) -> PageVersion:
     :rtype: PageVersion
     """
 
-    def read_head(repos: Repositories) -> PageVersion:
+    def read_head(repos: BookRepositories) -> PageVersion:
         """Read the record of the stage and the version it names, in one snapshot.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :returns: The version the stage record names.
         :rtype: PageVersion
         """
@@ -91,7 +96,7 @@ async def head_of(kit: ProcessingKit, page: Page) -> PageVersion:
         assert record.head_version_id is not None
         return repos.page_versions.get(record.head_version_id)
 
-    return await kit.uow().read(read_head)
+    return await kit.uow().read_book(page.project_id, read_head)
 
 
 class TestPageSide:

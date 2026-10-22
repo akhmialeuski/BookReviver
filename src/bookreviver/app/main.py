@@ -10,6 +10,7 @@ from fastapi import APIRouter, FastAPI
 from fastapi_pagination import add_pagination
 from fastapi_problem.handler import add_exception_handler
 
+from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.api.auth import signed_in_user
 from bookreviver.api.problems import problem_handler
@@ -25,6 +26,7 @@ from bookreviver.ports.storage import SourceStore
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.pages import PageService
+from bookreviver.services.projects import ProjectService
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -46,10 +48,12 @@ async def prepare_start(container: AsyncContainer) -> None:
 
     The board of jobs is empty when the process starts, and no job begins by itself, so what a job of the process before
     left half done is left as it is. The upload an import was receiving or running on is removed, since no job can use
-    it any more, and its sources that were stored stay. The stages whose result a replaced version of a processor made
-    are marked stale, so the workspace never shows them as up to date, and the blank leaves among them are given a
-    pending version, which the next ``prepare-pages`` job of the book writes. The two passes run in a request scope of
-    their own, as a job does, and each writes one book at a time, in a ``change_book`` of that book.
+    it any more, and its sources that were stored stay. A creation or a deletion of a book that was broken off half way
+    is finished, so the catalogue and the stores of the books list the same books before any other pass reads them. The
+    stages whose result a replaced version of a processor made are marked stale, so the workspace never shows them as up
+    to date, and the blank leaves among them are given a pending version, which the next ``prepare-pages`` job of the
+    book writes. The three passes run in a request scope of their own, as a job does, and the last two write one book
+    at a time, in a ``change_book`` of that book.
 
     :param container: Application container, which the passes take their services from.
     :type container: AsyncContainer
@@ -59,6 +63,7 @@ async def prepare_start(container: AsyncContainer) -> None:
     await container.get(StepExecutor)
     await (await container.get(SourceStore)).discard_all_staged()
     async with container() as request:
+        await (await request.get(ProjectService)).sweep()
         await (await request.get(OutdatedResults)).mark_stale()
         await (await request.get(PageService)).remake_outdated_leaves()
 
@@ -88,9 +93,10 @@ def create_app(
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         """Prepare the start, run the application, and close the container at shutdown, which cancels the jobs running.
 
-        ``prepare_start`` does what is done once before the first request. While the measurements are on, the probe of
-        the event-loop lag runs in a task group around the application. It is cancelled before the container closes, so
-        its last tick is recorded before the exporter flushes the file.
+        ``prepare_start`` does what is done once before the first request. A task group runs around the application:
+        it closes the books nobody used for their idle limit, and, while the measurements are on, it runs the probe of
+        the event-loop lag. The group is cancelled before the container closes, so the last tick of the probe is
+        recorded before the exporter flushes the file and no book is closed under the disposal of the registry.
 
         :param _app: The application, required by FastAPI's lifespan signature and unused.
         :type _app: FastAPI
@@ -101,15 +107,16 @@ def create_app(
         try:
             await prepare_start(container)
             async with AsyncExitStack() as stack:
+                group = await stack.enter_async_context(anyio.create_task_group())
+                # Registered after the group, so it runs first on exit and the group has nothing left to wait for
+                stack.callback(group.cancel_scope.cancel)
+                group.start_soon((await container.get(BookDatabases)).keep_closing_idle)
                 if resolved.tracing.enabled:
                     probe = LoopLagProbe(
                         tracer=await container.get(Tracer),
                         interval_seconds=resolved.tracing.loop_lag_interval_seconds,
                     )
-                    group = await stack.enter_async_context(anyio.create_task_group())
                     group.start_soon(probe.run)
-                    # Registered after the group, so it runs first on exit and the group has nothing left to wait for
-                    stack.callback(group.cancel_scope.cancel)
                 yield
         finally:
             await container.close()

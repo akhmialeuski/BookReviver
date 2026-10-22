@@ -31,7 +31,7 @@ from tests.helpers.builders import (
     new_account_id,
 )
 from tests.helpers.scripted_runner import TASKS_PER_JOB
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import commit_project, store_project
 from tests.helpers.sse import EVENT_STREAM_TYPE, STREAM_TIMEOUT_SECONDS, EventStreamReader, StreamedEvent
 
 if TYPE_CHECKING:
@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Job
+    from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fakes_jobs import JobFakes
 
 pytestmark = pytest.mark.anyio
@@ -65,36 +66,38 @@ ITEMS_FIELD: str = 'items'
 
 
 @pytest.fixture
-async def fx_queued_job(fx_fakes: JobFakes, fx_database: SqlDatabase, fx_actor: Actor) -> Job:
+async def fx_queued_job(fx_fakes: JobFakes, fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Job:
     """Store a project of the signed-in account with a queued job that nothing runs.
 
     :param fx_fakes: Adapters the application runs on.
     :type fx_fakes: JobFakes
-    :param fx_database: Database of the test, which the application runs on.
-    :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The queued job.
     :rtype: Job
     """
-    project = make_project(owner_id=fx_actor.account_id)
-    await commit_project(fx_database, project)
+    project = make_project()
+    await store_project(fx_uow(), project, owner=fx_actor.account_id)
     return fx_fakes.board.put(make_job(project_id=project.id))
 
 
 @pytest.fixture
-async def fx_strangers_job(fx_fakes: JobFakes, fx_database: SqlDatabase) -> Job:
+async def fx_strangers_job(fx_fakes: JobFakes, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory) -> Job:
     """Store a project of another account with a queued job.
 
     :param fx_fakes: Adapters the application runs on.
     :type fx_fakes: JobFakes
     :param fx_database: Database of the test, which the application runs on.
     :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :returns: The queued job of the other account.
     :rtype: Job
     """
-    project = make_project(owner_id=new_account_id())
-    await commit_project(fx_database, project)
+    project = make_project()
+    await commit_project(fx_database, fx_uow(), project, owner=new_account_id())
     return fx_fakes.board.put(make_job(project_id=project.id))
 
 
@@ -120,7 +123,7 @@ class TestReadJob:
         self,
         fx_client: httpx.AsyncClient,
         fx_fakes: JobFakes,
-        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
         fx_queued_job: Job,
     ) -> None:
@@ -130,15 +133,15 @@ class TestReadJob:
         :type fx_client: httpx.AsyncClient
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_queued_job: Queued import job of the signed-in account.
         :type fx_queued_job: Job
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         run = fx_fakes.board.put(
             make_job(project_id=project.id, kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.GEOMETRY).to_map())
         )

@@ -28,7 +28,7 @@ from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import FakeBoardProvider, RecordingEventBus
 from tests.helpers.scripted_runner import ScriptedRunner
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -56,12 +56,18 @@ SOURCE_ID_PARAM: str = 'source_id'
 
 @pytest.fixture
 async def fx_book(
-    fx_database: SqlDatabase, fx_source_store: SourceStore, fx_asset_store: AssetStore, fx_actor: Actor
+    fx_database: SqlDatabase,
+    fx_uow: UnitOfWorkFactory,
+    fx_source_store: SourceStore,
+    fx_asset_store: AssetStore,
+    fx_actor: Actor,
 ) -> Book:
     """Commit and store a book of the signed-in account.
 
     :param fx_database: Database of the test, which the application runs on.
     :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_source_store: Source store of the application.
     :type fx_source_store: SourceStore
     :param fx_asset_store: Asset store of the application.
@@ -71,15 +77,19 @@ async def fx_book(
     :returns: The stored book.
     :rtype: Book
     """
-    return await commit_book(fx_database, fx_source_store, fx_asset_store, fx_actor)
+    return await commit_book(fx_database, fx_uow(), fx_source_store, fx_asset_store, fx_actor)
 
 
 @pytest.fixture
-async def fx_strangers_book(fx_database: SqlDatabase, fx_source_store: SourceStore, fx_asset_store: AssetStore) -> Book:
+async def fx_strangers_book(
+    fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_source_store: SourceStore, fx_asset_store: AssetStore
+) -> Book:
     """Commit and store a book of an account that is not signed in.
 
     :param fx_database: Database of the test, which the application runs on.
     :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_source_store: Source store of the application.
     :type fx_source_store: SourceStore
     :param fx_asset_store: Asset store of the application.
@@ -87,7 +97,7 @@ async def fx_strangers_book(fx_database: SqlDatabase, fx_source_store: SourceSto
     :returns: The stored book.
     :rtype: Book
     """
-    return await commit_book(fx_database, fx_source_store, fx_asset_store, None)
+    return await commit_book(fx_database, fx_uow(), fx_source_store, fx_asset_store, None)
 
 
 def _sources_path(book: Book) -> str:
@@ -477,7 +487,7 @@ class TestListScans:
 
     @pytest.mark.parametrize('full', [Rendition.FULL_JPEG, Rendition.FULL_PNG])
     async def test_full_image_path_has_the_extension_of_the_format_recorded_with_the_scan(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor, full: Rendition
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, full: Rendition
     ) -> None:
         """Verify the path of the full image names the format its scan was stored in, whatever the project's policy.
 
@@ -485,18 +495,18 @@ class TestListScans:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param full: Format the scan records for its full image.
         :type full: Rendition
         """
         policy = ImagePolicy.LOSSLESS if full is Rendition.FULL_JPEG else ImagePolicy.COMPACT
-        project = evolve(make_project(owner_id=fx_actor.account_id), image_policy=policy)
+        project = evolve(make_project(), image_policy=policy)
         source = make_source(project_id=project.id)
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True, full=full))
-        await commit_project(fx_database, project, sources=[source], scans=[scan])
+        await store_project(fx_uow(), project, owner=fx_actor.account_id, sources=[source], scans=[scan])
 
         response = await fx_client.get(f'{PROJECTS_PATH}/{project.id}/scans')
 
@@ -505,20 +515,22 @@ class TestListScans:
         assert images.full == f'{IIIF_PATH}/{ProjectKeys(project.id).scan_rendition(scan, full)}'
 
     async def test_scan_without_ready_renditions_has_no_images(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify a scan whose renditions are not cut yet is listed without image paths.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
+        project = make_project()
         source = make_source(project_id=project.id)
-        await commit_project(fx_database, project, sources=[source], scans=[make_scan(source=source, number=0)])
+        await store_project(
+            fx_uow(), project, owner=fx_actor.account_id, sources=[source], scans=[make_scan(source=source, number=0)]
+        )
 
         response = await fx_client.get(f'{PROJECTS_PATH}/{project.id}/scans')
 

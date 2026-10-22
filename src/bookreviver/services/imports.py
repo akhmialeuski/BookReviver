@@ -66,8 +66,8 @@ from bookreviver.domain.ids import JobId, PageId, ScanId, SourceId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import ImportRequest, JobEnd, PageStageKey, Renditions, StageRun, UploadPath
 from bookreviver.services.base_versions import SPLIT_NONE, BaseVersions
+from bookreviver.services.library import Library
 from bookreviver.services.page_labels import PageLabels
-from bookreviver.services.projects import owned_project
 from bookreviver.services.source_labels import SourceLabels
 from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.steps import StepRun
@@ -81,7 +81,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import MetadataSuggestion, UploadedSource
     from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
     from bookreviver.ports.ordering import OrderKeys
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard, JobControl
     from bookreviver.ports.storage import AssetStore, IncomingFile, SourceStore
     from bookreviver.services.processing_parts import ProcessingParts
@@ -234,7 +234,9 @@ class ImportRun:
 
         :raises JobCancelledError: If the job was cancelled, which the first report after it finds out.
         """
-        unready = await self._uow.read(lambda repos: repos.scans.list_unready(self._job.project_id))
+        unready = await self._uow.read_book(
+            self._job.project_id, lambda repos: repos.scans.list_unready(self._job.project_id)
+        )
         await self._report(total=len(unready))
         await self._import_sources(list(self._files))
         await self._cut_scans()
@@ -304,7 +306,9 @@ class ImportRun:
         """
         files = [self._files[name] for name in uploaded.names]
         main = files[0]
-        twin = await self._uow.read(lambda repos: repos.sources.find_by_sha256(self._job.project_id, main.sha256))
+        twin = await self._uow.read_book(
+            self._job.project_id, lambda repos: repos.sources.find_by_sha256(self._job.project_id, main.sha256)
+        )
         if twin is not None:
             await self._reject(
                 uploaded.names,
@@ -346,11 +350,11 @@ class ImportRun:
             for number, facts in enumerate(analysis.scans)
         ]
 
-        def store(repos: Repositories, project: Project) -> tuple[list[Page], bool]:
+        def store(repos: BookRepositories, project: Project) -> tuple[list[Page], bool]:
             """Store the source with its scans and pages, and describe the book.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param project: The project as the change finds it.
             :type project: Project
             :returns: The pages as stored, and whether the description of the book changed.
@@ -393,11 +397,11 @@ class ImportRun:
 
         pages, described = await self._uow.change_book(source.project_id, store)
 
-        def retract(repos: Repositories, _project: Project) -> None:
+        def retract(repos: BookRepositories, _project: Project) -> None:
             """Delete the pages and the source, which takes their scans with it.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the retraction does not need.
             :type _project: Project
             """
@@ -423,7 +427,7 @@ class ImportRun:
             await self._publisher.publish(ProjectChanged(project_id=source.project_id))
         await self._report(done=len(uploaded.names), total=len(scans))
 
-    def _describe_book(self, repos: Repositories, project: Project, suggestion: MetadataSuggestion) -> bool:
+    def _describe_book(self, repos: BookRepositories, project: Project, suggestion: MetadataSuggestion) -> bool:
         """Fill the empty fields of the book description from what a source suggests, never the title.
 
         Writes through the repositories of its caller and opens no transaction, so the change joins the one of the
@@ -431,7 +435,7 @@ class ImportRun:
         source that has a value for a field is the one that gives it.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param project: The project as the change of the source found it.
         :type project: Project
         :param suggestion: Description fields found in the source, empty where nothing was found.
@@ -454,11 +458,11 @@ class ImportRun:
         :raises BaseExceptionGroup: If a cutter was stopped by a ``BaseException``, such as the death of the worker.
         """
 
-        def read(repos: Repositories) -> tuple[Sequence[Scan], dict[SourceId, SourceKind]]:
+        def read(repos: BookRepositories) -> tuple[Sequence[Scan], dict[SourceId, SourceKind]]:
             """Read the scans without renditions and the kinds of the sources of the project.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: The scans to cut in the order of the book, and the kind of each imported source by identifier.
             :rtype: tuple[Sequence[Scan], dict[SourceId, SourceKind]]
             """
@@ -466,7 +470,7 @@ class ImportRun:
             kinds = {source.id: source.kind for source in sources if source.kind is not None}
             return repos.scans.list_unready(self._job.project_id), kinds
 
-        scans, kinds = await self._uow.read(read)
+        scans, kinds = await self._uow.read_book(self._job.project_id, read)
         pending = iter(scans)
 
         async def worker() -> None:
@@ -503,11 +507,11 @@ class ImportRun:
         :raises JobCancelledError: If the job was cancelled.
         """
 
-        def start(repos: Repositories, project: Project) -> tuple[Project, list[Page]]:
+        def start(repos: BookRepositories, project: Project) -> tuple[Project, list[Page]]:
             """Read the project and the pages of the scan.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param project: The project as the change finds it, whose image policy chooses the format of the scan.
             :type project: Project
             :returns: The project, and the pages cut from the scan.
@@ -544,11 +548,11 @@ class ImportRun:
                     )
                 )
 
-        def finish(repos: Repositories, _project: Project) -> tuple[bool, list[PageStage]]:
+        def finish(repos: BookRepositories, _project: Project) -> tuple[bool, list[PageStage]]:
             """Store the versions and mark the scan ready, unless the book changed while the files were cut.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the check does not need.
             :type _project: Project
             :returns: Whether the scan and its pages were still the ones the versions were made for, and the records
@@ -663,6 +667,7 @@ class ImportService:
         :type parts: ProcessingParts
         """
         self._uow = uow
+        self._library = Library(uow=uow)
         self._storage = storage
         self._imaging = imaging
         self._runtime = runtime
@@ -685,7 +690,7 @@ class ImportService:
         :raises NotFoundError: If the actor has no such project.
         :raises ConflictError: If the project already has an import queued or running.
         """
-        await self._uow.read(lambda repos: owned_project(repos.projects, actor, project_id))
+        await self._library.open(actor, project_id)
         self._refuse_active_import(project_id)
 
     def _refuse_active_import(self, project_id: ProjectId) -> None:
@@ -800,10 +805,11 @@ class ImportService:
             steps = (await self._recipes.of_kind(project_id, Stage.PAGE_SPLIT, RecipeKind.TEXT)).enabled_steps
             if not steps or steps[0].processor_key != AUTOMATIC_SPLIT:
                 return
-            pages = await self._uow.read(
+            pages = await self._uow.read_book(
+                project_id,
                 lambda repos: [
                     page.id for source_id in run.imported for page in repos.pages.list_for_source(project_id, source_id)
-                ]
+                ],
             )
             if pages:
                 await self._starter.enqueue(

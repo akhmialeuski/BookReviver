@@ -56,7 +56,7 @@ if TYPE_CHECKING:
         VersionScale,
     )
     from bookreviver.domain.geometry import EditGeometry
-    from bookreviver.domain.ids import AccountId, ProjectId, RecipeId, RecipeProfileId, ScanId, SourceId
+    from bookreviver.domain.ids import RecipeId, RecipeProfileId, ScanId, SourceId
     from bookreviver.domain.page_label_rules import PageLabelRule
 
 # JSON-compatible metadata as read from a source file
@@ -570,18 +570,6 @@ class CarryRequest:
     scope: CarryScope
     page_ids: tuple[PageId, ...] = ()
     overwrite: bool = False
-
-
-@frozen
-class BookPlaceKey:
-    """The key of the place of a book, which a repository takes as one value: the account that reads it and the book.
-
-    :ivar account_id: Account the place belongs to.
-    :ivar project_id: Book the place is in.
-    """
-
-    account_id: AccountId
-    project_id: ProjectId
 
 
 @frozen(kw_only=True)

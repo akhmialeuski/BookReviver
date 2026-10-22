@@ -15,7 +15,7 @@ from tests.helpers.stage_reads import stage_rows
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, PageVersion, Project
     from bookreviver.domain.ids import PageId, PageVersionId, StepId
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -94,11 +94,11 @@ async def chain_of(kit: ProcessingKit, page: Page, stage: Stage) -> list[PageVer
     """
     head = await head_of(kit, page, stage)
 
-    def walk(repos: Repositories) -> list[PageVersion]:
+    def walk(repos: BookRepositories) -> list[PageVersion]:
         """Walk back from the current version of the stage while the versions belong to it.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :returns: The versions of the stage, the first step first.
         :rtype: list[PageVersion]
         """
@@ -111,7 +111,7 @@ async def chain_of(kit: ProcessingKit, page: Page, stage: Stage) -> list[PageVer
             chain.insert(0, version)
         return chain
 
-    return await kit.uow().read(walk)
+    return await kit.uow().read_book(page.project_id, walk)
 
 
 async def seed_staged_book(kit: ProcessingKit, case: StageCase) -> StagedBook:

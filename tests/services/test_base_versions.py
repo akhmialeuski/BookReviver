@@ -11,7 +11,7 @@ from bookreviver.domain.enums import BlankParam, ColorMode, PaperFill, Rendition
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.values import PageSize, Renditions
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
-from tests.helpers.builders import EPOCH, make_page, make_project, make_scan, make_source, new_account_id
+from tests.helpers.builders import EPOCH, make_page, make_project, make_scan, make_source
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Scan
@@ -31,7 +31,7 @@ def _cut_scan(*, dpi_x: float | None = None, dpi_y: float | None = None, full: R
     :returns: The scan.
     :rtype: Scan
     """
-    source = make_source(project_id=make_project(owner_id=new_account_id()).id)
+    source = make_source(project_id=make_project().id)
     scan = make_scan(source=source, number=0)
     facts = evolve(scan.facts, width_px=640, height_px=480, color_mode=ColorMode.GRAY, dpi_x=dpi_x, dpi_y=dpi_y)
     return evolve(scan, facts=facts, renditions=Renditions(ready=True, full=full))
@@ -85,7 +85,7 @@ class TestBlank:
 
     def test_builds_a_pending_version_of_the_page_order_stage_with_the_size_in_its_data(self) -> None:
         """Verify a blank leaf's version is pending, in the page order stage, in the format given."""
-        page = make_page(project_id=make_project(owner_id=new_account_id()).id)
+        page = make_page(project_id=make_project().id)
         size = PageSize(width_px=100, height_px=150, dpi=96.0)
 
         version = BaseVersions.blank(page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH)
@@ -99,7 +99,7 @@ class TestBlank:
 
     def test_a_white_leaf_has_the_size_alone_for_its_parameters(self) -> None:
         """Verify a leaf without a paper keeps the parameters it had before leaves could have one."""
-        page = make_page(project_id=make_project(owner_id=new_account_id()).id)
+        page = make_page(project_id=make_project().id)
         size = PageSize(width_px=100, height_px=150, dpi=96.0)
 
         version = BaseVersions.blank(page=page, size=size, full=Rendition.FULL_PNG, moment=EPOCH)
@@ -108,7 +108,7 @@ class TestBlank:
 
     def test_a_leaf_of_the_paper_names_the_pages_it_takes_the_paper_from_in_a_fixed_order(self) -> None:
         """Verify the identifier does not depend on the order the pages are given in, and differs from a white leaf's."""
-        page = make_page(project_id=make_project(owner_id=new_account_id()).id)
+        page = make_page(project_id=make_project().id)
         size = PageSize(width_px=100, height_px=150)
         pages = [PageVersionId('b' * 16), PageVersionId('a' * 16)]
 

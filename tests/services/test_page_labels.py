@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Page, Project
     from bookreviver.domain.ids import PageId, ProjectId
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.clock import FixedClock
     from tests.helpers.database import UnitOfWorkFactory
@@ -61,7 +61,7 @@ async def _commit_book(uow: UnitOfWork, owner: Actor) -> tuple[Project, list[Pag
     :returns: The project and its pages in book order.
     :rtype: tuple[Project, list[Page]]
     """
-    project = make_project(owner_id=owner.account_id)
+    project = make_project()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(LAYOUT))
     pages = [
         evolve(
@@ -73,7 +73,7 @@ async def _commit_book(uow: UnitOfWork, owner: Actor) -> tuple[Project, list[Pag
         )
         for key, (kind, included) in zip(keys, LAYOUT, strict=True)
     ]
-    await store_project(uow, project, *pages)
+    await store_project(uow, project, *pages, owner=owner.account_id)
     return project, pages
 
 
@@ -87,7 +87,9 @@ async def _stored(uow: UnitOfWork, project_id: ProjectId) -> dict[PageId, Page]:
     :returns: The pages of the book as committed, in book order, by identifier.
     :rtype: dict[PageId, Page]
     """
-    return await uow.read(lambda repos: {page.id: page for page in book_pages(repos.pages, project_id)})
+    return await uow.read_book(
+        project_id, lambda repos: {page.id: page for page in book_pages(repos.pages, project_id)}
+    )
 
 
 async def _update_kind(service: PageService, actor: Actor, project_id: ProjectId, page_ids: list[PageId]) -> None:
@@ -154,7 +156,7 @@ class TestUpdate:
             PageChanges(label=NEW_LABEL, kind=PageKind.OTHER, included=False, notes=NEW_NOTES),
         )
 
-        stored = await fx_uow().read(lambda repos: repos.pages.get(pages[2].id))
+        stored = await fx_uow().read_book(project.id, lambda repos: repos.pages.get(pages[2].id))
         expect(
             (stored.label, stored.kind, stored.included, stored.notes) == (NEW_LABEL, PageKind.OTHER, False, NEW_NOTES)
         )
@@ -276,11 +278,11 @@ class TestConcurrentWrites:
         anchor = PageAnchor(page_id=pages[3].id, side=Side.AFTER)
         seen_by_job: list[PageId] = []
 
-        def job_writes_content(repos: Repositories, _project: Project) -> None:
+        def job_writes_content(repos: BookRepositories, _project: Project) -> None:
             """Note the order of the book the job finds, and record the content of the second moved page.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             """

@@ -178,7 +178,7 @@ async def stored_parts(kit: ProcessingKit, project: Project, step_id: StepId) ->
     :returns: The stored values of the step.
     :rtype: Sequence[StepValues]
     """
-    return await kit.uow().read(lambda repos: repos.step_values.list_for_step(project.id, step_id))
+    return await kit.uow().read_book(project.id, lambda repos: repos.step_values.list_for_step(project.id, step_id))
 
 
 async def stages_of(kit: ProcessingKit, pages: list[Page]) -> list[StageState]:
@@ -227,7 +227,9 @@ class TestPageValues:
         values = PageValues(fx_kit, actor, project.id)
         await values.set(key, STRENGTH_PARAMETER, STRONGER)
         await values.set(key, FAILING_PARAMETER, NOT_FAILING)
-        history = await fx_kit.uow().read(lambda repos: repos.page_step_changes.list_for_page(page.id, Stage.GEOMETRY))
+        history = await fx_kit.uow().read_book(
+            project.id, lambda repos: repos.page_step_changes.list_for_page(page.id, Stage.GEOMETRY)
+        )
         expect(
             [(change.before, change.after) for change in history]
             == [
@@ -252,7 +254,7 @@ class TestPageValues:
         await run_stage(fx_kit, actor, project, GEOMETRY_RUN)
         again = await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         record = await stage_of(fx_kit, page, Stage.GEOMETRY)
-        history = await fx_kit.uow().read(lambda repos: repos.page_step_changes.list_for_page(page.id))
+        history = await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_changes.list_for_page(page.id))
         expect(record.state is StageState.FRESH)
         expect(again.changes == ())
         expect(len(history) == 1)
@@ -270,8 +272,8 @@ class TestPageValues:
         key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
         with pytest.raises(InvalidParametersError):
             await PageValues(fx_kit, actor, project.id).set(key, UNKNOWN_FIELD, 1)
-        state, history = await fx_kit.uow().read(
-            lambda repos: (repos.page_step_states.find(key), repos.page_step_changes.list_for_page(page.id))
+        state, history = await fx_kit.uow().read_book(
+            project.id, lambda repos: (repos.page_step_states.find(key), repos.page_step_changes.list_for_page(page.id))
         )
         expect(state is None)
         expect(history == [])
@@ -349,8 +351,8 @@ class TestTakingAPageValueBack:
         await run_stage(fx_kit, actor, project, GEOMETRY_RUN)
         await values.take_back(key, STRENGTH_PARAMETER)
         record = await stage_of(fx_kit, page, Stage.GEOMETRY)
-        history = await fx_kit.uow().read(lambda repos: repos.page_step_changes.list_for_page(page.id))
-        expect(await fx_kit.uow().read(lambda repos: repos.page_step_states.find(key)) is None)
+        history = await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_changes.list_for_page(page.id))
+        expect(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.find(key)) is None)
         expect(record.state is StageState.STALE)
         expect((history[-1].before, history[-1].after) == ({STRENGTH_PARAMETER: STRONGER}, None))
         assert_expectations()
@@ -367,10 +369,10 @@ class TestTakingAPageValueBack:
         edit = await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
         await values.set(key, STRENGTH_PARAMETER, STRONGER)
         await values.take_back(key, STRENGTH_PARAMETER)
-        left = await fx_kit.uow().read(lambda repos: repos.page_step_states.get(key))
+        left = await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.get(key))
         await values.set(key, STRENGTH_PARAMETER, STRONGER)
         await fx_kit.edits().delete(actor, project.id, key)
-        state = await fx_kit.uow().read(lambda repos: repos.page_step_states.get(key))
+        state = await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.get(key))
         expect(left.params == {} and left.edit == edit)
         expect((state.params, state.edit) == ({STRENGTH_PARAMETER: STRONGER}, None))
         assert_expectations()
@@ -620,7 +622,9 @@ class TestValuesForPartsOfTheBook:
         pages = [(await fx_kit.seed_scan_page(second, order_key=f'a{number}'))[0] for number in range(2)]
         for page in pages:
             await fx_kit.seed_base_version(page)
-        recipes = await fx_kit.uow().read(lambda repos: repos.recipes.list_for_stage(first.id, Stage.GEOMETRY))
+        recipes = await fx_kit.uow().read_book(
+            first.id, lambda repos: repos.recipes.list_for_stage(first.id, Stage.GEOMETRY)
+        )
         await fx_kit.uow().change_book(
             second.id,
             lambda repos, _project: repos.recipes.add_many(
@@ -843,8 +847,9 @@ class TestRunWithPageSettings:
         preview = StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=(form,), step_index=0)
         await fx_kit.service().start_preview(actor, project.id, preview)
         await fx_kit.work_queue()
-        previews = await fx_kit.uow().read(
-            lambda repos: repos.page_versions.list_for_stage(page.id, Stage.GEOMETRY, VersionScale.PREVIEW, EVERYTHING)
+        previews = await fx_kit.uow().read_book(
+            project.id,
+            lambda repos: repos.page_versions.list_for_stage(page.id, Stage.GEOMETRY, VersionScale.PREVIEW, EVERYTHING),
         )
         [version] = previews.items
         assert version.params[STRENGTH_PARAMETER] == STRONGER

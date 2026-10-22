@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Page, PageVersion, Project, Scan, Source
+    from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.storage import AssetStore, SourceStore
 
 SCANS_PER_SOURCE: int = 3
@@ -44,13 +45,17 @@ class Book(NamedTuple):
     version: PageVersion
 
 
-async def commit_book(database: SqlDatabase, sources: SourceStore, assets: AssetStore, owner: Actor | None) -> Book:
+async def commit_book(
+    database: SqlDatabase, uow: UnitOfWork, sources: SourceStore, assets: AssetStore, owner: Actor | None
+) -> Book:
     """Commit and store a project of two sources with scans, and one page cut from a scan of the first source.
 
     Every source has its file in the source store, and every scan and the page have their full image in the asset store.
 
-    :param database: SQL database to commit into, which gets the account of the project when it does not store it.
+    :param database: Catalogue to commit into, which gets the account of the owner when it does not store it.
     :type database: SqlDatabase
+    :param uow: Unit of work to store the book through, over the same catalogue.
+    :type uow: UnitOfWork
     :param sources: Source store receiving the two sources.
     :type sources: SourceStore
     :param assets: Asset store receiving the renditions of the scans and the image of the page.
@@ -60,7 +65,7 @@ async def commit_book(database: SqlDatabase, sources: SourceStore, assets: Asset
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project(owner_id=new_account_id() if owner is None else owner.account_id)
+    project = make_project()
     first = make_source(project_id=project.id, name='part1.pdf')
     second = make_source(project_id=project.id, name='part2.pdf', minutes=1)
     ready = Renditions(ready=True)
@@ -71,7 +76,10 @@ async def commit_book(database: SqlDatabase, sources: SourceStore, assets: Asset
     ]
     page = make_page(project_id=project.id, scan=scans[0])
     version = evolve(make_page_version(page_id=page.id), renditions=ready)
-    await commit_project(database, project, page, sources=[first, second], scans=scans, versions=[version])
+    owner_id = new_account_id() if owner is None else owner.account_id
+    await commit_project(
+        database, uow, project, page, owner=owner_id, sources=[first, second], scans=scans, versions=[version]
+    )
     keys = ProjectKeys(project.id)
     for source in (first, second):
         job_id = JobId(uuid4())

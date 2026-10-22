@@ -13,7 +13,7 @@ from bookreviver.domain.enums import RecipeKind
 from bookreviver.domain.values import Renditions
 from tests.helpers.builders import make_page, make_project, make_scan, make_source
 from tests.helpers.processing import ProcessingFakesProvider
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -21,8 +21,8 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Page, Project
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -92,26 +92,26 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_book(fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor) -> Book:
+async def fx_book(fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     """Commit a book of three pages and read the step of its geometry recipe.
 
     :param fx_client: Client of the running application.
     :type fx_client: httpx.AsyncClient
-    :param fx_database: Database of the test, which the application runs on.
-    :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project(owner_id=fx_actor.account_id)
+    project = make_project()
     sources = [make_source(project_id=project.id, name=f'{order_key}.pdf') for order_key in ORDER_KEYS]
     scans = [evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True)) for source in sources]
     pages = [
         make_page(project_id=project.id, order_key=order_key, scan=scan)
         for order_key, scan in zip(ORDER_KEYS, scans, strict=True)
     ]
-    await commit_project(fx_database, project, *pages, sources=sources, scans=scans)
+    await store_project(fx_uow(), project, *pages, owner=fx_actor.account_id, sources=sources, scans=scans)
     listed = await fx_client.get(f'{PROJECTS_PATH}/{project.id}/stages/geometry/recipes')
     recipe = next(
         recipe

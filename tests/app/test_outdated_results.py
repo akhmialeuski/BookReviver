@@ -14,21 +14,19 @@ from tests.helpers.builders import (
     make_project,
     make_scan,
     make_source,
-    new_account_id,
 )
 from tests.helpers.fakes_jobs import JobFakes, JobFakesProvider
 from tests.helpers.processing import ProcessingFakesProvider
 from tests.helpers.processors import FakeProcessor
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from dishka import Provider
 
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Page, PageStage, PageVersion, Project, Scan, Source
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.domain.entities import Actor, Page, PageStage, PageVersion, Project, Scan, Source
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
@@ -73,7 +71,7 @@ def fx_book() -> Book:
     :returns: The book, not stored yet.
     :rtype: Book
     """
-    project = make_project(owner_id=new_account_id())
+    project = make_project()
     source = make_source(project_id=project.id)
     scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
     page = make_page(project_id=project.id, scan=scan)
@@ -100,35 +98,36 @@ def fx_book() -> Book:
 
 @pytest.fixture
 async def fx_extra_providers(
-    fx_fakes: JobFakes, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_book: Book
+    fx_fakes: JobFakes, fx_uow: UnitOfWorkFactory, fx_book: Book, fx_actor: Actor
 ) -> Sequence[Provider]:
     """Store the book before the application starts, and give the application the fakes and the fake catalogue.
 
     :param fx_fakes: Adapters of the test.
     :type fx_fakes: JobFakes
-    :param fx_database: Database of the test, which the application runs on.
-    :type fx_database: SqlDatabase
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
     :param fx_book: The book to store.
     :type fx_book: Book
+    :param fx_actor: Account that owns the book.
+    :type fx_actor: Actor
     :returns: The providers of the fakes and of the fake processors.
     :rtype: Sequence[Provider]
     """
-    await commit_project(
-        fx_database,
+    await store_project(
+        fx_uow(),
         fx_book.project,
         fx_book.page,
+        owner=fx_actor.account_id,
         sources=[fx_book.source],
         scans=[fx_book.scan],
         versions=fx_book.versions,
     )
 
-    def save_records(repos: Repositories, _project: Project) -> None:
+    def save_records(repos: BookRepositories, _project: Project) -> None:
         """Save the fresh records of the book.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: Project of the book, which the work does not need.
         :type _project: Project
         """
@@ -158,11 +157,12 @@ class TestStart:
         :param fx_book: The stored book.
         :type fx_book: Book
         """
-        states = await fx_uow().read(
+        states = await fx_uow().read_book(
+            fx_book.project.id,
             lambda repos: [
                 repos.page_stages.get(PageStageKey(fx_book.page.id, stage)).state
                 for stage in (Stage.PAGE_SPLIT, Stage.GEOMETRY)
-            ]
+            ],
         )
 
         assert (states, fx_fakes.events.published) == ([StageState.FRESH, StageState.STALE], [])

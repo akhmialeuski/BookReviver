@@ -21,7 +21,7 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 /**
  * List Projects
  *
- * List the projects of the signed-in account, most recently updated first.
+ * List the projects of the signed-in account, the latest added first.
  */
 export const listProjectsApiV1ProjectsGet = <ThrowOnError extends boolean = false>(options?: Options<ListProjectsApiV1ProjectsGetData, ThrowOnError>): RequestResult<ListProjectsApiV1ProjectsGetResponses, ListProjectsApiV1ProjectsGetErrors, ThrowOnError> => (options?.client ?? client).get<ListProjectsApiV1ProjectsGetResponses, ListProjectsApiV1ProjectsGetErrors, ThrowOnError>({ url: '/api/v1/projects', ...options });
 

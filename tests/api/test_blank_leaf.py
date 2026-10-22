@@ -21,15 +21,14 @@ from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import Renditions
 from bookreviver.services.base_versions import BaseVersions
 from tests.helpers.builders import EPOCH, make_page, make_page_stage, make_project, make_scan, make_source
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     import httpx
 
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project
     from bookreviver.domain.entities import Page as BookPage
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.storage import AssetStore
     from tests.helpers.board_idle import JobsIdle
     from tests.helpers.database import UnitOfWorkFactory
@@ -97,13 +96,9 @@ def _jpeg() -> bytes:
 
 
 @pytest.fixture
-async def fx_book(
-    fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_actor: Actor
-) -> Book:
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_actor: Actor) -> Book:
     """Commit the book and store the full image of every scan and of every base version as a real JPEG.
 
-    :param fx_database: Database of the test, which the application runs on.
-    :type fx_database: SqlDatabase
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
     :param fx_asset_store: Asset store of the application.
@@ -113,7 +108,7 @@ async def fx_book(
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project(owner_id=fx_actor.account_id)
+    project = make_project()
     source = make_source(project_id=project.id)
     kinds = [PageKind.TEXT, PageKind.BLANK, PageKind.BLANK]
     scans = [
@@ -134,13 +129,15 @@ async def fx_book(
         BaseVersions.split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH)
         for page, scan in zip(pages, scans, strict=True)
     ]
-    await commit_project(fx_database, project, *pages, sources=[source], scans=scans, versions=versions)
+    await store_project(
+        fx_uow(), project, *pages, owner=fx_actor.account_id, sources=[source], scans=scans, versions=versions
+    )
 
-    def save_heads(repos: Repositories, _project: Project) -> None:
+    def save_heads(repos: BookRepositories, _project: Project) -> None:
         """Make the base version of each page the current version of the page split, as the import does.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: The project as the change finds it, which the work does not need.
         :type _project: Project
         """

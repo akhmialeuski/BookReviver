@@ -6,7 +6,6 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from fastapi import status
 
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.api.schemas.processing import RecipeSchema
 from bookreviver.api.schemas.profiles import (
     AppliedProfileSchema,
@@ -18,7 +17,7 @@ from bookreviver.domain.enums import RecipeKind, Stage
 from bookreviver.domain.values import Step
 from tests.helpers.builders import make_project, make_recipe_profile, new_account_id
 from tests.helpers.processing import ProcessingFakesProvider
-from tests.helpers.seeding import commit_project, ensure_account
+from tests.helpers.seeding import ensure_account, store_project
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -28,6 +27,8 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project, RecipeProfile
+    from bookreviver.ports.persistence import UnitOfWork
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -156,33 +157,35 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_project(fx_database: SqlDatabase, fx_actor: Actor) -> Project:
+async def fx_project(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Project:
     """Commit a book of the signed-in account.
 
-    :param fx_database: Database of the test, which the application runs on.
-    :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored project.
     :rtype: Project
     """
-    project = make_project(owner_id=fx_actor.account_id)
-    await commit_project(fx_database, project)
+    project = make_project()
+    await store_project(fx_uow(), project, owner=fx_actor.account_id)
     return project
 
 
-async def _store(database: SqlDatabase, profile: RecipeProfile) -> RecipeProfile:
+async def _store(database: SqlDatabase, uow: UnitOfWork, profile: RecipeProfile) -> RecipeProfile:
     """Commit a profile as an earlier request would have, and the account owning it unless the database stores it.
 
-    :param database: Database of the test, which the application runs on.
+    :param database: Catalogue of the test, which the application runs on.
     :type database: SqlDatabase
+    :param uow: Unit of work over the catalogue and the books of the test.
+    :type uow: UnitOfWork
     :param profile: Profile to store.
     :type profile: RecipeProfile
     :returns: The profile as stored.
     :rtype: RecipeProfile
     """
     await ensure_account(database, profile.account_id)
-    return await SqlAlchemyUnitOfWork(database).change(lambda repos: repos.recipe_profiles.add(profile))
+    return await uow.change(lambda repos: repos.recipe_profiles.add(profile))
 
 
 class TestProfiles:
@@ -252,7 +255,7 @@ class TestProfiles:
         assert_expectations()
 
     async def test_a_profile_of_another_account_is_a_404_problem(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_project: Project
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_project: Project
     ) -> None:
         """Verify another account's profile is not listed and cannot be changed or applied.
 
@@ -260,10 +263,14 @@ class TestProfiles:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_project: A book of the signed-in account.
         :type fx_project: Project
         """
-        foreign = await _store(fx_database, make_recipe_profile(account_id=new_account_id(), steps=(_step(FAKE_KEY),)))
+        foreign = await _store(
+            fx_database, fx_uow(), make_recipe_profile(account_id=new_account_id(), steps=(_step(FAKE_KEY),))
+        )
         path = f'{PROFILES_PATH}/{foreign.id}'
         listed = await fx_client.get(PROFILES_PATH)
         recipe = await _text_recipe(fx_client, fx_project)
@@ -328,7 +335,12 @@ class TestApplyProfile:
         ]
 
     async def test_a_missing_processor_is_named_in_the_answer(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor, fx_project: Project
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_project: Project,
     ) -> None:
         """Verify the steps that can run are applied and the processor that cannot is listed.
 
@@ -336,6 +348,8 @@ class TestApplyProfile:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_project: A book of the signed-in account.
@@ -343,6 +357,7 @@ class TestApplyProfile:
         """
         profile = await _store(
             fx_database,
+            fx_uow(),
             make_recipe_profile(
                 account_id=fx_actor.account_id, steps=(_step(MISSING_KEY), _step(FAKE_KEY, strength=2))
             ),
@@ -355,21 +370,21 @@ class TestApplyProfile:
         assert_expectations()
 
     async def test_a_new_book_starts_with_the_default_profile(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify the first request of a stage in a new book answers with the default profile.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
         profile = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
         await fx_client.put(_default_path(profile.id))
-        fresh = make_project(owner_id=fx_actor.account_id, title='Fresh')
-        await commit_project(fx_database, fresh)
+        fresh = make_project(title='Fresh')
+        await store_project(fx_uow(), fresh, owner=fx_actor.account_id)
         recipe = await _text_recipe(fx_client, fresh)
         expect((recipe.profile_id, recipe.steps) == (profile.id, profile.steps))
         assert_expectations()
@@ -549,14 +564,14 @@ class TestLibrary:
     """Tests for the books of a profile, the copy of a profile and the file a profile is exchanged by."""
 
     async def test_the_listing_counts_the_books_that_use_each_profile(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor, fx_project: Project
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_project: Project
     ) -> None:
         """Verify applying a profile to two books makes the listing say two, and a profile never applied says none.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_project: A book of the signed-in account.
@@ -564,8 +579,8 @@ class TestLibrary:
         """
         used = RecipeProfileSchema.model_validate_json((await fx_client.post(PROFILES_PATH, json=_body())).content)
         await fx_client.post(PROFILES_PATH, json=_body(OTHER_NAME))
-        other = make_project(owner_id=fx_actor.account_id, title='Another book')
-        await commit_project(fx_database, other)
+        other = make_project(title='Another book')
+        await store_project(fx_uow(), other, owner=fx_actor.account_id)
         for book in (fx_project, other, fx_project):
             await fx_client.post(_apply_path(book, used.id), json={'kind': 'text'})
         listed = await fx_client.get(PROFILES_PATH)
@@ -690,7 +705,7 @@ class TestLibrary:
         assert_expectations()
 
     async def test_a_profile_of_another_account_cannot_be_exported_or_copied(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify another account's profile answers 404 to the export and to the copy.
 
@@ -698,8 +713,12 @@ class TestLibrary:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
-        foreign = await _store(fx_database, make_recipe_profile(account_id=new_account_id(), steps=(_step(FAKE_KEY),)))
+        foreign = await _store(
+            fx_database, fx_uow(), make_recipe_profile(account_id=new_account_id(), steps=(_step(FAKE_KEY),))
+        )
         responses = [
             await fx_client.get(f'{PROFILES_PATH}/{foreign.id}/{EXPORT_SUFFIX}'),
             await fx_client.post(f'{PROFILES_PATH}/{foreign.id}/duplicate'),

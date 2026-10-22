@@ -6,7 +6,8 @@ import httpx
 import pytest
 from starlette.requests import Request
 
-from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.api.auth import current_actor
@@ -32,6 +33,9 @@ if TYPE_CHECKING:
 
 TEST_BASE_URL: str = 'http://testserver'
 TEST_SECRET: str = 'test-secret-that-is-long-enough-for-signing'
+# How long a book of a test stays open after its last use, longer than any test, so no book closes under a test that
+# does not ask for it
+TEST_BOOK_IDLE_SECONDS: float = 3600.0
 
 
 @pytest.fixture
@@ -46,17 +50,31 @@ def anyio_backend() -> str:
 
 @pytest.fixture(scope='session')
 def fx_schema_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Build the SQLite file with every table at the head revision, which each test copies instead of building it.
+    """Build the catalogue with every table at the head revision, which each test copies instead of building it.
 
     Every worker process of a parallel run builds its own once, since a session lasts as long as the process does.
 
     :param tmp_path_factory: Factory of the temporary directories that outlive one test.
     :type tmp_path_factory: pytest.TempPathFactory
-    :returns: The file the databases of the tests are copied from.
+    :returns: The file the catalogues of the tests are copied from.
     :rtype: Path
     """
-    template = tmp_path_factory.mktemp('schema') / 'template.db'
-    create_schema_template(template)
+    template = tmp_path_factory.mktemp('schema') / 'catalogue.db'
+    create_schema_template(template, Schema.CATALOGUE)
+    return template
+
+
+@pytest.fixture(scope='session')
+def fx_book_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build the database of a book with every table at the head revision, which every new book of a test copies.
+
+    :param tmp_path_factory: Factory of the temporary directories that outlive one test.
+    :type tmp_path_factory: pytest.TempPathFactory
+    :returns: The blank file of a book.
+    :rtype: Path
+    """
+    template = tmp_path_factory.mktemp('schema') / 'book.db'
+    create_schema_template(template, Schema.BOOK)
     return template
 
 
@@ -99,7 +117,7 @@ def fx_actor() -> Actor:
 
 @pytest.fixture
 async def fx_database(fx_settings: Settings, fx_schema_template: Path, fx_actor: Actor) -> AsyncIterator[SqlDatabase]:
-    """Open the SQLite database of the test, a copy of the schema template that stores the account of ``fx_actor``.
+    """Open the catalogue of the test, a copy of the schema template that stores the account of ``fx_actor``.
 
     The running application of ``fx_app`` is given this very object, so a test and the application have one write
     queue and one pool, and this fixture alone disposes of it.
@@ -115,7 +133,10 @@ async def fx_database(fx_settings: Settings, fx_schema_template: Path, fx_actor:
     """
     await copy_schema_template(fx_schema_template, database_file(fx_settings))
     database = SqlDatabase(
-        fx_settings.resolved_database_url, tracer=NullTracer(), wait_seconds=fx_settings.change_wait.job_seconds
+        fx_settings.resolved_catalogue_url,
+        schema=Schema.CATALOGUE,
+        tracer=NullTracer(),
+        wait_seconds=fx_settings.change_wait.job_seconds,
     )
     try:
         await commit_account(database, account_id=fx_actor.account_id)
@@ -125,19 +146,45 @@ async def fx_database(fx_settings: Settings, fx_schema_template: Path, fx_actor:
 
 
 @pytest.fixture
-def fx_uow(fx_database: SqlDatabase, fx_settings: Settings) -> UnitOfWorkFactory:
-    """Return a function opening a new unit of work over the database of the test, as a new request or job would get.
+async def fx_books(fx_settings: Settings, fx_book_template: Path) -> AsyncIterator[BookDatabases]:
+    """Open the registry of the books of the test, under the storage root of the settings, and close its books after.
 
-    :param fx_database: Database of the test.
+    :param fx_settings: Settings naming the storage root.
+    :type fx_settings: Settings
+    :param fx_book_template: The blank file every new book copies.
+    :type fx_book_template: Path
+    :returns: Iterator yielding the registry and closing every book it opened afterwards.
+    :rtype: AsyncIterator[BookDatabases]
+    """
+    books = BookDatabases(
+        fx_settings.storage_root,
+        tracer=NullTracer(),
+        wait_seconds=fx_settings.change_wait.job_seconds,
+        idle_seconds=TEST_BOOK_IDLE_SECONDS,
+        blank=fx_book_template,
+    )
+    try:
+        yield books
+    finally:
+        await books.dispose()
+
+
+@pytest.fixture
+def fx_uow(fx_database: SqlDatabase, fx_books: BookDatabases, fx_settings: Settings) -> UnitOfWorkFactory:
+    """Return a function opening a new unit of work over the catalogue and the books of the test, as a request would get.
+
+    :param fx_database: Catalogue of the test.
     :type fx_database: SqlDatabase
+    :param fx_books: Registry of the books of the test.
+    :type fx_books: BookDatabases
     :param fx_settings: Settings of the test, whose job limit is the wait of a unit of work opened with none.
     :type fx_settings: Settings
-    :returns: Function opening a unit of work over ``fx_database``.
+    :returns: Function opening a unit of work over ``fx_database`` and ``fx_books``.
     :rtype: UnitOfWorkFactory
     """
 
     def open_unit_of_work(*, wait_seconds: float | None = None) -> UnitOfWork:
-        """Open a unit of work over the database of the test.
+        """Open a unit of work over the catalogue and the books of the test.
 
         :param wait_seconds: How long a change waits for its turn, or None for the job limit of the settings.
         :type wait_seconds: float | None
@@ -145,7 +192,7 @@ def fx_uow(fx_database: SqlDatabase, fx_settings: Settings) -> UnitOfWorkFactory
         :rtype: UnitOfWork
         """
         seconds = fx_settings.change_wait.job_seconds if wait_seconds is None else wait_seconds
-        return SqlAlchemyUnitOfWork(fx_database, wait_seconds=seconds)
+        return SqlAlchemyUnitOfWork(fx_database, fx_books, wait_seconds=seconds)
 
     return open_unit_of_work
 
@@ -171,24 +218,40 @@ def fx_social_clients() -> Sequence[BaseOAuth2[Any]] | None:
 
 
 @pytest.fixture
+def fx_shared_database(fx_database: SqlDatabase, fx_books: BookDatabases) -> SharedDatabaseProvider:
+    """Hand the application the catalogue and the books of the test in place of its own.
+
+    :param fx_database: Catalogue of the test.
+    :type fx_database: SqlDatabase
+    :param fx_books: Registry of the books of the test.
+    :type fx_books: BookDatabases
+    :returns: The provider overriding the catalogue and the registry of the books of the application.
+    :rtype: SharedDatabaseProvider
+    """
+    return SharedDatabaseProvider(fx_database, fx_books)
+
+
+@pytest.fixture
 async def fx_app(
     fx_settings: Settings,
-    fx_database: SqlDatabase,
+    fx_shared_database: SharedDatabaseProvider,
     fx_actor: Actor,
     fx_extra_providers: Sequence[Provider],
     fx_social_clients: Sequence[BaseOAuth2[Any]] | None,
 ) -> AsyncIterator[FastAPI]:
     """Run the application lifespan with ``fx_actor`` signed in and ``fx_extra_providers`` applied.
 
-    The application runs on ``fx_database`` itself, which stores the account of the actor, so a test that opens a unit
-    of work with ``fx_uow`` and the requests of the application share one write queue. The steps run in threads
+    The application runs on ``fx_database`` and ``fx_books`` themselves, the catalogue storing the account of the actor,
+    so a test that opens a unit of work with ``fx_uow`` and the requests of the application share the write queue of
+    every file. The steps run in threads
     instead of the pool of processes the lifespan would start, unless a provider of the test replaces the executor
     itself.
 
     :param fx_settings: Settings with a fresh data directory.
     :type fx_settings: Settings
-    :param fx_database: Database of the test, which the application is given in place of one of its own.
-    :type fx_database: SqlDatabase
+    :param fx_shared_database: The catalogue and the books of the test, which the application is given in place of its
+                               own.
+    :type fx_shared_database: SharedDatabaseProvider
     :param fx_actor: Account every request acts as.
     :type fx_actor: Actor
     :param fx_extra_providers: Providers overriding the application's own.
@@ -198,7 +261,7 @@ async def fx_app(
     :returns: Iterator yielding the running application and shutting it down afterwards.
     :rtype: AsyncIterator[FastAPI]
     """
-    providers = [SharedDatabaseProvider(fx_database), InProcessExecutorProvider(), *fx_extra_providers]
+    providers = [fx_shared_database, InProcessExecutorProvider(), *fx_extra_providers]
     app = create_app(fx_settings, providers, fx_social_clients)
     app.dependency_overrides[current_actor] = lambda: fx_actor
     async with app.router.lifespan_context(app):

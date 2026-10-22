@@ -1,1 +1,1 @@
-"""Alembic revisions of the schema of the SQLAlchemy adapter, applied by hand with ``bookreviver-migrate``."""
+"""Alembic revisions of the two schemas of the SQLAlchemy adapter, a directory for each, and their environment."""

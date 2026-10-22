@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Job, Page, PageStage, PageVersion, Project
     from bookreviver.domain.ids import PageId, ProjectId
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.stage_records import StageRecords
     from bookreviver.services.stage_runs import StageRuntime
@@ -103,7 +103,7 @@ class ContentDetector:
         read = failed = 0
         try:
             for window in batched(pages, self.WINDOW, strict=False):
-                bases = await self._bases(window)
+                bases = await self._bases(job.project_id, window)
                 for page in window:
                     if (base := bases.get(page.id)) is not None:
                         outcome = await self._detect(
@@ -153,11 +153,11 @@ class ContentDetector:
         :raises NotFoundError: If the job names a page that is gone.
         """
 
-        def work(repos: Repositories) -> list[Page]:
+        def work(repos: BookRepositories) -> list[Page]:
             """Read the pages of the job from one snapshot of the book.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: The pages in book order that have an image to read.
             :rtype: list[Page]
             :raises NotFoundError: If the job names a page that is gone.
@@ -172,7 +172,7 @@ class ContentDetector:
                 if self._readable(page) and page.content_type is None and page.kind in self.KINDS
             ]
 
-        return await self._uow.read(work)
+        return await self._uow.read_book(project_id, work)
 
     @staticmethod
     def _readable(page: Page) -> bool:
@@ -185,16 +185,18 @@ class ContentDetector:
         """
         return page.origin is PageOrigin.SCAN and not page.is_leaf
 
-    async def _bases(self, pages: Sequence[Page]) -> dict[PageId, PageVersion]:
+    async def _bases(self, project_id: ProjectId, pages: Sequence[Page]) -> dict[PageId, PageVersion]:
         """Read the base version of each page whose image is ready, which is the image a page starts from.
 
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
         :param pages: Pages whose base versions are read in one query.
         :type pages: Sequence[Page]
         :returns: The latest ready base version of each page that has one.
         :rtype: dict[PageId, PageVersion]
         """
-        versions = await self._uow.read(
-            lambda repos: repos.page_versions.list_base_versions([page.id for page in pages])
+        versions = await self._uow.read_book(
+            project_id, lambda repos: repos.page_versions.list_base_versions([page.id for page in pages])
         )
         # The versions come earliest first, so the latest of a page that was cut again is the one that stays
         return {
@@ -245,11 +247,11 @@ class ContentDetector:
         :rtype: bool
         """
 
-        def work(repos: Repositories, _project: Project) -> list[PageStage] | None:
+        def work(repos: BookRepositories, _project: Project) -> list[PageStage] | None:
             """Write the content type into the page, and mark its later stages stale when its kind changed.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the write does not read.
             :type _project: Project
             :returns: The records that became stale, or None when nothing was written.

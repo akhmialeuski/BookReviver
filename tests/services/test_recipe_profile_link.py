@@ -10,6 +10,7 @@ from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.values import ProfileDraft, RecipeDraft, RecipeKey, SliceRequest, Step
 from tests.helpers.builders import make_project
 from tests.helpers.processors import SECOND_KEY, THIRD_KEY
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Project, Recipe, RecipeProfile
@@ -63,8 +64,9 @@ async def another_book(kit: ProcessingKit, actor: Actor) -> Project:
     :returns: The project.
     :rtype: Project
     """
-    project = make_project(owner_id=actor.account_id, title='Another book')
-    return await kit.uow().change(lambda repos: repos.projects.add(project))
+    project = make_project(title='Another book')
+    await store_project(kit.uow(), project, owner=actor.account_id)
+    return project
 
 
 async def stored_recipe(kit: ProcessingKit, recipe: Recipe) -> Recipe:
@@ -77,7 +79,7 @@ async def stored_recipe(kit: ProcessingKit, recipe: Recipe) -> Recipe:
     :returns: The recipe as committed.
     :rtype: Recipe
     """
-    return await kit.uow().read(lambda repos: repos.recipes.get(recipe.id))
+    return await kit.uow().read_book(recipe.project_id, lambda repos: repos.recipes.get(recipe.id))
 
 
 class TestProfileOrder:

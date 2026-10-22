@@ -11,7 +11,7 @@ from tests.helpers.builders import make_page_stage, make_page_version
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, PageVersion, Project
     from bookreviver.domain.enums import Stage
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.processing import ProcessingKit
 
 
@@ -41,11 +41,11 @@ async def seed_head(
         state=VersionState.READY,
     )
 
-    def save_head(repos: Repositories, _project: Project) -> None:
+    def save_head(repos: BookRepositories, _project: Project) -> None:
         """Add the version and save the record of the stage that names it as current.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: Project of the book, which the work does not need.
         :type _project: Project
         """

@@ -13,7 +13,8 @@ from bookreviver.domain.changes import BookDetailsChanges, CoverChange, ProjectC
 from bookreviver.domain.enums import ImagePolicy, Orthography
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.values import BookDetails, SliceRequest
-from bookreviver.services.projects import ProjectService
+from bookreviver.services.library import Library
+from bookreviver.services.projects import ProjectFiles, ProjectService
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import EPOCH, make_page, make_project, make_scan, make_source, new_account_id
 from tests.helpers.clock import FixedClock
@@ -21,7 +22,7 @@ from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.scripted_runner import ScriptedRunner
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import commit_project, store_project
 from tests.helpers.storage import BookFiles
 
 if TYPE_CHECKING:
@@ -30,10 +31,9 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.storage import LocalAssetStore
-    from bookreviver.domain.entities import Actor, Page, Project, ProjectOverview
+    from bookreviver.domain.entities import Actor, Project
     from bookreviver.domain.ids import ProjectId
-    from bookreviver.domain.values import Slice
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
@@ -58,7 +58,13 @@ def _service(uow: UnitOfWork, sources: LocalSourceStore, assets: LocalAssetStore
     clock = FixedClock(NOW)
     board = FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus(), clock=clock)
     stages = StageSummaries(catalogue=FakeCatalogue([]), board=board)
-    return ProjectService(uow=uow, clock=clock, sources=sources, assets=assets, stages=stages)
+    return ProjectService(
+        uow=uow,
+        library=Library(uow=uow),
+        clock=clock,
+        files=ProjectFiles(sources=sources, assets=assets),
+        stages=stages,
+    )
 
 
 @pytest.fixture
@@ -138,7 +144,7 @@ async def _stored(uow: UnitOfWork, project: Project) -> Project:
     :returns: The project as committed.
     :rtype: Project
     """
-    return await uow.read(lambda repos: repos.projects.get(project.id))
+    return await uow.read_book(project.id, lambda repos: repos.projects.get(project.id))
 
 
 @pytest.fixture
@@ -161,7 +167,11 @@ class TestList:
     """Tests for ProjectService.list()."""
 
     async def test_lists_only_the_actors_projects_newest_first(
-        self, fx_service: Callable[[], ProjectService], fx_database: SqlDatabase, fx_actor: Actor
+        self,
+        fx_service: Callable[[], ProjectService],
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
     ) -> None:
         """Verify another account's project is hidden and the actor's come most recently updated first.
 
@@ -169,13 +179,14 @@ class TestList:
         :type fx_service: Callable[[], ProjectService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        older = make_project(owner_id=fx_actor.account_id, minutes=1)
-        newer = make_project(owner_id=fx_actor.account_id, minutes=2)
-        for project in (older, newer, make_project(owner_id=new_account_id(), minutes=3)):
-            await commit_project(fx_database, project)
+        older, newer, other = make_project(minutes=1), make_project(minutes=2), make_project(minutes=3)
+        for project, owner in ((older, fx_actor.account_id), (newer, fx_actor.account_id), (other, new_account_id())):
+            await commit_project(fx_database, fx_uow(), project, owner=owner)
 
         result = await fx_service().list(fx_actor, SliceRequest())
 
@@ -204,8 +215,9 @@ class TestCreate:
         overview = await fx_service().create(fx_actor, details)
 
         stored = await _stored(fx_uow(), overview.project)
+        entry = await fx_uow().read(lambda repos: repos.library.get(stored.id))
         expect(stored == overview.project)
-        expect(stored.owner_id == fx_actor.account_id)
+        expect((entry.owner_id, entry.added_at) == (fx_actor.account_id, NOW))
         expect(stored.details == details)
         expect((stored.created_at, stored.updated_at) == (NOW, NOW))
         expect(overview.page_count == 0)
@@ -216,24 +228,30 @@ class TestGet:
     """Tests for ProjectService.get()."""
 
     async def test_returns_the_project_with_the_counts_of_its_book(
-        self, fx_service: Callable[[], ProjectService], fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_service: Callable[[], ProjectService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify the overview counts the included pages, the sources and the scans of the project.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
+        project = make_project()
         source = make_source(project_id=project.id)
         scans = [make_scan(source=source, number=number) for number in range(PAGE_COUNT)]
         pages = [make_page(project_id=project.id, order_key=f'a{scan.number}', scan=scan) for scan in scans]
         # A duplicate scan kept out of the book is no page of it
-        await commit_project(
-            fx_database, project, *pages[:-1], evolve(pages[-1], included=False), sources=[source], scans=scans
+        await store_project(
+            fx_uow(),
+            project,
+            *pages[:-1],
+            evolve(pages[-1], included=False),
+            owner=fx_actor.account_id,
+            sources=[source],
+            scans=scans,
         )
 
         overview = await fx_service().get(fx_actor, project.id)
@@ -246,7 +264,11 @@ class TestGet:
         )
 
     async def test_another_accounts_project_is_not_found(
-        self, fx_service: Callable[[], ProjectService], fx_database: SqlDatabase, fx_actor: Actor
+        self,
+        fx_service: Callable[[], ProjectService],
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
     ) -> None:
         """Verify a project of another account is reported as missing, not as forbidden.
 
@@ -254,11 +276,13 @@ class TestGet:
         :type fx_service: Callable[[], ProjectService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=new_account_id())
-        await commit_project(fx_database, project)
+        project = make_project()
+        await commit_project(fx_database, fx_uow(), project, owner=new_account_id())
 
         with pytest.raises(NotFoundError):
             await fx_service().get(fx_actor, project.id)
@@ -268,20 +292,20 @@ class TestUpdate:
     """Tests for ProjectService.update()."""
 
     async def test_sets_and_clears_the_cover_and_sets_the_image_policy(
-        self, fx_service: Callable[[], ProjectService], fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_service: Callable[[], ProjectService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify a page of the project becomes its cover, an empty cover change removes it, and the policy changes.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
+        project = make_project()
         page = make_page(project_id=project.id)
-        await commit_project(fx_database, project, page)
+        await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
 
         covered = await fx_service().update(
             fx_actor, project.id, ProjectChanges(cover=CoverChange(page_id=page.id), image_policy=ImagePolicy.LOSSLESS)
@@ -295,7 +319,6 @@ class TestUpdate:
     async def test_cover_outside_the_project_is_not_found_and_changes_nothing(
         self,
         fx_service: Callable[[], ProjectService],
-        fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
     ) -> None:
@@ -303,18 +326,16 @@ class TestUpdate:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        other = make_project(owner_id=fx_actor.account_id)
+        project = make_project()
+        other = make_project()
         foreign = make_page(project_id=other.id)
-        await commit_project(fx_database, project)
-        await commit_project(fx_database, other, foreign)
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
+        await store_project(fx_uow(), other, foreign, owner=fx_actor.account_id)
 
         with pytest.raises(NotFoundError):
             await fx_service().update(fx_actor, project.id, ProjectChanges(cover=CoverChange(page_id=foreign.id)))
@@ -324,7 +345,6 @@ class TestUpdate:
     async def test_changes_given_fields_and_touches_the_project(
         self,
         fx_service: Callable[[], ProjectService],
-        fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
     ) -> None:
@@ -332,15 +352,13 @@ class TestUpdate:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id, title='Old')
-        await commit_project(fx_database, project)
+        project = make_project(title='Old')
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
 
         overview = await fx_service().update(
             fx_actor, project.id, ProjectChanges(details=BookDetailsChanges(title=NEW_TITLE))
@@ -370,8 +388,8 @@ class TestUpdate:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=new_account_id())
-        await commit_project(fx_database, project)
+        project = make_project()
+        await commit_project(fx_database, fx_uow(), project, owner=new_account_id())
 
         with pytest.raises(NotFoundError):
             await fx_service().update(fx_actor, project.id, ProjectChanges(details=BookDetailsChanges(title=NEW_TITLE)))
@@ -385,7 +403,6 @@ class TestDelete:
     async def test_removes_the_project_then_all_its_files(
         self,
         fx_service: Callable[[], ProjectService],
-        fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_files: BookFiles,
         fx_actor: Actor,
@@ -394,8 +411,6 @@ class TestDelete:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_files: Files of imported books in the stores the service deletes from.
@@ -403,30 +418,17 @@ class TestDelete:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        doomed, kept = make_project(owner_id=fx_actor.account_id), make_project(owner_id=fx_actor.account_id)
+        doomed, kept = make_project(), make_project()
         doomed_page, kept_page = make_page(project_id=doomed.id), make_page(project_id=kept.id)
         for project, page in ((doomed, doomed_page), (kept, kept_page)):
-            await commit_project(fx_database, project, page)
+            await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
             await fx_files.store(page)
 
         await fx_service().delete(fx_actor, doomed.id)
 
-        def read_book(repos: Repositories) -> tuple[Slice[ProjectOverview], Slice[Page]]:
-            """Read the projects the actor has left and the pages of the deleted project.
-
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :returns: The remaining projects of the actor, and the pages of the deleted project.
-            :rtype: tuple[Slice[ProjectOverview], Slice[Page]]
-            """
-            return (
-                repos.projects.list_for_owner(fx_actor.account_id, SliceRequest()),
-                repos.pages.list_for_project(doomed.id, SliceRequest()),
-            )
-
-        remaining, doomed_pages = await fx_uow().read(read_book)
-        expect([item.project.id for item in remaining.items] == [kept.id])
-        expect(doomed_pages.total == 0)
+        remaining = await fx_uow().read(lambda repos: repos.library.list_for_owner(fx_actor.account_id, SliceRequest()))
+        expect([entry.project_id for entry in remaining.items] == [kept.id])
+        expect(doomed.id not in await fx_uow().stored_books())
         expect(fx_files.gone(doomed.id))
         expect(fx_files.kept(kept_page))
         assert_expectations()
@@ -434,7 +436,6 @@ class TestDelete:
     async def test_failed_deletion_can_be_repeated_until_nothing_is_left(
         self,
         fx_flaky_service: Callable[[], ProjectService],
-        fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_files: BookFiles,
         fx_actor: Actor,
@@ -443,8 +444,6 @@ class TestDelete:
 
         :param fx_flaky_service: Function building the service over a source store whose first deletion fails.
         :type fx_flaky_service: Callable[[], ProjectService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_files: Files of imported books in the stores the service deletes from.
@@ -452,9 +451,9 @@ class TestDelete:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
+        project = make_project()
         page = make_page(project_id=project.id)
-        await commit_project(fx_database, project, page)
+        await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
         await fx_files.store(page)
 
         with pytest.raises(StoreFailedError):
@@ -489,9 +488,9 @@ class TestDelete:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=new_account_id())
+        project = make_project()
         page = make_page(project_id=project.id)
-        await commit_project(fx_database, project, page)
+        await commit_project(fx_database, fx_uow(), project, page, owner=new_account_id())
         await fx_files.store(page)
 
         with pytest.raises(NotFoundError):
@@ -526,18 +525,17 @@ class TestDeleteAll:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        owned = [make_project(owner_id=fx_actor.account_id, minutes=minute) for minute in range(PAGE_COUNT + 1)]
-        kept = make_project(owner_id=new_account_id())
+        owned = [make_project(minutes=minute) for minute in range(PAGE_COUNT + 1)]
+        kept = make_project()
         pages = {project.id: make_page(project_id=project.id) for project in (*owned, kept)}
         for project in (*owned, kept):
-            await commit_project(fx_database, project, pages[project.id])
+            owner = new_account_id() if project is kept else fx_actor.account_id
+            await commit_project(fx_database, fx_uow(), project, pages[project.id], owner=owner)
             await fx_files.store(pages[project.id])
 
         await fx_service().delete_all(fx_actor)
 
-        remaining = await fx_uow().read(
-            lambda repos: repos.projects.list_for_owner(fx_actor.account_id, SliceRequest())
-        )
+        remaining = await fx_uow().read(lambda repos: repos.library.list_for_owner(fx_actor.account_id, SliceRequest()))
         expect(remaining.total == 0)
         expect(all(fx_files.gone(project.id) for project in owned))
         expect(await _stored(fx_uow(), kept) == kept)
@@ -555,6 +553,73 @@ class TestDeleteAll:
         :type fx_actor: Actor
         """
         await fx_service().delete_all(fx_actor)
+
+
+class TestSweep:
+    """Tests for ProjectService.sweep(), which finishes the creations and deletions that were broken off half way."""
+
+    async def test_a_book_stored_without_an_entry_goes_with_its_files(
+        self,
+        fx_service: Callable[[], ProjectService],
+        fx_uow: UnitOfWorkFactory,
+        fx_files: BookFiles,
+        fx_actor: Actor,
+    ) -> None:
+        """Verify a creation that stored the book and never listed it is undone, and a listed book stays.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], ProjectService]
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_files: Files of imported books in the stores the service deletes from.
+        :type fx_files: BookFiles
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        broken, whole = make_project(), make_project()
+        broken_page, whole_page = make_page(project_id=broken.id), make_page(project_id=whole.id)
+        await fx_uow().create_book(broken)
+        await store_project(fx_uow(), whole, whole_page, owner=fx_actor.account_id)
+        for page in (broken_page, whole_page):
+            await fx_files.store(page)
+
+        await fx_service().sweep()
+
+        expect(set(await fx_uow().stored_books()) == {whole.id})
+        expect(fx_files.gone(broken.id))
+        expect(fx_files.kept(whole_page))
+        assert_expectations()
+
+    async def test_an_entry_without_a_book_goes_with_the_files_that_are_left(
+        self,
+        fx_service: Callable[[], ProjectService],
+        fx_uow: UnitOfWorkFactory,
+        fx_files: BookFiles,
+        fx_actor: Actor,
+    ) -> None:
+        """Verify a deletion that removed the book and never removed its entry is finished.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], ProjectService]
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_files: Files of imported books in the stores the service deletes from.
+        :type fx_files: BookFiles
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project()
+        page = make_page(project_id=project.id)
+        await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
+        await fx_files.store(page)
+        await fx_uow().delete_book(project.id)
+
+        await fx_service().sweep()
+
+        entries = await fx_uow().read(lambda repos: repos.library.list_all())
+        expect(entries == [])
+        expect(fx_files.gone(project.id))
+        assert_expectations()
 
 
 class SourceStoreWaiting(LocalSourceStore):
@@ -591,7 +656,6 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
 
     async def test_a_change_of_the_book_opens_while_its_files_are_being_removed(
         self,
-        fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_asset_store: LocalAssetStore,
         fx_storage_root: Path,
@@ -599,8 +663,6 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
     ) -> None:
         """Verify a change of the book is not kept waiting by a slow store, and the deletion ends the row after it.
 
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Local asset store over the test's storage root.
@@ -610,16 +672,16 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         sources = SourceStoreWaiting(root=fx_storage_root)
         opened = False
 
-        def mark_opened(_repos: Repositories, _project: Project) -> None:
+        def mark_opened(_repos: BookRepositories, _project: Project) -> None:
             """Note that the change of the book was granted.
 
             :param _repos: Repositories of the transaction, which the work does not use.
-            :type _repos: Repositories
+            :type _repos: BookRepositories
             :param _project: The project of the book, which the work does not use.
             :type _project: Project
             """

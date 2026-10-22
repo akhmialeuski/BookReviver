@@ -17,7 +17,7 @@ from bookreviver.app.settings import TracingSettings
 from bookreviver.domain.enums import SpanAttribute, SpanName
 from bookreviver.ports.tracing import Tracer
 from tests.helpers.builders import make_project
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import store_project
 from tests.helpers.tracers import AskingTracer
 
 if TYPE_CHECKING:
@@ -26,9 +26,9 @@ if TYPE_CHECKING:
 
     import httpx
 
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Actor
+    from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.recording_tracer import RecordingTracer
 
 pytestmark = pytest.mark.anyio
@@ -106,21 +106,21 @@ class TestRequestSpan:
     """Tests for the span of a request, read from the tracer the application was given."""
 
     async def test_request_is_timed_under_the_template_of_its_route_not_its_path(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor, fx_tracer: RecordingTracer
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_tracer: RecordingTracer
     ) -> None:
         """Verify the span names the route with its parameter in braces, though the path holds the project's identifier.
 
         :param fx_client: Client talking to the application with tracing on.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param fx_tracer: Tracer the application was given.
         :type fx_tracer: RecordingTracer
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         response = await fx_client.get(f'{PROJECTS_PATH}/{project.id}')
         (span,) = fx_tracer.named(SpanName.HTTP_REQUEST)
         expect(response.status_code == status.HTTP_200_OK)

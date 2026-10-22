@@ -1,109 +1,112 @@
-"""Tests for the list of books over SQLite: its progress costs the same statements for one book as for a full window."""
+"""Tests for the list of books over SQLite: every book of a window adds the same statements to the list.
 
+The books live in files of their own, so the list reads the progress of each shown book from its file and the cost of a
+window grows with the number of books in it. What the list must not do is cost more for one book than for another, such
+as a query that grows with the size of the window.
+"""
+
+from functools import partial
 from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.values import SliceRequest
-from bookreviver.services.projects import ProjectService
+from bookreviver.services.library import Library
+from bookreviver.services.projects import ProjectFiles, ProjectService
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import EPOCH, make_job, make_page, make_page_stage, make_project
 from tests.helpers.clock import FixedClock
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.fakes_jobs import JobFakes
+from tests.helpers.seeding import store_project
 from tests.helpers.statements import STATEMENT_EVENT, StatementCounter
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Project
-    from bookreviver.domain.ids import AccountId
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.domain.ids import AccountId, PageId
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import JobBoard
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
-# A full window of the list, against the one book the statements are compared with
-WINDOW: int = 5
+# The windows of the list the statements are counted for, of one book, two books and every book of the owner
+WINDOWS: tuple[int, int, int] = (1, 2, 5)
+# How many books the owner has: as many as the largest window
+BOOKS: int = WINDOWS[-1]
 
 
-async def _commit_books(database: SqlDatabase, board: JobBoard, owner_id: AccountId, count: int) -> None:
-    """Commit books that each have a page in a stage and a job on the board, so every progress query returns rows.
+async def _store_books(uow: UnitOfWork, board: JobBoard, owner_id: AccountId, count: int) -> None:
+    """Store books that each have a page in a stage and a job on the board, so every progress query returns rows.
 
-    :param database: Fresh SQLite database with every table created.
-    :type database: SqlDatabase
+    :param uow: Unit of work over the catalogue and the books of the test.
+    :type uow: UnitOfWork
     :param board: Board of the jobs, which holds them in memory and so sends no statement.
     :type board: JobBoard
     :param owner_id: Committed account owning the books.
     :type owner_id: AccountId
-    :param count: Number of books to commit.
+    :param count: Number of books to store.
     :type count: int
     """
-
-    def add_books(repos: Repositories) -> list[Project]:
-        """Store the projects, and put a job of each on the board.
-
-        :param repos: Repositories of the transaction.
-        :type repos: Repositories
-        :returns: The stored projects.
-        :rtype: list[Project]
-        """
-        projects = []
-        for minutes in range(count):
-            project = repos.projects.add(make_project(owner_id=owner_id, minutes=minutes))
-            board.put(make_job(project_id=project.id, minutes=minutes))
-            projects.append(project)
-        return projects
-
-    def add_page(repos: Repositories, project: Project) -> None:
-        """Store a page of the book of the project, with a record of a stage.
-
-        :param repos: Repositories of the transaction.
-        :type repos: Repositories
-        :param project: Project whose book gets the page.
-        :type project: Project
-        """
-        page = repos.pages.add(make_page(project_id=project.id))
-        repos.page_stages.add(make_page_stage(page_id=page.id))
-
-    uow = SqlAlchemyUnitOfWork(database)
-    for project in await uow.change(add_books):
-        await uow.change_book(project.id, add_page)
+    for minutes in range(count):
+        project = make_project(minutes=minutes)
+        page = make_page(project_id=project.id)
+        await store_project(uow, project, page, owner=owner_id)
+        await uow.change_book(project.id, partial(_add_stage_record, page_id=page.id))
+        board.put(make_job(project_id=project.id, minutes=minutes))
 
 
-async def _statements_of_list(database: SqlDatabase, board: JobBoard, owner_id: AccountId, root: Path) -> int:
-    """List the owner's books through the project service and count the statements the request sends.
+def _add_stage_record(repos: BookRepositories, _project: Project, *, page_id: PageId) -> None:
+    """Store a record of a stage of a page.
 
-    :param database: SQLite database holding the owner's books.
-    :type database: SqlDatabase
+    :param repos: Repositories of the transaction.
+    :type repos: BookRepositories
+    :param _project: Project of the book, which the work does not need.
+    :type _project: Project
+    :param page_id: The page.
+    :type page_id: PageId
+    """
+    repos.page_stages.add(make_page_stage(page_id=page_id))
+
+
+async def _statements_of_list(uow: UnitOfWork, board: JobBoard, owner_id: AccountId, window: int, root: Path) -> int:
+    """List the owner's books through the project service and count the statements every engine sends meanwhile.
+
+    The counter listens on the ``Engine`` class, so the statements of the catalogue and of the file of every book count.
+
+    :param uow: Unit of work over the catalogue and the books of the test.
+    :type uow: UnitOfWork
     :param board: Board of the jobs of the books.
     :type board: JobBoard
     :param owner_id: Account whose books are listed.
     :type owner_id: AccountId
+    :param window: How many books the window holds.
+    :type window: int
     :param root: Storage root of the stores the service needs and the list does not touch.
     :type root: Path
     :returns: Number of statements sent while listing.
     :rtype: int
     """
+    service = ProjectService(
+        uow=uow,
+        library=Library(uow=uow),
+        clock=FixedClock(EPOCH),
+        files=ProjectFiles(sources=LocalSourceStore(root=root), assets=LocalAssetStore(root=root)),
+        stages=StageSummaries(catalogue=FakeCatalogue([]), board=board),
+    )
     counter = StatementCounter()
-    event.listen(database.read_engine, STATEMENT_EVENT, counter)
+    event.listen(Engine, STATEMENT_EVENT, counter)
     try:
-        uow = SqlAlchemyUnitOfWork(database)
-        service = ProjectService(
-            uow=uow,
-            clock=FixedClock(EPOCH),
-            sources=LocalSourceStore(root=root),
-            assets=LocalAssetStore(root=root),
-            stages=StageSummaries(catalogue=FakeCatalogue([]), board=board),
-        )
-        books = await service.list(Actor(account_id=owner_id), SliceRequest(limit=WINDOW))
+        books = await service.list(Actor(account_id=owner_id), SliceRequest(limit=window))
     finally:
-        event.remove(database.read_engine, STATEMENT_EVENT, counter)
+        event.remove(Engine, STATEMENT_EVENT, counter)
+    assert len(books.items) == window
     assert all(book.progress is not None for book in books.items)
     return counter.count
 
@@ -111,21 +114,29 @@ async def _statements_of_list(database: SqlDatabase, board: JobBoard, owner_id: 
 class TestProjectList:
     """Tests for the statements ``ProjectService.list`` sends to SQLite."""
 
-    async def test_progress_of_a_window_costs_the_statements_of_one_book(
-        self, fx_database: SqlDatabase, fx_owner_id: AccountId, tmp_path: Path
+    async def test_every_book_of_a_window_adds_the_same_number_of_statements(
+        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, tmp_path: Path
     ) -> None:
-        """Verify a window of five books takes as many statements as one book, so no query runs per book.
+        """Verify the statements grow by the same amount for each book, from one book to two and from one to five.
 
-        :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
+        A window is listed once before the count, so every connection and every book is open and the first read of a
+        file does not add statements of its own. The growth from one book to two, four times over, is then the growth
+        from one book to five.
+
+        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the books.
         :type fx_owner_id: AccountId
         :param tmp_path: Directory of the stores the list does not touch.
         :type tmp_path: Path
         """
         board = JobFakes().board
-        await _commit_books(fx_database, board, fx_owner_id, 1)
-        one_book = await _statements_of_list(fx_database, board, fx_owner_id, tmp_path)
-        await _commit_books(fx_database, board, fx_owner_id, WINDOW - 1)
-        full_window = await _statements_of_list(fx_database, board, fx_owner_id, tmp_path)
-        assert full_window == one_book
+        await _store_books(fx_uow(), board, fx_owner_id, BOOKS)
+        await _statements_of_list(fx_uow(), board, fx_owner_id, BOOKS, tmp_path)
+
+        counts = {
+            window: await _statements_of_list(fx_uow(), board, fx_owner_id, window, tmp_path) for window in WINDOWS
+        }
+
+        one, two, five = (counts[window] for window in WINDOWS)
+        assert (two - one) * (BOOKS - 1) == five - one

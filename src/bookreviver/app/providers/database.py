@@ -1,15 +1,16 @@
-"""Provider of the SQL database and of the unit of work over it, which the persistence port and the accounts share.
+"""Provider of the catalogue, of the databases of the books and of the unit of work over them.
 
-The database is one per application, and the unit of work over it is built per request or job, so that the books and
-the accounts share it. The same unit of work is the ``UnitOfWork`` of the port, so the books add no second connection
-pool and no second unit of work.
+The catalogue and the registry of the books are one per application, and the unit of work over them is built per
+request or job. The same unit of work is the ``UnitOfWork`` of the port and the one the accounts run on, so the
+accounts add no second connection pool and no second unit of work.
 
-The application never changes the schema. Migrations are applied by hand, after a copy of the data directory if it
-matters, and the provider only compares the revision of the database with the head of the migrations the code
-ships. A mismatch stops the start with the command that fixes it, because running against another schema would fail
-on the first query of a changed column or, worse, write rows the code does not expect. A database behind the code is
-upgraded. A database at a revision the code does not ship, migrated on another branch, cannot be: Alembic does not
-know that revision, so the message names the downgrade to run with the code that ships it, or the copy to restore.
+The application never changes the schema of the catalogue. Its migrations are applied by hand, after a copy of the data
+directory if it matters, and the provider only compares the revision of the catalogue with the head of the migrations
+the code ships. A mismatch stops the start with the command that fixes it, because running against another schema
+would fail on the first query of a changed column or, worse, write rows the code does not expect. A catalogue behind
+the code is upgraded. A catalogue at a revision the code does not ship, migrated on another branch, cannot be: Alembic
+does not know that revision, so the message names the downgrade to run with the code that ships it, or the copy to
+restore. A book is brought to the head revision of its schema by the registry when it is opened.
 """
 
 from collections.abc import AsyncIterator
@@ -17,7 +18,8 @@ from collections.abc import AsyncIterator
 from dishka import Provider, Scope, alias, provide
 from sqlalchemy.orm import configure_mappers
 
-from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.app.settings import Settings
 from bookreviver.ports.persistence import ChangeWaitSeconds, UnitOfWork
@@ -38,31 +40,34 @@ RUN: str = ': run `'
 
 
 class DatabaseProvider(Provider):
-    """One database per application whose schema is at the head revision, and one unit of work per request.
+    """One catalogue at the head revision and one registry of books per application, and one unit of work per request.
 
     :ivar unit_of_work_port: The unit of work of the request as the ``UnitOfWork`` port.
     """
 
     @provide(scope=Scope.APP)
     async def database(self, settings: Settings, tracer: Tracer) -> AsyncIterator[SqlDatabase]:
-        """Open the configured database, check its schema revision, and close it with the application.
+        """Open the configured catalogue, check its schema revision, and close it with the application.
 
         The mappers of the tables are configured before the database is handed out. SQLAlchemy does that on the first
         use of the ORM otherwise, and the 239 attribute registrations it makes cost 10 to 29 ms on the event loop of
         the first request, while the server answers nothing else and sends no event.
 
-        :param settings: Application settings, of which the database URL, the data directory and the wait limit of a
-                         job are read, which every connection opens with as its busy timeout.
+        :param settings: Application settings, of which the URL of the catalogue, the data directory and the wait limit
+                         of a job are read, which every connection opens with as its busy timeout.
         :type settings: Settings
         :param tracer: Tracer the write blocks are timed with.
         :type tracer: Tracer
-        :returns: Iterator yielding the open database and disposing of its engine afterwards.
+        :returns: Iterator yielding the open catalogue and disposing of its engine afterwards.
         :rtype: AsyncIterator[SqlDatabase]
-        :raises RuntimeError: When the database is not at the head revision of the migrations, naming the upgrade to
-            run, or the downgrade when the database is at a revision the code does not ship.
+        :raises RuntimeError: When the catalogue is not at the head revision of the migrations, naming the upgrade to
+            run, or the downgrade when the catalogue is at a revision the code does not ship.
         """
         database = SqlDatabase(
-            settings.resolved_database_url, tracer=tracer, wait_seconds=settings.change_wait.job_seconds
+            settings.resolved_catalogue_url,
+            schema=Schema.CATALOGUE,
+            tracer=tracer,
+            wait_seconds=settings.change_wait.job_seconds,
         )
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         # SQLAlchemy configures the mappers lazily, on the first use of the ORM, which took 10 to 29 ms on the event
@@ -88,20 +93,47 @@ class DatabaseProvider(Provider):
         finally:
             await database.dispose()
 
+    @provide(scope=Scope.APP)
+    async def books(self, settings: Settings, tracer: Tracer) -> AsyncIterator[BookDatabases]:
+        """Open the registry of the databases of the books, and close every open book with the application.
+
+        :param settings: Application settings, of which the storage root, the wait limit of a job and the idle limit of
+                         a book are read.
+        :type settings: Settings
+        :param tracer: Tracer the write blocks of the books are timed with.
+        :type tracer: Tracer
+        :returns: Iterator yielding the registry and closing its books afterwards.
+        :rtype: AsyncIterator[BookDatabases]
+        """
+        books = BookDatabases(
+            settings.storage_root,
+            tracer=tracer,
+            wait_seconds=settings.change_wait.job_seconds,
+            idle_seconds=settings.book_idle_seconds,
+        )
+        try:
+            yield books
+        finally:
+            await books.dispose()
+
     @provide(scope=Scope.REQUEST)
-    def unit_of_work(self, database: SqlDatabase, wait_seconds: ChangeWaitSeconds) -> SqlAlchemyUnitOfWork:
+    def unit_of_work(
+        self, database: SqlDatabase, books: BookDatabases, wait_seconds: ChangeWaitSeconds
+    ) -> SqlAlchemyUnitOfWork:
         """Build the unit of work of a request or job, which keeps no state but the wait limit of its scope.
 
-        The repositories of the books and the account database both take this one. It holds no session or connection,
-        so it needs no closing.
+        The services and the account database both take this one. It holds no session or connection, so it needs no
+        closing.
 
-        :param database: The application's database, whose threads and connections the transactions use.
+        :param database: The catalogue, whose threads and connections the transactions of the catalogue use.
         :type database: SqlDatabase
-        :param wait_seconds: How long a change of the unit of work waits for the writer, by the scope it lives in.
+        :param books: The registry of the databases of the books.
+        :type books: BookDatabases
+        :param wait_seconds: How long a change of the unit of work waits for a writer, by the scope it lives in.
         :type wait_seconds: ChangeWaitSeconds
-        :returns: Unit of work over the application's database.
+        :returns: Unit of work over the catalogue and the books.
         :rtype: SqlAlchemyUnitOfWork
         """
-        return SqlAlchemyUnitOfWork(database, wait_seconds=wait_seconds)
+        return SqlAlchemyUnitOfWork(database, books, wait_seconds=wait_seconds)
 
     unit_of_work_port = alias(source=SqlAlchemyUnitOfWork, provides=UnitOfWork)

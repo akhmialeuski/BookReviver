@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.step_values import StepValues
     from bookreviver.domain.values import MetadataMap
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
 
 
 # The layers a page changes for a step, which a run that drops the work empties, in the order the history of the page
@@ -40,11 +40,11 @@ class PageBatch:
     :ivar batch_id: The batch every change written through this object belongs to.
     """
 
-    def __init__(self, *, repos: Repositories, source: ChangeSource, moment: datetime) -> None:
+    def __init__(self, *, repos: BookRepositories, source: ChangeSource, moment: datetime) -> None:
         """Write through the repositories of one transaction, as one source, at one moment.
 
         :param repos: Repositories of the work of the use case, whose transaction makes the batch durable when it ends.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param source: What makes the changes of the batch.
         :type source: ChangeSource
         :param moment: When the layers are set, which stamps the states and the changes.

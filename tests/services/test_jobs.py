@@ -14,6 +14,7 @@ from bookreviver.domain.events import JobChanged, ProjectChanged
 from bookreviver.domain.ids import JobId
 from bookreviver.domain.values import SliceRequest
 from bookreviver.services.jobs import JobService
+from bookreviver.services.library import Library
 from tests.helpers.builders import make_job, make_project, new_account_id
 from tests.helpers.fakes_jobs import JobFakes
 from tests.helpers.seeding import commit_project
@@ -69,7 +70,7 @@ def fx_job_service(fx_fakes: JobFakes, fx_uow: UnitOfWorkFactory, fx_sources: Lo
     :returns: The job service.
     :rtype: JobService
     """
-    return JobService(uow=fx_uow(), board=fx_fakes.board, stream=fx_fakes.events, sources=fx_sources)
+    return JobService(library=Library(uow=fx_uow()), board=fx_fakes.board, stream=fx_fakes.events, sources=fx_sources)
 
 
 @pytest.fixture
@@ -93,18 +94,20 @@ def fx_stranger() -> Actor:
 
 
 @pytest.fixture
-async def fx_project(fx_database: SqlDatabase, fx_owner: Actor) -> Project:
+async def fx_project(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_owner: Actor) -> Project:
     """Store a project of ``fx_owner``, and the account of the owner.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_owner: Account owning the project.
     :type fx_owner: Actor
     :returns: The stored project.
     :rtype: Project
     """
-    project = make_project(owner_id=fx_owner.account_id)
-    await commit_project(fx_database, project)
+    project = make_project()
+    await commit_project(fx_database, fx_uow(), project, owner=fx_owner.account_id)
     return project
 
 
@@ -178,7 +181,7 @@ class TestList:
         ended = fx_fakes.board.put(make_job(project_id=fx_project.id, minutes=0))
         await fx_fakes.board.run_queued()
         queued = fx_fakes.board.put(make_job(project_id=fx_project.id, minutes=1))
-        elsewhere = fx_fakes.board.put(make_job(project_id=make_project(owner_id=fx_owner.account_id).id, minutes=2))
+        elsewhere = fx_fakes.board.put(make_job(project_id=make_project().id, minutes=2))
         everything = await fx_job_service.list_for_project(fx_owner, fx_project.id, WINDOW, active=False)
         active = await fx_job_service.list_for_project(fx_owner, fx_project.id, WINDOW, active=True)
         expect([job.id for job in everything.items] == [queued.id, ended.id])
@@ -380,7 +383,7 @@ class TestEvents:
         :param fx_project: Project of ``fx_owner``.
         :type fx_project: Project
         """
-        other = make_project(owner_id=fx_owner.account_id)
+        other = make_project()
         async with await fx_job_service.events(fx_owner, fx_project.id) as stream:
             # Published before anything reads the stream, as while the response headers are still being sent
             await fx_fakes.events.publish(ProjectChanged(project_id=other.id))

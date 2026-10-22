@@ -17,13 +17,12 @@ from anyio import to_thread
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import BlockKind
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import SliceRequest
 from bookreviver.ports.persistence import NoChangeOpenError
 from tests.helpers.book_hold import HOLD_LIMIT_SECONDS
-from tests.helpers.builders import make_page_version, make_project
+from tests.helpers.builders import make_page, make_page_version, make_project
 from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
@@ -34,7 +33,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import PageVersion, Project
     from bookreviver.domain.ids import AccountId
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -44,8 +44,8 @@ MISSING_VERSION: PageVersion = make_page_version(page_id=PageId(uuid4()))
 WRITE_ARG: str = 'write'
 # A write of each form the repositories use, which a read refuses, by the name of the test case; each takes the
 # repositories and the stored project of the test
-WRITES: dict[str, Callable[[Repositories, Project], object]] = {
-    'insert-through-the-session': lambda repos, project: repos.projects.add(make_project(owner_id=project.owner_id)),
+WRITES: dict[str, Callable[[BookRepositories, Project], object]] = {
+    'insert-through-the-session': lambda repos, project: repos.pages.add(make_page(project_id=project.id)),
     'update-through-the-session': lambda repos, project: repos.projects.update(
         evolve(project, details=evolve(project.details, title=NEW_TITLE))
     ),
@@ -53,77 +53,97 @@ WRITES: dict[str, Callable[[Repositories, Project], object]] = {
 }
 
 
+def count_pages(repos: BookRepositories, project: Project) -> int:
+    """Count the pages of the book.
+
+    :param repos: Repositories of the transaction.
+    :type repos: BookRepositories
+    :param project: The project of the book.
+    :type project: Project
+    :returns: How many pages the transaction sees.
+    :rtype: int
+    """
+    return repos.pages.list_for_project(project.id, SliceRequest()).total
+
+
 class TestRead:
-    """Tests for the transaction of ``read``, which runs on a connection of the readers."""
+    """Tests for the transaction of ``read_book``, which runs on a connection of the readers of the book."""
 
     @pytest.mark.parametrize(WRITE_ARG, list(WRITES.values()), ids=list(WRITES))
     async def test_every_form_of_write_is_refused_and_leaves_the_project_as_it_was(
-        self, fx_database: SqlDatabase, fx_owner_id: AccountId, write: Callable[[Repositories, Project], object]
+        self,
+        fx_uow: UnitOfWorkFactory,
+        fx_owner_id: AccountId,
+        write: Callable[[BookRepositories, Project], object],
     ) -> None:
         """Verify a read refuses a write through the session and a bulk statement alike, and stores nothing.
 
-        :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         :param write: A write the work of the read attempts.
-        :type write: Callable[[Repositories, Project], object]
+        :type write: Callable[[BookRepositories, Project], object]
         """
-        project = make_project(owner_id=fx_owner_id)
-        uow = SqlAlchemyUnitOfWork(fx_database)
-        await store_project(uow, project)
+        project = make_project()
+        uow = fx_uow()
+        await store_project(uow, project, owner=fx_owner_id)
 
         with pytest.raises(NoChangeOpenError):
-            await uow.read(lambda repos: write(repos, project))
+            await uow.read_book(project.id, lambda repos: write(repos, project))
 
-        owned = await uow.read(lambda repos: repos.projects.list_for_owner(fx_owner_id, SliceRequest()))
-        expect([overview.project for overview in owned.items] == [project])
+        stored, pages = await uow.read_book(
+            project.id, lambda repos: (repos.projects.get(project.id), count_pages(repos, project))
+        )
+        expect(stored == project)
+        expect(pages == 0)
         assert_expectations()
 
     async def test_read_sees_one_committed_state_while_a_change_commits_meanwhile(
-        self, fx_database: SqlDatabase, fx_owner_id: AccountId
+        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId
     ) -> None:
-        """Verify two reads of one work see the same projects although a change commits another between them.
+        """Verify two reads of one work see the same pages although a change commits another between them.
 
         The work reads, tells the test its snapshot is taken, and waits in its thread until the change has committed.
         Its second read is of the state its first one saw, which the write-ahead log keeps for a reader, and a read
-        that begins after the commit sees the new project.
+        that begins after the commit sees the new page.
 
-        :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
-        :param fx_owner_id: Committed account owning the projects.
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        stored, written = make_project(owner_id=fx_owner_id), make_project(owner_id=fx_owner_id)
-        uow = SqlAlchemyUnitOfWork(fx_database)
-        await store_project(uow, stored)
+        project = make_project()
+        uow = fx_uow()
+        await store_project(uow, project, make_page(project_id=project.id, order_key='a0'), owner=fx_owner_id)
+        written = make_page(project_id=project.id, order_key='a1')
         snapshot_taken, change_committed = threading.Event(), threading.Event()
         seen: list[tuple[int, int]] = []
 
-        def count_twice(repos: Repositories) -> tuple[int, int]:
-            """Count the owner's projects, wait for the commit of the change, and count them again.
+        def count_twice(repos: BookRepositories) -> tuple[int, int]:
+            """Count the pages of the book, wait for the commit of the change, and count them again.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :returns: The number of projects before the commit and after it, as this transaction saw them.
+            :type repos: BookRepositories
+            :returns: The number of pages before the commit and after it, as this transaction saw them.
             :rtype: tuple[int, int]
             """
-            before = repos.projects.list_for_owner(fx_owner_id, SliceRequest()).total
+            before = count_pages(repos, project)
             snapshot_taken.set()
             assert change_committed.wait(HOLD_LIMIT_SECONDS)
-            return before, repos.projects.list_for_owner(fx_owner_id, SliceRequest()).total
+            return before, count_pages(repos, project)
 
         async def read_twice() -> None:
             """Run the work of the two reads in a read of the unit of work, and keep what it saw."""
-            seen.append(await uow.read(count_twice))
+            seen.append(await uow.read_book(project.id, count_twice))
 
         async with anyio.create_task_group() as group:
             group.start_soon(read_twice)
             assert await to_thread.run_sync(snapshot_taken.wait, HOLD_LIMIT_SECONDS)
-            await uow.change(lambda repos: repos.projects.add(written))
+            await uow.change_book(project.id, lambda repos, _project: repos.pages.add(written))
             change_committed.set()
 
-        after = await uow.read(lambda repos: repos.projects.list_for_owner(fx_owner_id, SliceRequest()).total)
+        after = await uow.read_book(project.id, lambda repos: count_pages(repos, project))
         expect(seen == [(1, 1)], f'{seen} seen by the read')
         expect(after == 2, f'{after} seen by a later read')
         assert_expectations()

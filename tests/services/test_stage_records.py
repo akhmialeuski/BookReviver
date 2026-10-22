@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import PageStage, Project, Recipe
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from tests.helpers.clock import FixedClock
     from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
@@ -43,11 +43,11 @@ async def store_records(uow: UnitOfWork, project: Project, recipe: Recipe, recor
     :type records: Sequence[PageStage]
     """
 
-    def seed(repos: Repositories, _project: Project) -> None:
+    def seed(repos: BookRepositories, _project: Project) -> None:
         """Store the recipe and the records.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: Project of the book, which the work does not need.
         :type _project: Project
         """
@@ -74,9 +74,9 @@ class TestMarkRecipeStale:
         :param fx_events: Recording event bus the records are announced through.
         :type fx_events: RecordingEventBus
         """
-        project = make_project(owner_id=new_account_id())
+        project = make_project()
         first, second, third = (make_page(project_id=project.id, order_key=key) for key in PAGE_ORDER_KEYS)
-        await commit_project(fx_database, project, first, second, third)
+        await commit_project(fx_database, fx_uow(), project, first, second, third, owner=new_account_id())
         recipe = make_recipe(project_id=project.id)
         fresh_first = make_page_stage(page_id=first.id, recipe_id=recipe.id)
         fresh_second = make_page_stage(page_id=second.id, recipe_id=recipe.id)
@@ -89,7 +89,9 @@ class TestMarkRecipeStale:
 
         marked = await uow.change_book(project.id, lambda repos, _project: records.mark_recipe_stale(repos, recipe.id))
 
-        stored = await uow.read(lambda repos: repos.page_stages.list_for_pages([first.id, second.id, third.id]))
+        stored = await uow.read_book(
+            project.id, lambda repos: repos.page_stages.list_for_pages([first.id, second.id, third.id])
+        )
         stale = [
             evolve(record, state=StageState.STALE, updated_at=CHANGED_AT) for record in (fresh_first, fresh_second)
         ]
@@ -125,9 +127,9 @@ class TestMarkRecipeStale:
         :param fx_page_stage_writes: Record of the writes of the page stage repository, not yet started.
         :type fx_page_stage_writes: PageStageWrites
         """
-        project = make_project(owner_id=new_account_id())
+        project = make_project()
         pages = [make_page(project_id=project.id, order_key=key) for key in PAGE_ORDER_KEYS]
-        await commit_project(fx_database, project, *pages)
+        await commit_project(fx_database, fx_uow(), project, *pages, owner=new_account_id())
         recipe = make_recipe(project_id=project.id)
         fresh = [make_page_stage(page_id=page.id, recipe_id=recipe.id) for page in pages]
         uow = fx_uow()

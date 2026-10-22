@@ -13,7 +13,7 @@ from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.api.schemas.pagination import PaginationSectionSchema
 from bookreviver.domain.enums import NumberDisplay
 from tests.helpers.builders import make_page, make_project, new_account_id
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import commit_project, store_project
 
 if TYPE_CHECKING:
     import httpx
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project
     from bookreviver.domain.entities import Page as BookPage
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -61,20 +62,20 @@ class Book(NamedTuple):
 
 
 @pytest.fixture
-async def fx_book(fx_database: SqlDatabase, fx_actor: Actor) -> Book:
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     """Commit a book of four text pages for the signed-in account.
 
-    :param fx_database: Database of the test, which the application runs on.
-    :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project(owner_id=fx_actor.account_id)
+    project = make_project()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=PAGE_COUNT)
     pages = [make_page(project_id=project.id, order_key=key) for key in keys]
-    await commit_project(fx_database, project, *pages)
+    await store_project(fx_uow(), project, *pages, owner=fx_actor.account_id)
     return Book(project=project, pages=pages)
 
 
@@ -213,7 +214,7 @@ class TestCreateSection:
         assert_expectations()
 
     async def test_page_of_another_project_and_project_of_another_account_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify a first page that is another project's, and a project of another account, both answer 404.
 
@@ -223,10 +224,12 @@ class TestCreateSection:
         :type fx_book: Book
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
-        stranger = make_project(owner_id=new_account_id())
+        stranger = make_project()
         page = make_page(project_id=stranger.id)
-        await commit_project(fx_database, stranger, page)
+        await commit_project(fx_database, fx_uow(), stranger, page, owner=new_account_id())
 
         foreign_page = await fx_client.post(
             fx_book.sections_path, json={'first_page_id': str(page.id), 'style': 'arabic'}
@@ -263,7 +266,7 @@ class TestListSections:
         assert_expectations()
 
     async def test_a_project_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify the sections of another account's project are answered not found.
 
@@ -271,9 +274,11 @@ class TestListSections:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
-        stranger = make_project(owner_id=new_account_id())
-        await commit_project(fx_database, stranger)
+        stranger = make_project()
+        await commit_project(fx_database, fx_uow(), stranger, owner=new_account_id())
 
         response = await fx_client.get(f'{PROJECTS_PATH}/{stranger.id}/pagination-sections')
 

@@ -31,7 +31,7 @@ from bookreviver.domain.enums import ChangeSource, EditorKind, Rendition, StepLa
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import StorageKey
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.services.projects import owned_project, require_owner
+from bookreviver.services.library import Library
 from bookreviver.services.recipes import find_step
 
 if TYPE_CHECKING:
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.domain.values import NewPageEdit, PageStepKey, ProcessorSpec
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore, IncomingFile
@@ -85,6 +85,7 @@ class EditService:
         :type clock: Clock
         """
         self._uow = uow
+        self._library = Library(uow=uow)
         self._assets = assets
         self._catalogue = catalogue
         self._records = records
@@ -112,24 +113,24 @@ class EditService:
         :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its shape
                                         or its mask or has one it should not.
         """
+        await self._library.open(actor, project_id)
 
-        def check(repos: Repositories) -> None:
+        def check(repos: BookRepositories) -> None:
             """Require the project, the page and the edit to be as the request says.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the
+            :type repos: BookRepositories
+            :raises NotFoundError: If the project has no such page, or no recipe of the
                                    stage has such a step.
             :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its
                                             shape or its mask or has one it should not.
             """
-            owned_project(repos.projects, actor, project_id)
             self._page(repos, project_id, key.page_id)
             self._check(repos, project_id, key, edit, has_mask=mask is not None)
 
         # The edit is checked before its mask is written, so a refused request leaves no file, and checked again in the
         # change, since the page or the recipe may have changed while the mask streamed in
-        await self._uow.read(check)
+        await self._uow.read_book(project_id, check)
         keys = ProjectKeys(project_id)
         mask_digest, scratch = (None, None) if mask is None else await self._receive(keys, key, mask)
         edit_hash = PageEdit.hash_of(edit.geometry, mask_digest)
@@ -149,21 +150,20 @@ class EditService:
             updated_at=self._clock.now(),
         )
 
-        def work(repos: Repositories, project: Project) -> list[PageStage]:
+        def work(repos: BookRepositories, _project: Project) -> list[PageStage]:
             """Check the request again, write the edit, and mark the stage stale.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :param project: The project as the change finds it.
-            :type project: Project
+            :type repos: BookRepositories
+            :param _project: The project as the change finds it.
+            :type _project: Project
             :returns: The stage records that became stale.
             :rtype: list[PageStage]
-            :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the
+            :raises NotFoundError: If the project has no such page, or no recipe of the
                                    stage has such a step.
             :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its
                                             shape or its mask or has one it should not.
             """
-            require_owner(project, actor)
             self._page(repos, project_id, key.page_id)
             self._check(repos, project_id, key, edit, has_mask=mask is not None)
             state = repos.page_step_states.find(key) or PageStepState(
@@ -192,22 +192,22 @@ class EditService:
         :rtype: Sequence[PageEdit]
         :raises NotFoundError: If the actor has no such project, or the project has no such page.
         """
+        await self._library.open(actor, project_id)
 
-        def work(repos: Repositories) -> list[PageEdit]:
+        def work(repos: BookRepositories) -> list[PageEdit]:
             """Read the edits of the stage of the page.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: The edits of the stage.
             :rtype: list[PageEdit]
-            :raises NotFoundError: If the actor has no such project, or the project has no such page.
+            :raises NotFoundError: If the project has no such page.
             """
-            owned_project(repos.projects, actor, project_id)
             self._page(repos, project_id, page_id)
             states = repos.page_step_states.list_for_page(page_id, stage)
             return [state.edit for state in states if state.edit is not None]
 
-        return await self._uow.read(work)
+        return await self._uow.read_book(project_id, work)
 
     async def delete(self, actor: Actor, project_id: ProjectId, key: PageStepKey) -> None:
         """Delete the edit a step reads, and mark the stage stale.
@@ -223,20 +223,20 @@ class EditService:
         :raises NotFoundError: If the actor has no such project, the project has no such page, or the step has no edit
                                there.
         """
+        await self._library.open(actor, project_id)
 
-        def work(repos: Repositories, project: Project) -> list[PageStage]:
+        def work(repos: BookRepositories, _project: Project) -> list[PageStage]:
             """Delete the edit from the state of the step, and mark the stage stale.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :param project: The project as the change finds it.
-            :type project: Project
+            :type repos: BookRepositories
+            :param _project: The project as the change finds it.
+            :type _project: Project
             :returns: The stage records that became stale.
             :rtype: list[PageStage]
-            :raises NotFoundError: If the actor has no such project, the project has no such page, or the step has no
+            :raises NotFoundError: If the project has no such page, or the step has no
                                    edit there.
             """
-            require_owner(project, actor)
             self._page(repos, project_id, key.page_id)
             state = repos.page_step_states.find(key)
             if state is None or state.edit is None:
@@ -248,14 +248,14 @@ class EditService:
         await self._records.announce(project_id, stale)
 
     @staticmethod
-    def _store(repos: Repositories, state: PageStepState, changed: PageStepState) -> None:
+    def _store(repos: BookRepositories, state: PageStepState, changed: PageStepState) -> None:
         """Write the state with the edit saved or deleted, and the change of the manual layer to the history.
 
         It writes through the repositories of the work of its caller. A state with neither a setting nor an edit left
         is deleted. An edit equal to the stored one writes no change.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param state: The state as it is stored, or an empty one.
         :type state: PageStepState
         :param changed: The state after the edit was saved or deleted.
@@ -269,11 +269,11 @@ class EditService:
         if change.before != change.after:
             repos.page_step_changes.add(change)
 
-    def _spec(self, repos: Repositories, project_id: ProjectId, key: PageStepKey) -> ProcessorSpec:
+    def _spec(self, repos: BookRepositories, project_id: ProjectId, key: PageStepKey) -> ProcessorSpec:
         """Find the spec of the processor of a step, by the step in the recipes of the stage.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param key: The page, the stage and the step that reads the edit.
@@ -286,11 +286,11 @@ class EditService:
         return self._catalogue.get(step.processor_key).spec
 
     @staticmethod
-    def _page(repos: Repositories, project_id: ProjectId, page_id: PageId) -> Page:
+    def _page(repos: BookRepositories, project_id: ProjectId, page_id: PageId) -> Page:
         """Return a page of the project.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param page_id: Identifier of the page.
@@ -305,12 +305,12 @@ class EditService:
         return page
 
     def _check(
-        self, repos: Repositories, project_id: ProjectId, key: PageStepKey, edit: NewPageEdit, *, has_mask: bool
+        self, repos: BookRepositories, project_id: ProjectId, key: PageStepKey, edit: NewPageEdit, *, has_mask: bool
     ) -> None:
         """Check that the edit is the one the processor of the step reads.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param key: The page, the stage and the step that reads the edit.

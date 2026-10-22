@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import PageStage, PageVersion, Project, Recipe
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId
     from bookreviver.domain.values import MetadataMap, Step
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.services.recipes import RecipeBook
     from bookreviver.services.stage_records import StageRecords
 
@@ -341,11 +341,11 @@ class BookBlocks:
     ``UnitOfWork.read`` or ``change_book``.
     """
 
-    def __init__(self, repos: Repositories) -> None:
+    def __init__(self, repos: BookRepositories) -> None:
         """Read through the repositories of a transaction.
 
         :param repos: Repositories the records and the versions are read through.
-        :type repos: Repositories
+        :type repos: BookRepositories
         """
         self._repos = repos
 
@@ -447,7 +447,7 @@ class BookMeasure:
     def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, records: StageRecords) -> None:
         """Work over the ports of one job.
 
-        :param uow: Unit of work, whose ``read`` holds the reading of the boxes and whose ``change_book`` holds the
+        :param uow: Unit of work, whose ``read_book`` holds the reading of the boxes and whose ``change_book`` holds the
                     writing of the measures once the job has them.
         :type uow: UnitOfWork
         :param recipes: The recipes of the project, which supply the Geometry recipes and rewrite them.
@@ -489,7 +489,9 @@ class BookMeasure:
         if not holders:
             raise ConflictError(NO_NORMALIZE_STEP.format(key=NORMALIZE_KEY))
         measures = list(
-            (await self._uow.read(lambda repos: BookBlocks(repos).read(project_id, Stage.GEOMETRY))).values()
+            (
+                await self._uow.read_book(project_id, lambda repos: BookBlocks(repos).read(project_id, Stage.GEOMETRY))
+            ).values()
         )
         if not measures:
             raise ConflictError(NOTHING_TO_MEASURE)
@@ -501,11 +503,11 @@ class BookMeasure:
             for name in (NormalizeParam.PAGE_WIDTH, NormalizeParam.PAGE_HEIGHT)
         }
 
-        def work(repos: Repositories, _project: Project) -> list[PageStage]:
+        def work(repos: BookRepositories, _project: Project) -> list[PageStage]:
             """Write the measured steps into the recipes that were not changed since they were read.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the writing does not read.
             :type _project: Project
             :returns: The records of the pages that became stale.
@@ -528,11 +530,11 @@ class BookMeasure:
         await self._records.announce(project_id, await self._uow.change_book(project_id, work))
         return len(measures)
 
-    def _write(self, repos: Repositories, recipe: Recipe, position: int, step: Step) -> list[PageStage]:
+    def _write(self, repos: BookRepositories, recipe: Recipe, position: int, step: Step) -> list[PageStage]:
         """Store the recipe with the measured step, and mark the pages it processed stale, for the caller.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param recipe: A recipe of the Geometry stage.
         :type recipe: Recipe
         :param position: Place of the normalize step among the steps of the recipe.

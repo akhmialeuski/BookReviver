@@ -1,29 +1,29 @@
-"""Tables of the books feature, private to the SQLAlchemy persistence adapter.
+"""Tables of a book, private to the SQLAlchemy persistence adapter, which every book keeps in a file of its own.
 
 The module declares the ``projects``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
 ``page_step_states``, ``page_step_changes``, ``step_values``, ``result_mark_changes``, ``pagination_sections``,
-``book_places``, ``recipes`` and ``recipe_profiles`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped``
-annotations, ``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from advanced-alchemy's
-:class:`~advanced_alchemy.base.DefaultBase`, which is a ``DeclarativeBase`` carrying the metadata shared with the
-account tables, the portable ``GUID`` and ``DateTimeUTC`` column types for ``UUID`` and ``datetime`` annotations, and
-the naming convention of keys and constraints. The tables are written for SQLite alone, the one database of the
-application, so no column or index carries a variant for another database.
+``book_places`` and ``recipes`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped`` annotations,
+``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from :class:`BookTable`, which
+carries the bind key ``book``, so advanced-alchemy gives the tables of a book a ``MetaData`` of their own, apart from
+the tables of the catalogue in :mod:`bookreviver.adapters.persistence.sqlalchemy.catalogue`, and the migrations of the
+two schemas never meet. The base also brings the portable ``GUID`` and ``DateTimeUTC`` column types for ``UUID`` and
+``datetime`` annotations and the naming convention of keys and constraints. The tables are written for SQLite alone,
+the one database of the application, so no column or index carries a variant for another database.
 
 Rows never leave the adapter. The mappers in :mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turn them into
 frozen domain entities, so nothing outside this package depends on the shape of a table.
 
-A project owns its sources, scans, pages and recipes, a source owns its scans, and a page owns its versions,
-its stage records, its step states and its history. The foreign keys carry ``ON DELETE CASCADE``, so the database
-removes them with their owner. An optional reference carries ``ON DELETE SET NULL`` instead: a page keeps its row
-when its scan is deleted, a version when its input version is, and a stage record when its head version or its recipe
-is, a recipe when its profile is, because a page of the book holds its own copy of its image. The relationships use
-``passive_deletes=True`` to leave that deletion to the database, and ``lazy="raise"`` so that no query runs unseen on
-attribute access, inside a transaction or after its session has closed. Unique keys are declared with their table, and
-the shared naming convention names them.
+The file of a book holds one project. A project owns its sources, scans, pages and recipes, a source owns its scans,
+and a page owns its versions, its stage records, its step states and its history. The foreign keys carry
+``ON DELETE CASCADE``, so the database removes them with their owner. An optional reference carries
+``ON DELETE SET NULL`` instead: a page keeps its row when its scan is deleted, a version when its input version is,
+and a stage record when its head version or its recipe is, because a page of the book holds its own copy of its
+image. The relationships use ``passive_deletes=True`` to leave that deletion to the database, and ``lazy="raise"`` so
+that no query runs unseen on attribute access, inside a transaction or after its session has closed. Unique keys are
+declared with their table, and the shared naming convention names them.
 
-The owner of a project refers to the ``user`` table of fastapi-users with ``ON DELETE RESTRICT``. A cascade would
-remove the rows of the owner's projects but not their files, so an account is deleted only after its projects have
-been deleted through ``ProjectService``, which removes their files too.
+No table of a book names an account. The owner of the book is a row of the library in the catalogue, and the profile a
+recipe was made from is named by its identifier alone, since no key can reach another file.
 """
 
 import enum
@@ -32,10 +32,10 @@ from typing import Any, Final
 from uuid import UUID
 
 from advanced_alchemy.base import DefaultBase
-from sqlalchemy import JSON, Enum, ForeignKey, Index, String, UniqueConstraint, false, text
+from sqlalchemy import JSON, ForeignKey, Index, String, UniqueConstraint, false, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
+from bookreviver.adapters.persistence.sqlalchemy.columns import CASCADE, SET_NULL, enum_by_value
 from bookreviver.domain.enums import (
     BlankFill,
     ChangeSource,
@@ -47,7 +47,6 @@ from bookreviver.domain.enums import (
     ImagePolicy,
     LabelStyle,
     NumberDisplay,
-    OrderMode,
     Orthography,
     PageFilter,
     PageKind,
@@ -73,12 +72,8 @@ from bookreviver.domain.enums import (
 
 # Format of the ``full`` image of the scans stored before the format was recorded, which were all JPEG
 LEGACY_FULL_FORMAT: Final = Rendition.FULL_JPEG.value
-# Referential action that lets the database remove the rows of a project, a source or a page with it
-CASCADE: Final = 'CASCADE'
-# Referential action that keeps a row whose optional parent is removed, emptying the reference
-SET_NULL: Final = 'SET NULL'
-# Referential action that refuses to remove a parent while rows still refer to it
-RESTRICT: Final = 'RESTRICT'
+# The bind key of the tables of a book, under which advanced-alchemy keeps their metadata and the engines of a book
+BOOK_BIND_KEY: Final = 'book'
 # Name of the column holding a source's metadata, which the declarative base reserves as an attribute name
 METADATA_COLUMN: Final = 'metadata'
 # ORM cascade of a parent to its children; deletion itself is left to the database through CASCADE
@@ -88,11 +83,11 @@ NO_IMPLICIT_LOAD: Final = 'raise'
 # Server defaults of the columns the description gained, which existing rows take when the columns are added
 EMPTY_TEXT: Final = ''
 EMPTY_LIST: Final = '[]'
+PROJECTS_TABLE: Final = 'projects'
 PAGES_TABLE: Final = 'pages'
 PAGE_VERSIONS_TABLE: Final = 'page_versions'
 PAGINATION_SECTIONS_TABLE: Final = 'pagination_sections'
 RECIPES_TABLE: Final = 'recipes'
-RECIPE_PROFILES_TABLE: Final = 'recipe_profiles'
 # Columns that several keys, indexes and constraints name
 ID_COLUMN: Final = 'id'
 PROJECT_ID_COLUMN: Final = 'project_id'
@@ -103,8 +98,6 @@ SEQUENCE_COLUMN: Final = 'sequence'
 VERSION_ID_LENGTH: Final = 16
 # Server default of a column that holds a JSON object
 EMPTY_OBJECT: Final = '{}'
-# The rows of the partial unique index of ``recipe_profiles``: the default profile of a stage of an account
-DEFAULT_PROFILE: Final = text('is_default')
 # The rows of the partial unique index of ``sources``: the imported sources, which are the ones that join the book
 IMPORTED_SOURCE: Final = text(f"status = '{SourceStatus.IMPORTED}'")
 
@@ -125,35 +118,21 @@ class Relation(enum.StrEnum):
     PAGE = 'page'
 
 
-def enum_by_value[EnumT: enum.Enum](enum_type: type[EnumT]) -> Enum:
-    """Return a column type storing members of ``enum_type`` by value in a plain string column.
+class BookTable(DefaultBase):
+    """The base of the tables of a book, whose bind key gives them the metadata of the schema of a book."""
 
-    SQLAlchemy stores enum members by name unless told otherwise, and a native enum type exists only on some
-    databases. A plain string column holding the value keeps the rows readable when a member is renamed, as long as
-    its value stays.
-
-    :param enum_type: Domain enum whose members the column stores.
-    :type enum_type: type[EnumT]
-    :returns: Column type that writes ``member.value`` and reads it back as the member.
-    :rtype: Enum
-    """
-    return Enum(
-        enum_type,
-        native_enum=False,
-        values_callable=lambda members: [member.value for member in members],
-        validate_strings=True,
-    )
+    __abstract__ = True
+    __bind_key__ = BOOK_BIND_KEY
 
 
-class ProjectRow(DefaultBase):
-    """Row of one book: its owner, its bibliographic description and the settings of the work on it.
+class ProjectRow(BookTable):
+    """Row of the book of the file, the only row of its table: its description and the settings of the work on it.
 
     The description is a value object in the domain and columns here: a column per text field, and a JSON column per
     list, because the items of a list have no identity, are always read and written with their project, and the
     project list shows only the title and the first author. The sources of the book are rows of their own table.
 
     :ivar id: Project identifier, assigned by the domain.
-    :ivar owner_id: Account that owns the project, which the database keeps while the project exists.
     :ivar title: Title of the book.
     :ivar subtitle: Words of the title page that explain the title.
     :ivar parallel_titles: Titles in other languages, as a JSON list of strings.
@@ -190,11 +169,9 @@ class ProjectRow(DefaultBase):
     :ivar recipes: Recipes of the project, never loaded implicitly.
     """
 
-    __tablename__ = 'projects'
+    __tablename__ = PROJECTS_TABLE
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
-    # The column of the table, since fastapi-users declares the attribute for type checkers as a plain UUID
-    owner_id: Mapped[UUID] = mapped_column(ForeignKey(AccountTable.__table__.c.id, ondelete=RESTRICT), index=True)
     title: Mapped[str]
     subtitle: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     parallel_titles: Mapped[list[str]] = mapped_column(JSON, server_default=EMPTY_LIST)
@@ -228,7 +205,7 @@ class ProjectRow(DefaultBase):
         ForeignKey(f'{PAGES_TABLE}.{ID_COLUMN}', ondelete=SET_NULL, use_alter=True)
     )
     created_at: Mapped[datetime]
-    updated_at: Mapped[datetime] = mapped_column(index=True)
+    updated_at: Mapped[datetime]
 
     sources: Mapped[list[SourceRow]] = relationship(
         back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
@@ -246,7 +223,7 @@ class ProjectRow(DefaultBase):
     )
 
 
-class SourceRow(DefaultBase):
+class SourceRow(BookTable):
     """Row of one uploaded file of a project: an imported source, or a file the import rejected or skipped.
 
     The stored files and the description values the source suggests are value objects in the domain and JSON here,
@@ -303,7 +280,7 @@ class SourceRow(DefaultBase):
     )
 
 
-class ScanRow(DefaultBase):
+class ScanRow(BookTable):
     """Row of one scan of a source, unique within the source by its number.
 
     The project is stored beside the source, so the scans of a book are counted and listed without a join and removed
@@ -358,7 +335,7 @@ class ScanRow(DefaultBase):
     source: Mapped[SourceRow] = relationship(back_populates=Relation.SCANS, lazy=NO_IMPLICIT_LOAD)
 
 
-class PageRow(DefaultBase):
+class PageRow(BookTable):
     """Row of one page of the book, unique within its project by order key and within its scan by slot.
 
     The page keeps its row when its scan is deleted, which empties ``scan_id``. A null never matches in a unique key,
@@ -427,7 +404,7 @@ class PageRow(DefaultBase):
     )
 
 
-class PaginationSectionRow(DefaultBase):
+class PaginationSectionRow(BookTable):
     """Row of one pagination section of a book, which numbers the pages from the page it starts at.
 
     A project owns its sections, and so does the page a section starts at, so the database removes a section with
@@ -462,7 +439,7 @@ class PaginationSectionRow(DefaultBase):
     updated_at: Mapped[datetime]
 
 
-class PageVersionRow(DefaultBase):
+class PageVersionRow(BookTable):
     """Row of one version of a page, identified by the hash of what produced it.
 
     The processor is flattened into its key and version, and the parameters, the transform and the data of the step
@@ -518,7 +495,7 @@ class PageVersionRow(DefaultBase):
     page: Mapped[PageRow] = relationship(back_populates=Relation.VERSIONS, lazy=NO_IMPLICIT_LOAD)
 
 
-class PageStageRow(DefaultBase):
+class PageStageRow(BookTable):
     """Row of the current version of one stage of one page, keyed by the page and the stage.
 
     The head version and the recipe are optional references that the database empties when the version or the recipe
@@ -551,7 +528,7 @@ class PageStageRow(DefaultBase):
     page: Mapped[PageRow] = relationship(back_populates=Relation.STAGES, lazy=NO_IMPLICIT_LOAD)
 
 
-class PageStepStateRow(DefaultBase):
+class PageStepStateRow(BookTable):
     """Row of what one page keeps for one step of a recipe, keyed by the page, the stage and the step.
 
     The step is named by the identifier its recipe gives it, with no foreign key: the steps are a JSON list in the row
@@ -588,7 +565,7 @@ class PageStepStateRow(DefaultBase):
     page: Mapped[PageRow] = relationship(back_populates=Relation.STEP_STATES, lazy=NO_IMPLICIT_LOAD)
 
 
-class StepValuesRow(DefaultBase):
+class StepValuesRow(BookTable):
     """Row of the values of one step for the odd pages, the even pages or one group of pages.
 
     The step is named by the identifier its recipe gives it, with no foreign key, as in ``page_step_states``. The label
@@ -616,7 +593,7 @@ class StepValuesRow(DefaultBase):
     updated_at: Mapped[datetime]
 
 
-class PageStepChangeRow(DefaultBase):
+class PageStepChangeRow(BookTable):
     """Row of one change of a layer of a step on a page, which the history of the page keeps and never rewrites.
 
     The step is named by its identifier with no foreign key, as in ``page_step_states``, since a change outlives a step
@@ -665,7 +642,7 @@ class PageStepChangeRow(DefaultBase):
     page: Mapped[PageRow] = relationship(back_populates=Relation.STEP_CHANGES, lazy=NO_IMPLICIT_LOAD)
 
 
-class ResultMarkChangeRow(DefaultBase):
+class ResultMarkChangeRow(BookTable):
     """Row of one change of the mark or the comment of a result, which the log of the result never rewrites.
 
     :ivar id: Change identifier, assigned by the domain.
@@ -691,13 +668,12 @@ class ResultMarkChangeRow(DefaultBase):
     sequence: Mapped[int]
 
 
-class BookPlaceRow(DefaultBase):
-    """Row of the place one account left one book at, keyed by the account and the book.
+class BookPlaceRow(BookTable):
+    """Row of the place the reader left the book at, keyed by the book, which has one owner and so one place.
 
     The page, scan, file and strip columns hold identifiers without a foreign key: the reader may delete the page the
     place names, and the place then falls back to the nearest view that still exists, so the database keeps the row.
 
-    :ivar account_id: Account the place belongs to, whose deletion removes the place.
     :ivar project_id: Book the place is in, whose deletion removes the place.
     :ivar mode: Whether the reader was working on a stage or reading, stored by value.
     :ivar stage: Stage the reader was on, stored by value.
@@ -716,10 +692,7 @@ class BookPlaceRow(DefaultBase):
 
     __tablename__ = 'book_places'
 
-    account_id: Mapped[UUID] = mapped_column(
-        ForeignKey(AccountTable.__table__.c.id, ondelete=CASCADE), primary_key=True
-    )
-    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), primary_key=True, index=True)
+    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), primary_key=True)
     mode: Mapped[PlaceMode] = mapped_column(enum_by_value(PlaceMode))
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
     page_id: Mapped[UUID | None]
@@ -735,7 +708,7 @@ class BookPlaceRow(DefaultBase):
     updated_at: Mapped[datetime]
 
 
-class RecipeRow(DefaultBase):
+class RecipeRow(BookTable):
     """Row of one recipe of a stage of a project, of which there is one for each kind of page.
 
     The steps are a JSON list of ``{processor_key, params, enabled, step_id}`` objects, since no query looks inside
@@ -746,7 +719,7 @@ class RecipeRow(DefaultBase):
     :ivar stage: Stage the recipe processes, stored by value.
     :ivar kind: Kind of the pages the recipe processes, stored by value.
     :ivar steps: The steps in order, as JSON.
-    :ivar profile_id: Profile of the account the recipe was made from, emptied when the profile is deleted.
+    :ivar profile_id: Profile of the catalogue the recipe was made from, which the service empties with the profile.
     :ivar created_at: Time the recipe was created.
     :ivar updated_at: Time the recipe last changed.
     :ivar project: Project owning the recipe, never loaded implicitly.
@@ -761,52 +734,9 @@ class RecipeRow(DefaultBase):
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
     kind: Mapped[RecipeKind] = mapped_column(enum_by_value(RecipeKind))
     steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
-    profile_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey(f'{RECIPE_PROFILES_TABLE}.{ID_COLUMN}', ondelete=SET_NULL), index=True
-    )
+    # The profile lives in the catalogue, which no key of this file can reach
+    profile_id: Mapped[UUID | None] = mapped_column(index=True)
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
 
     project: Mapped[ProjectRow] = relationship(back_populates=Relation.RECIPES, lazy=NO_IMPLICIT_LOAD)
-
-
-class RecipeProfileRow(DefaultBase):
-    """Row of one recipe profile of an account, of which at most one per stage is the default.
-
-    The steps are a JSON list of ``{processor_key, params, enabled, step_id}`` objects, as in a recipe. No column of the
-    profile refers to a book. A recipe may refer to the profile it was made from, and the database empties that
-    reference when the profile is deleted, so a profile outlives every recipe made from it and is removed only with its
-    account or by its owner.
-
-    :ivar id: Profile identifier, assigned by the domain.
-    :ivar account_id: Account owning the profile, whose deletion removes the profile.
-    :ivar stage: Stage whose recipes the profile can be applied to, stored by value.
-    :ivar name: Name the user sees.
-    :ivar steps: The steps in order, as JSON.
-    :ivar order: Whether the steps were saved in the usual order or the free one, stored by value.
-    :ivar is_default: Whether a new book of the account starts the stage with this profile.
-    :ivar created_at: Time the profile was saved.
-    :ivar updated_at: Time the profile last changed.
-    """
-
-    __tablename__ = RECIPE_PROFILES_TABLE
-    # The database keeps two requests that both choose the default profile of a stage from both succeeding
-    __table_args__ = (
-        Index(
-            'ix_recipe_profiles_one_default',
-            'account_id',
-            STAGE_COLUMN,
-            unique=True,
-            sqlite_where=DEFAULT_PROFILE,
-        ),
-    )
-
-    id: Mapped[UUID] = mapped_column(primary_key=True)
-    account_id: Mapped[UUID] = mapped_column(ForeignKey(AccountTable.__table__.c.id, ondelete=CASCADE), index=True)
-    stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
-    name: Mapped[str]
-    steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
-    order: Mapped[OrderMode] = mapped_column(enum_by_value(OrderMode), server_default=OrderMode.USUAL.value)
-    is_default: Mapped[bool]
-    created_at: Mapped[datetime]
-    updated_at: Mapped[datetime]

@@ -11,9 +11,11 @@ from bookreviver.domain.values import ProfileDraft, SliceRequest, Step
 from bookreviver.services.recipe_profiles import COPY_NAME
 from tests.helpers.builders import make_project
 from tests.helpers.processors import FakeProcessor, SecondProcessor, ThirdProcessor
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, Project, RecipeProfile
+    from bookreviver.domain.entities import Actor, Project, Recipe, RecipeProfile
+    from bookreviver.domain.ids import RecipeId
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -62,8 +64,9 @@ async def another_book(kit: ProcessingKit, actor: Actor) -> Project:
     :returns: The project.
     :rtype: Project
     """
-    project = make_project(owner_id=actor.account_id, title='Another book')
-    return await kit.uow().change(lambda repos: repos.projects.add(project))
+    project = make_project(title='Another book')
+    await store_project(kit.uow(), project, owner=actor.account_id)
+    return project
 
 
 class TestBooksOfAProfile:
@@ -122,8 +125,41 @@ class TestBooksOfAProfile:
         applied = await fx_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
         await fx_kit.profiles().remove(actor, profile.id)
         listed = await fx_kit.profiles().library(actor, None, EVERYTHING)
-        kept = await fx_kit.uow().read(lambda repos: repos.recipes.get(applied.recipe.id))
+        kept = await fx_kit.uow().read_book(project.id, lambda repos: repos.recipes.get(applied.recipe.id))
         assert (listed.total, kept.profile_id) == (0, None)
+
+    async def test_deleting_a_profile_clears_the_link_in_every_book_of_the_owner(self, fx_kit: ProcessingKit) -> None:
+        """Verify the recipes of both books that were made from the profile lose the link, and keep their steps.
+
+        :param fx_kit: What the processing services of the test share.
+        :type fx_kit: ProcessingKit
+        """
+        actor, project = await fx_kit.seed_project()
+        other = await another_book(fx_kit, actor)
+        profile = await save_profile(fx_kit, actor)
+        applied = [
+            await fx_kit.profiles().apply(actor, target.id, profile.id, kind=RecipeKind.TEXT)
+            for target in (project, other)
+        ]
+
+        await fx_kit.profiles().remove(actor, profile.id)
+
+        async def recipe_of(target: Project, recipe_id: RecipeId) -> Recipe:
+            """Read a recipe of a book as committed.
+
+            :param target: The book.
+            :type target: Project
+            :param recipe_id: The recipe.
+            :type recipe_id: RecipeId
+            :returns: The recipe.
+            :rtype: Recipe
+            """
+            return await fx_kit.uow().read_book(target.id, lambda repos: repos.recipes.get(recipe_id))
+
+        kept = [await recipe_of(target, done.recipe.id) for target, done in zip((project, other), applied, strict=True)]
+        expect([recipe.profile_id for recipe in kept] == [None, None])
+        expect([recipe.steps for recipe in kept] == [done.recipe.steps for done in applied])
+        assert_expectations()
 
 
 class TestDuplicateProfile:
