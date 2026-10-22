@@ -3,15 +3,20 @@
 The revisions of the shared database are gone from the code, so the tests build a shared database the way its last
 revision left it: every table of the catalogue but the library and every table of a book, in one file, with the owner
 of a project and the account of a place that the new tables no longer keep, and the version table at the last
-revision. The rows are stored through the repositories of the adapter, so they have the shape the application wrote.
+revision. The tables come from the baselines of the catalogue and of a book, which have the tables of that revision
+without the accounts of the books, and the rows are stored through the repositories of the adapter at the head and
+carried down to the baselines by the downgrades, so they have the shape the application wrote.
 """
 
+import shutil
+import sqlite3
+from contextlib import closing
 from typing import TYPE_CHECKING
 
 import pytest
-from attrs import frozen
+from anyio import to_thread
+from attrs import evolve, frozen
 from delayed_assert import assert_expectations, expect
-from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
@@ -38,13 +43,13 @@ from tests.helpers.builders import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable, Collection, Sequence
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Project
-    from bookreviver.domain.ids import AccountId
+    from bookreviver.domain.ids import AccountId, PageId
 
 pytestmark = pytest.mark.anyio
 
@@ -53,8 +58,13 @@ VERSION_TABLE: str = 'alembic_versions'
 # A revision of the shared chain before its last one, which the split refuses
 OLDER_REVISION: str = 'a6cd07915dcf'
 PAGES_OF_FIRST: int = 2
-# The parameter of the statements that set the account the earlier releases kept beside a book
-OWNER_PARAMETER: str = 'owner'
+# The baselines of the catalogue and of a book, whose tables are those of the shared database
+CATALOGUE_BASELINE: str = '56d52a4a1656'
+BOOK_BASELINE: str = '99e96bc47c3c'
+# The directory of the files the shared database is gathered from, and the name each is attached under
+PARTS: str = 'parts'
+PART: str = 'part'
+MANUAL_LABEL: str = 'xii'
 
 
 @frozen(kw_only=True)
@@ -65,19 +75,79 @@ class SharedBooks:
     :ivar owner_id: The account owning every book.
     :ivar first: The first book, with a source, a scan, pages, a version, a stage record and a place.
     :ivar second: The second book, with one page.
+    :ivar labelled: The page of the first book whose label was typed by hand.
     """
 
     path: Path
     owner_id: AccountId
     first: Project
     second: Project
+    labelled: PageId
 
 
-def _build_shared(path: Path, *, revision: str) -> SharedBooks:
-    """Write a shared database of the earlier releases with one account, one profile and two books.
+async def _write_at_baseline(path: Path, schema: Schema, baseline: str, store: Callable[[Session], None]) -> None:
+    """Write rows into a new file through the tables of the code, at the head, and take the file down to a baseline.
+
+    The tables of the code describe the head, and the downgrades carry the rows, so the file ends with the tables and
+    the rows a file of that baseline had, whatever the tables of the code look like now.
 
     :param path: Where the file is made.
     :type path: Path
+    :param schema: The schema of the file.
+    :type schema: Schema
+    :param baseline: The revision to take the file down to.
+    :type baseline: str
+    :param store: Work that writes the rows in one transaction.
+    :type store: Callable[[Session], None]
+    """
+    database = SqlDatabase(f'sqlite:///{path}', schema=schema, tracer=NullTracer())
+    try:
+        await to_thread.run_sync(database.migrations.upgrade)
+        with Session(database.engine) as session, session.begin():
+            store(session)
+        await database.dispose()
+        await to_thread.run_sync(database.migrations.downgrade, baseline)
+    finally:
+        await database.dispose()
+
+
+def _merge(target: Path, parts: Sequence[Path], *, leaving_out: Collection[str]) -> None:
+    """Gather the tables and the rows of several files into one, each table made once from the first file that has it.
+
+    :param target: The file the tables and rows are gathered in.
+    :type target: Path
+    :param parts: The files to gather, whose tables of one name have one definition.
+    :type parts: Sequence[Path]
+    :param leaving_out: Names of the tables not to gather, such as the version tables.
+    :type leaving_out: Collection[str]
+    """
+    with closing(sqlite3.connect(target)) as connection:
+        for part in parts:
+            connection.execute(f"ATTACH DATABASE '{part}' AS {PART}")
+            # The tables come before the indexes, which need them
+            schema = connection.execute(
+                f"SELECT type, name, tbl_name, sql FROM {PART}.sqlite_master WHERE sql IS NOT NULL ORDER BY type = 'index'"
+            ).fetchall()
+            made = {row[0] for row in connection.execute('SELECT name FROM main.sqlite_master')}
+            for kind, name, table, sql in schema:
+                if table in leaving_out or (kind == 'index' and name in made):
+                    continue
+                if name not in made:
+                    connection.execute(sql)
+                if kind == 'table':
+                    connection.execute(f'INSERT INTO main."{name}" SELECT * FROM {PART}."{name}"')
+            connection.commit()
+            connection.execute(f'DETACH DATABASE {PART}')
+
+
+async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
+    """Write a shared database of the earlier releases with one account, one profile and two books.
+
+    The tables come from the baselines of the catalogue and of a book, which the split was written against, and the
+    rows from the repositories of the adapter, so they have the shape the application wrote.
+
+    :param directory: The data directory, which holds the shared file and the parts it is gathered from.
+    :type directory: Path
     :param revision: The revision its version table records.
     :type revision: str
     :returns: What the file stores.
@@ -90,45 +160,71 @@ def _build_shared(path: Path, *, revision: str) -> SharedBooks:
     pages = [
         make_page(project_id=first.id, order_key=f'a{index}', scan=scan if not index else None) for index in range(2)
     ]
+    pages[1] = evolve(pages[1], manual_label=MANUAL_LABEL)
     version = make_page_version(page_id=pages[0].id)
-    engine = create_engine(f'sqlite:///{path}')
-    try:
-        with engine.begin() as connection:
-            Schema.CATALOGUE.metadata.create_all(connection)
-            Schema.BOOK.metadata.create_all(connection)
-            connection.execute(text(f'DROP TABLE "{LibraryRow.__tablename__}"'))
-            connection.execute(text('ALTER TABLE projects ADD COLUMN owner_id BLOB'))
-            connection.execute(text('ALTER TABLE book_places ADD COLUMN account_id BLOB'))
-            connection.execute(text(f'CREATE TABLE {VERSION_TABLE} (version_num VARCHAR(32) NOT NULL PRIMARY KEY)'))
-            connection.execute(text(f'INSERT INTO {VERSION_TABLE} VALUES (:revision)'), {'revision': revision})
-        with Session(engine) as session, session.begin():
-            session.add(
-                AccountTable(
-                    id=owner_id,
-                    email='owner@example.org',
-                    hashed_password='',
-                    is_active=True,
-                    is_superuser=False,
-                    is_verified=True,
-                )
+    parts = directory / PARTS
+    parts.mkdir()
+
+    def store_catalogue(session: Session) -> None:
+        """Store the account and its profile.
+
+        :param session: Session of the transaction.
+        :type session: Session
+        """
+        session.add(
+            AccountTable(
+                id=owner_id,
+                email='owner@example.org',
+                hashed_password='',
+                is_active=True,
+                is_superuser=False,
+                is_verified=True,
             )
-            session.flush()
-            SqlAlchemyCatalogueRepositories(session).recipe_profiles.add(make_recipe_profile(account_id=owner_id))
-            repos = SqlAlchemyBookRepositories(session)
-            repos.projects.add_many([first, second])
-            repos.sources.add(source)
-            repos.scans.add(scan)
-            repos.pages.add_many([*pages, make_page(project_id=second.id)])
-            repos.page_versions.add(version)
-            repos.page_stages.add(make_page_stage(page_id=pages[0].id, head_version_id=version.id))
-            repos.book_places.save(make_book_place(project_id=first.id, page_id=pages[1].id))
-        with engine.begin() as connection:
-            owner = {OWNER_PARAMETER: owner_id.bytes}
-            connection.execute(text(f'UPDATE projects SET owner_id = :{OWNER_PARAMETER}'), owner)
-            connection.execute(text(f'UPDATE book_places SET account_id = :{OWNER_PARAMETER}'), owner)
-    finally:
-        engine.dispose()
-    return SharedBooks(path=path, owner_id=owner_id, first=first, second=second)
+        )
+        session.flush()
+        SqlAlchemyCatalogueRepositories(session).recipe_profiles.add(make_recipe_profile(account_id=owner_id))
+
+    def store_first(session: Session) -> None:
+        """Store the first book, with every kind of row the split copies.
+
+        :param session: Session of the transaction.
+        :type session: Session
+        """
+        repos = SqlAlchemyBookRepositories(session)
+        repos.projects.add(first)
+        repos.sources.add(source)
+        repos.scans.add(scan)
+        repos.pages.add_many(pages)
+        repos.page_versions.add(version)
+        repos.page_stages.add(make_page_stage(page_id=pages[0].id, head_version_id=version.id))
+        repos.book_places.save(make_book_place(project_id=first.id, page_id=pages[1].id))
+
+    def store_second(session: Session) -> None:
+        """Store the second book, with one page.
+
+        :param session: Session of the transaction.
+        :type session: Session
+        """
+        repos = SqlAlchemyBookRepositories(session)
+        repos.projects.add(second)
+        repos.pages.add(make_page(project_id=second.id))
+
+    files = [parts / name for name in ('catalogue.db', 'first.db', 'second.db')]
+    await _write_at_baseline(files[0], Schema.CATALOGUE, CATALOGUE_BASELINE, store_catalogue)
+    await _write_at_baseline(files[1], Schema.BOOK, BOOK_BASELINE, store_first)
+    await _write_at_baseline(files[2], Schema.BOOK, BOOK_BASELINE, store_second)
+    path = directory / SHARED_FILE
+    _merge(path, files, leaving_out={VERSION_TABLE, LibraryRow.__tablename__})
+    shutil.rmtree(parts)
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute('ALTER TABLE projects ADD COLUMN owner_id BLOB')
+        connection.execute('ALTER TABLE book_places ADD COLUMN account_id BLOB')
+        connection.execute('UPDATE projects SET owner_id = ?', (owner_id.bytes,))
+        connection.execute('UPDATE book_places SET account_id = ?', (owner_id.bytes,))
+        connection.execute(f'CREATE TABLE {VERSION_TABLE} (version_num VARCHAR(32) NOT NULL PRIMARY KEY)')
+        connection.execute(f'INSERT INTO {VERSION_TABLE} VALUES (?)', (revision,))
+        connection.commit()
+    return SharedBooks(path=path, owner_id=owner_id, first=first, second=second, labelled=pages[1].id)
 
 
 @pytest.fixture
@@ -147,7 +243,7 @@ async def fx_empty_catalogue(fx_settings: Settings) -> AsyncIterator[SqlDatabase
 
 
 @pytest.fixture
-def fx_shared(fx_settings: Settings) -> SharedBooks:
+async def fx_shared(fx_settings: Settings) -> SharedBooks:
     """Write the shared database of the test at the last revision of its chain, in the data directory.
 
     :param fx_settings: Settings pointing at a fresh data directory of the test.
@@ -156,7 +252,7 @@ def fx_shared(fx_settings: Settings) -> SharedBooks:
     :rtype: SharedBooks
     """
     fx_settings.data_dir.mkdir(parents=True, exist_ok=True)
-    return _build_shared(fx_settings.data_dir / SHARED_FILE, revision=SHARED_REVISION)
+    return await _build_shared(fx_settings.data_dir, revision=SHARED_REVISION)
 
 
 class TestSplit:
@@ -203,6 +299,24 @@ class TestSplit:
         expect(second_pages == 1)
         assert_expectations()
 
+    async def test_a_label_typed_by_hand_stays_a_manual_label(
+        self, fx_shared: SharedBooks, fx_empty_catalogue: SqlDatabase, fx_books: BookDatabases
+    ) -> None:
+        """Verify the rows go through the revisions after the baseline, so a label typed by hand keeps its page.
+
+        :param fx_shared: The shared database of the test.
+        :type fx_shared: SharedBooks
+        :param fx_empty_catalogue: The catalogue the split builds.
+        :type fx_empty_catalogue: SqlDatabase
+        :param fx_books: Registry of the books of the test.
+        :type fx_books: BookDatabases
+        """
+        await SharedDatabaseSplit(fx_shared.path, catalogue=fx_empty_catalogue, books=fx_books).run()
+
+        uow = SqlAlchemyUnitOfWork(fx_empty_catalogue, fx_books)
+        page = await uow.read_book(fx_shared.first.id, lambda repos: repos.pages.get(fx_shared.labelled))
+        assert page.manual_label == MANUAL_LABEL
+
     async def test_the_shared_database_is_left_as_it_was(
         self, fx_shared: SharedBooks, fx_empty_catalogue: SqlDatabase, fx_books: BookDatabases
     ) -> None:
@@ -235,7 +349,8 @@ class TestRefusal:
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookDatabases
         """
-        shared = _build_shared(fx_settings.data_dir / SHARED_FILE, revision=OLDER_REVISION)
+        fx_settings.data_dir.mkdir(parents=True, exist_ok=True)
+        shared = await _build_shared(fx_settings.data_dir, revision=OLDER_REVISION)
         with pytest.raises(SplitRefusedError, match=OLDER_REVISION):
             await SharedDatabaseSplit(shared.path, catalogue=fx_empty_catalogue, books=fx_books).run()
 
