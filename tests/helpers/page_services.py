@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, override
 import anyio
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.plugins.blank import BlankPage
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import Tiler
@@ -29,6 +28,8 @@ if TYPE_CHECKING:
 PREVIEW_CONTENT: bytes = b'preview'
 THUMBNAIL_CONTENT: bytes = b'thumbnail'
 INFO_NAME: str = 'info.json'
+# The image information document of a fake pyramid, which the API fills in when it serves it
+EMPTY_INFO: str = '{}'
 
 
 class FakeTiler(Tiler):
@@ -42,20 +43,18 @@ class FakeTiler(Tiler):
         self.cut: list[Path] = []
 
     @override
-    async def tile(self, image: Path, target_dir: Path, *, resource_id: str) -> None:
-        """Write a directory holding an ``info.json`` that names the resource.
+    async def tile(self, image: Path, target_dir: Path) -> None:
+        """Write a directory holding an empty ``info.json``.
 
         :param image: Image to cut.
         :type image: Path
         :param target_dir: Directory to create.
         :type target_dir: Path
-        :param resource_id: Address of the pyramid, written into the ``info.json``.
-        :type resource_id: str
         """
         self.cut.append(image)
         directory = anyio.Path(target_dir)
         await directory.mkdir(parents=True)
-        await (directory / INFO_NAME).write_text(resource_id)
+        await (directory / INFO_NAME).write_text(EMPTY_INFO)
 
     @override
     async def preview(self, image: Path, target: Path) -> None:
@@ -116,13 +115,12 @@ def make_page_service(
             publisher=publisher, clock=clock, order_keys=order_keys or FractionalOrderKeys(), board=board
         ),
         imaging=PageImaging(
-            base_versions=BaseVersions(assets=assets, tiler=tiler, iiif_root=IIIF_ROOT),
+            base_versions=BaseVersions(assets=assets, tiler=tiler),
             runner=StepRunner(
                 assets=assets,
                 executor=InProcessStepExecutor(FakeCatalogue([SplitNone(), BlankPage()])),
                 renditions=renditions or FakeRenditionWriter(),
                 tiler=tiler,
-                iiif_root=IIIF_ROOT,
             ),
         ),
     )

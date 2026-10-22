@@ -79,7 +79,6 @@ from tests.helpers.builders import make_job, make_project, make_source, new_acco
 from tests.helpers.fakes_imports import (
     BOOK_WINDOW,
     DEFAULT_PARALLEL_SCANS,
-    IIIF_ROOT,
     IMPORT_TIMEOUT_SECONDS,
     MAX_BYTES,
     MAX_FILES,
@@ -1200,10 +1199,10 @@ class TestRunImport:
         )
         assert_expectations()
 
-    async def test_cuts_every_pyramid_for_the_route_that_serves_it(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+    async def test_cuts_every_pyramid_into_the_directory_of_its_key(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path, fx_storage_root: Path
     ) -> None:
-        """Verify each pyramid is cut for the IIIF route and the key of its own directory, for scans and pages alike.
+        """Verify each pyramid is cut into the directory of its own key, for scans and pages alike.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
@@ -1213,6 +1212,8 @@ class TestRunImport:
         :type fx_project: Project
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
+        :param fx_storage_root: Storage root of the test.
+        :type fx_storage_root: Path
         """
         await _import(fx_rig, fx_owner, fx_project.id, [image_upload(fx_samples, COVER_NAME)])
 
@@ -1220,10 +1221,11 @@ class TestRunImport:
         [scan] = await _scans(fx_rig, fx_project.id)
         [page] = await _pages(fx_rig, fx_project.id)
         [version] = await _versions(fx_rig, fx_project.id, [page.id])
-        assert sorted(fx_rig.tiler.resource_ids) == sorted(
+        # The asset store hands out a hidden directory beside the key, which the pyramid is published from
+        assert sorted(target.parent for target in fx_rig.tiler.targets) == sorted(
             [
-                f'{IIIF_ROOT}/{keys.scan_rendition(scan, Rendition.TILES)}',
-                f'{IIIF_ROOT}/{keys.version_rendition(version, Rendition.TILES)}',
+                (fx_storage_root / keys.scan_rendition(scan, Rendition.TILES)).parent,
+                (fx_storage_root / keys.version_rendition(version, Rendition.TILES)).parent,
             ]
         )
 

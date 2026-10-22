@@ -6,7 +6,6 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.domain.enums import (
     ColorMode,
     ImagePolicy,
@@ -82,7 +81,6 @@ class Rig:
             executor=InProcessStepExecutor(FakeCatalogue([SplitNone(), self.fake])),
             renditions=self.writer,
             tiler=self.tiler,
-            iiif_root=IIIF_ROOT,
         )
         self.scan = _scan()
         self.keys = ProjectKeys(make_project().id)
@@ -157,7 +155,7 @@ class TestStore:
         directory = fx_storage_root / fx_rig.keys.version_directory(ready)
         expect((directory / Rendition.FULL_JPEG).read_bytes() == IMAGE)
         expect((directory / Rendition.PREVIEW).read_bytes() == PREVIEW_TOKEN)
-        expect((directory / Rendition.TILES / INFO_NAME).read_text().startswith(IIIF_ROOT))
+        expect((directory / Rendition.TILES / INFO_NAME).is_file())
         expect(all(image == directory / Rendition.FULL_JPEG for image in fx_rig.tiler.cut))
         expect((ready.state, ready.tiles_ready) == (VersionState.READY, True))
         expect(ready.renditions == Renditions(ready=True, full=Rendition.FULL_JPEG))
