@@ -10,8 +10,8 @@ from bookreviver.domain.entities import (
     Job,
     Page,
     PageEdit,
+    PageHistoryEntry,
     PageStage,
-    PageStepChange,
     PageStepState,
     PageVersion,
     PaginationSection,
@@ -51,8 +51,8 @@ from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import (
     AccountId,
     JobId,
+    PageHistoryEntryId,
     PageId,
-    PageStepChangeId,
     PageVersionId,
     PaginationSectionId,
     ProjectId,
@@ -512,14 +512,14 @@ def make_page_step_state(
     )
 
 
-def make_page_step_change(
+def make_page_history_entry(
     *,
     page_id: PageId,
     stage: Stage = Stage.GEOMETRY,
     created_at: datetime = EPOCH,
     before: MetadataMap | None = None,
     after: MetadataMap | None = None,
-) -> PageStepChange:
+) -> PageHistoryEntry:
     """Build a change of the settings of the deskew step of a page made by the user.
 
     :param page_id: Page the change was made on.
@@ -533,10 +533,10 @@ def make_page_step_change(
     :param after: The settings after the change, or None for none.
     :type after: MetadataMap | None
     :returns: A change with a new identifier.
-    :rtype: PageStepChange
+    :rtype: PageHistoryEntry
     """
-    return PageStepChange(
-        id=PageStepChangeId(uuid4()),
+    return PageHistoryEntry(
+        id=PageHistoryEntryId(uuid4()),
         page_id=page_id,
         stage=stage,
         step_id=DESKEW_STEP_ID,

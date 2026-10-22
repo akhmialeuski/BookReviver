@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { PageStepChangeSchema, PageVersionSchema } from '@/api';
+import type { PageHistoryEntrySchema, PageVersionSchema } from '@/api';
 import { stepChain } from '@/features/editors/chain';
 import { useClearHistory, usePageHistory, useUndo } from '@/features/processing/historyQueries';
 import { lastStanding, stands } from '@/features/processing/pageHistory';
@@ -52,7 +52,7 @@ const labels = MESSAGES.processing.timeline;
 /** How many rows the list shows at first, and how many more "Show more" adds. */
 const ROWS_AT_A_TIME = 3;
 
-const NO_CHANGES: readonly PageStepChangeSchema[] = [];
+const NO_CHANGES: readonly PageHistoryEntrySchema[] = [];
 const NO_VERSIONS: readonly PageVersionSchema[] = [];
 
 /** What the dialog asks the reader to confirm. */

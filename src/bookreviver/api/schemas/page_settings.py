@@ -6,7 +6,7 @@ from typing import Any, Self
 from pydantic import Field, model_validator
 
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
-from bookreviver.api.schemas.page_history import PageStepChangeSchema
+from bookreviver.api.schemas.page_history import PageHistoryEntrySchema
 from bookreviver.api.schemas.types import GroupLabel, PageIdList
 from bookreviver.domain.enums import ValueScope
 from bookreviver.domain.ids import ChangeBatchId, StepId
@@ -99,4 +99,4 @@ class ValueChangesSchema(ResponseModel):
     """
 
     batch_id: ChangeBatchId
-    changes: list[PageStepChangeSchema]
+    changes: list[PageHistoryEntrySchema]

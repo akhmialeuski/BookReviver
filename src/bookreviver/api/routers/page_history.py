@@ -15,8 +15,8 @@ from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
-from bookreviver.api.schemas.page_history import ClearedSchema, PageStepChangeSchema, UndoForm, UndoneSchema
-from bookreviver.domain.entities import PageStepChange
+from bookreviver.api.schemas.page_history import ClearedSchema, PageHistoryEntrySchema, UndoForm, UndoneSchema
+from bookreviver.domain.entities import PageHistoryEntry
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import PageId, ProjectId, StepId
 from bookreviver.domain.values import PageStepKey, Slice
@@ -52,7 +52,7 @@ async def list_history(
     params: Annotated[Params, Depends()],
     actor: ActorDep,
     history: FromDishka[PageHistoryService],
-) -> Page[PageStepChangeSchema]:
+) -> Page[PageHistoryEntrySchema]:
     """List the changes of a step on a page, the newest first, with which of them were taken back.
 
     \N{FORM FEED}
@@ -65,22 +65,22 @@ async def list_history(
     :param history: Page history service of the request.
     :type history: PageHistoryService
     :returns: One page of the changes.
-    :rtype: Page[PageStepChangeSchema]
+    :rtype: Page[PageHistoryEntrySchema]
     """
     found = await history.list(actor, address.project_id, address.key)
     undone = found.undone
 
-    def to_schema(change: PageStepChange) -> PageStepChangeSchema:
+    def to_schema(change: PageHistoryEntry) -> PageHistoryEntrySchema:
         """Build the schema of one change, marked when a later change took it back.
 
         :param change: The change.
-        :type change: PageStepChange
+        :type change: PageHistoryEntry
         :returns: The schema.
-        :rtype: PageStepChangeSchema
+        :rtype: PageHistoryEntrySchema
         """
-        return PageStepChangeSchema.model_validate(change).model_copy(update={'undone': change.id in undone})
+        return PageHistoryEntrySchema.model_validate(change).model_copy(update={'undone': change.id in undone})
 
-    pager = Pager[PageStepChange, PageStepChangeSchema](params, to_schema)
+    pager = Pager[PageHistoryEntry, PageHistoryEntrySchema](params, to_schema)
     newest_first = found.changes[::-1]
     window = newest_first[pager.request.offset : pager.request.offset + pager.request.limit]
     return pager.page(Slice(items=window, total=len(newest_first)))
@@ -112,7 +112,7 @@ async def undo_change(
     :rtype: UndoneSchema
     """
     written = await history.undo(actor, address.project_id, address.key, form.change_id)
-    return UndoneSchema(changes=[PageStepChangeSchema.model_validate(change) for change in written])
+    return UndoneSchema(changes=[PageHistoryEntrySchema.model_validate(change) for change in written])
 
 
 @router.delete('/{project_id}/pages/{page_id}/history/{stage}/{step_id}')

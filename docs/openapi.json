@@ -6462,7 +6462,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_PageStepChangeSchema_"
+                  "$ref": "#/components/schemas/Page_PageHistoryEntrySchema_"
                 }
               }
             }
@@ -9289,7 +9289,7 @@
           },
           "changes": {
             "items": {
-              "$ref": "#/components/schemas/PageStepChangeSchema"
+              "$ref": "#/components/schemas/PageHistoryEntrySchema"
             },
             "type": "array",
             "title": "Changes"
@@ -10414,6 +10414,122 @@
         "title": "PageFilter",
         "description": "Which pages the strip and the grid of a stage list."
       },
+      "PageHistoryEntrySchema": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Page Id"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "step_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Step Id"
+          },
+          "layer": {
+            "$ref": "#/components/schemas/StepLayer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ValueScope"
+          },
+          "group_label": {
+            "type": "string",
+            "title": "Group Label"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ChangeSource"
+          },
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
+          "undoes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Undoes"
+          },
+          "undone": {
+            "type": "boolean",
+            "title": "Undone",
+            "default": false
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "sequence": {
+            "type": "integer",
+            "title": "Sequence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "page_id",
+          "stage",
+          "step_id",
+          "layer",
+          "scope",
+          "group_label",
+          "before",
+          "after",
+          "source",
+          "batch_id",
+          "undoes",
+          "created_at",
+          "sequence"
+        ],
+        "title": "PageHistoryEntrySchema",
+        "description": "One change of a layer of a step on a page.\n\n:ivar id: Identifier of the change.\n:ivar page_id: Page the change was made on.\n:ivar stage: Stage of the step.\n:ivar step_id: Identifier of the step.\n:ivar layer: The layer that changed.\n:ivar scope: Whose settings the layer holds: the page's own, or the odd pages, the even pages or a group it takes.\n:ivar group_label: Label of the group for the scope of a group, and empty for the others.\n:ivar before: Content of the layer before the change, or None when it was empty.\n:ivar after: Content of the layer after the change, or None when the change emptied it.\n:ivar source: What made the change.\n:ivar batch_id: Identifier shared by the changes of one batch, which are undone together, or None.\n:ivar undoes: The change this one takes back, or None for a change that is not an undo.\n:ivar undone: Whether a later change took this one back, so it no longer stands.\n:ivar created_at: When the change was made.\n:ivar sequence: Place of the change in the history of its page."
+      },
       "PageKind": {
         "type": "string",
         "enum": [
@@ -10680,122 +10796,6 @@
         ],
         "title": "PageStageStatus",
         "description": "Where one page stands in one stage: the state of its record, or that the stage has not run on it yet."
-      },
-      "PageStepChangeSchema": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
-          },
-          "page_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Page Id"
-          },
-          "stage": {
-            "$ref": "#/components/schemas/Stage"
-          },
-          "step_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Step Id"
-          },
-          "layer": {
-            "$ref": "#/components/schemas/StepLayer"
-          },
-          "scope": {
-            "$ref": "#/components/schemas/ValueScope"
-          },
-          "group_label": {
-            "type": "string",
-            "title": "Group Label"
-          },
-          "before": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Before"
-          },
-          "after": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "After"
-          },
-          "source": {
-            "$ref": "#/components/schemas/ChangeSource"
-          },
-          "batch_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Batch Id"
-          },
-          "undoes": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Undoes"
-          },
-          "undone": {
-            "type": "boolean",
-            "title": "Undone",
-            "default": false
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          },
-          "sequence": {
-            "type": "integer",
-            "title": "Sequence"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "page_id",
-          "stage",
-          "step_id",
-          "layer",
-          "scope",
-          "group_label",
-          "before",
-          "after",
-          "source",
-          "batch_id",
-          "undoes",
-          "created_at",
-          "sequence"
-        ],
-        "title": "PageStepChangeSchema",
-        "description": "One change of a layer of a step on a page.\n\n:ivar id: Identifier of the change.\n:ivar page_id: Page the change was made on.\n:ivar stage: Stage of the step.\n:ivar step_id: Identifier of the step.\n:ivar layer: The layer that changed.\n:ivar scope: Whose settings the layer holds: the page's own, or the odd pages, the even pages or a group it takes.\n:ivar group_label: Label of the group for the scope of a group, and empty for the others.\n:ivar before: Content of the layer before the change, or None when it was empty.\n:ivar after: Content of the layer after the change, or None when the change emptied it.\n:ivar source: What made the change.\n:ivar batch_id: Identifier shared by the changes of one batch, which are undone together, or None.\n:ivar undoes: The change this one takes back, or None for a change that is not an undo.\n:ivar undone: Whether a later change took this one back, so it no longer stands.\n:ivar created_at: When the change was made.\n:ivar sequence: Place of the change in the history of its page."
       },
       "PageStepSettingsSchema": {
         "properties": {
@@ -11160,6 +11160,46 @@
         ],
         "title": "Page[PageEditSchema]"
       },
+      "Page_PageHistoryEntrySchema_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PageHistoryEntrySchema"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Page"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Size"
+          },
+          "pages": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "size",
+          "pages"
+        ],
+        "title": "Page[PageHistoryEntrySchema]"
+      },
       "Page_PageStageSchema_": {
         "properties": {
           "items": {
@@ -11199,46 +11239,6 @@
           "pages"
         ],
         "title": "Page[PageStageSchema]"
-      },
-      "Page_PageStepChangeSchema_": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/PageStepChangeSchema"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "total": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Total"
-          },
-          "page": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Page"
-          },
-          "size": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Size"
-          },
-          "pages": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Pages"
-          }
-        },
-        "type": "object",
-        "required": [
-          "items",
-          "total",
-          "page",
-          "size",
-          "pages"
-        ],
-        "title": "Page[PageStepChangeSchema]"
       },
       "Page_PageStepSettingsSchema_": {
         "properties": {
@@ -14040,7 +14040,7 @@
         "properties": {
           "changes": {
             "items": {
-              "$ref": "#/components/schemas/PageStepChangeSchema"
+              "$ref": "#/components/schemas/PageHistoryEntrySchema"
             },
             "type": "array",
             "title": "Changes"
@@ -14102,7 +14102,7 @@
           },
           "changes": {
             "items": {
-              "$ref": "#/components/schemas/PageStepChangeSchema"
+              "$ref": "#/components/schemas/PageHistoryEntrySchema"
             },
             "type": "array",
             "title": "Changes"

@@ -19,7 +19,7 @@ from tests.helpers.spreads import run_stage
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Page, PageStepChange, PageStepState, PageVersion, Project
+    from bookreviver.domain.entities import Page, PageHistoryEntry, PageStepState, PageVersion, Project
     from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.values import PageStepKey
     from tests.helpers.processing import ProcessingKit
@@ -106,7 +106,9 @@ async def states_of(
     return await kit.uow().read_book(project_id, lambda repos: [repos.page_step_states.find(key) for key in keys])
 
 
-async def histories(kit: ProcessingKit, project_id: ProjectId, pages: Sequence[Page]) -> list[Sequence[PageStepChange]]:
+async def histories(
+    kit: ProcessingKit, project_id: ProjectId, pages: Sequence[Page]
+) -> list[Sequence[PageHistoryEntry]]:
     """Read the history of the steps of each page as committed.
 
     :param kit: What the processing services of the test share.
@@ -116,10 +118,10 @@ async def histories(kit: ProcessingKit, project_id: ProjectId, pages: Sequence[P
     :param pages: The pages.
     :type pages: Sequence[Page]
     :returns: The changes of each page, in order.
-    :rtype: list[Sequence[PageStepChange]]
+    :rtype: list[Sequence[PageHistoryEntry]]
     """
     return await kit.uow().read_book(
-        project_id, lambda repos: [repos.page_step_changes.list_for_page(page.id) for page in pages]
+        project_id, lambda repos: [repos.page_history.list_for_page(page.id) for page in pages]
     )
 
 

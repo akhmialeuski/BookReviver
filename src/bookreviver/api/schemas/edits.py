@@ -13,7 +13,7 @@ from pydantic import Json, model_validator
 
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
-from bookreviver.api.schemas.page_history import PageStepChangeSchema
+from bookreviver.api.schemas.page_history import PageHistoryEntrySchema
 from bookreviver.api.schemas.types import PageIdList
 from bookreviver.domain.enums import CarryScope, EditorKind, Stage
 from bookreviver.domain.geometry import geometry_from_data
@@ -165,5 +165,5 @@ class CarryOverSchema(ResponseModel):
     """
 
     batch_id: ChangeBatchId
-    changes: list[PageStepChangeSchema]
+    changes: list[PageHistoryEntrySchema]
     skipped: list[PageId]

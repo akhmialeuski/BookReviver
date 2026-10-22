@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from attrs import evolve
 
-from bookreviver.domain.entities import PageStepChange
+from bookreviver.domain.entities import PageHistoryEntry
 from bookreviver.domain.enums import StepLayer
 from bookreviver.domain.ids import ChangeBatchId
 
@@ -54,7 +54,7 @@ class PageBatch:
         self._repos = repos
         self._source = source
         self._moment = moment
-        self._changes: list[PageStepChange] = []
+        self._changes: list[PageHistoryEntry] = []
 
     def write(self, state: PageStepState, layer: StepLayer, content: MetadataMap | None) -> PageStepState:
         """Set a layer of the state of a step on a page, storing the state and keeping the change.
@@ -80,7 +80,7 @@ class PageBatch:
         else:
             self._repos.page_step_states.save(changed)
         self._changes.append(
-            evolve(PageStepChange.between(state, changed, layer, self._source), batch_id=self.batch_id)
+            evolve(PageHistoryEntry.between(state, changed, layer, self._source), batch_id=self.batch_id)
         )
         return changed
 
@@ -108,7 +108,7 @@ class PageBatch:
         else:
             self._repos.step_values.save(changed)
         self._changes.extend(
-            evolve(PageStepChange.of_values(page_id, values, changed, self._source), batch_id=self.batch_id)
+            evolve(PageHistoryEntry.of_values(page_id, values, changed, self._source), batch_id=self.batch_id)
             for page_id in pages
         )
         return changed
@@ -125,14 +125,14 @@ class PageBatch:
             state = self.write(state, layer, None)
         return state
 
-    def flush(self) -> Sequence[PageStepChange]:
+    def flush(self) -> Sequence[PageHistoryEntry]:
         """Add the changes of the batch to the history, which numbers them, and forget them.
 
         It writes in the transaction of the caller and opens none.
 
         :returns: The changes as stored, in the order they were written.
-        :rtype: Sequence[PageStepChange]
+        :rtype: Sequence[PageHistoryEntry]
         """
-        added = self._repos.page_step_changes.add_many(self._changes)
+        added = self._repos.page_history.add_many(self._changes)
         self._changes = []
         return added
