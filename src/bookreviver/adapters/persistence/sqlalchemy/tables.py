@@ -161,7 +161,6 @@ class ProjectRow(BookTable):
     :ivar copy_notes: Marks of the scanned copy.
     :ivar notes: Free-form notes of the owner.
     :ivar image_policy: How the images of the project's scans and page versions are stored, stored by value.
-    :ivar cover_page_id: Page whose thumbnail the project list shows, or null for the first page.
     :ivar created_at: Time the project was created.
     :ivar updated_at: Time of the last change, set by the domain through its ``Clock``.
     :ivar sources: Sources of the project, never loaded implicitly.
@@ -200,23 +199,14 @@ class ProjectRow(BookTable):
     copy_notes: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     notes: Mapped[str]
     image_policy: Mapped[ImagePolicy] = mapped_column(enum_by_value(ImagePolicy))
-    # By table name, and added after both tables exist, since the pages table refers back to this one
-    cover_page_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey(f'{PAGES_TABLE}.{ID_COLUMN}', ondelete=SET_NULL, use_alter=True)
-    )
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
 
     sources: Mapped[list[SourceRow]] = relationship(
         back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
-    # The project's own key of its pages, not the cover's key the other way
     pages: Mapped[list[PageRow]] = relationship(
-        back_populates=Relation.PROJECT,
-        cascade=CHILD_CASCADE,
-        passive_deletes=True,
-        lazy=NO_IMPLICIT_LOAD,
-        foreign_keys=lambda: [PageRow.project_id],
+        back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
     recipes: Mapped[list[RecipeRow]] = relationship(
         back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
@@ -387,9 +377,7 @@ class PageRow(BookTable):
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
 
-    project: Mapped[ProjectRow] = relationship(
-        back_populates=Relation.PAGES, lazy=NO_IMPLICIT_LOAD, foreign_keys=lambda: [PageRow.project_id]
-    )
+    project: Mapped[ProjectRow] = relationship(back_populates=Relation.PAGES, lazy=NO_IMPLICIT_LOAD)
     versions: Mapped[list[PageVersionRow]] = relationship(
         back_populates=Relation.PAGE, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )

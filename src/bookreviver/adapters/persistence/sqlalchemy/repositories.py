@@ -30,7 +30,7 @@ from advanced_alchemy.exceptions import NotFoundError as MissingRowError
 from advanced_alchemy.filters import CollectionFilter, LimitOffset
 from advanced_alchemy.repository import DEFAULT_ERROR_MESSAGE_TEMPLATES, SQLAlchemySyncRepository
 from attrs import evolve
-from sqlalchemy import Table, UniqueConstraint, and_, case, delete, exists, func, or_, select
+from sqlalchemy import Table, UniqueConstraint, and_, case, delete, func, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow, RecipeProfileRow
@@ -88,6 +88,7 @@ from bookreviver.domain.entities import (
 )
 from bookreviver.domain.enums import (
     ContentType,
+    PageKind,
     PageOrigin,
     RecipeKind,
     ResultMark,
@@ -648,7 +649,7 @@ class SqlAlchemyLibraryRepository(SqlAlchemyRepository[LibraryEntry, ProjectId, 
 
 
 class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, ProjectRow], ProjectRepository):
-    """The project of the book of the file, with the counts of its book.
+    """The project of the book of the file, with the counts and the cover of its book.
 
     The counts are scalar subqueries, so one statement returns every count.
     """
@@ -662,60 +663,32 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
         super().__init__(rows=ProjectRows(session=session), mapper=ProjectMapper())
 
     @override
-    def add(self, entity: Project) -> Project:
-        """Store a new project whose cover, if any, is one of its own pages.
-
-        :param entity: Project to store, with its identifier already assigned.
-        :type entity: Project
-        :returns: The project as stored.
-        :rtype: Project
-        :raises NotFoundError: If the cover page is not a page of the project.
-        :raises ConflictError: If a project with this identifier is already stored.
-        """
-        self._require_own_cover(entity)
-        return super().add(entity)
-
-    @override
-    def update(self, entity: Project) -> Project:
-        """Replace the stored state of a project whose cover, if any, is one of its own pages.
-
-        :param entity: Project with its new state.
-        :type entity: Project
-        :returns: The project as stored.
-        :rtype: Project
-        :raises NotFoundError: If the project is not stored, or the cover page is not a page of the project.
-        """
-        self._require_own_cover(entity)
-        return super().update(entity)
-
-    def _require_own_cover(self, project: Project) -> None:
-        """Refuse a cover that is not a page of the project.
-
-        The foreign key of the cover proves only that the page exists and empties the cover when the page goes. A
-        key over the pair of project and page cannot empty the cover alone on SQLite, so the project is checked here.
-
-        :param project: Project about to be stored.
-        :type project: Project
-        :raises NotFoundError: If the cover page is not stored or belongs to another project.
-        """
-        if (cover_id := project.cover_page_id) is None:
-            return
-        own_page = exists().where(PageRow.id == cover_id, PageRow.project_id == project.id)
-        if not self._rows.session.scalar(select(own_page)):
-            raise NotFoundError(cover_id)
-
-    @override
     def overview(self, project: Project) -> ProjectOverview:
-        """Count the included pages, the sources and the scans of the project in one statement.
+        """Count the included pages, the sources and the scans of the project in one statement, and find its cover.
+
+        The cover is the page of the kind ``cover`` that comes first in the book, else the first page of the book, and a
+        book without pages has none.
 
         :param project: Project whose book is counted.
         :type project: Project
-        :returns: The project with its counts.
+        :returns: The project with its counts and its cover.
         :rtype: ProjectOverview
         """
         pages, sources, scans, with_image = self._rows.session.execute(select(*self._book_counts(project.id))).one()
+        cover = (
+            select(PageRow.id)
+            .where(PageRow.project_id == project.id)
+            .order_by(PageRow.kind != PageKind.COVER, PageRow.order_key)
+            .limit(1)
+        )
+        cover_id = self._rows.session.scalar(cover)
         return ProjectOverview(
-            project=project, page_count=pages, source_count=sources, scan_count=scans, image_page_count=with_image
+            project=project,
+            page_count=pages,
+            source_count=sources,
+            scan_count=scans,
+            image_page_count=with_image,
+            cover_page_id=None if cover_id is None else PageId(cover_id),
         )
 
     @staticmethod

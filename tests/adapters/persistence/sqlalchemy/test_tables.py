@@ -108,40 +108,6 @@ class TestProjectRow:
         expect(stored_scans == 0)
         assert_expectations()
 
-    async def test_database_deletes_a_project_with_a_cover(
-        self, fx_uow: UnitOfWorkFactory, fx_book_sessions: BookSessions, fx_owner_id: AccountId
-    ) -> None:
-        """Verify a plain SQL delete of a project whose cover is set removes it and its pages, despite the cycle.
-
-        The project refers to its cover page and the page to its project, so the cascade to the pages empties the
-        cover of the row being deleted.
-
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_book_sessions: Sessions of the files of the books of the test.
-        :type fx_book_sessions: BookSessions
-        :param fx_owner_id: Committed account owning the project.
-        :type fx_owner_id: AccountId
-        """
-        project = make_project()
-        cover = make_page(project_id=project.id)
-        uow = fx_uow()
-        await store_project(uow, project, cover, owner=fx_owner_id)
-        await uow.change_book(
-            project.id, lambda repos, _project: repos.projects.update(evolve(project, cover_page_id=cover.id))
-        )
-
-        await fx_book_sessions.write(
-            project.id, lambda session: session.execute(delete(ProjectRow).where(ProjectRow.id == project.id))
-        )
-
-        projects, pages = await fx_book_sessions.read(
-            project.id, lambda session: (count_rows(session, ProjectRow), count_rows(session, PageRow))
-        )
-        expect(projects == 0)
-        expect(pages == 0)
-        assert_expectations()
-
     async def test_update_keeps_pages(
         self, fx_uow: UnitOfWorkFactory, fx_book_sessions: BookSessions, fx_owner_id: AccountId
     ) -> None:

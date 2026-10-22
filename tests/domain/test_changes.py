@@ -1,12 +1,11 @@
 """Tests for partial changes of value objects."""
 
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 import attrs
 import pytest
 
-from bookreviver.domain.changes import KEEP, BookDetailsChanges, CoverChange, PageChanges, ProjectChanges
+from bookreviver.domain.changes import KEEP, BookDetailsChanges, PageChanges, ProjectChanges
 from bookreviver.domain.enums import (
     BlankFill,
     ContributorRole,
@@ -16,7 +15,6 @@ from bookreviver.domain.enums import (
     PageKind,
     Script,
 )
-from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor
 from tests.helpers.builders import FULL_DETAILS, make_page, make_project, make_scan, make_source
 
@@ -98,32 +96,16 @@ class TestProjectChangesApplyTo:
     """Tests for ProjectChanges.apply_to()."""
 
     def test_replaces_given_fields_and_keeps_the_rest(self) -> None:
-        """Verify the description, the image policy and the cover change together, and nothing else does."""
-        cover = PageId(uuid4())
-        changes = ProjectChanges(
-            details=BookDetailsChanges(title=NEW_TITLE),
-            image_policy=ImagePolicy.LOSSLESS,
-            cover=CoverChange(page_id=cover),
-        )
+        """Verify the description and the image policy change together, and nothing else does."""
+        changes = ProjectChanges(details=BookDetailsChanges(title=NEW_TITLE), image_policy=ImagePolicy.LOSSLESS)
 
         assert changes.apply_to(PROJECT) == attrs.evolve(
-            PROJECT,
-            details=attrs.evolve(CURRENT, title=NEW_TITLE),
-            image_policy=ImagePolicy.LOSSLESS,
-            cover_page_id=cover,
+            PROJECT, details=attrs.evolve(CURRENT, title=NEW_TITLE), image_policy=ImagePolicy.LOSSLESS
         )
 
     def test_empty_change_keeps_the_project(self) -> None:
-        """Verify a change that sets no field returns the project as it was, its cover included."""
-        covered = attrs.evolve(PROJECT, cover_page_id=PageId(uuid4()))
-
-        assert ProjectChanges().apply_to(covered) == covered
-
-    def test_empty_cover_change_removes_the_cover(self) -> None:
-        """Verify a cover change without a page clears the cover, which a missing change would keep."""
-        covered = attrs.evolve(PROJECT, cover_page_id=PageId(uuid4()))
-
-        assert ProjectChanges(cover=CoverChange(page_id=None)).apply_to(covered).cover_page_id is None
+        """Verify a change that sets no field returns the project as it was."""
+        assert ProjectChanges().apply_to(PROJECT) == PROJECT
 
     def test_empty_title_is_rejected_like_a_new_description(self) -> None:
         """Verify the result is validated, so a change cannot produce a project with an invalid description."""
