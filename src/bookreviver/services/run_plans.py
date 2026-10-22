@@ -162,8 +162,8 @@ class RunPlan:
                 :raises NotFoundError: If a page the run names is not one of the project.
                 """
                 if self._run.page_ids is None:
-                    return book_pages(repos.pages, self._project_id)
-                return list(repos.pages.list_by_ids(self._project_id, self._run.page_ids))
+                    return book_pages(repos.pages)
+                return list(repos.pages.list_by_ids(self._run.page_ids))
 
             found = await self._uow.read_book(self._project_id, work)
             self._named_pages = [page for page in found if page.origin is not PageOrigin.PLACEHOLDER]

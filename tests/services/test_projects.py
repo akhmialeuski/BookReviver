@@ -240,9 +240,9 @@ class TestGet:
         :type fx_actor: Actor
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         scans = [make_scan(source=source, number=number) for number in range(PAGE_COUNT)]
-        pages = [make_page(project_id=project.id, order_key=f'a{scan.number}', scan=scan) for scan in scans]
+        pages = [make_page(order_key=f'a{scan.number}', scan=scan) for scan in scans]
         # A duplicate scan kept out of the book is no page of it
         await store_project(
             fx_uow(),
@@ -387,10 +387,10 @@ class TestDelete:
         :type fx_actor: Actor
         """
         doomed, kept = make_project(), make_project()
-        doomed_page, kept_page = make_page(project_id=doomed.id), make_page(project_id=kept.id)
+        doomed_page, kept_page = make_page(), make_page()
         for project, page in ((doomed, doomed_page), (kept, kept_page)):
             await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
-            await fx_files.store(page)
+            await fx_files.store(project.id, page)
 
         await fx_service().delete(fx_actor, doomed.id)
 
@@ -420,9 +420,9 @@ class TestDelete:
         :type fx_actor: Actor
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
-        await fx_files.store(page)
+        await fx_files.store(project.id, page)
 
         with pytest.raises(StoreFailedError):
             await fx_flaky_service().delete(fx_actor, project.id)
@@ -457,9 +457,9 @@ class TestDelete:
         :type fx_actor: Actor
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         await commit_project(fx_database, fx_uow(), project, page, owner=new_account_id())
-        await fx_files.store(page)
+        await fx_files.store(project.id, page)
 
         with pytest.raises(NotFoundError):
             await fx_service().delete(fx_actor, project.id)
@@ -495,11 +495,11 @@ class TestDeleteAll:
         """
         owned = [make_project(minutes=minute) for minute in range(PAGE_COUNT + 1)]
         kept = make_project()
-        pages = {project.id: make_page(project_id=project.id) for project in (*owned, kept)}
+        pages = {project.id: make_page() for project in (*owned, kept)}
         for project in (*owned, kept):
             owner = new_account_id() if project is kept else fx_actor.account_id
             await commit_project(fx_database, fx_uow(), project, pages[project.id], owner=owner)
-            await fx_files.store(pages[project.id])
+            await fx_files.store(project.id, pages[project.id])
 
         await fx_service().delete_all(fx_actor)
 
@@ -545,11 +545,11 @@ class TestSweep:
         :type fx_actor: Actor
         """
         broken, whole = make_project(), make_project()
-        broken_page, whole_page = make_page(project_id=broken.id), make_page(project_id=whole.id)
+        broken_page, whole_page = make_page(), make_page()
         await fx_uow().create_book(broken)
         await store_project(fx_uow(), whole, whole_page, owner=fx_actor.account_id)
-        for page in (broken_page, whole_page):
-            await fx_files.store(page)
+        for project, page in ((broken, broken_page), (whole, whole_page)):
+            await fx_files.store(project.id, page)
 
         await fx_service().sweep()
 
@@ -577,9 +577,9 @@ class TestSweep:
         :type fx_actor: Actor
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
-        await fx_files.store(page)
+        await fx_files.store(project.id, page)
         await fx_uow().delete_book(project.id)
 
         await fx_service().sweep()

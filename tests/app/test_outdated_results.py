@@ -72,9 +72,9 @@ def fx_book() -> Book:
     :rtype: Book
     """
     project = make_project()
-    source = make_source(project_id=project.id)
+    source = make_source()
     scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
-    page = make_page(project_id=project.id, scan=scan)
+    page = make_page(scan=scan)
     base = evolve(make_page_version(page_id=page.id), state=VersionState.READY)
     geometry = evolve(
         make_page_version(page_id=page.id, minutes=1),

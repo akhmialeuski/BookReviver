@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import PageVersion, Recipe
     from bookreviver.domain.enums import ReviewReason, Stage, StepMeasure
-    from bookreviver.domain.ids import PageId, ProjectId, RecipeId, StepId
+    from bookreviver.domain.ids import PageId, RecipeId, StepId
     from bookreviver.domain.step_measures import Reading
 
 # The statuses of a stage that a user still has something to do or to watch in, which a book's next stage is taken from
@@ -44,7 +44,6 @@ STATUSES_WITH_WORK: frozenset[StageStatus] = frozenset(
 class StageTally:
     """The pages of one stage of one book counted by the state of their records, as a repository counts them.
 
-    :ivar project_id: Project owning the pages.
     :ivar stage: The stage.
     :ivar fresh: Pages whose current version of the stage matches its inputs.
     :ivar stale: Pages whose current version is out of date.
@@ -54,7 +53,6 @@ class StageTally:
     :ivar partial: Pages, not failed, that were run through some of the steps of their recipe only.
     """
 
-    project_id: ProjectId
     stage: Stage
     fresh: int = field(default=0, validator=validators.ge(0))
     stale: int = field(default=0, validator=validators.ge(0))

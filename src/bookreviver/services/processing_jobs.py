@@ -264,7 +264,7 @@ class ProcessingJobs:
         measured = [page for page in pages if leaves_to_the_book(recipes[page.id], through_step=run.through_step)]
         if measured:
             await self._measure_book(executor, measured, recipes, run)
-        return [await self._run_page(executor, page, recipes[page.id], run) for page in pages]
+        return [await self._run_page(job.project_id, executor, page, recipes[page.id], run) for page in pages]
 
     async def _measure_book(
         self, executor: RecipeRun, pages: Sequence[Page], recipes: Mapping[PageId, Recipe], run: StageRun
@@ -296,12 +296,16 @@ class ProcessingJobs:
         for recipe in {recipes[page.id].id: recipes[page.id] for page in pages}.values():
             await executor.settle_book(recipe, boxes.get(recipe.id, {}), through_step=run.through_step)
 
-    async def _run_page(self, executor: RecipeRun, page: Page, recipe: Recipe, run: StageRun) -> RunOutcome:
+    async def _run_page(
+        self, project_id: ProjectId, executor: RecipeRun, page: Page, recipe: Recipe, run: StageRun
+    ) -> RunOutcome:
         """Run the recipe on one page, so that whatever goes wrong on it fails the page and not the job.
 
         A cancellation is no fault of the page: ``JobCancelledError`` is no ``Exception``, so it passes this handler and
         the page keeps the state it had.
 
+        :param project_id: Identifier of the project of the job.
+        :type project_id: ProjectId
         :param executor: Runner of recipes of the project.
         :type executor: RecipeRun
         :param page: Page to process.
@@ -338,9 +342,9 @@ class ProcessingJobs:
                         return None
                     return self._records.mark_failed(repos, page.id, recipe.stage, recipe_id=recipe.id)
 
-                record = await self._uow.change_book(page.project_id, fail)
+                record = await self._uow.change_book(project_id, fail)
                 if record is not None:
-                    await self._records.announce(page.project_id, [record])
+                    await self._records.announce(project_id, [record])
                 outcome = RunOutcome.FAILED
             span.set_attribute(SpanAttribute.RUN_OUTCOME, outcome)
             return outcome
@@ -427,7 +431,7 @@ class ProcessingJobs:
         collection = VersionCollection.from_map(job.params)
         old = await self._uow.read_book(
             job.project_id,
-            lambda repos: repos.page_versions.collectable(job.project_id, collection.previews_older_than),
+            lambda repos: repos.page_versions.collectable(collection.previews_older_than),
         )
         groups = [list(batched(group, self.COLLECTION_BATCH_SIZE, strict=False)) for group in readers_first(old)]
         control.plan(sum(len(batches) for batches in groups))

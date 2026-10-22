@@ -123,11 +123,8 @@ class TestPageChangesApplyTo:
         :returns: The page.
         :rtype: Page
         """
-        project = make_project()
-        scan = make_scan(source=make_source(project_id=project.id), number=0)
-        return attrs.evolve(
-            make_page(project_id=project.id, scan=scan, kind=PageKind.BLANK), blank_fill=BlankFill.WHITE
-        )
+        scan = make_scan(source=make_source(), number=0)
+        return attrs.evolve(make_page(scan=scan, kind=PageKind.BLANK), blank_fill=BlankFill.WHITE)
 
     def test_a_page_that_stops_being_blank_gets_its_scan_back(self) -> None:
         """Verify the leaf is dropped with the kind, since a leaf stands in place of the scan of a blank page only."""

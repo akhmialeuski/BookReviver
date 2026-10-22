@@ -8,7 +8,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import Stage, StageState, VersionState
-from bookreviver.domain.values import Renditions
+from bookreviver.domain.values import PageStageKey, Renditions
 from bookreviver.services.stage_inputs import StageInputs
 from tests.helpers.builders import make_page_stage, make_page_version
 from tests.helpers.stage_heads import seed_head
@@ -42,31 +42,33 @@ async def seed_page(kit: ProcessingKit, project: Project, order_key: str) -> tup
     :rtype: tuple[Page, PageVersion]
     """
     page, _ = await kit.seed_scan_page(project, order_key=order_key)
-    return page, await kit.seed_base_version(page)
+    return page, await kit.seed_base_version(project.id, page)
 
 
 async def seed_loose_base(
-    kit: ProcessingKit, page: Page, *, minutes: int, state: VersionState = VersionState.READY, ready: bool = True
+    kit: ProcessingKit, project_id: ProjectId, page: Page, *, minutes: int, pending: bool = False
 ) -> PageVersion:
     """Commit a base version of a page that no record of a stage names, as a page cut from its scan again has.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
     :param page: The page.
     :type page: Page
     :param minutes: Minutes after the epoch the version was created, which orders the base versions of the page.
     :type minutes: int
-    :param state: State of the version.
-    :type state: VersionState
-    :param ready: Whether the files of the version are published.
-    :type ready: bool
+    :param pending: Whether the version is still to make, with no files published, where a ready one has them.
+    :type pending: bool
     :returns: The version.
     :rtype: PageVersion
     """
     version = evolve(
-        make_page_version(page_id=page.id, minutes=minutes), state=state, renditions=Renditions(ready=ready)
+        make_page_version(page_id=page.id, minutes=minutes),
+        state=VersionState.PENDING if pending else VersionState.READY,
+        renditions=Renditions(ready=not pending),
     )
-    await kit.uow().change_book(page.project_id, lambda repos, _project: repos.page_versions.add(version))
+    await kit.uow().change_book(project_id, lambda repos, _project: repos.page_versions.add(version))
     return version
 
 
@@ -100,8 +102,8 @@ class TestOf:
         """
         _, project = await fx_kit.seed_project()
         page, base = await seed_page(fx_kit, project, FIRST_KEY)
-        geometry = await seed_head(fx_kit, page, Stage.GEOMETRY, after=base)
-        cleanup = await seed_head(fx_kit, page, Stage.CLEANUP, after=geometry)
+        geometry = await seed_head(fx_kit, project.id, PageStageKey(page.id, Stage.GEOMETRY), after=base)
+        cleanup = await seed_head(fx_kit, project.id, PageStageKey(page.id, Stage.CLEANUP), after=geometry)
         expect(await inputs_of(fx_kit, project.id, [page.id], Stage.GEOMETRY) == {page.id: base})
         expect(await inputs_of(fx_kit, project.id, [page.id], Stage.CLEANUP) == {page.id: geometry})
         expect(await inputs_of(fx_kit, project.id, [page.id], Stage.LAYOUT) == {page.id: cleanup})
@@ -117,7 +119,7 @@ class TestOf:
         """
         _, project = await fx_kit.seed_project()
         page, base = await seed_page(fx_kit, project, FIRST_KEY)
-        geometry = await seed_head(fx_kit, page, Stage.GEOMETRY, after=base)
+        geometry = await seed_head(fx_kit, project.id, PageStageKey(page.id, Stage.GEOMETRY), after=base)
         empty = make_page_stage(page_id=page.id, stage=Stage.CLEANUP, head_version_id=None)
         await fx_kit.uow().change_book(project.id, lambda repos, _project: repos.page_stages.save(empty))
         assert await inputs_of(fx_kit, project.id, [page.id], Stage.LAYOUT) == {page.id: geometry}
@@ -130,8 +132,8 @@ class TestOf:
         """
         _, project = await fx_kit.seed_project()
         page, base = await seed_page(fx_kit, project, FIRST_KEY)
-        geometry = await seed_head(fx_kit, page, Stage.GEOMETRY, after=base)
-        await seed_head(fx_kit, page, Stage.CLEANUP, after=geometry, ready=False)
+        geometry = await seed_head(fx_kit, project.id, PageStageKey(page.id, Stage.GEOMETRY), after=base)
+        await seed_head(fx_kit, project.id, PageStageKey(page.id, Stage.CLEANUP), after=geometry, ready=False)
         assert await inputs_of(fx_kit, project.id, [page.id], Stage.LAYOUT) == {page.id: geometry}
 
     async def test_the_latest_ready_base_version_is_read_when_no_earlier_stage_has_a_head(
@@ -144,9 +146,9 @@ class TestOf:
         """
         _, project = await fx_kit.seed_project()
         page, _ = await fx_kit.seed_scan_page(project, order_key=FIRST_KEY)
-        await seed_loose_base(fx_kit, page, minutes=1)
-        latest = await seed_loose_base(fx_kit, page, minutes=2)
-        await seed_loose_base(fx_kit, page, minutes=3, state=VersionState.PENDING, ready=False)
+        await seed_loose_base(fx_kit, project.id, page, minutes=1)
+        latest = await seed_loose_base(fx_kit, project.id, page, minutes=2)
+        await seed_loose_base(fx_kit, project.id, page, minutes=3, pending=True)
         assert await inputs_of(fx_kit, project.id, [page.id], Stage.GEOMETRY) == {page.id: latest}
 
     async def test_a_page_with_no_image_to_read_has_no_entry(self, fx_kit: ProcessingKit) -> None:
@@ -158,7 +160,7 @@ class TestOf:
         _, project = await fx_kit.seed_project()
         empty, _ = await fx_kit.seed_scan_page(project, order_key=FIRST_KEY)
         unready, _ = await fx_kit.seed_scan_page(project, order_key=SECOND_KEY)
-        await seed_loose_base(fx_kit, unready, minutes=1, state=VersionState.PENDING, ready=False)
+        await seed_loose_base(fx_kit, project.id, unready, minutes=1, pending=True)
         assert await inputs_of(fx_kit, project.id, [empty.id, unready.id], Stage.GEOMETRY) == {}
 
     async def test_the_page_split_reads_the_scan_so_it_has_no_input_version(self, fx_kit: ProcessingKit) -> None:
@@ -179,7 +181,7 @@ class TestOf:
         """
         _, project = await fx_kit.seed_project()
         with_head, with_head_base = await seed_page(fx_kit, project, FIRST_KEY)
-        geometry = await seed_head(fx_kit, with_head, Stage.GEOMETRY, after=with_head_base)
+        geometry = await seed_head(fx_kit, project.id, PageStageKey(with_head.id, Stage.GEOMETRY), after=with_head_base)
         base_only, base = await seed_page(fx_kit, project, SECOND_KEY)
         empty, _ = await fx_kit.seed_scan_page(project, order_key=THIRD_KEY)
         found = await inputs_of(fx_kit, project.id, [with_head.id, base_only.id, empty.id], Stage.CLEANUP)
@@ -197,11 +199,11 @@ class TestOf:
             if number >= WINDOW_SIZE - 2:
                 # The last pages have a base version no stage names, so the base versions have to be read
                 page, _ = await fx_kit.seed_scan_page(project, order_key=f'a{number}')
-                await seed_loose_base(fx_kit, page, minutes=number)
+                await seed_loose_base(fx_kit, project.id, page, minutes=number)
             else:
                 page, base = await seed_page(fx_kit, project, f'a{number}')
                 if number % 2 == 0:
-                    await seed_head(fx_kit, page, Stage.GEOMETRY, after=base)
+                    await seed_head(fx_kit, project.id, PageStageKey(page.id, Stage.GEOMETRY), after=base)
             pages.append(page)
 
         def work(repos: BookRepositories) -> tuple[dict[PageId, PageVersion], tuple[int, int, int]]:
@@ -222,7 +224,7 @@ class TestOf:
                 found = StageInputs.of(repos, [page.id for page in pages], Stage.CLEANUP)
             return found, (records.call_count, versions.call_count, bases.call_count)
 
-        found, reads = await fx_kit.uow().read_book(pages[0].project_id, work)
+        found, reads = await fx_kit.uow().read_book(project.id, work)
         expect(len(found) == WINDOW_SIZE)
         expect(reads == (1, 1, 1))
         assert_expectations()
@@ -235,8 +237,8 @@ class TestOf:
         """
         _, project = await fx_kit.seed_project()
         page, base = await seed_page(fx_kit, project, FIRST_KEY)
-        geometry = await seed_head(fx_kit, page, Stage.GEOMETRY, after=base)
-        await seed_head(fx_kit, page, Stage.CLEANUP, after=geometry)
+        geometry = await seed_head(fx_kit, project.id, PageStageKey(page.id, Stage.GEOMETRY), after=base)
+        await seed_head(fx_kit, project.id, PageStageKey(page.id, Stage.CLEANUP), after=geometry)
         later = make_page_stage(
             page_id=page.id, stage=Stage.LAYOUT, head_version_id=geometry.id, state=StageState.STALE
         )

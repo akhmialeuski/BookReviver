@@ -42,7 +42,7 @@ async def prepared(kit: ProcessingKit) -> tuple[Actor, Project, Page]:
     """
     actor, project = await kit.seed_project()
     page, _ = await kit.seed_scan_page(project)
-    await kit.seed_base_version(page)
+    await kit.seed_base_version(project.id, page)
     await run_stage(kit, actor, project, StageRun(stage=Stage.GEOMETRY))
     return actor, project, page
 
@@ -58,10 +58,10 @@ class TestSave:
         """
         actor, project, page = await prepared(fx_kit)
         runs = fx_kit.fake.runs
-        key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
+        key = await fx_kit.edit_key(project.id, page, Stage.GEOMETRY, FAKE_KEY)
         stored = await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
         listed = await fx_kit.edits().list(actor, project.id, page.id, Stage.GEOMETRY)
-        record = await stage_of(fx_kit, page, Stage.GEOMETRY)
+        record = await stage_of(fx_kit, project.id, page, Stage.GEOMETRY)
         expect(listed == [stored])
         expect(stored.edit_hash == stored.edit_hash.lower() and len(stored.edit_hash) == 16)
         expect(record.state is StageState.STALE)
@@ -83,7 +83,7 @@ class TestSave:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared(fx_kit)
-        key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
+        key = await fx_kit.edit_key(project.id, page, Stage.GEOMETRY, FAKE_KEY)
 
         async def rerun() -> str:
             """Run the geometry stage again and return the identifier of its current version.
@@ -92,7 +92,7 @@ class TestSave:
             :rtype: str
             """
             await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-            record = await stage_of(fx_kit, page, Stage.GEOMETRY)
+            record = await stage_of(fx_kit, project.id, page, Stage.GEOMETRY)
             assert record.head_version_id is not None
             return record.head_version_id
 
@@ -111,7 +111,7 @@ class TestSave:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared(fx_kit)
-        key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
+        key = await fx_kit.edit_key(project.id, page, Stage.GEOMETRY, FAKE_KEY)
         await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
         second = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=-2))
         replaced = await fx_kit.edits().save(actor, project.id, key, second, None)
@@ -148,7 +148,7 @@ class TestSave:
         :type match: str
         """
         actor, project, page = await prepared(fx_kit)
-        key = await fx_kit.edit_key(page, key_stage, processor)
+        key = await fx_kit.edit_key(project.id, page, key_stage, processor)
         with pytest.raises(InvalidParametersError, match=match):
             await fx_kit.edits().save(actor, project.id, key, edit, None)
 
@@ -159,7 +159,7 @@ class TestSave:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared(fx_kit)
-        geometry_key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
+        geometry_key = await fx_kit.edit_key(project.id, page, Stage.GEOMETRY, FAKE_KEY)
         for key in (PageStepKey(page.id, Stage.GEOMETRY, StepId(uuid4())), evolve(geometry_key, stage=Stage.CLEANUP)):
             with pytest.raises(NotFoundError):
                 await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
@@ -191,7 +191,7 @@ class TestSave:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared(fx_kit)
-        key = await fx_kit.edit_key(page, Stage.CLEANUP, ERASER_KEY)
+        key = await fx_kit.edit_key(project.id, page, Stage.CLEANUP, ERASER_KEY)
         edit = NewPageEdit(kind=EditorKind.BRUSH_MASK)
         stored = await fx_kit.edits().save(actor, project.id, key, edit, upload(MASK_NAME, content=MASK_CONTENT))
         assert stored.mask_key is not None
@@ -211,7 +211,7 @@ class TestSave:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared(fx_kit)
-        key = await fx_kit.edit_key(page, Stage.CLEANUP, ERASER_KEY)
+        key = await fx_kit.edit_key(project.id, page, Stage.CLEANUP, ERASER_KEY)
         strokes = BrushStrokes(strokes=(Stroke(radius=9, points=(Point(x=3, y=4),)),))
         edit = NewPageEdit(kind=EditorKind.BRUSH_MASK, geometry=strokes)
         stored = await fx_kit.edits().save(actor, project.id, key, edit, upload(MASK_NAME, content=MASK_CONTENT))
@@ -229,7 +229,7 @@ class TestSave:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared(fx_kit)
-        key = await fx_kit.edit_key(page, Stage.CLEANUP, ERASER_KEY)
+        key = await fx_kit.edit_key(project.id, page, Stage.CLEANUP, ERASER_KEY)
         edit = NewPageEdit(kind=EditorKind.BRUSH_MASK)
         first = await fx_kit.edits().save(actor, project.id, key, edit, upload(MASK_NAME, content=MASK_CONTENT))
         second = await fx_kit.edits().save(actor, project.id, key, edit, upload(MASK_NAME, content=MASK_CONTENT))
@@ -244,7 +244,7 @@ class TestSave:
         actor, project, page = await prepared(fx_kit)
         _, other_project = await fx_kit.seed_project()
         foreign, _ = await fx_kit.seed_scan_page(other_project)
-        key = evolve(await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY), page_id=foreign.id)
+        key = evolve(await fx_kit.edit_key(project.id, page, Stage.GEOMETRY, FAKE_KEY), page_id=foreign.id)
         with pytest.raises(NotFoundError):
             await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
 
@@ -259,13 +259,13 @@ class TestDelete:
         :type fx_kit: ProcessingKit
         """
         actor, project, page = await prepared(fx_kit)
-        key = await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
+        key = await fx_kit.edit_key(project.id, page, Stage.GEOMETRY, FAKE_KEY)
         await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
         await fx_kit.uow().change_book(
             project.id, lambda repos, _project: repos.page_stages.save(make_page_stage(page_id=page.id))
         )
         await fx_kit.edits().delete(actor, project.id, key)
-        record = await stage_of(fx_kit, page, Stage.GEOMETRY)
+        record = await stage_of(fx_kit, project.id, page, Stage.GEOMETRY)
         expect(await fx_kit.edits().list(actor, project.id, page.id, Stage.GEOMETRY) == [])
         expect(record.state is StageState.STALE)
         with pytest.raises(NotFoundError):

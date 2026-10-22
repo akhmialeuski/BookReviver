@@ -224,10 +224,10 @@ class TestListProjects:
         :type fx_actor: Actor
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         scans = [make_scan(source=source, number=number) for number in range(2)]
         # The second scan is a spread whose page has not been made yet, so the book has one page
-        page = make_page(project_id=project.id, scan=scans[0])
+        page = make_page(scan=scans[0])
         await store_project(fx_uow(), project, page, owner=fx_actor.account_id, sources=[source], scans=scans)
 
         listed = await _list_projects(fx_client, {})
@@ -525,8 +525,8 @@ class TestUpdateProject:
         :type fx_actor: Actor
         """
         project = make_project()
-        title = make_page(project_id=project.id, order_key='a0', kind=PageKind.TITLE)
-        cover = make_page(project_id=project.id, order_key='a1', kind=PageKind.COVER)
+        title = make_page(order_key='a0', kind=PageKind.TITLE)
+        cover = make_page(order_key='a1', kind=PageKind.COVER)
         await store_project(fx_uow(), project, title, cover, owner=fx_actor.account_id)
 
         chosen = await fx_client.patch(_project_path(project.id), json={COVER_FIELD: str(title.id)})
@@ -599,9 +599,9 @@ class TestDeleteProject:
         :type fx_actor: Actor
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
-        await fx_files.store(page)
+        await fx_files.store(project.id, page)
 
         response = await fx_client.delete(_project_path(project.id))
 
@@ -625,9 +625,9 @@ class TestDeleteProject:
         :type fx_files: BookFiles
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         await commit_project(fx_database, fx_uow(), project, page, owner=new_account_id())
-        await fx_files.store(page)
+        await fx_files.store(project.id, page)
 
         response = await fx_client.delete(_project_path(project.id))
 

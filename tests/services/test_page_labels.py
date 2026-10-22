@@ -65,7 +65,7 @@ async def _commit_book(uow: UnitOfWork, owner: Actor) -> tuple[Project, list[Pag
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(LAYOUT))
     pages = [
         evolve(
-            make_page(project_id=project.id, order_key=key),
+            make_page(order_key=key),
             kind=kind,
             included=included,
             manual_label=STALE_LABEL,
@@ -86,9 +86,7 @@ async def _stored(uow: UnitOfWork, project_id: ProjectId) -> dict[PageId, Page]:
     :returns: The pages of the book as committed, in book order, by identifier.
     :rtype: dict[PageId, Page]
     """
-    return await uow.read_book(
-        project_id, lambda repos: {page.id: page for page in book_pages(repos.pages, project_id)}
-    )
+    return await uow.read_book(project_id, lambda repos: {page.id: page for page in book_pages(repos.pages)})
 
 
 async def _update_kind(service: PageService, actor: Actor, project_id: ProjectId, page_ids: list[PageId]) -> None:
@@ -242,7 +240,7 @@ class TestUpdate:
         strangers_account = evolve(fx_actor, account_id=new_account_id())
         await ensure_account(fx_database, strangers_account.account_id)
         stranger, strangers_pages = await _commit_book(fx_uow(), strangers_account)
-        other = make_page(project_id=project.id, order_key='z0')
+        other = make_page(order_key='z0')
 
         with pytest.raises(NotFoundError):
             await fx_service().update(fx_actor, project.id, other.id, PageChanges(label='1'))
@@ -286,7 +284,7 @@ class TestConcurrentWrites:
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             """
-            seen_by_job.extend(page.id for page in book_pages(repos.pages, project.id))
+            seen_by_job.extend(page.id for page in book_pages(repos.pages))
             repos.pages.update(evolve(repos.pages.get(moved[1]), content_type=ContentType.COLOR_PICTURE))
 
         mover = fx_service_over(fx_uow())

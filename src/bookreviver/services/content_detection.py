@@ -163,12 +163,10 @@ class ContentDetector:
             :raises NotFoundError: If the job names a page that is gone.
             """
             if detection.page_ids is not None:
-                return [
-                    page for page in repos.pages.list_by_ids(project_id, detection.page_ids) if self._readable(page)
-                ]
+                return [page for page in repos.pages.list_by_ids(detection.page_ids) if self._readable(page)]
             return [
                 page
-                for page in book_pages(repos.pages, project_id)
+                for page in book_pages(repos.pages)
                 if self._readable(page) and page.content_type is None and page.kind in self.KINDS
             ]
 

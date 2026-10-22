@@ -34,7 +34,7 @@ async def seeded_pages(kit: ProcessingKit) -> tuple[Actor, Project, list[Page]]:
     pages: list[Page] = []
     for order_key in ORDER_KEYS:
         page, _ = await kit.seed_scan_page(project, order_key=order_key)
-        await kit.seed_base_version(page)
+        await kit.seed_base_version(project.id, page)
         pages.append(page)
     return actor, project, pages
 

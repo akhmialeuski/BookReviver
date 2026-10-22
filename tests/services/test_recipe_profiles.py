@@ -233,7 +233,7 @@ class TestApplyProfile:
         picture = await fx_kit.recipe_of(actor, other, Stage.GEOMETRY, RecipeKind.BW_PICTURE)
         text = await fx_kit.recipe_of(actor, other, Stage.GEOMETRY)
         expect(applied.recipe.steps == profile.steps)
-        expect((applied.recipe.kind, applied.recipe.project_id) == (RecipeKind.BW_PICTURE, other.id))
+        expect(applied.recipe.kind is RecipeKind.BW_PICTURE)
         expect(applied.missing_processors == ())
         expect((picture.id, picture.profile_id) == (applied.recipe.id, profile.id))
         expect(text.steps != profile.steps)

@@ -11866,11 +11866,6 @@
             "format": "uuid",
             "title": "Id"
           },
-          "project_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Project Id"
-          },
           "first_page_id": {
             "type": "string",
             "format": "uuid",
@@ -11915,7 +11910,6 @@
         "type": "object",
         "required": [
           "id",
-          "project_id",
           "first_page_id",
           "name",
           "style",
@@ -11927,7 +11921,7 @@
           "updated_at"
         ],
         "title": "PaginationSectionSchema",
-        "description": "A pagination section of a book.\n\n:ivar id: Identifier of the section.\n:ivar project_id: Project owning the section.\n:ivar first_page_id: The page the section starts at, so the section follows the page when it is moved.\n:ivar name: Name the user sees.\n:ivar style: How the numbers of the section are written.\n:ivar start: Number of the first counted page of the section.\n:ivar prefix: Text written before every number, empty for none.\n:ivar display: Whether the pages count, and whether their numbers are printed or only implied.\n:ivar kinds: Kinds of page the section takes as a series by kind, empty for a section of the main flow.\n:ivar created_at: When the section was made.\n:ivar updated_at: When the section was last changed."
+        "description": "A pagination section of a book.\n\n:ivar id: Identifier of the section.\n:ivar first_page_id: The page the section starts at, so the section follows the page when it is moved.\n:ivar name: Name the user sees.\n:ivar style: How the numbers of the section are written.\n:ivar start: Number of the first counted page of the section.\n:ivar prefix: Text written before every number, empty for none.\n:ivar display: Whether the pages count, and whether their numbers are printed or only implied.\n:ivar kinds: Kinds of page the section takes as a series by kind, empty for a section of the main flow.\n:ivar created_at: When the section was made.\n:ivar updated_at: When the section was last changed."
       },
       "PlaceMode": {
         "type": "string",
@@ -13085,11 +13079,6 @@
             "format": "uuid",
             "title": "Id"
           },
-          "project_id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Project Id"
-          },
           "stage": {
             "$ref": "#/components/schemas/Stage"
           },
@@ -13136,7 +13125,6 @@
         "type": "object",
         "required": [
           "id",
-          "project_id",
           "stage",
           "kind",
           "steps",
@@ -13145,7 +13133,7 @@
           "updated_at"
         ],
         "title": "RecipeSchema",
-        "description": "A recipe: the ordered steps of one stage for one kind of page.\n\n:ivar id: Identifier of the recipe.\n:ivar project_id: Project owning the recipe.\n:ivar stage: Stage the recipe processes.\n:ivar kind: Kind of the pages the recipe processes, which is also its name.\n:ivar steps: The steps in the order they run.\n:ivar profile_id: The profile of the account the recipe was made from, or null for a recipe that was not.\n:ivar created_at: When the recipe was created.\n:ivar updated_at: When the recipe was last changed.\n:ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual\n                    order. A required place appears here only for a recipe saved in the free order."
+        "description": "A recipe: the ordered steps of one stage for one kind of page.\n\n:ivar id: Identifier of the recipe.\n:ivar stage: Stage the recipe processes.\n:ivar kind: Kind of the pages the recipe processes, which is also its name.\n:ivar steps: The steps in the order they run.\n:ivar profile_id: The profile of the account the recipe was made from, or null for a recipe that was not.\n:ivar created_at: When the recipe was created.\n:ivar updated_at: When the recipe was last changed.\n:ivar order_issues: The steps that stand off the place their processors ask for, none for a recipe in its usual\n                    order. A required place appears here only for a recipe saved in the free order."
       },
       "RejectionReason": {
         "type": "string",

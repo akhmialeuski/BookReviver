@@ -92,7 +92,7 @@ class TestDelete:
         owner_id, neighbour_id = await commit_account(database), await commit_account(database)
         owned = [make_project(minutes=minute) for minute in range(OWNED_PROJECTS)]
         kept = make_project()
-        pages = {project.id: make_page(project_id=project.id) for project in (*owned, kept)}
+        pages = {project.id: make_page() for project in (*owned, kept)}
         async with fx_container() as scope:
             uow = await scope.get(UnitOfWork)
             for project in (*owned, kept):
@@ -104,7 +104,7 @@ class TestDelete:
             root=fx_settings.storage_root,
         )
         for page in pages.values():
-            await files.store(page)
+            await files.store(project.id, page)
 
         async with fx_container() as scope:
             manager = await scope.get(UserManager)

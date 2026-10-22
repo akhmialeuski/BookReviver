@@ -100,10 +100,10 @@ class TestChainOfTransforms:
         await use_recipe(fx_cv_kit, actor, project, Stage.GEOMETRY, DESKEW)
         if degrees is not None:
             edit = NewPageEdit(kind=Rotation.editor, geometry=Rotation(degrees=degrees))
-            key = await fx_cv_kit.edit_key(left, Stage.GEOMETRY, DESKEW)
+            key = await fx_cv_kit.edit_key(project.id, left, Stage.GEOMETRY, DESKEW)
             await fx_cv_kit.edits().save(actor, project.id, key, edit, None)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.GEOMETRY, page_ids=(left.id,)))
-        deskewed = await head_of(fx_cv_kit, left, Stage.GEOMETRY)
+        deskewed = await head_of(fx_cv_kit, project.id, left, Stage.GEOMETRY)
         found = await landmark_on(fx_cv_kit, project, deskewed)
         [mapped] = await fx_cv_kit.service().map_to_scan(actor, project.id, left.id, deskewed.id, [found])
         expect(deskewed.input_id is not None)
@@ -118,7 +118,7 @@ class TestChainOfTransforms:
         :type fx_cv_kit: ProcessingKit
         """
         actor, project, _left, right = await split_marked_spread(fx_cv_kit)
-        base = await head_of(fx_cv_kit, right, Stage.PAGE_SPLIT)
+        base = await head_of(fx_cv_kit, project.id, right, Stage.PAGE_SPLIT)
         found = await landmark_on(fx_cv_kit, project, base)
         [mapped] = await fx_cv_kit.service().map_to_scan(actor, project.id, right.id, base.id, [found])
         expect(abs(mapped.x - MARK_ON_RIGHT[0]) <= TOLERANCE_PX)

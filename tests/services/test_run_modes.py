@@ -46,30 +46,32 @@ async def worked_book(kit: ProcessingKit) -> tuple[Actor, Project, list[Page], l
     pages = []
     for order_key in ('a0', 'a1', 'a2'):
         page, _ = await kit.seed_scan_page(project, order_key=order_key)
-        await kit.seed_base_version(page)
+        await kit.seed_base_version(project.id, page)
         pages.append(page)
-    keys = [await kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY) for page in pages]
+    keys = [await kit.edit_key(project.id, page, Stage.GEOMETRY, FAKE_KEY) for page in pages]
     for key in keys[:WORKED_PAGES]:
         await PageValues(kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
     await kit.edits().save(actor, project.id, keys[0], ROTATION, None)
     return actor, project, pages, keys
 
 
-async def head_of(kit: ProcessingKit, page: Page) -> PageVersion:
+async def head_of(kit: ProcessingKit, project_id: ProjectId, page: Page) -> PageVersion:
     """Read the current version of the geometry stage of a page.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
     :param page: The page.
     :type page: Page
     :returns: The version the stage record names.
     :rtype: PageVersion
     """
     record = await kit.uow().read_book(
-        page.project_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        project_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
     )
     assert record.head_version_id is not None
-    return await kit.stored_version(page.project_id, record.head_version_id)
+    return await kit.stored_version(project_id, record.head_version_id)
 
 
 async def state_of(kit: ProcessingKit, project_id: ProjectId, key: PageStepKey) -> PageStepState:
@@ -104,18 +106,20 @@ async def states_of(
     return await kit.uow().read_book(project_id, lambda repos: [repos.page_step_states.find(key) for key in keys])
 
 
-async def histories(kit: ProcessingKit, pages: Sequence[Page]) -> list[Sequence[PageStepChange]]:
+async def histories(kit: ProcessingKit, project_id: ProjectId, pages: Sequence[Page]) -> list[Sequence[PageStepChange]]:
     """Read the history of the steps of each page as committed.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
     :param pages: The pages.
     :type pages: Sequence[Page]
     :returns: The changes of each page, in order.
     :rtype: list[Sequence[PageStepChange]]
     """
     return await kit.uow().read_book(
-        pages[0].project_id, lambda repos: [repos.page_step_changes.list_for_page(page.id) for page in pages]
+        project_id, lambda repos: [repos.page_step_changes.list_for_page(page.id) for page in pages]
     )
 
 
@@ -201,11 +205,11 @@ class TestKeep:
         :type fx_kit: ProcessingKit
         """
         actor, project, pages, keys = await worked_book(fx_kit)
-        before = await histories(fx_kit, pages)
+        before = await histories(fx_kit, project.id, pages)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         first = await state_of(fx_kit, project.id, keys[0])
         second = await state_of(fx_kit, project.id, keys[1])
-        after = await histories(fx_kit, pages)
+        after = await histories(fx_kit, project.id, pages)
         expect(first.params == {STRENGTH_PARAMETER: STRONGER} and first.edit is not None)
         expect(second.params == {STRENGTH_PARAMETER: STRONGER})
         expect(after == before)
@@ -219,7 +223,7 @@ class TestKeep:
         """
         actor, project, pages, _ = await worked_book(fx_kit)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        strengths = [(await head_of(fx_kit, page)).params[STRENGTH_PARAMETER] for page in pages]
+        strengths = [(await head_of(fx_kit, project.id, page)).params[STRENGTH_PARAMETER] for page in pages]
         assert strengths == [STRONGER, STRONGER, 1]
 
 
@@ -248,7 +252,7 @@ class TestConfirmation:
         """
         actor, project = await fx_kit.seed_project()
         page, _ = await fx_kit.seed_scan_page(project)
-        await fx_kit.seed_base_version(page)
+        await fx_kit.seed_base_version(project.id, page)
         job = await fx_kit.service().start_run(
             actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY, mode=RunMode.DROP_OWN)
         )
@@ -268,7 +272,7 @@ class TestDropOwn:
         run = StageRun(stage=Stage.GEOMETRY, mode=RunMode.DROP_OWN, confirm_overwrite=True)
         await run_stage(fx_kit, actor, project, run)
         states = await states_of(fx_kit, project.id, keys[:WORKED_PAGES])
-        heads = [await head_of(fx_kit, page) for page in pages[:WORKED_PAGES]]
+        heads = [await head_of(fx_kit, project.id, page) for page in pages[:WORKED_PAGES]]
         expect(states == [None] * WORKED_PAGES)
         expect(all(head.edit_hash == '' for head in heads))
         expect(all(head.params[STRENGTH_PARAMETER] == 1 for head in heads))

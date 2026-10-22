@@ -31,7 +31,7 @@ async def stage_rows(
     :raises NotFoundError: If no recipe of the stage has the step.
     """
     stages = kit.stages()
-    return await kit.uow().read_book(project.id, lambda repos: stages.rows(repos, project, stage, request, step_id))
+    return await kit.uow().read_book(project.id, lambda repos: stages.rows(repos, stage, request, step_id))
 
 
 async def book_summaries(kit: ProcessingKit, project: Project) -> list[StageSummary]:

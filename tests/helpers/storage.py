@@ -79,16 +79,20 @@ class BookFiles:
         self._root = root
         self._stored: dict[PageId, tuple[StorageKey, StorageKey]] = {}
 
-    async def store(self, page: Page) -> None:
+    async def store(self, project_id: ProjectId, page: Page) -> None:
         """Store a source for the page's project and the full image of the page's base version, as an import would.
+
+        :param project_id: Identifier of the project of the page.
+
+        :type project_id: ProjectId
 
         :param page: Page whose project and image are stored.
         :type page: Page
         """
-        keys = ProjectKeys(page.project_id)
+        keys = ProjectKeys(project_id)
         job_id, source_id = JobId(uuid4()), SourceId(uuid4())
-        staged = await self._sources.stage(page.project_id, job_id, [upload(SOURCE_NAME)], max_bytes=MAX_SOURCE_BYTES)
-        await self._sources.promote(page.project_id, job_id, source_id, names=[file.name for file in staged])
+        staged = await self._sources.stage(project_id, job_id, [upload(SOURCE_NAME)], max_bytes=MAX_SOURCE_BYTES)
+        await self._sources.promote(project_id, job_id, source_id, names=[file.name for file in staged])
         image = keys.version_rendition(make_page_version(page_id=page.id), Rendition.FULL_JPEG)
         async with self._assets.writable(image) as path:
             path.write_bytes(PAGE_IMAGE_CONTENT)

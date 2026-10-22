@@ -37,7 +37,7 @@ from bookreviver.services.recipes import find_step
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Actor, Page, PageStage, Project
+    from bookreviver.domain.entities import Actor, PageStage, Project
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.domain.values import NewPageEdit, PageStepKey, ProcessorSpec
@@ -98,8 +98,6 @@ class EditService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
         :param key: The page, the stage and the step that reads the edit.
         :type key: PageStepKey
         :param edit: The shape the user drew and the editor that drew it.
@@ -125,8 +123,8 @@ class EditService:
             :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its
                                             shape or its mask or has one it should not.
             """
-            self._page(repos, project_id, key.page_id)
-            self._check(repos, project_id, key, edit, has_mask=mask is not None)
+            repos.pages.get(key.page_id)
+            self._check(repos, key, edit, has_mask=mask is not None)
 
         # The edit is checked before its mask is written, so a refused request leaves no file, and checked again in the
         # change, since the page or the recipe may have changed while the mask streamed in
@@ -164,8 +162,8 @@ class EditService:
             :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its
                                             shape or its mask or has one it should not.
             """
-            self._page(repos, project_id, key.page_id)
-            self._check(repos, project_id, key, edit, has_mask=mask is not None)
+            repos.pages.get(key.page_id)
+            self._check(repos, key, edit, has_mask=mask is not None)
             state = repos.page_step_states.find(key) or PageStepState(
                 page_id=key.page_id, stage=key.stage, step_id=key.step_id, updated_at=stored.updated_at
             )
@@ -182,8 +180,6 @@ class EditService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :param stage: The stage whose edits are listed.
@@ -203,7 +199,7 @@ class EditService:
             :rtype: list[PageEdit]
             :raises NotFoundError: If the project has no such page.
             """
-            self._page(repos, project_id, page_id)
+            repos.pages.get(page_id)
             states = repos.page_step_states.list_for_page(page_id, stage)
             return [state.edit for state in states if state.edit is not None]
 
@@ -216,8 +212,6 @@ class EditService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
         :param key: The page, the stage and the step that reads the edit.
         :type key: PageStepKey
         :raises NotFoundError: If the actor has no such project, the project has no such page, or the step has no edit
@@ -237,7 +231,7 @@ class EditService:
             :raises NotFoundError: If the project has no such page, or the step has no
                                    edit there.
             """
-            self._page(repos, project_id, key.page_id)
+            repos.pages.get(key.page_id)
             state = repos.page_step_states.find(key)
             if state is None or state.edit is None:
                 raise NotFoundError(key)
@@ -269,50 +263,25 @@ class EditService:
         if change.before != change.after:
             repos.page_step_changes.add(change)
 
-    def _spec(self, repos: BookRepositories, project_id: ProjectId, key: PageStepKey) -> ProcessorSpec:
+    def _spec(self, repos: BookRepositories, key: PageStepKey) -> ProcessorSpec:
         """Find the spec of the processor of a step, by the step in the recipes of the stage.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
         :param key: The page, the stage and the step that reads the edit.
         :type key: PageStepKey
         :returns: What the processor of the step says about itself.
         :rtype: ProcessorSpec
         :raises NotFoundError: If no recipe of the stage has the step, or its processor is not installed.
         """
-        step = find_step(repos.recipes, project_id, key)
+        step = find_step(repos.recipes, key)
         return self._catalogue.get(step.processor_key).spec
 
-    @staticmethod
-    def _page(repos: BookRepositories, project_id: ProjectId, page_id: PageId) -> Page:
-        """Return a page of the project.
-
-        :param repos: Repositories of the transaction the caller runs in.
-        :type repos: BookRepositories
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :param page_id: Identifier of the page.
-        :type page_id: PageId
-        :returns: The page.
-        :rtype: Page
-        :raises NotFoundError: If the page does not exist or belongs to another project.
-        """
-        page = repos.pages.get(page_id)
-        if page.project_id != project_id:
-            raise NotFoundError(page_id)
-        return page
-
-    def _check(
-        self, repos: BookRepositories, project_id: ProjectId, key: PageStepKey, edit: NewPageEdit, *, has_mask: bool
-    ) -> None:
+    def _check(self, repos: BookRepositories, key: PageStepKey, edit: NewPageEdit, *, has_mask: bool) -> None:
         """Check that the edit is the one the processor of the step reads.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
         :param key: The page, the stage and the step that reads the edit.
         :type key: PageStepKey
         :param edit: The edit.
@@ -323,7 +292,7 @@ class EditService:
         :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its shape
                                         or its mask or has one it should not.
         """
-        spec = self._spec(repos, project_id, key)
+        spec = self._spec(repos, key)
         if spec.editor is not edit.kind:
             err_msg = WRONG_EDITOR.format(key=spec.key, expected=spec.editor.label, actual=edit.kind.label)
             raise InvalidParametersError(err_msg)

@@ -386,7 +386,6 @@ export function step(processorKey: string, overrides: Partial<StepSchema> = {}):
 export function recipe(id: string, overrides: Partial<RecipeSchema> = {}): RecipeSchema {
   return {
     id,
-    project_id: 'project',
     stage: 'geometry',
     kind: 'text',
     steps: [step('geometry.deskew', { params: { max_angle: 5, min_confidence: 0.3 } })],

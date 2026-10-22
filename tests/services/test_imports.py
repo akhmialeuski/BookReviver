@@ -399,7 +399,7 @@ async def _report(rig: ImportRig, project_id: ProjectId) -> list[Source]:
     :returns: The files, in the order the imports recorded them.
     :rtype: list[Source]
     """
-    return list(await rig.open_uow().read_book(project_id, lambda repos: repos.sources.list_unimported(project_id)))
+    return list(await rig.open_uow().read_book(project_id, lambda repos: repos.sources.list_unimported()))
 
 
 async def _sources(rig: ImportRig, project_id: ProjectId) -> list[Source]:
@@ -1219,7 +1219,7 @@ class TestRunImport:
         keys = ProjectKeys(fx_project.id)
         [scan] = await _scans(fx_rig, fx_project.id)
         [page] = await _pages(fx_rig, fx_project.id)
-        [version] = await _versions(fx_rig, page.project_id, [page.id])
+        [version] = await _versions(fx_rig, fx_project.id, [page.id])
         assert sorted(fx_rig.tiler.resource_ids) == sorted(
             [
                 f'{IIIF_ROOT}/{keys.scan_rendition(scan, Rendition.TILES)}',
@@ -1341,7 +1341,7 @@ class TestRunImportFullFormat:
         keys = ProjectKeys(project.id)
         [scan] = await _scans(fx_rig, project.id)
         [page] = await _pages(fx_rig, project.id)
-        [version] = await _versions(fx_rig, page.project_id, [page.id])
+        [version] = await _versions(fx_rig, project.id, [page.id])
         other = Rendition.FULL_JPEG if case.expected is Rendition.FULL_PNG else Rendition.FULL_PNG
         expect(fx_rig.rasterizer.formats == [case.expected])
         expect(scan.renditions.full is case.expected)
@@ -1423,7 +1423,7 @@ class TestRunImportDjvu:
             wanted = DJVU_FULL_IMAGES[policy, scan.facts.color_mode]
             expect(await _stored_image(fx_rig, keys.scan_rendition(scan, scan.renditions.full)) == wanted)
         for page in await _pages(fx_rig, project.id):
-            [version] = await _versions(fx_rig, page.project_id, [page.id])
+            [version] = await _versions(fx_rig, project.id, [page.id])
             scan = next(scan for scan in scans if scan.id == page.scan_id)
             wanted = DJVU_FULL_IMAGES[policy, scan.facts.color_mode]
             expect(version.renditions is not None and version.renditions.full is scan.renditions.full)
@@ -2650,9 +2650,9 @@ async def fx_files(fx_rig: ImportRig, fx_project: Project) -> list[Source]:
     :returns: The imported source, the rejected file and the skipped file.
     :rtype: list[Source]
     """
-    imported = make_source(project_id=fx_project.id, name=PDF_NAME, minutes=0)
+    imported = make_source(name=PDF_NAME, minutes=0)
     rejected = evolve(
-        make_source(project_id=fx_project.id, name=TEXT_NAME, minutes=1),
+        make_source(name=TEXT_NAME, minutes=1),
         kind=None,
         file_type=None,
         scan_count=0,
@@ -2661,7 +2661,7 @@ async def fx_files(fx_rig: ImportRig, fx_project: Project) -> list[Source]:
         detail=RejectionReason.UNSUPPORTED_TYPE.label,
     )
     skipped = evolve(
-        make_source(project_id=fx_project.id, name=SECOND_PDF_NAME, minutes=2),
+        make_source(name=SECOND_PDF_NAME, minutes=2),
         scan_count=0,
         status=SourceStatus.SKIPPED,
     )

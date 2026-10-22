@@ -56,7 +56,7 @@ async def carry_book(kit: ProcessingKit) -> tuple[Actor, Project, list[Page], li
     """
     actor, project = await kit.seed_project()
     pages = [(await kit.seed_scan_page(project, order_key=order_key))[0] for order_key in ORDER_KEYS]
-    keys = [await kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY) for page in pages]
+    keys = [await kit.edit_key(project.id, page, Stage.GEOMETRY, FAKE_KEY) for page in pages]
     await PageValues(kit, actor, project.id).set(keys[SOURCE_INDEX], STRENGTH_PARAMETER, CARRIED)
     return actor, project, pages, keys
 
@@ -203,7 +203,7 @@ class TestShapeSetByHand:
         actor, project = await fx_kit.seed_project()
         text = [(await fx_kit.seed_scan_page(project, order_key=order_key))[0] for order_key in ('a0', 'a2')]
         plate, _ = await fx_kit.seed_scan_page(project, order_key='a1', kind=PageKind.PLATE)
-        keys = [await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY) for page in (*text, plate)]
+        keys = [await fx_kit.edit_key(project.id, page, Stage.GEOMETRY, FAKE_KEY) for page in (*text, plate)]
         await fx_kit.edits().save(actor, project.id, keys[0], SHAPE, None)
         await carry_over(fx_kit).carry(actor, project.id, shape_of(keys[0], CarryScope.KIND))
         assert [await angle_of(fx_kit, project.id, key) for key in keys] == [SHAPE_ANGLE, SHAPE_ANGLE, None]
@@ -233,11 +233,11 @@ class TestShapeSetByHand:
         """
         actor, project, pages, keys = await carry_book(fx_kit)
         for page in pages:
-            await fx_kit.seed_base_version(page)
+            await fx_kit.seed_base_version(project.id, page)
         await fx_kit.edits().save(actor, project.id, keys[SOURCE_INDEX], SHAPE, None)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         await carry_over(fx_kit).carry(actor, project.id, shape_of(keys[SOURCE_INDEX]))
-        states = [(await stage_of(fx_kit, page, Stage.GEOMETRY)).state for page in pages]
+        states = [(await stage_of(fx_kit, project.id, page, Stage.GEOMETRY)).state for page in pages]
         assert states == [StageState.FRESH, StageState.FRESH, StageState.STALE, StageState.STALE]
 
     async def test_a_source_with_no_shape_of_its_own_is_not_found(self, fx_kit: ProcessingKit) -> None:

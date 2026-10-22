@@ -7,7 +7,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import Stage
-from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, StepId
+from bookreviver.domain.ids import PageId, PageVersionId, StepId
 from bookreviver.domain.values import ProcessorRef, Step
 from bookreviver.domain.version_chains import StepVersions, readers_first, stage_depths, step_places, versions_of_step
 from tests.helpers.builders import make_page_version, make_recipe
@@ -105,12 +105,11 @@ class TestStepPlaces:
 
     def test_a_step_copied_into_the_recipe_of_another_kind_has_a_place_in_each_recipe_that_has_it_on(self) -> None:
         """Verify one step identifier gives one place for each recipe, and none for a recipe that has it off."""
-        project_id = ProjectId(uuid4())
         crop = Step(processor_key=CROP_KEY, step_id=CROP_STEP)
-        first = evolve(make_recipe(project_id=project_id), steps=(Step(processor_key=DESKEW_KEY), crop))
-        second = evolve(make_recipe(project_id=project_id), steps=(crop,))
-        off = evolve(make_recipe(project_id=project_id), steps=(evolve(crop, enabled=False),))
-        elsewhere = evolve(make_recipe(project_id=project_id), steps=(Step(processor_key=DESKEW_KEY),))
+        first = evolve(make_recipe(), steps=(Step(processor_key=DESKEW_KEY), crop))
+        second = evolve(make_recipe(), steps=(crop,))
+        off = evolve(make_recipe(), steps=(evolve(crop, enabled=False),))
+        elsewhere = evolve(make_recipe(), steps=(Step(processor_key=DESKEW_KEY),))
         places = step_places([first, second, off, elsewhere], CROP_STEP)
         assert places == {(CROP_KEY, CROP_PLACE), (CROP_KEY, 0)}
 

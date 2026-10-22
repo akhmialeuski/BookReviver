@@ -102,9 +102,9 @@ async def ran_geometry(kit: ProcessingKit) -> tuple[Actor, Project, Page, PageVe
     """
     actor, project = await kit.seed_project()
     page, _ = await kit.seed_scan_page(project)
-    await kit.seed_base_version(page)
+    await kit.seed_base_version(project.id, page)
     await run_stage(kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-    record = await stage_of(kit, page, Stage.GEOMETRY)
+    record = await stage_of(kit, project.id, page, Stage.GEOMETRY)
     assert record.head_version_id is not None
     return actor, project, page, await kit.stored_version(project.id, record.head_version_id)
 
@@ -124,11 +124,11 @@ async def ran_two_steps(
     """
     actor, project = await kit.seed_project()
     page, _ = await kit.seed_scan_page(project)
-    await kit.seed_base_version(page)
+    await kit.seed_base_version(project.id, page)
     steps = [Step(processor_key=FakeProcessor.spec.key, enabled=first_on), Step(processor_key=FakeProcessor.spec.key)]
     recipe = await kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=steps))
     await run_stage(kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-    found = await kit.uow().read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id))
+    found = await kit.uow().read_book(project.id, lambda repos: repos.page_versions.list_for_page(page.id))
     in_stage = [version for version in found if version.stage is Stage.GEOMETRY]
     # The steps run within one tick of the clock, so the order is the one of the chain: each step reads the version of
     # the step before it, and the first reads the image of an earlier stage
@@ -213,7 +213,7 @@ class TestChooseVersion:
 
         await fx_kit.uow().change_book(project.id, add_second)
         chosen = await fx_kit.service().choose_version(actor, project.id, page.id, Stage.GEOMETRY, second.id)
-        later = await stage_of(fx_kit, page, Stage.CLEANUP)
+        later = await stage_of(fx_kit, project.id, page, Stage.CLEANUP)
         expect((chosen.head_version_id, chosen.state) == (second.id, StageState.FRESH))
         expect(later.state is StageState.STALE)
         expect(
@@ -273,14 +273,14 @@ class TestChooseVersion:
         :type active: JobKind
         """
         actor, project, page, first = await ran_geometry(fx_kit)
-        before = await stage_of(fx_kit, page, Stage.GEOMETRY)
+        before = await stage_of(fx_kit, project.id, page, Stage.GEOMETRY)
         job = await fx_kit.parts(fx_kit.uow()).starter.enqueue(
             project.id, active, StageRun(stage=Stage.GEOMETRY).to_map()
         )
         with pytest.raises(ConflictError, match=BUSY_REASON):
             await fx_kit.service().choose_version(actor, project.id, page.id, Stage.GEOMETRY, first.id)
         expect(stored_job(fx_kit, job.id).state is JobState.QUEUED)
-        expect(await stage_of(fx_kit, page, Stage.GEOMETRY) == before)
+        expect(await stage_of(fx_kit, project.id, page, Stage.GEOMETRY) == before)
         assert_expectations()
 
     async def test_a_version_that_cannot_be_current_does_not_cancel_the_preview(self, fx_kit: ProcessingKit) -> None:
@@ -303,7 +303,7 @@ class TestChooseVersion:
         """
         actor, project, page, first = await ran_geometry(fx_kit)
         await fx_kit.service().choose_version(actor, project.id, page.id, Stage.GEOMETRY, first.id)
-        versions = await stage_versions(fx_kit, page, None)
+        versions = await stage_versions(fx_kit, project.id, page, None)
         assert versions.total == 2
 
     @pytest.mark.parametrize(
@@ -605,7 +605,7 @@ class TestCollection:
         await fx_kit.uow().change_book(project.id, mark_old)
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.work_queue()
-        remaining = (await stage_versions(fx_kit, page, None)).items
+        remaining = (await stage_versions(fx_kit, project.id, page, None)).items
         with pytest.raises(NotFoundError):
             async with fx_kit.assets.readable(ProjectKeys(project.id).version_directory(old)):
                 pass
@@ -634,7 +634,7 @@ class TestCollection:
         jobs = fx_kit.board.jobs(project.id, active=False)
         gone = await found_version(fx_kit, project.id, old.id)
         kept = await fx_kit.stored_version(project.id, current.id)
-        record = await stage_of(fx_kit, page, Stage.GEOMETRY)
+        record = await stage_of(fx_kit, project.id, page, Stage.GEOMETRY)
         keys = ProjectKeys(project.id)
         with pytest.raises(NotFoundError):
             async with fx_kit.assets.readable(keys.version_directory(old)):
@@ -924,7 +924,7 @@ class TestCollection:
         # The run that made the book queued a collection of its own, so the report is judged by the jobs it adds
         before = fx_kit.board.jobs(project.id, active=False)
         report = await fx_kit.service().collection_report(actor, project.id)
-        listed = (await stage_versions(fx_kit, page, None)).items
+        listed = (await stage_versions(fx_kit, project.id, page, None)).items
         jobs = fx_kit.board.jobs(project.id, active=False)
         async with fx_kit.assets.readable(ProjectKeys(project.id).version_rendition(old, Rendition.FULL_JPEG)):
             pass
@@ -1128,7 +1128,7 @@ class TestChooseVersionApplyStep:
         change_when_published(fx_kit, monkeypatch, partial(change, fx_kit, project.id, second))
         with pytest.raises(refusal):
             await fx_kit.service().choose_version(actor, project.id, page.id, Stage.GEOMETRY, second.id)
-        record = await found_stage(fx_kit, page, Stage.GEOMETRY)
+        record = await found_stage(fx_kit, project.id, page, Stage.GEOMETRY)
         announced = [
             event
             for event in fx_kit.events.published

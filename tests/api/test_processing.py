@@ -123,12 +123,12 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
     :rtype: Book
     """
     project = make_project()
-    source = make_source(project_id=project.id)
+    source = make_source()
     scan = evolve(
         make_scan(source=source, number=0),
         renditions=Renditions(ready=True),
     )
-    page = make_page(project_id=project.id, scan=scan)
+    page = make_page(scan=scan)
     await store_project(fx_uow(), project, page, owner=fx_actor.account_id, sources=[source], scans=[scan])
     await store_scan_images(fx_asset_store, project, scan)
     return Book(project=project, page=page)
@@ -675,14 +675,14 @@ class TestRunAndVersions:
         await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         uow = fx_uow()
         record = await uow.read_book(
-            fx_book.page.project_id,
+            fx_book.project.id,
             lambda repos: repos.page_stages.get(PageStageKey(fx_book.page.id, Stage.PAGE_SPLIT)),
         )
         assert record.head_version_id is not None
         head_id = record.head_version_id
         # A version made from the current one and left behind: it reads the head, and no current chain reads it
         old = evolve(
-            await uow.read_book(fx_book.page.project_id, lambda repos: repos.page_versions.get(head_id)),
+            await uow.read_book(fx_book.project.id, lambda repos: repos.page_versions.get(head_id)),
             id=PageVersionId(OLD_VERSION_ID),
             input_id=head_id,
         )
@@ -1099,9 +1099,9 @@ async def add_page(uow: UnitOfWork, book: Book, order_key: str, kind: PageKind =
     :returns: The page and the scan it shows.
     :rtype: tuple[Page, Scan]
     """
-    source = make_source(project_id=book.project.id, name=f'{order_key}.pdf')
+    source = make_source(name=f'{order_key}.pdf')
     scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
-    page = make_page(project_id=book.project.id, order_key=order_key, scan=scan, kind=kind)
+    page = make_page(order_key=order_key, scan=scan, kind=kind)
 
     def add_scan_page(repos: BookRepositories, _project: Project) -> None:
         """Add the source, its scan and the page that shows the scan.

@@ -71,12 +71,10 @@ async def _commit_book(
     :returns: The pages in the order they were stored, and the base versions of the two that have one.
     :rtype: tuple[list[Page], list[PageVersion]]
     """
-    source = make_source(project_id=project.id)
+    source = make_source()
     scans = [make_scan(source=source, number=number) for number in range(2)]
     shown = [scans[0], None, scans[1]]
-    pages = [
-        make_page(project_id=project.id, order_key=key, scan=scan) for key, scan in zip(STORED_KEYS, shown, strict=True)
-    ]
+    pages = [make_page(order_key=key, scan=scan) for key, scan in zip(STORED_KEYS, shown, strict=True)]
     versions = [make_page_version(page_id=pages[index].id) for index in (0, 2)]
     await commit_project(database, uow, project, *pages, owner=owner, sources=[source], scans=scans, versions=versions)
     return pages, versions
@@ -154,7 +152,7 @@ class TestManifest:
         :type fx_actor: Actor
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         old, new = make_page_version(page_id=page.id, minutes=1), make_page_version(page_id=page.id, minutes=2)
         await store_project(fx_uow(), project, page, owner=fx_actor.account_id, versions=[new, old])
 
@@ -178,7 +176,7 @@ class TestManifest:
         :type fx_actor: Actor
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         base = _ready(make_page_version(page_id=page.id, minutes=1))
         deskewed = evolve(_ready(make_page_version(page_id=page.id, minutes=2)), stage=Stage.GEOMETRY, input_id=base.id)
         regions = evolve(make_page_version(page_id=page.id, minutes=3), stage=Stage.LAYOUT, input_id=deskewed.id)
@@ -220,7 +218,7 @@ class TestManifest:
         :type fx_actor: Actor
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         chosen, newer = (_ready(make_page_version(page_id=page.id, minutes=minutes)) for minutes in (1, 2))
         await store_project(fx_uow(), project, page, owner=fx_actor.account_id, versions=[chosen, newer])
         await fx_uow().change_book(
@@ -271,7 +269,7 @@ class TestManifest:
         :type fx_actor: Actor
         """
         project = make_project()
-        pages = [make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1', 'a2')]
+        pages = [make_page(order_key=key) for key in ('a0', 'a1', 'a2')]
         pages[1] = evolve(pages[1], included=False)
         await store_project(fx_uow(), project, *pages, owner=fx_actor.account_id)
 
@@ -302,7 +300,7 @@ class TestManifest:
         """
         project = make_project()
         await _commit_book(fx_database, fx_uow(), project, fx_actor.account_id)
-        [source, *_] = await fx_uow().read_book(project.id, lambda repos: repos.sources.list_for_project(project.id))
+        [source, *_] = await fx_uow().read_book(project.id, lambda repos: repos.sources.list_all())
 
         manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
 
@@ -353,7 +351,7 @@ class TestGet:
         :type fx_actor: Actor
         """
         project, holder = (make_project() for _ in range(2))
-        page = make_page(project_id=holder.id)
+        page = make_page()
         await store_project(fx_uow(), project, owner=fx_actor.account_id)
         await store_project(fx_uow(), holder, page, owner=fx_actor.account_id)
 
@@ -379,7 +377,7 @@ class TestGet:
         :type fx_actor: Actor
         """
         holder = make_project()
-        page = make_page(project_id=holder.id)
+        page = make_page()
         await commit_project(fx_database, fx_uow(), holder, page, owner=new_account_id())
 
         with pytest.raises(NotFoundError):

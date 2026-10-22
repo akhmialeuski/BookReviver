@@ -49,7 +49,7 @@ class PlaceService:
         :raises NotFoundError: If the actor has no such book.
         """
         await self._library.open(actor, project_id)
-        return await self._uow.read_book(project_id, lambda repos: repos.book_places.find(project_id))
+        return await self._uow.read_book(project_id, lambda repos: repos.book_places.find())
 
     async def save(self, actor: Actor, project_id: ProjectId, place: NewBookPlace) -> BookPlace:
         """Replace the place the actor left one of their books at.
@@ -68,5 +68,5 @@ class PlaceService:
         :raises NotFoundError: If the actor has no such book.
         """
         await self._library.open(actor, project_id)
-        stored = BookPlace(project_id=project_id, updated_at=self._clock.now(), **asdict(place, recurse=False))
+        stored = BookPlace(updated_at=self._clock.now(), **asdict(place, recurse=False))
         return await self._uow.change_book(project_id, lambda repos, _project: repos.book_places.save(stored))

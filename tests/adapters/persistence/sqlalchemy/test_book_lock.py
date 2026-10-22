@@ -55,36 +55,36 @@ class TestMoveAgainstJobWrite:
         :type fx_tracer: AskingTracer
         """
         uow = fx_traced_uow()
-        pages = [make_page(project_id=fx_project.id, order_key=key) for key in ORDER_KEYS]
+        pages = [make_page(order_key=key) for key in ORDER_KEYS]
         await uow.change_book(fx_project.id, lambda repos, _project: repos.pages.add_many(pages))
         moved = [pages[0].id, pages[1].id]
         entered, proceed = anyio.Event(), threading.Event()
         seen_by_job: list[PageId] = []
 
-        def move_the_group(repos: BookRepositories, project: Project) -> None:
+        def move_the_group(repos: BookRepositories, _project: Project) -> None:
             """Read the window, hold the book until the test lets the move go, and move the first two pages.
 
             :param repos: BookRepositories of the transaction.
             :type repos: BookRepositories
-            :param project: Project of the book, whose pages are listed.
-            :type project: Project
+            :param _project: Project of the book, whose pages are listed.
+            :type _project: Project
             """
-            window = repos.pages.list_for_project(project.id, SliceRequest())
+            window = repos.pages.list_window(SliceRequest())
             anyio.from_thread.run_sync(entered.set)
             proceed.wait(HOLD_LIMIT_SECONDS)
             by_id = {page.id: page for page in window.items}
             for page_id, key in zip(moved, MOVED_KEYS, strict=True):
                 repos.pages.update(evolve(by_id[page_id], order_key=key))
 
-        def job_writes_content(repos: BookRepositories, project: Project) -> None:
+        def job_writes_content(repos: BookRepositories, _project: Project) -> None:
             """Write the content type of the second moved page after the order the move left.
 
             :param repos: BookRepositories of the transaction.
             :type repos: BookRepositories
-            :param project: Project of the book, whose pages are listed.
-            :type project: Project
+            :param _project: Project of the book, whose pages are listed.
+            :type _project: Project
             """
-            window = repos.pages.list_for_project(project.id, SliceRequest())
+            window = repos.pages.list_window(SliceRequest())
             seen_by_job.extend(page.id for page in window.items)
             page = repos.pages.get(moved[1])
             repos.pages.update(evolve(page, content_type=ContentType.COLOR_PICTURE))
@@ -100,11 +100,7 @@ class TestMoveAgainstJobWrite:
             proceed.set()
 
         expected = [pages[MOVED].id, pages[ANCHOR].id, *moved, pages[4].id]
-        stored = (
-            await uow.read_book(
-                fx_project.id, lambda repos: repos.pages.list_for_project(fx_project.id, SliceRequest())
-            )
-        ).items
+        stored = (await uow.read_book(fx_project.id, lambda repos: repos.pages.list_window(SliceRequest()))).items
         expect([page.id for page in stored] == expected)
         expect(next(page for page in stored if page.id == moved[1]).content_type == ContentType.COLOR_PICTURE)
         expect(seen_by_job == expected)

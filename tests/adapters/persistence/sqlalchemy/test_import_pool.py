@@ -170,7 +170,7 @@ class TestRunImportConnections:
 
         stored = rig.stored_job(job)
         scans = await uow.read_book(
-            project.id, lambda repos: repos.scans.list_for_project(project.id, SliceRequest(limit=PARALLEL_SCANS)).items
+            project.id, lambda repos: repos.scans.list_window(SliceRequest(limit=PARALLEL_SCANS)).items
         )
         expect(queued)
         expect(rig.rasterizer.peak == PARALLEL_SCANS)

@@ -44,7 +44,7 @@ from bookreviver.domain.enums import (
     VersionState,
     WorkerPool,
 )
-from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId, RecipeProfileId, StepId
+from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, RecipeProfileId, StepId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import RecipeDraft, StageRun, Step, StepPreview, VersionFilter
 
@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from bookreviver.domain.entities import PageStage, PageVersion, Recipe
+    from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.values import OrderIssue
 
 STEP_INDEX_OUT_OF_RANGE: str = 'The step index must name one of the steps.'
@@ -141,7 +142,6 @@ class RecipeSchema(ResponseModel):
     """A recipe: the ordered steps of one stage for one kind of page.
 
     :ivar id: Identifier of the recipe.
-    :ivar project_id: Project owning the recipe.
     :ivar stage: Stage the recipe processes.
     :ivar kind: Kind of the pages the recipe processes, which is also its name.
     :ivar steps: The steps in the order they run.
@@ -153,7 +153,6 @@ class RecipeSchema(ResponseModel):
     """
 
     id: RecipeId
-    project_id: ProjectId
     stage: Stage
     kind: RecipeKind
     steps: list[StepSchema]

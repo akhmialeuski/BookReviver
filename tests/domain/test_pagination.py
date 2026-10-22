@@ -10,7 +10,7 @@ from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.domain.enums import LabelStyle, NumberDisplay, PageKind
 from bookreviver.domain.page_label_rules import PageLabelRule, PrintedNumber
 from bookreviver.domain.pagination import Pagination
-from tests.helpers.builders import make_page, make_project, make_section
+from tests.helpers.builders import make_page, make_section
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, PaginationSection
@@ -33,9 +33,8 @@ def _book(*kinds: PageKind) -> list[Page]:
     :returns: Pages of one project, included, without labels.
     :rtype: list[Page]
     """
-    project = make_project()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(kinds))
-    return [make_page(project_id=project.id, order_key=key, kind=kind) for key, kind in zip(keys, kinds, strict=True)]
+    return [make_page(order_key=key, kind=kind) for key, kind in zip(keys, kinds, strict=True)]
 
 
 def _labels(pages: list[Page], *sections: PaginationSection) -> list[str]:

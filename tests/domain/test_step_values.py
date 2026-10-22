@@ -41,7 +41,7 @@ def values(scope: ValueScope, strength: int, *, group_label: str = '') -> StepVa
     :returns: The values.
     :rtype: StepValues
     """
-    return make_step_values(project_id=PROJECT_ID, scope=scope, group_label=group_label, params={'strength': strength})
+    return make_step_values(scope=scope, group_label=group_label, params={'strength': strength})
 
 
 class TestValueTarget:
@@ -91,7 +91,7 @@ class TestStepValues:
     def test_values_for_pages_are_not_kept_once_for_the_step(self) -> None:
         """Verify the values of pages belong to the pages and are refused as values of a part."""
         with pytest.raises(ValueError, match='kept by the pages'):
-            make_step_values(project_id=PROJECT_ID, scope=ValueScope.PAGES)
+            make_step_values(scope=ValueScope.PAGES)
 
     @pytest.mark.parametrize(
         ('scope', 'label'), [(ValueScope.GROUP, ''), (ValueScope.ODD, GROUP)], ids=['group-no-label', 'side-label']
@@ -105,7 +105,7 @@ class TestStepValues:
         :type label: str
         """
         with pytest.raises(ValueError, match='group'):
-            make_step_values(project_id=PROJECT_ID, scope=scope, group_label=label)
+            make_step_values(scope=scope, group_label=label)
 
     @pytest.mark.parametrize(
         ('scope', 'place', 'covered'),
@@ -136,7 +136,7 @@ class TestStepValues:
 
     def test_values_with_no_field_are_empty(self) -> None:
         """Verify values are empty while they change no field, which is when they are no longer stored."""
-        assert make_step_values(project_id=PROJECT_ID, params={}).is_empty
+        assert make_step_values(params={}).is_empty
 
 
 class TestStepValueLayers:

@@ -51,7 +51,7 @@ class TestPreviewBudget:
         actor, project = await fx_cv_kit.seed_project()
         page, _ = await fx_cv_kit.seed_scan_page(project)
         scan = turned(text_page(PAGE_WIDTH_PX, PAGE_HEIGHT_PX), SKEW_DEGREES)
-        await fx_cv_kit.seed_base_version(page, image=png_bytes(scan))
+        await fx_cv_kit.seed_base_version(project.id, page, image=png_bytes(scan))
         preview = StepPreview(
             page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=DESKEW_KEY),), step_index=0
         )

@@ -151,7 +151,7 @@ async def _add_unimported(uow: UnitOfWork, book: Book, status_of: SourceStatus, 
     """
     rejected = status_of is SourceStatus.REJECTED
     source = evolve(
-        make_source(project_id=book.project.id, name=name, minutes=minutes),
+        make_source(name=name, minutes=minutes),
         kind=None,
         file_type=None,
         scan_count=0,
@@ -504,7 +504,7 @@ class TestListScans:
         """
         policy = ImagePolicy.LOSSLESS if full is Rendition.FULL_JPEG else ImagePolicy.COMPACT
         project = evolve(make_project(), image_policy=policy)
-        source = make_source(project_id=project.id)
+        source = make_source()
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True, full=full))
         await store_project(fx_uow(), project, owner=fx_actor.account_id, sources=[source], scans=[scan])
 
@@ -527,7 +527,7 @@ class TestListScans:
         :type fx_actor: Actor
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         await store_project(
             fx_uow(), project, owner=fx_actor.account_id, sources=[source], scans=[make_scan(source=source, number=0)]
         )

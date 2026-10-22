@@ -180,18 +180,20 @@ async def measure(kit: ProcessingKit, actor: Actor, project: Project) -> Job:
     return stored_job(kit, job.id)
 
 
-async def geometry_record(kit: ProcessingKit, page: Page) -> PageStage:
+async def geometry_record(kit: ProcessingKit, project_id: ProjectId, page: Page) -> PageStage:
     """Read the committed record of the Geometry stage of a page.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
     :param page: The page.
     :type page: Page
     :returns: The record.
     :rtype: PageStage
     """
     return await kit.uow().read_book(
-        page.project_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        project_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
     )
 
 
@@ -411,7 +413,7 @@ class TestMeasureBook:
             for index, (width, height, line_height) in enumerate(BLOCKS)
         ]
         await measure(fx_cv_kit, actor, project)
-        records = [await geometry_record(fx_cv_kit, page) for page in pages]
+        records = [await geometry_record(fx_cv_kit, project.id, page) for page in pages]
         announced = [event for event in fx_cv_kit.events.published if isinstance(event, PageStageChanged)]
         expect(all(record.state is StageState.STALE for record in records))
         expect({event.stage.page_id for event in announced} == {page.id for page in pages})
@@ -427,7 +429,7 @@ class TestMeasureBook:
         recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         page = await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(300, 600, 30))
         await measure(fx_cv_kit, actor, project)
-        written = await fx_cv_kit.uow().read_book(page.project_id, lambda repos: repos.recipes.get(recipe.id))
+        written = await fx_cv_kit.uow().read_book(project.id, lambda repos: repos.recipes.get(recipe.id))
 
         def make_fresh(repos: BookRepositories, _project: Project) -> None:
             """Make the record of the Geometry stage of the page fresh again.
@@ -444,7 +446,7 @@ class TestMeasureBook:
         await fx_cv_kit.uow().change_book(project.id, make_fresh)
         job = await measure(fx_cv_kit, actor, project)
         again = await fx_cv_kit.uow().read_book(project.id, lambda repos: repos.recipes.get(recipe.id))
-        record = await geometry_record(fx_cv_kit, page)
+        record = await geometry_record(fx_cv_kit, project.id, page)
         expect(job.state is JobState.SUCCEEDED)
         expect(again.steps == written.steps)
         expect(again.updated_at == written.updated_at)
@@ -503,7 +505,7 @@ class TestMeasureBook:
         ]
         page = await placed_page(fx_cv_kit, project, recipes[0], FIRST_KEY, block_data(300, 600, 30))
         job = await measure(fx_cv_kit, actor, project)
-        record = await geometry_record(fx_cv_kit, page)
+        record = await geometry_record(fx_cv_kit, project.id, page)
         expect(job.state is JobState.FAILED)
         expect(NORMALIZE_KEY in job.error)
         expect(record.state is StageState.FRESH)

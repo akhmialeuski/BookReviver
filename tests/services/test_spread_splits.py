@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from bookreviver.domain.entities import Actor, PageStage, PageVersion, Project
+    from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.values import Slice
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.processing import ProcessingKit
@@ -74,17 +75,19 @@ async def width_of(kit: ProcessingKit, project: Project, version: PageVersion) -
             return image.width
 
 
-async def versions_of(kit: ProcessingKit, page: Page) -> list[PageVersion]:
+async def versions_of(kit: ProcessingKit, project_id: ProjectId, page: Page) -> list[PageVersion]:
     """Read the versions of a page, the earliest first, as committed.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
     :param page: The page.
     :type page: Page
     :returns: Every version of the page.
     :rtype: list[PageVersion]
     """
-    return list(await kit.uow().read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id)))
+    return list(await kit.uow().read_book(project_id, lambda repos: repos.page_versions.list_for_page(page.id)))
 
 
 async def give_odd_pages_a_value(kit: ProcessingKit, project: Project, page: Page) -> None:
@@ -106,7 +109,7 @@ async def give_odd_pages_a_value(kit: ProcessingKit, project: Project, page: Pag
         :param _project: The project as the change finds it, which the work does not need.
         :type _project: Project
         """
-        repos.step_values.save(make_step_values(project_id=project.id, scope=ValueScope.ODD))
+        repos.step_values.save(make_step_values(scope=ValueScope.ODD))
         repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.GEOMETRY))
 
     await kit.uow().change_book(project.id, save_value_and_record)
@@ -127,7 +130,7 @@ class TestSplit:
         await give_odd_pages_a_value(fx_cv_kit, project, second)
         await use_recipe(fx_cv_kit, actor, project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT, page_ids=(first.id,)))
-        assert (await stage_of(fx_cv_kit, second, Stage.GEOMETRY)).state is StageState.STALE
+        assert (await stage_of(fx_cv_kit, project.id, second, Stage.GEOMETRY)).state is StageState.STALE
 
     async def test_the_page_stays_the_left_half_and_the_right_half_follows_it(self, fx_cv_kit: ProcessingKit) -> None:
         """Verify a new page is inserted right after the page that was split, and the pages after it keep their order.
@@ -155,8 +158,8 @@ class TestSplit:
         await use_recipe(fx_cv_kit, actor, project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         left, right = await book_of(fx_cv_kit, project)
-        left_version = await head_of(fx_cv_kit, left, Stage.PAGE_SPLIT)
-        right_version = await head_of(fx_cv_kit, right, Stage.PAGE_SPLIT)
+        left_version = await head_of(fx_cv_kit, project.id, left, Stage.PAGE_SPLIT)
+        right_version = await head_of(fx_cv_kit, project.id, right, Stage.PAGE_SPLIT)
         expect(left.id == first.id)
         for version in (left_version, right_version):
             expect((version.state, version.processor.key, version.input_id) == (VersionState.READY, SPLIT_SPREAD, None))
@@ -165,8 +168,8 @@ class TestSplit:
             await width_of(fx_cv_kit, project, left_version) + await width_of(fx_cv_kit, project, right_version)
             == 2 * PAGE_WIDTH_PX
         )
-        expect((await stage_of(fx_cv_kit, right, Stage.PAGE_SPLIT)).state is StageState.FRESH)
-        expect((await stage_of(fx_cv_kit, left, Stage.PAGE_SPLIT)).state is StageState.FRESH)
+        expect((await stage_of(fx_cv_kit, project.id, right, Stage.PAGE_SPLIT)).state is StageState.FRESH)
+        expect((await stage_of(fx_cv_kit, project.id, left, Stage.PAGE_SPLIT)).state is StageState.FRESH)
         assert_expectations()
 
     async def test_the_events_name_the_new_page_and_both_versions(self, fx_cv_kit: ProcessingKit) -> None:
@@ -235,12 +238,12 @@ class TestSplit:
         await use_recipe(fx_cv_kit, actor, project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         left, right = await book_of(fx_cv_kit, project)
-        before = [await head_of(fx_cv_kit, page, Stage.PAGE_SPLIT) for page in (left, right)]
-        key = await fx_cv_kit.edit_key(left, Stage.PAGE_SPLIT, SPLIT_SPREAD)
+        before = [await head_of(fx_cv_kit, project.id, page, Stage.PAGE_SPLIT) for page in (left, right)]
+        key = await fx_cv_kit.edit_key(project.id, left, Stage.PAGE_SPLIT, SPLIT_SPREAD)
         await fx_cv_kit.edits().save(actor, project.id, key, NewPageEdit(kind=CUT_LINE.editor, geometry=CUT_LINE), None)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
-        after = [await head_of(fx_cv_kit, page, Stage.PAGE_SPLIT) for page in (left, right)]
-        every = [await versions_of(fx_cv_kit, page) for page in (left, right)]
+        after = [await head_of(fx_cv_kit, project.id, page, Stage.PAGE_SPLIT) for page in (left, right)]
+        every = [await versions_of(fx_cv_kit, project.id, page) for page in (left, right)]
         expect(all(new.id != old.id for new, old in zip(after, before, strict=True)))
         expect([len(versions) for versions in every] == [2, 2])
         expect(len(await book_of(fx_cv_kit, project)) == 2)
@@ -257,14 +260,14 @@ class TestSplit:
         await use_recipe(fx_cv_kit, actor, project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         [stored] = await book_of(fx_cv_kit, project)
-        versions = await versions_of(fx_cv_kit, page)
+        versions = await versions_of(fx_cv_kit, project.id, page)
         added = [event for event in fx_cv_kit.events.published if isinstance(event, PagesChanged)]
         expect((stored.id, stored.slot) == (page.id, Page.WHOLE_SCAN))
         expect(
             [(version.state, version.processor.key) for version in versions] == [(VersionState.FAILED, SPLIT_SPREAD)]
         )
         expect('cannot be read' in versions[0].data['error'])
-        expect((await stage_of(fx_cv_kit, page, Stage.PAGE_SPLIT)).state is StageState.FAILED)
+        expect((await stage_of(fx_cv_kit, project.id, page, Stage.PAGE_SPLIT)).state is StageState.FAILED)
         expect(not added)
         assert_expectations()
 
@@ -288,7 +291,7 @@ class TestSplit:
             target.write_bytes(png_bytes(spread(PAGE_WIDTH_PX, HEIGHT_PX)))
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         left, right = await book_of(fx_cv_kit, project)
-        versions = await versions_of(fx_cv_kit, left)
+        versions = await versions_of(fx_cv_kit, project.id, left)
         expect((left.id, left.slot, right.slot) == (broken.id, Page.LEFT_HALF, Page.RIGHT_HALF))
         expect([version.state for version in versions] == [VersionState.READY])
         assert_expectations()
@@ -300,7 +303,7 @@ class TestSplit:
         :type fx_cv_kit: ProcessingKit
         """
         actor, project, [page] = await seed_spreads(fx_cv_kit)
-        await fx_cv_kit.seed_base_version(page)
+        await fx_cv_kit.seed_base_version(project.id, page)
         preview = StepPreview(
             page_id=page.id, stage=Stage.PAGE_SPLIT, steps=(Step(processor_key=SPLIT_SPREAD),), step_index=0
         )
@@ -348,7 +351,7 @@ class TestUnsplit:
         await run_stage(
             fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT, page_ids=(first.id,), confirm_unsplit=True)
         )
-        assert (await stage_of(fx_cv_kit, second, Stage.GEOMETRY)).state is StageState.STALE
+        assert (await stage_of(fx_cv_kit, project.id, second, Stage.GEOMETRY)).state is StageState.STALE
 
     async def test_without_a_confirmation_the_page_fails_and_nothing_is_deleted(self, fx_cv_kit: ProcessingKit) -> None:
         """Verify an unconfirmed run leaves the right half, and says on the stage of the left one that it failed.
@@ -359,7 +362,7 @@ class TestUnsplit:
         actor, project, [left, _right] = await self.split_then_use_whole_scan(fx_cv_kit)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         expect(len(await book_of(fx_cv_kit, project)) == 2)
-        expect((await stage_of(fx_cv_kit, left, Stage.PAGE_SPLIT)).state is StageState.FAILED)
+        expect((await stage_of(fx_cv_kit, project.id, left, Stage.PAGE_SPLIT)).state is StageState.FAILED)
         assert_expectations()
 
     async def test_a_replacement_that_fails_leaves_the_right_half_in_place(
@@ -373,11 +376,11 @@ class TestUnsplit:
         :type monkeypatch: pytest.MonkeyPatch
         """
         actor, project, [left, right] = await self.split_then_use_whole_scan(fx_cv_kit)
-        halves = [await head_of(fx_cv_kit, page, Stage.PAGE_SPLIT) for page in (left, right)]
+        halves = [await head_of(fx_cv_kit, project.id, page, Stage.PAGE_SPLIT) for page in (left, right)]
         monkeypatch.setattr(fx_cv_kit.writer, 'write', AsyncMock(side_effect=ConflictError('The disk is full.')))
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT, confirm_unsplit=True))
         pages = await book_of(fx_cv_kit, project)
-        heads = [await head_of(fx_cv_kit, page, Stage.PAGE_SPLIT) for page in pages]
+        heads = [await head_of(fx_cv_kit, project.id, page, Stage.PAGE_SPLIT) for page in pages]
         expect([(page.id, page.slot) for page in pages] == [(left.id, Page.LEFT_HALF), (right.id, Page.RIGHT_HALF)])
         expect([head.id for head in heads] == [half.id for half in halves])
         assert_expectations()
@@ -391,12 +394,12 @@ class TestUnsplit:
         :type fx_cv_kit: ProcessingKit
         """
         actor, project, [left, right] = await self.split_then_use_whole_scan(fx_cv_kit)
-        right_version = await head_of(fx_cv_kit, right, Stage.PAGE_SPLIT)
+        right_version = await head_of(fx_cv_kit, project.id, right, Stage.PAGE_SPLIT)
         assert right_version.renditions is not None
         stored = ProjectKeys(project.id).version_rendition(right_version, right_version.renditions.full)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT, confirm_unsplit=True))
         [remaining] = await book_of(fx_cv_kit, project)
-        head = await head_of(fx_cv_kit, remaining, Stage.PAGE_SPLIT)
+        head = await head_of(fx_cv_kit, project.id, remaining, Stage.PAGE_SPLIT)
         removed = [
             event
             for event in fx_cv_kit.events.published
@@ -404,7 +407,7 @@ class TestUnsplit:
         ]
         expect((remaining.id, remaining.slot) == (left.id, Page.WHOLE_SCAN))
         expect((head.processor.key, head.state) == ('split.none', VersionState.READY))
-        expect((await stage_of(fx_cv_kit, remaining, Stage.PAGE_SPLIT)).state is StageState.FRESH)
+        expect((await stage_of(fx_cv_kit, project.id, remaining, Stage.PAGE_SPLIT)).state is StageState.FRESH)
         expect([event.page_ids for event in removed] == [[right.id]])
         with pytest.raises(NotFoundError):
             async with fx_cv_kit.assets.readable(stored):
@@ -456,7 +459,7 @@ async def draw_the_cut_line(kit: ProcessingKit, book: SplitBook) -> None:
     :param book: The account, the project and the page.
     :type book: SplitBook
     """
-    key = await kit.edit_key(book.page, Stage.PAGE_SPLIT, SPLIT_SPREAD)
+    key = await kit.edit_key(book.project.id, book.page, Stage.PAGE_SPLIT, SPLIT_SPREAD)
     await kit.edits().save(book.actor, book.project.id, key, NewPageEdit(kind=CUT_LINE.editor, geometry=CUT_LINE), None)
 
 

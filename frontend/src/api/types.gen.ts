@@ -2189,7 +2189,6 @@ export type PaginationSectionBody = {
  * A pagination section of a book.
  *
  * :ivar id: Identifier of the section.
- * :ivar project_id: Project owning the section.
  * :ivar first_page_id: The page the section starts at, so the section follows the page when it is moved.
  * :ivar name: Name the user sees.
  * :ivar style: How the numbers of the section are written.
@@ -2205,10 +2204,6 @@ export type PaginationSectionSchema = {
      * Id
      */
     id: string;
-    /**
-     * Project Id
-     */
-    project_id: string;
     /**
      * First Page Id
      */
@@ -2980,7 +2975,6 @@ export type RecipeProfileSchema = {
  * A recipe: the ordered steps of one stage for one kind of page.
  *
  * :ivar id: Identifier of the recipe.
- * :ivar project_id: Project owning the recipe.
  * :ivar stage: Stage the recipe processes.
  * :ivar kind: Kind of the pages the recipe processes, which is also its name.
  * :ivar steps: The steps in the order they run.
@@ -2995,10 +2989,6 @@ export type RecipeSchema = {
      * Id
      */
     id: string;
-    /**
-     * Project Id
-     */
-    project_id: string;
     stage: Stage;
     kind: RecipeKind;
     /**

@@ -105,10 +105,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     """
     project = make_project()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(LAYOUT))
-    pages = [
-        evolve(make_page(project_id=project.id, order_key=key), kind=kind)
-        for key, kind in zip(keys, LAYOUT, strict=True)
-    ]
+    pages = [evolve(make_page(order_key=key), kind=kind) for key, kind in zip(keys, LAYOUT, strict=True)]
     pages[1] = evolve(pages[1], content_type=FOUND)
     await store_project(fx_uow(), project, *pages, owner=fx_actor.account_id)
     return Book(project=project, pages=pages)
@@ -292,7 +289,7 @@ class TestDetectContent:
         :type fx_uow: UnitOfWorkFactory
         """
         stranger = make_project()
-        page = make_page(project_id=stranger.id)
+        page = make_page()
         await commit_project(fx_database, fx_uow(), stranger, page, owner=new_account_id())
 
         missing = await fx_client.post(fx_book.detect_path, json={PAGE_IDS_FIELD: [str(uuid4())]})

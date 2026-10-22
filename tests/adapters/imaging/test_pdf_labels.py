@@ -24,7 +24,7 @@ from tests.adapters.imaging.samples import (
     add_page_labels,
     write_pdf,
 )
-from tests.helpers.builders import make_page, make_project, make_section
+from tests.helpers.builders import make_page, make_section
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -248,9 +248,8 @@ class TestPdfLabelWriter:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        project = make_project()
         keys = FractionalOrderKeys().spread(lower=None, upper=None, count=BOOK_PAGES)
-        pages = [make_page(project_id=project.id, order_key=key, kind=PageKind.TEXT) for key in keys]
+        pages = [make_page(order_key=key, kind=PageKind.TEXT) for key in keys]
         pages[3] = evolve(pages[3], manual_label=HAND_WRITTEN)
         sections = [make_section(page=pages[0], style=LabelStyle.ROMAN_LOWER), make_section(page=pages[2])]
         pagination = Pagination(sections, pages)

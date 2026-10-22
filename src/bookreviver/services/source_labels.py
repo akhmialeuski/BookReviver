@@ -72,7 +72,6 @@ class SourceLabels:
             self.sections.append(
                 PaginationSection(
                     id=PaginationSectionId(uuid4()),
-                    project_id=first.project_id,
                     first_page_id=first.id,
                     name=rule.style.label if counts else NumberDisplay.NOT_COUNTED.label,
                     style=rule.style if counts else LabelStyle.NONE,

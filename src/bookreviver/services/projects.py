@@ -20,7 +20,6 @@ from uuid import uuid4
 from attrs import evolve, frozen
 
 from bookreviver.domain.entities import LibraryEntry, Project
-from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import ProjectId
 from bookreviver.domain.values import Slice, SliceRequest
 
@@ -28,7 +27,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.changes import ProjectChanges
     from bookreviver.domain.entities import Actor, Page, ProjectOverview
     from bookreviver.domain.enums import Stage
-    from bookreviver.domain.ids import PageId, StepId
+    from bookreviver.domain.ids import StepId
     from bookreviver.domain.stage_summaries import StageRow, StageSummary
     from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import BookRepositories, PageRepository, UnitOfWork
@@ -41,38 +40,17 @@ if TYPE_CHECKING:
 PAGE_WINDOW: int = 1_000
 
 
-def book_page(repos: BookRepositories, project_id: ProjectId, page_id: PageId) -> Page:
-    """Return a page of a book, which is called from the work of a transaction of the book.
-
-    :param repos: Repositories of the transaction to read the page from.
-    :type repos: BookRepositories
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
-    :param page_id: Identifier of the page.
-    :type page_id: PageId
-    :returns: The page, which is one of the book of the project.
-    :rtype: Page
-    :raises NotFoundError: If the book has no such page.
-    """
-    page = repos.pages.get(page_id)
-    if page.project_id != project_id:
-        raise NotFoundError(page_id)
-    return page
-
-
-def book_pages(pages: PageRepository, project_id: ProjectId) -> list[Page]:
-    """Read every page of a project in book order, window by window, which a transaction of the book calls.
+def book_pages(pages: PageRepository) -> list[Page]:
+    """Read every page of the book in book order, window by window, which a transaction of the book calls.
 
     :param pages: Repository of the transaction to read the pages from.
     :type pages: PageRepository
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
     :returns: The pages of the book, the placeholders and the pages kept out of the book included.
     :rtype: list[Page]
     """
     book: list[Page] = []
     while True:
-        window = pages.list_for_project(project_id, SliceRequest(offset=len(book), limit=PAGE_WINDOW))
+        window = pages.list_window(SliceRequest(offset=len(book), limit=PAGE_WINDOW))
         book.extend(window.items)
         if len(book) >= window.total or not window.items:
             return book
@@ -217,7 +195,7 @@ class ProjectService:
         await self._library.open(actor, project_id)
         return await self._uow.read_book(
             project_id,
-            lambda repos: self._stages.rows(repos, repos.projects.get(project_id), stage, request, step_id),
+            lambda repos: self._stages.rows(repos, stage, request, step_id),
         )
 
     async def update(self, actor: Actor, project_id: ProjectId, changes: ProjectChanges) -> ProjectOverview:

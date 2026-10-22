@@ -23,7 +23,6 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, NewType
 
 from bookreviver.domain.entities import (
-    BookPlace,
     LibraryEntry,
     Page,
     PageStage,
@@ -57,7 +56,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Mapping, Sequence
     from datetime import datetime
 
-    from bookreviver.domain.entities import ProjectOverview
+    from bookreviver.domain.entities import (
+        BookPlace,
+        ProjectOverview,
+    )
     from bookreviver.domain.enums import RecipeKind, ResultMark, Side, Stage, VersionScale
     from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
     from bookreviver.domain.stage_summaries import StageTally, StepTally
@@ -220,11 +222,7 @@ class LibraryRepository(Repository[LibraryEntry, ProjectId]):
 
 
 class ProjectRepository(Repository[Project, ProjectId]):
-    """The project of a book, the one row its store has.
-
-    A project's cover is one of its own pages: ``add`` and ``update`` raise ``NotFoundError`` naming a cover page that
-    is not stored, and deleting the cover page leaves the project without a cover.
-    """
+    """The project of a book, the one row its store has."""
 
     @abstractmethod
     def overview(self, project: Project) -> ProjectOverview:
@@ -238,7 +236,7 @@ class ProjectRepository(Repository[Project, ProjectId]):
 
 
 class SourceRepository(Repository[Source, SourceId]):
-    """Sources of the projects; the pair of a project and the digest of an imported source's main file is unique.
+    """Sources of the book; the digest of the main file of an imported source is unique.
 
     A rejected or skipped file is a source row too, and its digest may repeat, since it is no part of the book. Only
     the imported sources count as the project's sources, and the rejected and skipped ones are listed and deleted
@@ -248,39 +246,29 @@ class SourceRepository(Repository[Source, SourceId]):
     """
 
     @abstractmethod
-    def list_for_project(self, project_id: ProjectId) -> Sequence[Source]:
+    def list_all(self) -> Sequence[Source]:
         """Return the project's imported sources in the order they were imported, ties by identifier.
 
-        :param project_id: Project owning the sources.
-        :type project_id: ProjectId
         :returns: Every imported source of the project, the earliest import first.
         :rtype: Sequence[Source]
         """
 
     @abstractmethod
-    def list_unimported(self, project_id: ProjectId) -> Sequence[Source]:
+    def list_unimported(self) -> Sequence[Source]:
         """Return the project's rejected and skipped files in the order they were recorded, ties by identifier.
 
-        :param project_id: Project owning the sources.
-        :type project_id: ProjectId
         :returns: Every rejected or skipped source of the project, the earliest first.
         :rtype: Sequence[Source]
         """
 
     @abstractmethod
-    def delete_unimported(self, project_id: ProjectId) -> None:
-        """Delete the project's rejected and skipped sources, which hold no scan, and keep the imported ones.
-
-        :param project_id: Project owning the sources.
-        :type project_id: ProjectId
-        """
+    def delete_unimported(self) -> None:
+        """Delete the project's rejected and skipped sources, which hold no scan, and keep the imported ones."""
 
     @abstractmethod
-    def find_by_sha256(self, project_id: ProjectId, sha256: str) -> Source | None:
+    def find_by_sha256(self, sha256: str) -> Source | None:
         """Return the project's imported source whose main file has this digest, which refuses a second upload.
 
-        :param project_id: Project owning the sources.
-        :type project_id: ProjectId
         :param sha256: SHA-256 digest of a main file as lower-case hexadecimal digits.
         :type sha256: str
         :returns: The imported source with this digest, or None when the project has none.
@@ -302,11 +290,9 @@ class ScanRepository(Repository[Scan, ScanId]):
         """
 
     @abstractmethod
-    def list_for_project(self, project_id: ProjectId, request: SliceRequest) -> Slice[Scan]:
+    def list_window(self, request: SliceRequest) -> Slice[Scan]:
         """Return the scans of a project, source by source in import order and by number within a source.
 
-        :param project_id: Project owning the scans.
-        :type project_id: ProjectId
         :param request: Offset and limit of the window to return.
         :type request: SliceRequest
         :returns: The scans of the window and the number of all the project's scans.
@@ -324,11 +310,9 @@ class ScanRepository(Repository[Scan, ScanId]):
         """
 
     @abstractmethod
-    def list_unready(self, project_id: ProjectId) -> Sequence[Scan]:
+    def list_unready(self) -> Sequence[Scan]:
         """Return the scans of a project whose renditions are not ready, which an import cut again.
 
-        :param project_id: Project owning the scans.
-        :type project_id: ProjectId
         :returns: The scans without ready renditions, source by source in import order and by number within a source.
         :rtype: Sequence[Scan]
         """
@@ -337,21 +321,16 @@ class ScanRepository(Repository[Scan, ScanId]):
 class PageRepository(Repository[Page, PageId]):
     """Pages of the book, addressed by their identifier and ordered by their order key.
 
-    Within a project an order key is unique, and a part of a scan, the pair of a scan and a slot, belongs to one page
-    at most. A page keeps its row when its scan is deleted, and loses only the reference to it. Deleting a page
-    removes its versions.
+    An order key is unique, and a part of a scan, the pair of a scan and a slot, belongs to one page at most. A page
+    keeps its row when its scan is deleted, and loses only the reference to it. Deleting a page removes its versions.
     """
 
     @abstractmethod
-    def list_for_project(
-        self, project_id: ProjectId, request: SliceRequest, *, included_only: bool = False
-    ) -> Slice[Page]:
+    def list_window(self, request: SliceRequest, *, included_only: bool = False) -> Slice[Page]:
         """Return the pages of a project in book order, the byte order of their order keys.
 
         The position of a page in the book is the offset of the window plus its index in the window.
 
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
         :param request: Offset and limit of the window to return.
         :type request: SliceRequest
         :param included_only: Whether to leave out the pages kept out of the book, which then take no part in the
@@ -363,27 +342,22 @@ class PageRepository(Repository[Page, PageId]):
         """
 
     @abstractmethod
-    def list_by_ids(self, project_id: ProjectId, page_ids: Collection[PageId]) -> Sequence[Page]:
+    def list_by_ids(self, page_ids: Collection[PageId]) -> Sequence[Page]:
         """Return the given pages of a project in book order.
 
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
         :param page_ids: Identifiers of the pages to read, repeats counting once.
         :type page_ids: Collection[PageId]
         :returns: The pages, in the byte order of their order keys.
         :rtype: Sequence[Page]
-        :raises NotFoundError: If an identifier names no page, or a page of another project, which is reported like a
-                               missing one.
+        :raises NotFoundError: If an identifier names no page.
         """
 
     @abstractmethod
-    def list_for_source(self, project_id: ProjectId, source_id: SourceId) -> Sequence[Page]:
+    def list_for_source(self, source_id: SourceId) -> Sequence[Page]:
         """Return the pages whose scans belong to a source, in book order.
 
         Pages without a scan, such as placeholders and blank leaves, belong to no source and are never listed.
 
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
         :param source_id: Source whose scans the pages show.
         :type source_id: SourceId
         :returns: The pages cut from the scans of the source, by order key.
@@ -391,16 +365,12 @@ class PageRepository(Repository[Page, PageId]):
         """
 
     @abstractmethod
-    def neighbour_key(
-        self, project_id: ProjectId, key: str, side: Side, *, excluding: Collection[PageId] = ()
-    ) -> str | None:
+    def neighbour_key(self, key: str, side: Side, *, excluding: Collection[PageId] = ()) -> str | None:
         """Return the order key of the page next to ``key`` on one side, leaving some pages out of the count.
 
         A group of pages that is about to move is left out, so the key found is the one of the page the group will
         stand next to once it has left its old place.
 
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
         :param key: Order key the neighbour is looked up from, usually the key of an anchor page.
         :type key: str
         :param side: Whether to look for the nearest key before or after ``key``.
@@ -449,23 +419,19 @@ class PageRepository(Repository[Page, PageId]):
         """
 
     @abstractmethod
-    def last_order_key(self, project_id: ProjectId) -> str | None:
+    def last_order_key(self) -> str | None:
         """Return the order key of the last page of a project, after which new pages are appended.
 
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
         :returns: The greatest order key of the project's pages, or None for a book without pages.
         :rtype: str | None
         """
 
     @abstractmethod
-    def kind_tally(self, project_id: ProjectId) -> Mapping[RecipeKind, int]:
+    def kind_tally(self) -> Mapping[RecipeKind, int]:
         """Count the pages with an image of each kind of a project, in one grouped query.
 
         The kind of a page is ``Page.recipe_kind``. A placeholder has no image and is never counted.
 
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
         :returns: The number of pages of each kind that has any page.
         :rtype: Mapping[RecipeKind, int]
         """
@@ -479,13 +445,11 @@ class PaginationSectionRepository(Repository[PaginationSection, PaginationSectio
     """
 
     @abstractmethod
-    def list_for_project(self, project_id: ProjectId) -> Sequence[PaginationSection]:
+    def list_all(self) -> Sequence[PaginationSection]:
         """Return the sections of a project in the order they were made, ties by identifier.
 
         The sections are not in book order, since the order of the book is the order of the pages they start at.
 
-        :param project_id: Project owning the sections.
-        :type project_id: ProjectId
         :returns: Every section of the project.
         :rtype: Sequence[PaginationSection]
         """
@@ -505,14 +469,12 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         """
 
     @abstractmethod
-    def list_to_prepare(self, project_id: ProjectId, processor_keys: Collection[str]) -> Sequence[PageVersion]:
+    def list_to_prepare(self, processor_keys: Collection[str]) -> Sequence[PageVersion]:
         """Return the versions of a project whose files still have to be written: the pending and the failed ones.
 
         A failed version is returned with the pending ones, so the next job of the project tries it again and no route
         of its own is needed to repeat it.
 
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
         :param processor_keys: Keys of the processors whose versions are returned, those the job knows how to make.
         :type processor_keys: Collection[str]
         :returns: The pending and failed versions made by those processors, the earliest first, ties by identifier.
@@ -520,14 +482,12 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         """
 
     @abstractmethod
-    def base_sizes(self, project_id: ProjectId) -> Sequence[PageSize]:
+    def base_sizes(self) -> Sequence[PageSize]:
         """Return the sizes of the page split's base versions of the included pages that show a scan.
 
         The median of these is the size of a generated blank leaf. A leaf drawn in place of a scan is a version of the
         page order, so it is not counted. A version that records no size is left out.
 
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
         :returns: The recorded size of every such base version, in no particular order.
         :rtype: Sequence[PageSize]
         """
@@ -591,7 +551,7 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         """
 
     @abstractmethod
-    def collectable(self, project_id: ProjectId, previews_older_than: datetime) -> Sequence[PageVersion]:
+    def collectable(self, previews_older_than: datetime) -> Sequence[PageVersion]:
         """Return the versions a collection may delete: not base, and read by no version that stays.
 
         A version stays when a stage record names it as its head, when it is a base version, which has no input, when
@@ -601,8 +561,6 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
         run goes as soon as it is none of these, with no age to wait for, and a preview once it was created before
         ``previews_older_than``, since the editor that asked for it is still showing it.
 
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
         :param previews_older_than: Previews created before this moment may go.
         :type previews_older_than: datetime
         :returns: The versions that may be deleted, the earliest first, ties by identifier.
@@ -680,11 +638,9 @@ class PageStageRepository(KeyedRepository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
-    def list_for_project_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[PageStage]:
+    def list_for_stage(self, stage: Stage) -> Sequence[PageStage]:
         """Return the records of one stage over the pages of a project, by page identifier.
 
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
         :returns: Every record of the stage in the project.
@@ -692,30 +648,26 @@ class PageStageRepository(KeyedRepository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
-    def step_tally(self, project_id: ProjectId) -> Sequence[StepTally]:
+    def step_tally(self) -> Sequence[StepTally]:
         """Count the pages of every stage of a project that a run stopped at each step, in one grouped query.
 
         Only pages with an image are counted, and a record that failed is left out, since its step belongs to a run that
         did not end. A page run through every step that is on has no step and is not counted.
 
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
         :returns: One tally for each step of a stage that a page stopped at, in no particular order.
         :rtype: Sequence[StepTally]
         """
 
     @abstractmethod
-    def head_ids(self, project_id: ProjectId) -> Collection[PageVersionId]:
+    def head_ids(self) -> Collection[PageVersionId]:
         """Return the identifiers of the versions that are the current version of a stage of a page of the project.
 
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
         :returns: The distinct head versions.
         :rtype: Collection[PageVersionId]
         """
 
     @abstractmethod
-    def tally(self, project_id: ProjectId) -> Sequence[StageTally]:
+    def tally(self) -> Sequence[StageTally]:
         """Count the records of every stage of the project by state, in one grouped query.
 
         Only pages with an image are counted, so a placeholder never is. A page counts as marked for review when the
@@ -723,8 +675,6 @@ class PageStageRepository(KeyedRepository[PageStage, PageStageKey]):
         when its record is stale or failed or the page is marked, once however many of these hold. A stage that no page
         has a record of has no tally.
 
-        :param project_id: Project whose stages are counted.
-        :type project_id: ProjectId
         :returns: One tally for each stage that has a record, in no particular order.
         :rtype: Sequence[StageTally]
         """
@@ -772,13 +722,11 @@ class StepValuesRepository(KeyedRepository[StepValues, StepValuesKey]):
     """
 
     @abstractmethod
-    def list_for_step(self, project_id: ProjectId, step_id: StepId) -> Sequence[StepValues]:
+    def list_for_step(self, step_id: StepId) -> Sequence[StepValues]:
         """Return the values every part of the pages of a project has for one step, by scope and group.
 
         Books built from one profile share the identifiers of the steps, so the values are those of one project.
 
-        :param project_id: Project owning the step.
-        :type project_id: ProjectId
         :param step_id: The step of a recipe.
         :type step_id: StepId
         :returns: The values of the step, which are none when no part changes a field of it.
@@ -786,11 +734,9 @@ class StepValuesRepository(KeyedRepository[StepValues, StepValuesKey]):
         """
 
     @abstractmethod
-    def list_for_project(self, project_id: ProjectId) -> Sequence[StepValues]:
+    def list_all(self) -> Sequence[StepValues]:
         """Return the values of every step of a project, by step, scope and group, which is one read for all stages.
 
-        :param project_id: Project owning the steps.
-        :type project_id: ProjectId
         :returns: The values of the project, each naming its stage.
         :rtype: Sequence[StepValues]
         """
@@ -868,17 +814,15 @@ class ResultMarkChangeRepository(Repository[ResultMarkChange, ResultMarkChangeId
 
 
 class RecipeRepository(Repository[Recipe, RecipeId]):
-    """Recipes of the projects; a stage of a project has at most one recipe for each kind, which the database keeps.
+    """Recipes of the book; a stage has at most one recipe for each kind, which the database keeps.
 
     Deleting a recipe leaves the page stages it processed without their recipe.
     """
 
     @abstractmethod
-    def list_for_stage(self, project_id: ProjectId, stage: Stage) -> Sequence[Recipe]:
+    def list_for_stage(self, stage: Stage) -> Sequence[Recipe]:
         """Return the recipes of one stage of a project, by creation, ties by identifier.
 
-        :param project_id: Project owning the recipes.
-        :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
         :returns: The recipes of the stage, one for each kind, or none before the stage has been used.
@@ -886,11 +830,9 @@ class RecipeRepository(Repository[Recipe, RecipeId]):
         """
 
     @abstractmethod
-    def list_for_project(self, project_id: ProjectId) -> Sequence[Recipe]:
+    def list_all(self) -> Sequence[Recipe]:
         """Return the recipes of every stage of a project, in the order of the stages and then as ``list_for_stage``.
 
-        :param project_id: Project owning the recipes.
-        :type project_id: ProjectId
         :returns: The recipes of the stages that have been used.
         :rtype: Sequence[Recipe]
         """
@@ -929,8 +871,8 @@ class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
         """
 
 
-class BookPlaceRepository(Repository[BookPlace, ProjectId]):
-    """The place the reader left the book at, one for the book; deleting the book removes it."""
+class BookPlaceRepository(ABC):
+    """The one place the reader left the book at, which goes with the file of the book."""
 
     @abstractmethod
     def save(self, place: BookPlace) -> BookPlace:
@@ -945,15 +887,12 @@ class BookPlaceRepository(Repository[BookPlace, ProjectId]):
         :type place: BookPlace
         :returns: The place as stored, which is the stored place when it is newer than ``place``.
         :rtype: BookPlace
-        :raises NotFoundError: If the book is not stored.
         """
 
     @abstractmethod
-    def find(self, project_id: ProjectId) -> BookPlace | None:
+    def find(self) -> BookPlace | None:
         """Return the place of the book.
 
-        :param project_id: The book.
-        :type project_id: ProjectId
         :returns: The place, or None when the book has not been worked on yet.
         :rtype: BookPlace | None
         """

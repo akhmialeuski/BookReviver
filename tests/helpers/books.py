@@ -66,15 +66,15 @@ async def commit_book(
     :rtype: Book
     """
     project = make_project()
-    first = make_source(project_id=project.id, name='part1.pdf')
-    second = make_source(project_id=project.id, name='part2.pdf', minutes=1)
+    first = make_source(name='part1.pdf')
+    second = make_source(name='part2.pdf', minutes=1)
     ready = Renditions(ready=True)
     scans = [
         evolve(make_scan(source=source, number=number), renditions=ready)
         for source in (first, second)
         for number in range(SCANS_PER_SOURCE)
     ]
-    page = make_page(project_id=project.id, scan=scans[0])
+    page = make_page(scan=scans[0])
     version = evolve(make_page_version(page_id=page.id), renditions=ready)
     owner_id = new_account_id() if owner is None else owner.account_id
     await commit_project(

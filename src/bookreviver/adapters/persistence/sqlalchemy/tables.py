@@ -90,7 +90,6 @@ PAGINATION_SECTIONS_TABLE: Final = 'pagination_sections'
 RECIPES_TABLE: Final = 'recipes'
 # Columns that several keys, indexes and constraints name
 ID_COLUMN: Final = 'id'
-PROJECT_ID_COLUMN: Final = 'project_id'
 PAGE_ID_COLUMN: Final = 'page_id'
 STAGE_COLUMN: Final = 'stage'
 SEQUENCE_COLUMN: Final = 'sequence'
@@ -100,6 +99,8 @@ VERSION_ID_LENGTH: Final = 16
 EMPTY_OBJECT: Final = '{}'
 # The rows of the partial unique index of ``sources``: the imported sources, which are the ones that join the book
 IMPORTED_SOURCE: Final = text(f"status = '{SourceStatus.IMPORTED}'")
+# The key of the one row of ``book_places``
+BOOK_PLACE_ID: Final = 1
 # A manual label is a label, so the empty label is never one; null leaves the number to the sections
 MANUAL_LABEL_GIVEN: Final = "manual_label <> ''"
 
@@ -107,15 +108,11 @@ MANUAL_LABEL_GIVEN: Final = "manual_label <> ''"
 class Relation(enum.StrEnum):
     """Attribute names of the relationships, which ``back_populates`` refers to by name."""
 
-    SOURCES = 'sources'
     SCANS = 'scans'
-    PAGES = 'pages'
     VERSIONS = 'versions'
-    RECIPES = 'recipes'
     STAGES = 'stages'
     STEP_STATES = 'step_states'
     STEP_CHANGES = 'step_changes'
-    PROJECT = 'project'
     SOURCE = 'source'
     PAGE = 'page'
 
@@ -165,9 +162,6 @@ class ProjectRow(BookTable):
     :ivar image_policy: How the images of the project's scans and page versions are stored, stored by value.
     :ivar created_at: Time the project was created.
     :ivar updated_at: Time of the last change, set by the domain through its ``Clock``.
-    :ivar sources: Sources of the project, never loaded implicitly.
-    :ivar pages: Pages of the project, never loaded implicitly.
-    :ivar recipes: Recipes of the project, never loaded implicitly.
     """
 
     __tablename__ = PROJECTS_TABLE
@@ -204,16 +198,6 @@ class ProjectRow(BookTable):
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
 
-    sources: Mapped[list[SourceRow]] = relationship(
-        back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
-    )
-    pages: Mapped[list[PageRow]] = relationship(
-        back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
-    )
-    recipes: Mapped[list[RecipeRow]] = relationship(
-        back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
-    )
-
 
 class SourceRow(BookTable):
     """Row of one uploaded file of a project: an imported source, or a file the import rejected or skipped.
@@ -223,7 +207,6 @@ class SourceRow(BookTable):
     which a partial unique index keeps, so a rejected or skipped file may repeat a digest, as a duplicate does.
 
     :ivar id: Source identifier, assigned by the domain.
-    :ivar project_id: Project owning the source.
     :ivar kind: Kind of the source, stored by value, or null for a rejected or skipped file of an unknown type.
     :ivar file_type: Exact format of the main file, stored by value, or null for a file of an unknown type.
     :ivar file_name: Name the browser sent for the main file.
@@ -237,19 +220,13 @@ class SourceRow(BookTable):
     :ivar rejection: Why a rejected file was refused, stored by value, or null.
     :ivar detail: Text for the reader that says more than the reason, or empty.
     :ivar imported_at: Time the file was recorded, which for an imported source is when it became part of the project.
-    :ivar project: Project owning the source, never loaded implicitly.
     :ivar scans: Scans of the source, never loaded implicitly.
     """
 
     __tablename__ = 'sources'
-    __table_args__ = (
-        Index(
-            'ix_sources_one_imported_per_digest', PROJECT_ID_COLUMN, 'sha256', unique=True, sqlite_where=IMPORTED_SOURCE
-        ),
-    )
+    __table_args__ = (Index('ix_sources_one_imported_per_digest', 'sha256', unique=True, sqlite_where=IMPORTED_SOURCE),)
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
-    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), index=True)
     kind: Mapped[SourceKind | None] = mapped_column(enum_by_value(SourceKind))
     file_type: Mapped[FileType | None] = mapped_column(enum_by_value(FileType))
     file_name: Mapped[str]
@@ -266,7 +243,6 @@ class SourceRow(BookTable):
     detail: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     imported_at: Mapped[datetime]
 
-    project: Mapped[ProjectRow] = relationship(back_populates=Relation.SOURCES, lazy=NO_IMPLICIT_LOAD)
     scans: Mapped[list[ScanRow]] = relationship(
         back_populates=Relation.SOURCE, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
@@ -279,7 +255,6 @@ class ScanRow(BookTable):
     with the project by their own foreign key.
 
     :ivar id: Scan identifier, assigned by the domain.
-    :ivar project_id: Project owning the scan's source.
     :ivar source_id: Source holding the scan.
     :ivar number: Zero-based position of the scan in its source.
     :ivar source_label: Page label the file gives the scan, or empty.
@@ -305,7 +280,6 @@ class ScanRow(BookTable):
     __table_args__ = (UniqueConstraint('source_id', 'number'),)
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
-    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), index=True)
     source_id: Mapped[UUID] = mapped_column(ForeignKey(SourceRow.id, ondelete=CASCADE))
     number: Mapped[int]
     source_label: Mapped[str]
@@ -328,13 +302,12 @@ class ScanRow(BookTable):
 
 
 class PageRow(BookTable):
-    """Row of one page of the book, unique within its project by order key and within its scan by slot.
+    """Row of one page of the book, unique by order key and within its scan by slot.
 
     The page keeps its row when its scan is deleted, which empties ``scan_id``. A null never matches in a unique key,
     so any number of pages without a scan share the null pair of scan and slot.
 
     :ivar id: Page identifier, assigned by the domain.
-    :ivar project_id: Project owning the page.
     :ivar order_key: Fractional index string, compared byte by byte, whose order is the order of the book.
     :ivar manual_label: Printed number written by hand or taken from the scan, or null for the number the pagination
                         sections give, which is computed on read and never stored. An empty label is never stored.
@@ -350,7 +323,6 @@ class PageRow(BookTable):
     :ivar group_label: Label of the group the user put the page in, or empty.
     :ivar created_at: Time the page was created.
     :ivar updated_at: Time the page was last changed.
-    :ivar project: Project owning the page, never loaded implicitly.
     :ivar versions: Versions of the page, never loaded implicitly.
     :ivar stages: Stage records of the page, never loaded implicitly.
     :ivar step_states: Settings and manual edits of the steps on the page, never loaded implicitly.
@@ -359,13 +331,12 @@ class PageRow(BookTable):
 
     __tablename__ = PAGES_TABLE
     __table_args__ = (
-        UniqueConstraint(PROJECT_ID_COLUMN, 'order_key'),
+        UniqueConstraint('order_key'),
         UniqueConstraint('scan_id', 'slot'),
         CheckConstraint(MANUAL_LABEL_GIVEN, name='manual_label_given'),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
-    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE))
     # Order keys compare byte by byte, which SQLite's default BINARY collation does
     order_key: Mapped[str] = mapped_column(String)
     manual_label: Mapped[str | None]
@@ -382,7 +353,6 @@ class PageRow(BookTable):
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
 
-    project: Mapped[ProjectRow] = relationship(back_populates=Relation.PAGES, lazy=NO_IMPLICIT_LOAD)
     versions: Mapped[list[PageVersionRow]] = relationship(
         back_populates=Relation.PAGE, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
@@ -405,7 +375,6 @@ class PaginationSectionRow(BookTable):
     flow, and no query looks inside it.
 
     :ivar id: Section identifier, assigned by the domain.
-    :ivar project_id: Project owning the section.
     :ivar first_page_id: Page the section starts at.
     :ivar name: Name the user sees.
     :ivar style: How the numbers are written, stored by value.
@@ -420,7 +389,6 @@ class PaginationSectionRow(BookTable):
     __tablename__ = PAGINATION_SECTIONS_TABLE
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
-    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), index=True)
     first_page_id: Mapped[UUID] = mapped_column(ForeignKey(PageRow.id, ondelete=CASCADE), index=True)
     name: Mapped[str]
     style: Mapped[LabelStyle] = mapped_column(enum_by_value(LabelStyle))
@@ -567,8 +535,6 @@ class StepValuesRow(BookTable):
     The step is named by the identifier its recipe gives it, with no foreign key, as in ``page_step_states``. The label
     of a group is empty for the odd and the even pages, so it can belong to the key.
 
-    :ivar project_id: Project owning the step, whose deletion removes the values. It belongs to the key, since two books
-                      built from one profile keep the identifiers of its steps.
     :ivar step_id: Identifier of the step.
     :ivar scope: The odd pages, the even pages or a group, stored by value.
     :ivar group_label: Label of the group, or empty.
@@ -578,9 +544,8 @@ class StepValuesRow(BookTable):
     """
 
     __tablename__ = 'step_values'
-    __table_args__ = (Index(None, PROJECT_ID_COLUMN, STAGE_COLUMN),)
+    __table_args__ = (Index(None, STAGE_COLUMN),)
 
-    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), primary_key=True)
     step_id: Mapped[UUID] = mapped_column(primary_key=True)
     scope: Mapped[ValueScope] = mapped_column(enum_by_value(ValueScope), primary_key=True)
     group_label: Mapped[str] = mapped_column(primary_key=True, server_default=EMPTY_TEXT)
@@ -665,12 +630,12 @@ class ResultMarkChangeRow(BookTable):
 
 
 class BookPlaceRow(BookTable):
-    """Row of the place the reader left the book at, keyed by the book, which has one owner and so one place.
+    """Row of the place the reader left the book at, the one row of the table, since the file holds one book.
 
     The page, scan, file and strip columns hold identifiers without a foreign key: the reader may delete the page the
     place names, and the place then falls back to the nearest view that still exists, so the database keeps the row.
 
-    :ivar project_id: Book the place is in, whose deletion removes the place.
+    :ivar id: Key of the one row, which a check holds at ``1``.
     :ivar mode: Whether the reader was working on a stage or reading, stored by value.
     :ivar stage: Stage the reader was on, stored by value.
     :ivar page_id: Page that was open, or null.
@@ -687,8 +652,9 @@ class BookPlaceRow(BookTable):
     """
 
     __tablename__ = 'book_places'
+    __table_args__ = (CheckConstraint(f'id = {BOOK_PLACE_ID}', name='one_place'),)
 
-    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE), primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
     mode: Mapped[PlaceMode] = mapped_column(enum_by_value(PlaceMode))
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
     page_id: Mapped[UUID | None]
@@ -711,22 +677,19 @@ class RecipeRow(BookTable):
     them.
 
     :ivar id: Recipe identifier, assigned by the domain.
-    :ivar project_id: Project owning the recipe.
     :ivar stage: Stage the recipe processes, stored by value.
     :ivar kind: Kind of the pages the recipe processes, stored by value.
     :ivar steps: The steps in order, as JSON.
     :ivar profile_id: Profile of the catalogue the recipe was made from, which the service empties with the profile.
     :ivar created_at: Time the recipe was created.
     :ivar updated_at: Time the recipe last changed.
-    :ivar project: Project owning the recipe, never loaded implicitly.
     """
 
     __tablename__ = RECIPES_TABLE
     # The database keeps two requests that both make the recipes of a stage from both succeeding
-    __table_args__ = (UniqueConstraint(PROJECT_ID_COLUMN, STAGE_COLUMN, 'kind'),)
+    __table_args__ = (UniqueConstraint(STAGE_COLUMN, 'kind'),)
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
-    project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE))
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
     kind: Mapped[RecipeKind] = mapped_column(enum_by_value(RecipeKind))
     steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
@@ -734,5 +697,3 @@ class RecipeRow(BookTable):
     profile_id: Mapped[UUID | None] = mapped_column(index=True)
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
-
-    project: Mapped[ProjectRow] = relationship(back_populates=Relation.RECIPES, lazy=NO_IMPLICIT_LOAD)

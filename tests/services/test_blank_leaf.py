@@ -172,13 +172,13 @@ class LeafDesk:
         :rtype: LeafBook
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         scans, pages, versions = [], [], []
         for number, kind in enumerate(kinds):
             scan = make_scan(source=source, number=number)
             facts = evolve(scan.facts, width_px=SCAN_WIDTH_PX, height_px=SCAN_HEIGHT_PX, dpi_x=SCAN_DPI, dpi_y=SCAN_DPI)
             scan = evolve(scan, facts=facts, renditions=Renditions(ready=True, full=Rendition.FULL_PNG))
-            page = make_page(project_id=project.id, order_key=f'a{number}', scan=scan, kind=kind)
+            page = make_page(order_key=f'a{number}', scan=scan, kind=kind)
             scans.append(scan)
             pages.append(page)
             versions.append(BaseVersions.split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH))
@@ -285,18 +285,26 @@ class LeafDesk:
         """
         return [event for event in self.events.published if isinstance(event, PagesChanged)]
 
-    async def page(self, page: Page) -> Page:
+    async def page(self, project_id: ProjectId, page: Page) -> Page:
         """Read the committed state of a page.
+
+        :param project_id: Identifier of the project of the page.
+
+        :type project_id: ProjectId
 
         :param page: The page.
         :type page: Page
         :returns: The page as committed.
         :rtype: Page
         """
-        return await self.open_uow().read_book(page.project_id, lambda repos: repos.pages.get(page.id))
+        return await self.open_uow().read_book(project_id, lambda repos: repos.pages.get(page.id))
 
-    async def versions(self, page: Page) -> list[PageVersion]:
+    async def versions(self, project_id: ProjectId, page: Page) -> list[PageVersion]:
         """Read every committed version of a page, the earliest first.
+
+        :param project_id: Identifier of the project of the page.
+
+        :type project_id: ProjectId
 
         :param page: The page.
         :type page: Page
@@ -304,31 +312,37 @@ class LeafDesk:
         :rtype: list[PageVersion]
         """
         return list(
-            await self.open_uow().read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id))
+            await self.open_uow().read_book(project_id, lambda repos: repos.page_versions.list_for_page(page.id))
         )
 
-    async def leaves(self, page: Page) -> list[PageVersion]:
+    async def leaves(self, project_id: ProjectId, page: Page) -> list[PageVersion]:
         """Read the committed versions of a page that ``pages.blank`` made, the earliest first.
+
+        :param project_id: Identifier of the project of the page.
+
+        :type project_id: ProjectId
 
         :param page: The page.
         :type page: Page
         :returns: Its leaves.
         :rtype: list[PageVersion]
         """
-        found = [version for version in await self.versions(page) if version.processor == PAGES_BLANK]
+        found = [version for version in await self.versions(project_id, page) if version.processor == PAGES_BLANK]
         return sorted(found, key=lambda version: (version.created_at, version.id))
 
-    async def heads(self, page: Page) -> dict[Stage, PageStage]:
+    async def heads(self, project_id: ProjectId, page: Page) -> dict[Stage, PageStage]:
         """Read the committed records of the stages of a page.
+
+        :param project_id: Identifier of the project of the page.
+
+        :type project_id: ProjectId
 
         :param page: The page.
         :type page: Page
         :returns: Its records by stage.
         :rtype: dict[Stage, PageStage]
         """
-        records = await self.open_uow().read_book(
-            page.project_id, lambda repos: repos.page_stages.list_for_page(page.id)
-        )
+        records = await self.open_uow().read_book(project_id, lambda repos: repos.page_stages.list_for_page(page.id))
         return {record.stage: record for record in records}
 
     def image(self, book: LeafBook, version: PageVersion) -> Image.Image:
@@ -389,8 +403,8 @@ class TestChooseALeaf:
 
         await fx_desk.choose(book, [1], BlankFill.WHITE)
 
-        [leaf] = await fx_desk.leaves(blank)
-        stored = await fx_desk.page(blank)
+        [leaf] = await fx_desk.leaves(book.project.id, blank)
+        stored = await fx_desk.page(book.project.id, blank)
         expect((stored.blank_fill, stored.origin, stored.scan_id) == (BlankFill.WHITE, PageOrigin.SCAN, blank.scan_id))
         expect((leaf.stage, leaf.state, leaf.input_id) == (Stage.PAGE_ORDER, VersionState.PENDING, None))
         expect(leaf.params == leaf_params(SCAN_WIDTH_PX, SCAN_HEIGHT_PX))
@@ -400,7 +414,7 @@ class TestChooseALeaf:
             == [PagesChanged(project_id=book.project.id, page_ids=[blank.id], change=PageChange.EDITED)]
         )
         # The base version of the scan stays as it was
-        expect(book.versions[1] in await fx_desk.versions(blank))
+        expect(book.versions[1] in await fx_desk.versions(book.project.id, blank))
         assert_expectations()
 
     async def test_the_job_draws_the_leaf_and_the_page_shows_it(self, fx_desk: LeafDesk) -> None:
@@ -415,11 +429,11 @@ class TestChooseALeaf:
 
         await fx_desk.prepare()
 
-        [leaf] = await fx_desk.leaves(blank)
+        [leaf] = await fx_desk.leaves(book.project.id, blank)
         shown = await fx_desk.service().get(fx_desk.actor, book.project.id, blank.id)
         image = fx_desk.image(book, leaf)
         expect(leaf.state is VersionState.READY)
-        expect((await fx_desk.heads(blank))[Stage.PAGE_ORDER].head_version_id == leaf.id)
+        expect((await fx_desk.heads(book.project.id, blank))[Stage.PAGE_ORDER].head_version_id == leaf.id)
         expect(shown.image_version is not None and shown.image_version.id == leaf.id)
         expect((image.mode, image.size) == (BILEVEL, (SCAN_WIDTH_PX, SCAN_HEIGHT_PX)))
         assert_expectations()
@@ -437,7 +451,7 @@ class TestChooseALeaf:
         await fx_desk.choose(book, [2], BlankFill.PAPER)
         await fx_desk.prepare()
 
-        [leaf] = await fx_desk.leaves(blank)
+        [leaf] = await fx_desk.leaves(book.project.id, blank)
         wanted = sorted(book.versions[position].id for position in (1, 3, 5))
         image = fx_desk.image(book, leaf)
         expect(leaf.params[BlankParam.FILL] == PaperFill.PAPER)
@@ -458,7 +472,7 @@ class TestChooseALeaf:
 
         [event] = fx_desk.announced()
         expect(set(event.page_ids) == {book.pages[0].id, book.pages[2].id})
-        expect([len(await fx_desk.leaves(book.pages[position])) for position in range(3)] == [1, 0, 1])
+        expect([len(await fx_desk.leaves(book.project.id, book.pages[position])) for position in range(3)] == [1, 0, 1])
         expect(len(fx_desk.prepare_jobs()) == 1)
         assert_expectations()
 
@@ -492,7 +506,7 @@ class TestChooseALeaf:
         :type fx_desk: LeafDesk
         """
         book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK, PageKind.BLANK])
-        recipe = make_recipe(project_id=book.project.id, kind=RecipeKind.BLANK)
+        recipe = make_recipe(kind=RecipeKind.BLANK)
         width, height = NORMALIZED_SIZE
         step = Step(
             processor_key=NORMALIZE_KEY, params={NormalizeParam.PAGE_WIDTH: width, NormalizeParam.PAGE_HEIGHT: height}
@@ -508,8 +522,8 @@ class TestChooseALeaf:
         )
         await fx_desk.choose(book, [2], BlankFill.WHITE)
 
-        [normalized] = await fx_desk.leaves(book.pages[1])
-        [median] = await fx_desk.leaves(book.pages[2])
+        [normalized] = await fx_desk.leaves(book.project.id, book.pages[1])
+        [median] = await fx_desk.leaves(book.project.id, book.pages[2])
         expect(normalized.params == leaf_params(width, height))
         expect(median.params == leaf_params(SCAN_WIDTH_PX, SCAN_HEIGHT_PX))
         assert_expectations()
@@ -523,7 +537,7 @@ class TestChooseALeaf:
         :type fx_desk: LeafDesk
         """
         book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK])
-        recipe = make_recipe(project_id=book.project.id, kind=RecipeKind.BLANK)
+        recipe = make_recipe(kind=RecipeKind.BLANK)
         step = Step(
             processor_key=NORMALIZE_KEY, params={NormalizeParam.PAGE_WIDTH: 500, NormalizeParam.PAGE_HEIGHT: 600}
         )
@@ -541,7 +555,7 @@ class TestChooseALeaf:
             fx_desk.actor, book.project.id, NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
         )
 
-        [made] = await fx_desk.leaves(added.page)
+        [made] = await fx_desk.leaves(book.project.id, added.page)
         assert made.params == leaf_params(SCAN_WIDTH_PX, SCAN_HEIGHT_PX)
 
 
@@ -564,9 +578,9 @@ class TestGetTheScanBack:
         await fx_desk.choose(book, [1], BlankFill.SCAN)
 
         shown = await fx_desk.service().get(fx_desk.actor, book.project.id, blank.id)
-        stored = await fx_desk.page(blank)
+        stored = await fx_desk.page(book.project.id, blank)
         expect((stored.blank_fill, stored.scan_id, stored.origin) == (BlankFill.SCAN, blank.scan_id, PageOrigin.SCAN))
-        expect(Stage.PAGE_ORDER not in await fx_desk.heads(blank))
+        expect(Stage.PAGE_ORDER not in await fx_desk.heads(book.project.id, blank))
         expect(shown.image_version is not None and shown.image_version.id == book.versions[1].id)
         assert_expectations()
 
@@ -599,7 +613,7 @@ class TestGetTheScanBack:
         await fx_desk.open_uow().change_book(book.project.id, add_geometry)
         await fx_desk.choose(book, [1], BlankFill.WHITE)
         await fx_desk.prepare()
-        after_leaf = (await fx_desk.heads(blank))[Stage.GEOMETRY].state
+        after_leaf = (await fx_desk.heads(book.project.id, blank))[Stage.GEOMETRY].state
         await fx_desk.open_uow().change_book(
             book.project.id,
             lambda repos, _project: repos.page_stages.save(
@@ -610,7 +624,7 @@ class TestGetTheScanBack:
         await fx_desk.choose(book, [1], BlankFill.SCAN)
 
         expect(after_leaf is StageState.STALE)
-        expect((await fx_desk.heads(blank))[Stage.GEOMETRY].state is StageState.STALE)
+        expect((await fx_desk.heads(book.project.id, blank))[Stage.GEOMETRY].state is StageState.STALE)
         assert_expectations()
 
     async def test_the_leaf_is_found_again_when_it_is_chosen_again(self, fx_desk: LeafDesk) -> None:
@@ -623,13 +637,13 @@ class TestGetTheScanBack:
         blank = book.pages[1]
         await fx_desk.choose(book, [1], BlankFill.WHITE)
         await fx_desk.prepare()
-        [leaf] = await fx_desk.leaves(blank)
+        [leaf] = await fx_desk.leaves(book.project.id, blank)
         await fx_desk.choose(book, [1], BlankFill.SCAN)
 
         await fx_desk.choose(book, [1], BlankFill.WHITE)
 
-        expect(await fx_desk.leaves(blank) == [leaf])
-        expect((await fx_desk.heads(blank))[Stage.PAGE_ORDER].head_version_id == leaf.id)
+        expect(await fx_desk.leaves(book.project.id, blank) == [leaf])
+        expect((await fx_desk.heads(book.project.id, blank))[Stage.PAGE_ORDER].head_version_id == leaf.id)
         expect(len(fx_desk.prepare_jobs()) == 1)
         assert_expectations()
 
@@ -647,8 +661,8 @@ class TestGetTheScanBack:
         await fx_desk.prepare()
 
         [job] = fx_desk.prepare_jobs()
-        expect(await fx_desk.leaves(blank) == [])
-        expect(Stage.PAGE_ORDER not in await fx_desk.heads(blank))
+        expect(await fx_desk.leaves(book.project.id, blank) == [])
+        expect(Stage.PAGE_ORDER not in await fx_desk.heads(book.project.id, blank))
         expect(job.state is JobState.SUCCEEDED)
         assert_expectations()
 
@@ -667,9 +681,9 @@ class TestGetTheScanBack:
 
         await fx_desk.prepare()
 
-        [leaf] = await fx_desk.leaves(blank)
+        [leaf] = await fx_desk.leaves(book.project.id, blank)
         expect(leaf.params[BlankParam.FILL] == PaperFill.PAPER)
-        expect((await fx_desk.heads(blank))[Stage.PAGE_ORDER].head_version_id == leaf.id)
+        expect((await fx_desk.heads(book.project.id, blank))[Stage.PAGE_ORDER].head_version_id == leaf.id)
         assert_expectations()
 
     async def test_a_page_that_stops_being_blank_gets_its_scan_back(self, fx_desk: LeafDesk) -> None:
@@ -688,9 +702,9 @@ class TestGetTheScanBack:
         )
 
         expect((changed.page.kind, changed.page.blank_fill) == (PageKind.TEXT, BlankFill.SCAN))
-        stored = await fx_desk.page(blank)
+        stored = await fx_desk.page(book.project.id, blank)
         expect((stored.kind, stored.blank_fill) == (PageKind.TEXT, BlankFill.SCAN))
-        expect(Stage.PAGE_ORDER not in await fx_desk.heads(blank))
+        expect(Stage.PAGE_ORDER not in await fx_desk.heads(book.project.id, blank))
         expect(changed.image_version is not None and changed.image_version.id == book.versions[1].id)
         assert_expectations()
 
@@ -707,8 +721,8 @@ class TestGetTheScanBack:
 
         await fx_desk.service().update(fx_desk.actor, book.project.id, blank.id, PageChanges(notes='Verso is clean'))
 
-        expect((await fx_desk.page(blank)).blank_fill is BlankFill.WHITE)
-        expect(Stage.PAGE_ORDER in await fx_desk.heads(blank))
+        expect((await fx_desk.page(book.project.id, blank)).blank_fill is BlankFill.WHITE)
+        expect(Stage.PAGE_ORDER in await fx_desk.heads(book.project.id, blank))
         assert_expectations()
 
 
@@ -728,11 +742,13 @@ class TestRemakeOutdatedLeaves:
         :type position: int
         """
         page = book.pages[position]
-        [leaf] = await desk.leaves(page)
+        [leaf] = await desk.leaves(book.project.id, page)
         old = evolve(
             leaf, id=PageVersionId(f'{position:016x}'), processor=ProcessorRef(key=PAGES_BLANK.key, version='1')
         )
-        stale = evolve((await desk.heads(page))[Stage.PAGE_ORDER], head_version_id=old.id, state=StageState.STALE)
+        stale = evolve(
+            (await desk.heads(book.project.id, page))[Stage.PAGE_ORDER], head_version_id=old.id, state=StageState.STALE
+        )
 
         def replace_leaf(repos: BookRepositories, _project: Project) -> None:
             """Add the old leaf, point the record of the stage at it, and delete the leaf the job made.
@@ -775,14 +791,14 @@ class TestRemakeOutdatedLeaves:
         await fx_desk.add_blank_page(book)
         await fx_desk.prepare()
 
-        [leaf] = await fx_desk.leaves(blank)
-        record = (await fx_desk.heads(blank))[Stage.PAGE_ORDER]
+        [leaf] = await fx_desk.leaves(book.project.id, blank)
+        record = (await fx_desk.heads(book.project.id, blank))[Stage.PAGE_ORDER]
         image = fx_desk.image(book, leaf)
         expect(len(fx_desk.prepare_jobs()) == queued + 1)
         expect((record.head_version_id, record.state) == (leaf.id, StageState.FRESH))
         expect((leaf.state, leaf.params[BlankParam.FILL]) == (VersionState.READY, PaperFill.PAPER))
         expect(same_colour(pixel(image, (0, 0)), PAPER))
-        expect((await fx_desk.page(blank)).blank_fill is BlankFill.PAPER)
+        expect((await fx_desk.page(book.project.id, blank)).blank_fill is BlankFill.PAPER)
         assert_expectations()
 
     async def test_a_start_that_ended_before_the_job_ran_is_finished_by_the_next_one(self, fx_desk: LeafDesk) -> None:
@@ -797,15 +813,15 @@ class TestRemakeOutdatedLeaves:
         await fx_desk.prepare()
         await self.outdate(fx_desk, book, 1)
         await fx_desk.service().remake_outdated_leaves()
-        [pending] = await fx_desk.leaves(blank)
+        [pending] = await fx_desk.leaves(book.project.id, blank)
 
         await fx_desk.service().remake_outdated_leaves()
         await fx_desk.add_blank_page(book)
         await fx_desk.prepare()
 
-        [leaf] = await fx_desk.leaves(blank)
+        [leaf] = await fx_desk.leaves(book.project.id, blank)
         expect((leaf.id, leaf.state) == (pending.id, VersionState.READY))
-        expect((await fx_desk.heads(blank))[Stage.PAGE_ORDER].state is StageState.FRESH)
+        expect((await fx_desk.heads(book.project.id, blank))[Stage.PAGE_ORDER].state is StageState.FRESH)
         assert_expectations()
 
     async def test_a_leaf_of_the_current_version_and_a_stage_that_is_not_a_leaf_are_left_alone(
@@ -820,12 +836,12 @@ class TestRemakeOutdatedLeaves:
         blank = book.pages[1]
         await fx_desk.choose(book, [1], BlankFill.WHITE)
         await fx_desk.prepare()
-        queued, leaves = len(fx_desk.prepare_jobs()), await fx_desk.leaves(blank)
+        queued, leaves = len(fx_desk.prepare_jobs()), await fx_desk.leaves(book.project.id, blank)
 
         await fx_desk.service().remake_outdated_leaves()
 
         expect(len(fx_desk.prepare_jobs()) == queued)
-        expect(await fx_desk.leaves(blank) == leaves)
+        expect(await fx_desk.leaves(book.project.id, blank) == leaves)
         assert_expectations()
 
 
@@ -845,8 +861,11 @@ class TestRefusals:
         with pytest.raises(ConflictError, match='not a blank page'):
             await fx_desk.choose(book, [0, 1], BlankFill.WHITE)
 
-        expect([(await fx_desk.page(page)).blank_fill for page in book.pages] == [BlankFill.SCAN, BlankFill.SCAN])
-        expect(await fx_desk.leaves(book.pages[0]) == [])
+        expect(
+            [(await fx_desk.page(book.project.id, page)).blank_fill for page in book.pages]
+            == [BlankFill.SCAN, BlankFill.SCAN]
+        )
+        expect(await fx_desk.leaves(book.project.id, book.pages[0]) == [])
         expect(fx_desk.events.published == [])
         expect(fx_desk.board.put_jobs == [])
         assert_expectations()
@@ -863,10 +882,8 @@ class TestRefusals:
         :type fill: BlankFill
         """
         book = await fx_desk.book([PageKind.TEXT])
-        generated = evolve(
-            make_page(project_id=book.project.id, order_key='b0', kind=PageKind.BLANK), origin=PageOrigin.BLANK
-        )
-        waiting = make_page(project_id=book.project.id, order_key='b1', kind=PageKind.BLANK)
+        generated = evolve(make_page(order_key='b0', kind=PageKind.BLANK), origin=PageOrigin.BLANK)
+        waiting = make_page(order_key='b1', kind=PageKind.BLANK)
         await fx_desk.open_uow().change_book(
             book.project.id, lambda repos, _project: repos.pages.add_many([generated, waiting])
         )
@@ -885,7 +902,7 @@ class TestRefusals:
         """
         book = await fx_desk.book([PageKind.BLANK])
         other = make_project()
-        stranger = make_page(project_id=other.id, kind=PageKind.BLANK)
+        stranger = make_page(kind=PageKind.BLANK)
         await store_project(fx_desk.open_uow(), other, stranger, owner=fx_desk.actor.account_id)
         foreign = evolve(fx_desk.actor, account_id=new_account_id())
 
@@ -894,7 +911,7 @@ class TestRefusals:
         with pytest.raises(NotFoundError):
             await fx_desk.service().set_blank_fill(foreign, book.project.id, [book.pages[0].id], BlankFill.WHITE)
 
-        assert await fx_desk.leaves(book.pages[0]) == []
+        assert await fx_desk.leaves(book.project.id, book.pages[0]) == []
 
     async def test_a_book_without_a_recorded_size_has_no_size_to_give_the_leaf(self, fx_desk: LeafDesk) -> None:
         """Verify the answer is a conflict and nothing is stored when no page of the book records a size.
@@ -910,7 +927,7 @@ class TestRefusals:
         with pytest.raises(ConflictError, match='no size'):
             await fx_desk.choose(book, [0], BlankFill.WHITE)
 
-        expect((await fx_desk.page(book.pages[0])).blank_fill is BlankFill.SCAN)
+        expect((await fx_desk.page(book.project.id, book.pages[0])).blank_fill is BlankFill.SCAN)
         expect(fx_desk.events.published == [])
         assert_expectations()
 
@@ -945,8 +962,8 @@ class TestJobsReCheckWhatTheyApply:
         job = await fx_desk.prepare_with(ActingRenditionWriter(take_the_scan_back))
 
         expect(job.state is JobState.SUCCEEDED)
-        expect(await fx_desk.leaves(blank) == [])
-        expect(Stage.PAGE_ORDER not in await fx_desk.heads(blank))
+        expect(await fx_desk.leaves(book.project.id, blank) == [])
+        expect(Stage.PAGE_ORDER not in await fx_desk.heads(book.project.id, blank))
         expect(not any(isinstance(event, PageVersionReady) for event in fx_desk.events.published))
         assert_expectations()
 
@@ -969,7 +986,7 @@ class TestJobsReCheckWhatTheyApply:
         await fx_desk.choose(book, [1], BlankFill.PAPER)
         await fx_desk.prepare()
         await TestRemakeOutdatedLeaves().outdate(fx_desk, book, 1)
-        queued, leaves = len(fx_desk.prepare_jobs()), await fx_desk.leaves(blank)
+        queued, leaves = len(fx_desk.prepare_jobs()), await fx_desk.leaves(book.project.id, blank)
         uow = fx_desk.open_uow()
         read = uow.read_book
         raced = False
@@ -995,6 +1012,6 @@ class TestJobsReCheckWhatTheyApply:
         await fx_desk.service(uow=uow).remake_outdated_leaves()
 
         expect(len(fx_desk.prepare_jobs()) == queued)
-        expect(await fx_desk.leaves(blank) == leaves)
-        expect((await fx_desk.page(blank)).blank_fill is BlankFill.SCAN)
+        expect(await fx_desk.leaves(book.project.id, blank) == leaves)
+        expect((await fx_desk.page(book.project.id, blank)).blank_fill is BlankFill.SCAN)
         assert_expectations()

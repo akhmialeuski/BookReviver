@@ -13,6 +13,7 @@ from tests.helpers.samples import png_bytes, spread
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Page, PageStage, PageVersion, Project
     from bookreviver.domain.enums import Stage
+    from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.values import StageRun
     from tests.helpers.processing import ProcessingKit
 
@@ -86,15 +87,17 @@ async def book_of(kit: ProcessingKit, project: Project) -> list[Page]:
     :returns: Its pages.
     :rtype: list[Page]
     """
-    listed = await kit.uow().read_book(project.id, lambda repos: repos.pages.list_for_project(project.id, EVERY_PAGE))
+    listed = await kit.uow().read_book(project.id, lambda repos: repos.pages.list_window(EVERY_PAGE))
     return list(listed.items)
 
 
-async def stage_of(kit: ProcessingKit, page: Page, stage: Stage) -> PageStage:
+async def stage_of(kit: ProcessingKit, project_id: ProjectId, page: Page, stage: Stage) -> PageStage:
     """Read the record of a stage of a page, as committed.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Identifier of the project of the page.
+    :type project_id: ProjectId
     :param page: The page.
     :type page: Page
     :param stage: The stage.
@@ -102,14 +105,16 @@ async def stage_of(kit: ProcessingKit, page: Page, stage: Stage) -> PageStage:
     :returns: The record.
     :rtype: PageStage
     """
-    return await kit.uow().read_book(page.project_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, stage)))
+    return await kit.uow().read_book(project_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, stage)))
 
 
-async def head_of(kit: ProcessingKit, page: Page, stage: Stage) -> PageVersion:
+async def head_of(kit: ProcessingKit, project_id: ProjectId, page: Page, stage: Stage) -> PageVersion:
     """Read the current version of a stage of a page, as committed.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Identifier of the project of the page.
+    :type project_id: ProjectId
     :param page: The page.
     :type page: Page
     :param stage: The stage.
@@ -117,6 +122,6 @@ async def head_of(kit: ProcessingKit, page: Page, stage: Stage) -> PageVersion:
     :returns: The version the record of the stage names.
     :rtype: PageVersion
     """
-    record = await stage_of(kit, page, stage)
+    record = await stage_of(kit, project_id, page, stage)
     assert record.head_version_id is not None
-    return await kit.stored_version(page.project_id, record.head_version_id)
+    return await kit.stored_version(project_id, record.head_version_id)
