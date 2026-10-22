@@ -298,6 +298,8 @@ def make_job(
 ) -> Job:
     """Build a job created ``minutes`` after the epoch, an import job unless told otherwise.
 
+    :param project_id: Project the job imports into.
+    :type project_id: ProjectId
     :param state: State of the job.
     :type state: JobState
     :param minutes: Minutes after ``EPOCH`` the job was created.

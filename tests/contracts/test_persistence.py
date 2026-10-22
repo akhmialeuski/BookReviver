@@ -104,6 +104,8 @@ async def _add_book(uow: UnitOfWork, project: Project) -> list[Page]:
 
     :param uow: Unit of work to add with, in which the project is stored.
     :type uow: UnitOfWork
+    :param project: Project of the book.
+    :type project: Project
     :returns: The pages in book order.
     :rtype: list[Page]
     """
@@ -526,6 +528,8 @@ class TestSourceRepository:
         async def sources_of(project: Project) -> int:
             """Count the sources of one book.
 
+            :param project: The book.
+            :type project: Project
             :returns: How many sources it has.
             :rtype: int
             """

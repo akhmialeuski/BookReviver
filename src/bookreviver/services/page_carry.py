@@ -66,6 +66,8 @@ class CarryOverService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param request: The source page, the stage and the step, and the pages the shape goes to.
         :type request: CarryRequest
         :returns: The batch, the changes written and the pages skipped for a shape of their own.

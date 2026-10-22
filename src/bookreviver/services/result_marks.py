@@ -59,6 +59,8 @@ class ResultMarksService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :param version_id: Identifier of the version.
@@ -114,6 +116,8 @@ class ResultMarksService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :param version_id: Identifier of the version.

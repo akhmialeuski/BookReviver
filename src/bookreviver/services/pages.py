@@ -224,6 +224,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param request: Offset and limit of the window.
         :type request: SliceRequest
         :param included_only: Whether to leave out the pages kept out of the book.
@@ -253,6 +255,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :returns: The page, its position in the book and its base version.
@@ -282,6 +286,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :param changes: New values for the fields to change, None keeping a field.
@@ -336,6 +342,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param page_ids: Pages to detect, or None for the pages that have no content type yet.
         :type page_ids: Sequence[PageId] | None
         :returns: The queued job.
@@ -366,6 +374,8 @@ class PageService:
 
         Nothing is queued while a detection of the project is queued or running, which goes over the pages it finds.
 
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         """
         self._enqueue(project_id, JobKind.DETECT_CONTENT, ContentDetection().to_map())
 
@@ -381,6 +391,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param new_page: The page to add, with its place and for a blank leaf perhaps its size.
         :type new_page: NewPage
         :returns: The new page with its position.
@@ -434,6 +446,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param new_pages: The pages to add, in the order they are to stand in where they share a place.
         :type new_pages: Sequence[NewPage]
         :returns: The new pages with their positions, in the order listed.
@@ -535,6 +549,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param page_ids: Pages to change, each at most once.
         :type page_ids: Collection[PageId]
         :param fill: What the image of the pages becomes.
@@ -675,6 +691,8 @@ class PageService:
 
         It queues the job in a ``change`` of its own, so it is called after the transaction that wrote the leaves.
 
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param stood: What ``_stand_leaves`` returned.
         :type stood: StoodLeaves
         """
@@ -691,6 +709,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :raises NotFoundError: If the actor has no such project, or the project has no such page.
@@ -732,6 +752,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param page_id: Identifier of the placeholder.
         :type page_id: PageId
         :param scan_id: Identifier of the scan to bind.
@@ -852,6 +874,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param page_id: Identifier of the page to move.
         :type page_id: PageId
         :param anchor: Page the moved page is put next to, and the side of it.
@@ -896,6 +920,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param page_ids: Identifiers of the pages to move.
         :type page_ids: Collection[PageId]
         :param anchor: Page the run is put next to, and the side of it.
@@ -932,6 +958,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param source_id: Identifier of the source whose pages are moved.
         :type source_id: SourceId
         :param anchor: Page the run is put next to, and the side of it.
@@ -1151,6 +1179,8 @@ class PageService:
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param pages: Pages to move, in book order; none moves nothing.
         :type pages: Sequence[Page]
         :param anchor: Page the run is put next to, and the side of it.
@@ -1172,6 +1202,8 @@ class PageService:
     async def _announce(self, project_id: ProjectId, pages: Sequence[Page], change: PageChange) -> None:
         """Tell the browser which pages changed, which it reads the manifest again for, after the transaction.
 
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param pages: Pages the change touched.
         :type pages: Sequence[Page]
         :param change: What was done to them.
@@ -1184,6 +1216,8 @@ class PageService:
     async def _discard_files(self, project_id: ProjectId, pages: Sequence[Page]) -> None:
         """Remove every file of pages that were deleted, after the transaction that deleted them has ended.
 
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param pages: The deleted pages, whose directories under ``assets/pages`` are removed.
         :type pages: Sequence[Page]
         """
@@ -1202,6 +1236,8 @@ class PageService:
         running when a version is stored may have read its versions before it, which is why the job looks again when it
         ends, in ``_follow_up``.
 
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param kind: What the job does, ``prepare-pages`` or ``detect-content``.
         :type kind: JobKind
         :param params: What the job was asked to do, in the form its value class writes, or None for a job without.
@@ -1328,6 +1364,8 @@ class PageService:
         removed and the job goes on. The files are written outside any transaction, and the result is stored by
         ``_store`` in a ``change_book`` of its own.
 
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param version: A pending or failed base version.
         :type version: PageVersion
         :returns: False when the version failed, and True when it is ready, nothing was left to make, or its page is
@@ -1375,6 +1413,8 @@ class PageService:
         as ``_prepare`` deletes such a leaf, since a leaf left pending would be taken by every job, and its files are
         removed after the transaction.
 
+        :param project_id: Identifier of the project of the page.
+        :type project_id: ProjectId
         :param page: The page the version belongs to, as read before its files were written.
         :type page: Page
         :param version: The version with its new state.
@@ -1459,6 +1499,8 @@ class PageService:
     async def _write_files(self, project_id: ProjectId, version: PageVersion, page: Page) -> PageVersion:
         """Run the processor of a base version and write its files: a copy of its scan, or a generated white leaf.
 
+        :param project_id: Identifier of the project of the page.
+        :type project_id: ProjectId
         :param version: A pending or failed base version.
         :type version: PageVersion
         :param page: The page the version belongs to.

@@ -99,6 +99,8 @@ class PaginationService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param request: Offset and limit of the window.
         :type request: SliceRequest
         :returns: The sections of the window, those of the main flow before the series that start at the same page,
@@ -130,6 +132,8 @@ class PaginationService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param draft: The page the section starts at, and its name, style, first number, prefix, display and kinds.
         :type draft: PaginationSectionDraft
         :returns: The section as stored.
@@ -184,6 +188,8 @@ class PaginationService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param section_id: Identifier of the section.
         :type section_id: PaginationSectionId
         :param draft: The new page, name, style, first number, prefix, display and kinds.
@@ -236,6 +242,8 @@ class PaginationService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param section_id: Identifier of the section.
         :type section_id: PaginationSectionId
         :raises NotFoundError: If the actor has no such project, or the project has no such section.
@@ -269,6 +277,8 @@ class PaginationService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param numbering: The range, the style and the first number.
         :type numbering: PageNumbering
         :raises NotFoundError: If the actor has no such project, or the project lacks the first or the last page.
@@ -312,6 +322,8 @@ class PaginationService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param numbering: The range, the style and the first number.
         :type numbering: PageNumbering
         :returns: One entry for each page of the range that takes a number, in book order, with the label it would get.

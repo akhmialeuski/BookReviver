@@ -189,7 +189,14 @@ class TestStepValueLayers:
 
 
 class TestPagesChangingSide:
-    """Tests for the pages a change of the places of the pages turns over to the other side of the book."""
+    """Tests for the pages a change of the places of the pages turns over to the other side of the book.
+
+    :ivar FIRST: The first page of the book.
+    :ivar SECOND: The second page.
+    :ivar THIRD: The third page.
+    :ivar FOURTH: The fourth page.
+    :ivar ADDED: A page added to the book.
+    """
 
     FIRST: PageId = PageId(uuid4())
     SECOND: PageId = PageId(uuid4())

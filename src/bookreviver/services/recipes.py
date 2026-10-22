@@ -231,6 +231,8 @@ class RecipeBook:
         database. When the stage has no recipes yet, the default profile of the owner of the book is read first, in the
         catalogue, and the defaults are made from it.
 
+        :param project_id: Project owning the recipes.
+        :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
         :param checking: Function over the repositories of the reading transaction, run before the recipes are read,
@@ -262,6 +264,8 @@ class RecipeBook:
     async def default_profile(self, project_id: ProjectId, stage: Stage) -> RecipeProfile | None:
         """Read the default profile of the owner of a book for a stage, in a read of the catalogue.
 
+        :param project_id: Project whose owner's default profile is read.
+        :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
         :returns: The profile the owner chose as the default of the stage, or None when they have not chosen one.
@@ -345,6 +349,8 @@ class RecipeBook:
     async def of_kind(self, project_id: ProjectId, stage: Stage, kind: RecipeKind) -> Recipe:
         """Return the recipe of a stage for one kind of page, called outside any work as ``recipes`` is.
 
+        :param project_id: Project owning the recipe.
+        :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
         :param kind: The kind of page.
@@ -360,6 +366,8 @@ class RecipeBook:
 
         Called outside any work, as ``recipes`` is.
 
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
         :param pages: The pages.

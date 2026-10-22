@@ -458,6 +458,8 @@ class BookMeasure:
         one short ``change_book`` that reads the recipes again. A recipe that was changed meanwhile, which a user may
         have done by hand while the pages were measured, is left as it is and nothing is written.
 
+        :param project_id: Project whose pages are measured.
+        :type project_id: ProjectId
         :returns: The number of pages that were measured.
         :rtype: int
         :raises NotFoundError: If the Geometry stage has no recipe.

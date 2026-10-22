@@ -621,7 +621,11 @@ class TestStageManual:
 
 
 class TestStageRowMarkedBad:
-    """Tests for StageRow.marked_bad."""
+    """Tests for StageRow.marked_bad.
+
+    :ivar BAD: A version marked bad.
+    :ivar GOOD: A version marked good.
+    """
 
     BAD: PageVersion = evolve(make_page_version(page_id=PageId(uuid4())), mark=ResultMark.BAD)
     GOOD: PageVersion = evolve(make_page_version(page_id=PageId(uuid4())), mark=ResultMark.GOOD)
