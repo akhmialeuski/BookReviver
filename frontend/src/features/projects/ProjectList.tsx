@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { listProjectsApiV1ProjectsGetOptions } from '@/api/@tanstack/react-query.gen';
 import { CreateProjectDialog } from '@/features/projects/CreateProjectDialog';
+import { ImportProjectButton } from '@/features/projects/ImportProjectButton';
 import { ProjectCard } from '@/features/projects/ProjectCard';
 import { pageToShow } from '@/features/projects/paging';
 import { STAGE_STATUS_TONE } from '@/features/stages/stages';
@@ -12,7 +13,8 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
 import { Pager } from '@/shared/ui/pager';
 
 /**
- * The books of the signed-in account, newest change first, a page at a time, with the button that creates one.
+ * The books of the signed-in account, newest change first, a page at a time, with the buttons that import a book and
+ * create one.
  *
  * Under the cards a key names the colours of the bar every card draws for the stages of its book.
  */
@@ -86,7 +88,10 @@ export function ProjectList({
             </p>
           )}
         </div>
-        <CreateProjectDialog />
+        <div className="flex items-start gap-2">
+          <ImportProjectButton />
+          <CreateProjectDialog />
+        </div>
       </div>
       {body}
     </div>

@@ -4100,6 +4100,89 @@ export type UpdateProjectApiV1ProjectsProjectIdPatchResponses = {
 
 export type UpdateProjectApiV1ProjectsProjectIdPatchResponse = UpdateProjectApiV1ProjectsProjectIdPatchResponses[keyof UpdateProjectApiV1ProjectsProjectIdPatchResponses];
 
+export type ExportProjectApiV1ProjectsProjectIdArchiveGetData = {
+    body?: never;
+    path: {
+        /**
+         * Project Id
+         *
+         * Identifier of the project
+         */
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/projects/{project_id}/archive';
+};
+
+export type ExportProjectApiV1ProjectsProjectIdArchiveGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ExportProjectApiV1ProjectsProjectIdArchiveGetError = ExportProjectApiV1ProjectsProjectIdArchiveGetErrors[keyof ExportProjectApiV1ProjectsProjectIdArchiveGetErrors];
+
+export type ExportProjectApiV1ProjectsProjectIdArchiveGetResponses = {
+    /**
+     * The archive of the book
+     */
+    200: Blob | File;
+};
+
+export type ExportProjectApiV1ProjectsProjectIdArchiveGetResponse = ExportProjectApiV1ProjectsProjectIdArchiveGetResponses[keyof ExportProjectApiV1ProjectsProjectIdArchiveGetResponses];
+
+export type ImportProjectApiV1ProjectsArchivePostData = {
+    /**
+     * ArchiveForm
+     *
+     * The form of the import of a book: the archive another instance exported.
+     *
+     * :ivar archive: The uploaded archive of the book.
+     */
+    body: {
+        /**
+         * Archive
+         *
+         * The archive of a book, as an export of BookReviver writes it
+         */
+        archive: Blob | File;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/projects/archive';
+};
+
+export type ImportProjectApiV1ProjectsArchivePostErrors = {
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ImportProjectApiV1ProjectsArchivePostError = ImportProjectApiV1ProjectsArchivePostErrors[keyof ImportProjectApiV1ProjectsArchivePostErrors];
+
+export type ImportProjectApiV1ProjectsArchivePostResponses = {
+    /**
+     * Successful Response
+     */
+    201: ProjectSchema;
+};
+
+export type ImportProjectApiV1ProjectsArchivePostResponse = ImportProjectApiV1ProjectsArchivePostResponses[keyof ImportProjectApiV1ProjectsArchivePostResponses];
+
 export type ListSourcesApiV1ProjectsProjectIdSourcesGetData = {
     body?: never;
     path: {
