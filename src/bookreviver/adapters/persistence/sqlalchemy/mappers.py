@@ -34,6 +34,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     RecipeRow,
     ScanRow,
     SourceRow,
+    StepChangeRow,
     StepValuesRow,
 )
 from bookreviver.domain.entities import (
@@ -723,7 +724,10 @@ class PageStepStateMapper(RowMapper[PageStepState, PageStepStateRow]):
 
 
 class PageHistoryMapper(RowMapper[PageHistoryEntry, PageHistoryRow]):
-    """Translation of a change of a layer of a step, whose values are stored as JSON objects and group by its key.
+    """Translation of a change as the history of one page names it: the row of the history and the change it links.
+
+    A change that reaches several pages is one row of ``step_changes`` and a row of ``page_history`` for each page, and
+    one entry of the domain for each page, which share the identifier of the change.
 
     :ivar _groups: The groups of the book.
     """
@@ -738,42 +742,52 @@ class PageHistoryMapper(RowMapper[PageHistoryEntry, PageHistoryRow]):
 
     @override
     def to_entity(self, row: PageHistoryRow) -> PageHistoryEntry:
-        """Build the change stored in ``row``.
+        """Build the change stored in ``row`` and the change it links, which is loaded with it.
 
-        :param row: Page history row loaded from the database.
+        :param row: Row of the history loaded with its change.
         :type row: PageHistoryRow
-        :returns: The change.
+        :returns: The change as the history of the page keeps it.
         :rtype: PageHistoryEntry
         """
+        change = row.change
         return PageHistoryEntry(
-            id=PageHistoryEntryId(row.id),
+            id=PageHistoryEntryId(change.id),
             page_id=PageId(row.page_id),
-            stage=row.stage,
-            step_id=StepId(row.step_id),
-            layer=row.layer,
-            scope=row.scope,
-            group_label=self._groups.label_of(row.group_id),
-            before=row.before,
-            after=row.after,
-            source=row.source,
-            batch_id=None if row.batch_id is None else ChangeBatchId(row.batch_id),
-            undoes=None if row.undoes_id is None else PageHistoryEntryId(row.undoes_id),
-            created_at=row.created_at,
+            stage=change.stage,
+            step_id=StepId(change.step_id),
+            layer=change.layer,
+            scope=change.scope,
+            group_label=self._groups.label_of(change.group_id),
+            before=change.before,
+            after=change.after,
+            source=change.source,
+            batch_id=None if change.batch_id is None else ChangeBatchId(change.batch_id),
+            undoes=None if change.undoes_id is None else PageHistoryEntryId(change.undoes_id),
+            created_at=change.created_at,
             sequence=row.sequence,
         )
 
     @override
     def to_row(self, entity: PageHistoryEntry) -> PageHistoryRow:
-        """Build the row of ``entity``.
+        """Build the row that places the change in the history of its page.
+
+        :param entity: Change to store, numbered in the history of its page.
+        :type entity: PageHistoryEntry
+        :returns: Transient row of the history.
+        :rtype: PageHistoryRow
+        """
+        return PageHistoryRow(page_id=entity.page_id, sequence=entity.sequence, change_id=entity.id)
+
+    def change_row(self, entity: PageHistoryEntry) -> StepChangeRow:
+        """Build the row of the change itself, which every page the change reached shares.
 
         :param entity: Change to store.
         :type entity: PageHistoryEntry
-        :returns: Transient page history row.
-        :rtype: PageHistoryRow
+        :returns: Transient row of the change.
+        :rtype: StepChangeRow
         """
-        return PageHistoryRow(
+        return StepChangeRow(
             id=entity.id,
-            page_id=entity.page_id,
             stage=entity.stage,
             step_id=entity.step_id,
             layer=entity.layer,
@@ -785,7 +799,6 @@ class PageHistoryMapper(RowMapper[PageHistoryEntry, PageHistoryRow]):
             batch_id=entity.batch_id,
             undoes_id=entity.undoes,
             created_at=entity.created_at,
-            sequence=entity.sequence,
         )
 
 

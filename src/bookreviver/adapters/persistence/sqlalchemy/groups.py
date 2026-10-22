@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, exists, insert, or_, select
 
-from bookreviver.adapters.persistence.sqlalchemy.tables import GroupValuesRow, PageGroupRow, PageHistoryRow, PageRow
+from bookreviver.adapters.persistence.sqlalchemy.tables import GroupValuesRow, PageGroupRow, PageRow, StepChangeRow
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -80,7 +80,7 @@ class PageGroups:
         named = or_(
             exists().where(PageRow.group_id == PageGroupRow.id),
             exists().where(GroupValuesRow.group_id == PageGroupRow.id),
-            exists().where(PageHistoryRow.group_id == PageGroupRow.id),
+            exists().where(StepChangeRow.group_id == PageGroupRow.id),
         )
         self._session.execute(delete(PageGroupRow).where(~named))
         self._keys = None

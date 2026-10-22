@@ -30,8 +30,9 @@ from advanced_alchemy.exceptions import NotFoundError as MissingRowError
 from advanced_alchemy.filters import CollectionFilter, LimitOffset
 from advanced_alchemy.repository import DEFAULT_ERROR_MESSAGE_TEMPLATES, SQLAlchemySyncRepository
 from attrs import evolve
-from sqlalchemy import Table, UniqueConstraint, and_, case, delete, func, or_, select
+from sqlalchemy import Table, UniqueConstraint, and_, case, delete, exists, func, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.orm import contains_eager
 
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import PROJECT_ID_COLUMN, LibraryRow, RecipeProfileRow
 from bookreviver.adapters.persistence.sqlalchemy.database import SQLITE_DIALECT
@@ -68,12 +69,12 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     RecipeRow,
     ScanRow,
     SourceRow,
+    StepChangeRow,
     StepValuesRow,
 )
 from bookreviver.domain.entities import (
     LibraryEntry,
     Page,
-    PageHistoryEntry,
     PageStage,
     PageStepState,
     PageVersion,
@@ -101,7 +102,6 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import (
-    PageHistoryEntryId,
     PageId,
     PageVersionId,
     PaginationSectionId,
@@ -140,6 +140,7 @@ from bookreviver.ports.persistence import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
     from datetime import datetime
+    from uuid import UUID
 
     from advanced_alchemy.base import ModelProtocol
     from advanced_alchemy.filters import StatementFilter
@@ -150,8 +151,13 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
     from bookreviver.domain.entities import (
         BookPlace,
+        PageHistoryEntry,
     )
-    from bookreviver.domain.ids import AccountId, ChangeBatchId
+    from bookreviver.domain.ids import (
+        AccountId,
+        ChangeBatchId,
+        PageHistoryEntryId,
+    )
     from bookreviver.domain.step_values import StepValuesKey
     from bookreviver.domain.values import ProcessorRef, SliceRequest
 
@@ -459,6 +465,25 @@ class PageHistoryRows(RowRepository[PageHistoryRow]):
     """Rows of the ``page_history`` table."""
 
     model_type = PageHistoryRow
+
+
+class StepChangeRows(RowRepository[StepChangeRow]):
+    """Rows of the ``step_changes`` table, of which a change no page names any longer is deleted."""
+
+    model_type = StepChangeRow
+
+    def delete_unlinked(self, change_ids: Collection[UUID]) -> None:
+        """Delete those of the changes that no row of the history of a page names any longer.
+
+        :param change_ids: The changes whose rows of the history were deleted, of any number.
+        :type change_ids: Collection[UUID]
+        """
+        for chunk in batched(change_ids, self.IN_CHUNK_SIZE, strict=False):
+            self.session.execute(
+                delete(StepChangeRow).where(
+                    StepChangeRow.id.in_(chunk), ~exists().where(PageHistoryRow.change_id == StepChangeRow.id)
+                )
+            )
 
 
 class BookPlaceRows(RowRepository[BookPlaceRow]):
@@ -838,6 +863,7 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
 
     :ivar _pages: The rows of the table as their own repository, whose update of several pages the generic rows do not
                   have.
+    :ivar _changes: The changes of the steps, of which those that reached only a deleted page go with it.
     """
 
     def __init__(self, session: Session, groups: PageGroups) -> None:
@@ -851,6 +877,21 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
         pages = PageRows(session=session)
         super().__init__(rows=pages, mapper=PageMapper(groups))
         self._pages = pages
+        self._changes = StepChangeRows(session=session)
+
+    @override
+    def delete(self, entity_id: PageId) -> None:
+        """Remove the page, its history with it, and the changes that reached no other page.
+
+        :param entity_id: Identifier of the page.
+        :type entity_id: PageId
+        :raises NotFoundError: If the page is not stored.
+        """
+        reached = self._pages.session.scalars(
+            select(PageHistoryRow.change_id).where(PageHistoryRow.page_id == entity_id)
+        ).all()
+        super().delete(entity_id)
+        self._changes.delete_unlinked(reached)
 
     @override
     def list_window(self, request: SliceRequest, *, included_only: bool = False) -> Slice[Page]:
@@ -1709,20 +1750,46 @@ class SqlAlchemyStepValuesRepository(StepValuesRepository):
         return self._listed()
 
 
-class SqlAlchemyPageHistoryRepository(
-    SqlAlchemyRepository[PageHistoryEntry, PageHistoryEntryId, PageHistoryRow], PageHistoryRepository
-):
-    """The history of the layers of the steps of the pages."""
+class SqlAlchemyPageHistoryRepository(PageHistoryRepository):
+    """The history of the layers of the steps of the pages: each change once, and its place in each page it reached.
+
+    :ivar _links: The rows of ``page_history``, which place a change in the history of a page.
+    :ivar _changes: The rows of ``step_changes``, one for each change.
+    :ivar _mapper: Translation between an entry of the history of a page and its two rows.
+    """
 
     def __init__(self, session: Session, groups: PageGroups) -> None:
-        """Create the repository over the ``page_history`` table.
+        """Create the repository over the ``page_history`` and the ``step_changes`` tables.
 
         :param session: Session of the unit of work.
         :type session: Session
         :param groups: The groups of the book on the session, which name the group of a change of a group.
         :type groups: PageGroups
         """
-        super().__init__(rows=PageHistoryRows(session=session), mapper=PageHistoryMapper(groups))
+        self._links = PageHistoryRows(session=session)
+        self._changes = StepChangeRows(session=session)
+        self._mapper = PageHistoryMapper(groups)
+
+    def _entries(
+        self, *filters: ColumnElement[bool], order: Sequence[InstrumentedAttribute[Any]]
+    ) -> list[PageHistoryEntry]:
+        """Read the entries of the histories that match the filters, each with its change in the same statement.
+
+        :param filters: Conditions over the rows of the history and of the changes.
+        :type filters: ColumnElement[bool]
+        :param order: The columns the entries are ordered by, ascending.
+        :type order: Sequence[InstrumentedAttribute[Any]]
+        :returns: The entries.
+        :rtype: list[PageHistoryEntry]
+        """
+        statement = (
+            select(PageHistoryRow)
+            .join(PageHistoryRow.change)
+            .options(contains_eager(PageHistoryRow.change))
+            .where(*filters)
+            .order_by(*(column.asc() for column in order))
+        )
+        return [self._mapper.to_entity(row) for row in self._links.session.scalars(statement)]
 
     @override
     def add(self, entity: PageHistoryEntry) -> PageHistoryEntry:
@@ -1742,41 +1809,47 @@ class SqlAlchemyPageHistoryRepository(
     def add_many(self, entities: Sequence[PageHistoryEntry]) -> Sequence[PageHistoryEntry]:
         """Store several changes, numbering each after the last change of its page in the order given.
 
+        The entries that share an identifier are one change reaching several pages, which is stored once.
+
         :param entities: Changes to store.
         :type entities: Sequence[PageHistoryEntry]
         :returns: The changes as stored, with their sequences.
         :rtype: Sequence[PageHistoryEntry]
-        :raises ConflictError: If an identifier is stored already or given twice.
+        :raises ConflictError: If a change is stored already, or reaches a page twice.
         :raises NotFoundError: If a page is not stored.
         """
+        if not entities:
+            return entities
         next_of: dict[PageId, int] = {}
         numbered: list[PageHistoryEntry] = []
         for change in entities:
             if change.page_id not in next_of:
-                last = self._rows.session.scalar(
+                last = self._links.session.scalar(
                     select(func.max(PageHistoryRow.sequence)).where(PageHistoryRow.page_id == change.page_id)
                 )
                 next_of[change.page_id] = (last or 0) + 1
             numbered.append(evolve(change, sequence=next_of[change.page_id]))
             next_of[change.page_id] += 1
-        return super().add_many(numbered)
+        changes = {change.id: change for change in reversed(numbered)}
+        self._changes.add_many([self._mapper.change_row(change) for change in changes.values()])
+        self._links.add_many([self._mapper.to_row(change) for change in numbered])
+        return numbered
 
     @override
     def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageHistoryEntry]:
         """Return the changes of one page, by their sequence.
 
-        :param page_id: Page the changes were made on.
+        :param page_id: Page the changes reached.
         :type page_id: PageId
-        :param stage: Stage listed, or None for every stage.
+        :param stage: Stage whose changes are listed, or None for every stage.
         :type stage: Stage | None
         :returns: The changes of the page.
         :rtype: Sequence[PageHistoryEntry]
         """
         filters: list[ColumnElement[bool]] = [PageHistoryRow.page_id == page_id]
         if stage is not None:
-            filters.append(PageHistoryRow.stage == stage)
-        rows = self._rows.get_many(*filters, order_by=[PageHistoryRow.sequence.asc()])
-        return [self._mapper.to_entity(row) for row in rows]
+            filters.append(StepChangeRow.stage == stage)
+        return self._entries(*filters, order=[PageHistoryRow.sequence])
 
     @override
     def list_for_batch(self, batch_id: ChangeBatchId) -> Sequence[PageHistoryEntry]:
@@ -1787,10 +1860,8 @@ class SqlAlchemyPageHistoryRepository(
         :returns: The changes of the batch.
         :rtype: Sequence[PageHistoryEntry]
         """
-        rows = self._rows.get_many(
-            order_by=[PageHistoryRow.page_id.asc(), PageHistoryRow.sequence.asc()], batch_id=batch_id
-        )
-        return [self._mapper.to_entity(row) for row in rows]
+        by_page = [PageHistoryRow.page_id, PageHistoryRow.sequence]
+        return self._entries(StepChangeRow.batch_id == batch_id, order=by_page)
 
     @override
     def list_undoing(self, change_ids: Collection[PageHistoryEntryId]) -> Sequence[PageHistoryEntry]:
@@ -1801,29 +1872,36 @@ class SqlAlchemyPageHistoryRepository(
         :returns: The undos.
         :rtype: Sequence[PageHistoryEntry]
         """
-        rows = self._rows.get_many_in(
-            PageHistoryRow.undoes_id,
-            set(change_ids),
-            order=[PageHistoryRow.page_id, PageHistoryRow.sequence],
-        )
-        return [self._mapper.to_entity(row) for row in rows]
+        found = [
+            entry
+            for chunk in batched(set(change_ids), self._links.IN_CHUNK_SIZE, strict=False)
+            for entry in self._entries(StepChangeRow.undoes_id.in_(chunk), order=[])
+        ]
+        return sorted(found, key=lambda entry: (entry.page_id, entry.sequence))
 
     @override
     def delete_for_step(self, key: PageStepKey) -> int:
-        """Delete every change of one step on one page in one statement.
+        """Delete every change of one step on one page, and the changes that reached no other page.
 
         :param key: The page, the stage and the step.
         :type key: PageStepKey
-        :returns: How many changes were deleted.
+        :returns: How many changes the history of the page lost.
         :rtype: int
         """
+        session = self._links.session
+        of_step = select(StepChangeRow.id).where(StepChangeRow.stage == key.stage, StepChangeRow.step_id == key.step_id)
+        reached = session.scalars(
+            select(PageHistoryRow.change_id).where(
+                PageHistoryRow.page_id == key.page_id, PageHistoryRow.change_id.in_(of_step)
+            )
+        ).all()
         statement = delete(PageHistoryRow).where(
-            PageHistoryRow.page_id == key.page_id,
-            PageHistoryRow.stage == key.stage,
-            PageHistoryRow.step_id == key.step_id,
+            PageHistoryRow.page_id == key.page_id, PageHistoryRow.change_id.in_(of_step)
         )
         # An ORM delete of a mapped class returns the cursor result, whose row count the database reports
-        return cast('CursorResult[Any]', self._rows.session.execute(statement)).rowcount
+        removed = cast('CursorResult[Any]', session.execute(statement)).rowcount
+        self._changes.delete_unlinked(reached)
+        return removed
 
 
 class SqlAlchemyBookPlaceRepository(BookPlaceRepository):

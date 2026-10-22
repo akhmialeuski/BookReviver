@@ -14,7 +14,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.entities import PageEdit
+from bookreviver.domain.entities import PageEdit, PageHistoryEntry
 from bookreviver.domain.enums import (
     ChangeSource,
     PageOrigin,
@@ -51,7 +51,7 @@ from tests.helpers.seeding import store_project
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Page, PageHistoryEntry, PageStage, PageVersion, Project
+    from bookreviver.domain.entities import Page, PageStage, PageVersion, Project
     from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.step_values import StepValues
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
@@ -82,6 +82,8 @@ EVERYTHING: SliceRequest = SliceRequest(limit=10)
 # The attribute the records of the pages are sorted by, and the key of a processor that blanks pages
 PAGE_ID: str = 'page_id'
 BLANK_PROCESSOR: str = 'pages.blank'
+# The order key of a second page, after the page every test of the history stores
+OTHER_ORDER_KEY: str = 'z0'
 
 
 def _save_records(repos: BookRepositories, _project: Project, *, records: Sequence[PageStage]) -> None:
@@ -1305,8 +1307,51 @@ class TestPageHistoryRepository:
             undoes=PageHistoryEntryId(uuid4()),
         )
         stored = await fx_uow().change_book(project_id, lambda repos, _project: repos.page_history.add(change))
-        read_back = await fx_uow().read_book(project_id, lambda repos: repos.page_history.get(change.id))
-        assert (read_back, stored) == (stored, evolve(change, sequence=1))
+        read_back = await fx_uow().read_book(project_id, lambda repos: repos.page_history.list_for_page(page_id))
+        assert (read_back, stored) == ([stored], evolve(change, sequence=1))
+
+    async def test_a_change_of_two_pages_is_one_change_each_page_keeps_until_its_own_history_goes(
+        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+    ) -> None:
+        """Verify a change of values reaching two pages lists in both, and clearing it on one leaves it on the other.
+
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_new_owner: Function creating an account the database accepts as an owner.
+        :type fx_new_owner: OwnerFactory
+        """
+        project_id, page_id = await _store_page(fx_uow, fx_new_owner)
+        other = make_page(order_key=OTHER_ORDER_KEY)
+        values = make_step_values(scope=ValueScope.ODD)
+        change = PageHistoryEntry.of_values(
+            [page_id, other.id], values, evolve(values, params={METHOD: 'otsu'}), ChangeSource.USER
+        )
+
+        def record(repos: BookRepositories, _project: Project) -> None:
+            """Store the other page and the change of both pages.
+
+            :param repos: Repositories of the transaction.
+            :type repos: BookRepositories
+            :param _project: The project of the book.
+            :type _project: Project
+            """
+            repos.pages.add(other)
+            repos.page_history.add_many(change)
+
+        await fx_uow().change_book(project_id, record)
+        cleared = await fx_uow().change_book(
+            project_id, lambda repos, _project: repos.page_history.delete_for_step(change[0].key)
+        )
+        mine, theirs = await fx_uow().read_book(
+            project_id,
+            lambda repos: (repos.page_history.list_for_page(page_id), repos.page_history.list_for_page(other.id)),
+        )
+
+        expect(change[0].id == change[1].id)
+        expect(cleared == 1)
+        expect(mine == [])
+        expect([(entry.id, entry.page_id) for entry in theirs] == [(change[1].id, other.id)])
+        assert_expectations()
 
     async def test_changes_made_at_the_same_instant_list_in_the_order_they_were_written(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory

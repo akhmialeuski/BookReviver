@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, NewType
 from bookreviver.domain.entities import (
     LibraryEntry,
     Page,
-    PageHistoryEntry,
     PageStage,
     PageStepState,
     PageVersion,
@@ -37,7 +36,6 @@ from bookreviver.domain.entities import (
     Source,
 )
 from bookreviver.domain.ids import (
-    PageHistoryEntryId,
     PageId,
     PageVersionId,
     PaginationSectionId,
@@ -56,10 +54,16 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import (
         BookPlace,
+        PageHistoryEntry,
         ProjectOverview,
     )
     from bookreviver.domain.enums import RecipeKind, ResultMark, Side, Stage, VersionScale
-    from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
+    from bookreviver.domain.ids import (
+        AccountId,
+        ChangeBatchId,
+        PageHistoryEntryId,
+        StepId,
+    )
     from bookreviver.domain.stage_summaries import StageTally, StepTally
     from bookreviver.domain.values import PageSize, ProcessorRef, Slice, SliceRequest
 
@@ -738,12 +742,42 @@ class StepValuesRepository(KeyedRepository[StepValues, StepValuesKey]):
         """
 
 
-class PageHistoryRepository(Repository[PageHistoryEntry, PageHistoryEntryId]):
+class PageHistoryRepository(ABC):
     """The history of the layers of the steps of each page. A change is added once and never rewritten.
 
-    Deleting a page removes its history. ``add`` and ``add_many`` number the changes of a page from one in the order
-    they are written, whatever their ``sequence``, and return them as stored.
+    A change of the values of the odd pages, the even pages or a group reaches every page that takes them, and is one
+    entry in the history of each of those pages, the entries sharing the identifier of the change, which is stored
+    once. A change is therefore addressed by its page as well as its identifier, and the history has no ``get``,
+    ``update`` or ``delete`` of one change. Deleting a page removes its history, and a change that reached no other
+    page with it. ``add`` and ``add_many`` number the changes of a page from one in the order they are written,
+    whatever their ``sequence``, and return them as stored.
     """
+
+    @abstractmethod
+    def add(self, entity: PageHistoryEntry) -> PageHistoryEntry:
+        """Store a new change of one page and return it as stored.
+
+        :param entity: Change to store, with its identifier already assigned.
+        :type entity: PageHistoryEntry
+        :returns: The change as stored, with its sequence.
+        :rtype: PageHistoryEntry
+        :raises ConflictError: If a change with this identifier is already stored.
+        :raises NotFoundError: If the page is not stored.
+        """
+
+    @abstractmethod
+    def add_many(self, entities: Sequence[PageHistoryEntry]) -> Sequence[PageHistoryEntry]:
+        """Store several new changes at once, all of them or, on an error, none.
+
+        The entries that share an identifier are one change and its pages, and must agree on everything but the page.
+
+        :param entities: Changes to store, with their identifiers already assigned.
+        :type entities: Sequence[PageHistoryEntry]
+        :returns: The changes as stored, with their sequences, in the given order.
+        :rtype: Sequence[PageHistoryEntry]
+        :raises ConflictError: If a change is stored already, or reaches one page twice.
+        :raises NotFoundError: If a page is not stored.
+        """
 
     @abstractmethod
     def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageHistoryEntry]:

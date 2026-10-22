@@ -1029,30 +1029,38 @@ class PageHistoryEntry:
         )
 
     @classmethod
-    def of_values(cls, page_id: PageId, before: StepValues, after: StepValues, source: ChangeSource) -> Self:
-        """Describe a change of the values of a part of the pages, as the history of one of its pages keeps it.
+    def of_values(
+        cls, pages: Sequence[PageId], before: StepValues, after: StepValues, source: ChangeSource
+    ) -> list[Self]:
+        """Describe a change of the values of a part of the pages, once for each page whose history keeps it.
 
-        :param page_id: The page whose history keeps the change, which is one that takes the values.
-        :type page_id: PageId
+        The entries are one change, so they share its identifier and differ only in the page.
+
+        :param pages: The pages whose histories keep the change, which are those that take the values.
+        :type pages: Sequence[PageId]
         :param before: The values of the part before the change, which are empty for a part that had none.
         :type before: StepValues
         :param after: The values after the change, which carry the time of the change.
         :type after: StepValues
         :param source: What made the change.
         :type source: ChangeSource
-        :returns: The change, with a new identifier, no batch, nothing undone and no sequence yet.
-        :rtype: Self
+        :returns: The change for each page, with one new identifier, no batch, nothing undone and no sequence yet.
+        :rtype: list[Self]
         """
-        return cls(
-            id=PageHistoryEntryId(uuid4()),
-            page_id=page_id,
-            stage=after.stage,
-            step_id=after.step_id,
-            layer=StepLayer.SETTINGS,
-            scope=after.scope,
-            group_label=after.group_label,
-            before=dict(before.params) or None,
-            after=dict(after.params) or None,
-            source=source,
-            created_at=after.updated_at,
-        )
+        change_id = PageHistoryEntryId(uuid4())
+        return [
+            cls(
+                id=change_id,
+                page_id=page_id,
+                stage=after.stage,
+                step_id=after.step_id,
+                layer=StepLayer.SETTINGS,
+                scope=after.scope,
+                group_label=after.group_label,
+                before=dict(before.params) or None,
+                after=dict(after.params) or None,
+                source=source,
+                created_at=after.updated_at,
+            )
+            for page_id in pages
+        ]
