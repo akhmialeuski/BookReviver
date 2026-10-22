@@ -1,4 +1,4 @@
-"""Use cases of projects: listing, creating, describing and deleting books.
+"""Use cases of projects: listing, creating, describing, exporting, importing and deleting books.
 
 Every use case of a book with an actor first asks the ``Library`` to open the book, which reports a book of another
 account exactly like a missing one. An answer of "forbidden" would confirm that a book with that identifier exists, so
@@ -21,9 +21,11 @@ from attrs import evolve, frozen
 
 from bookreviver.domain.entities import LibraryEntry, Project
 from bookreviver.domain.ids import ProjectId
-from bookreviver.domain.values import Slice, SliceRequest
+from bookreviver.domain.values import ArchivedBook, Slice, SliceRequest
 
 if TYPE_CHECKING:
+    from typing import BinaryIO
+
     from bookreviver.domain.changes import ProjectChanges
     from bookreviver.domain.entities import Actor, Page, ProjectOverview
     from bookreviver.domain.enums import Stage
@@ -32,7 +34,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import BookRepositories, PageRepository, UnitOfWork
     from bookreviver.ports.runtime import Clock
-    from bookreviver.ports.storage import AssetStore, SourceStore
+    from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
     from bookreviver.services.library import Library
     from bookreviver.services.stage_summaries import StageSummaries
 
@@ -58,14 +60,16 @@ def book_pages(pages: PageRepository) -> list[Page]:
 
 @frozen(kw_only=True)
 class ProjectFiles:
-    """The stores of the files of a book, emptied when the book is deleted.
+    """The stores of the files of a book, emptied when the book is deleted, and the archive that carries them all.
 
     :ivar sources: Store of the uploaded sources.
     :ivar assets: Store of the derived files.
+    :ivar archive: Archive of a whole book, which packs a book and unpacks one as a new book.
     """
 
     sources: SourceStore
     assets: AssetStore
+    archive: BookArchive
 
 
 class ProjectService:
@@ -229,6 +233,53 @@ class ProjectService:
             return repos.projects.update(evolve(changes.apply_to(project), updated_at=self._clock.now()))
 
         await self._uow.change_book(project_id, change)
+        return await self._overview(project_id)
+
+    async def export(self, actor: Actor, project_id: ProjectId) -> ArchivedBook:
+        """Return the archive of one of the actor's books, which another instance imports as a book of its own.
+
+        The database is copied first, as one committed state, and the files after it. A file is written once and never
+        replaced, so every file the copy names is on the disk when the archive reads it, unless the book is deleted or
+        a source of it removed while the archive is read.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :returns: The title of the book and the stream of its archive.
+        :rtype: ArchivedBook
+        :raises NotFoundError: If the actor has no such project.
+        """
+        await self._library.open(actor, project_id)
+        project = await self._uow.read_book(project_id, lambda repos: repos.projects.get(project_id))
+        database = await self._uow.snapshot_book(project_id)
+        return ArchivedBook(title=project.details.title, pieces=self._files.archive.export(project_id, database))
+
+    async def import_archive(self, actor: Actor, archive: BinaryIO) -> ProjectOverview:
+        """Take the archive of a book in as a new book of the actor, under a new identifier.
+
+        The archive is unpacked database first, then the database is brought to this release and its project renamed,
+        and the entry of the library comes last, as for a book created here. A failure removes what was unpacked, and an
+        import broken off is a store without an entry, which the start pass removes.
+
+        :param actor: Account acting in the current request, which becomes the owner.
+        :type actor: Actor
+        :param archive: The archive, a file that can be read from any position.
+        :type archive: BinaryIO
+        :returns: The new project with the counts and the progress of its book.
+        :rtype: ProjectOverview
+        :raises InvalidArchiveError: If the file is not the archive of a book.
+        :raises BookTooNewError: If the book was exported by a newer release.
+        """
+        project_id = ProjectId(uuid4())
+        try:
+            await self._files.archive.unpack(project_id, archive)
+            await self._uow.adopt_book(project_id)
+        except Exception:
+            await self._erase(project_id)
+            raise
+        entry = LibraryEntry(project_id=project_id, owner_id=actor.account_id, added_at=self._clock.now())
+        await self._uow.change(lambda repos: repos.library.add(entry))
         return await self._overview(project_id)
 
     async def _overview(self, project_id: ProjectId) -> ProjectOverview:

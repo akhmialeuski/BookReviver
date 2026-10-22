@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Self
 
 import attrs
+from fastapi import UploadFile
 from pydantic import ConfigDict, Field, field_validator, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
@@ -120,6 +121,15 @@ def _domain_value(value: object) -> object:
             return BookIdentifier.parse(value.scheme, value.value)
         case _:
             return value
+
+
+class ArchiveForm(RequestModel):
+    """The form of the import of a book: the archive another instance exported.
+
+    :ivar archive: The uploaded archive of the book.
+    """
+
+    archive: Annotated[UploadFile, Field(description='The archive of a book, as an export of BookReviver writes it')]
 
 
 class ProjectCreate(RequestModel):

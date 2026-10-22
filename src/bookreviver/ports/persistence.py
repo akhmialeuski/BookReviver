@@ -1052,6 +1052,35 @@ class UnitOfWork(ABC):
         """
 
     @abstractmethod
+    async def snapshot_book(self, project_id: ProjectId) -> bytes:
+        """Return a copy of the store of a book as one committed state of it, for the archive of the book.
+
+        The copy is the store in the form it keeps on disk, which :meth:`adopt_book` takes back in another instance.
+
+        :param project_id: Project whose book is copied.
+        :type project_id: ProjectId
+        :returns: The copy of the store.
+        :rtype: bytes
+        :raises NotFoundError: If the book is not stored.
+        :raises BookTooNewError: If the store of the book is at a revision this code does not ship.
+        """
+
+    @abstractmethod
+    async def adopt_book(self, project_id: ProjectId) -> Project:
+        """Take as a new book the store an archive placed for it, and give its project the identifier of the new book.
+
+        The store is brought to the release of this code first, as any book is when it is opened.
+
+        :param project_id: Identifier of the new book, whose store the archive placed.
+        :type project_id: ProjectId
+        :returns: The project of the new book.
+        :rtype: Project
+        :raises NotFoundError: If no store was placed for the book.
+        :raises BookTooNewError: If the store is at a revision this code does not ship.
+        :raises InvalidArchiveError: If the store does not hold exactly one project.
+        """
+
+    @abstractmethod
     async def stored_books(self) -> Collection[ProjectId]:
         """Return the books that have a store, whether the library lists them or not.
 

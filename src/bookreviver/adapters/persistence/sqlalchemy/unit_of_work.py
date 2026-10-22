@@ -21,14 +21,21 @@ tables of the catalogue but not part of the port, so ``read_session`` and ``chan
 session of the catalogue itself, in the same threads and with the same transactions, for the account database.
 """
 
+import sqlite3
+from contextlib import closing
 from functools import partial
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, cast, override
+
+from sqlalchemy import func, select, update
+from sqlalchemy.exc import DatabaseError
 
 from bookreviver.adapters.persistence.sqlalchemy.repositories import (
     SqlAlchemyBookRepositories,
     SqlAlchemyCatalogueRepositories,
 )
+from bookreviver.adapters.persistence.sqlalchemy.tables import ProjectRow
 from bookreviver.domain.enums import BlockKind
+from bookreviver.domain.errors import InvalidArchiveError
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS, UnitOfWork
 
 if TYPE_CHECKING:
@@ -41,6 +48,12 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Project
     from bookreviver.domain.ids import ProjectId
     from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories
+
+
+# Where SQLite keeps a database that lives in memory alone, as the copy of a book does
+MEMORY_DATABASE: str = ':memory:'
+NOT_ONE_PROJECT: str = 'The database of the archive does not hold exactly one book.'
+NOT_A_DATABASE: str = 'The database of the archive is not a database of a book.'
 
 
 class SqlAlchemyUnitOfWork(UnitOfWork):
@@ -163,6 +176,43 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         await self._books.remove(project_id)
 
     @override
+    async def snapshot_book(self, project_id: ProjectId) -> bytes:
+        """Copy the database of a book through SQLite's backup, in one transaction of a reader of the book.
+
+        :param project_id: Project whose book is copied.
+        :type project_id: ProjectId
+        :returns: The database file as SQLite writes it, of the state committed when the copy began.
+        :rtype: bytes
+        :raises NotFoundError: If the book is not stored.
+        :raises BookTooNewError: If the file of the book is at a revision this code does not ship.
+        """
+        async with self._books.use(project_id) as database:
+            return await database.read(_copy_of_database)
+
+    @override
+    async def adopt_book(self, project_id: ProjectId) -> Project:
+        """Open the file an archive placed for a new book, which brings it to the head revision, and rename its project.
+
+        :param project_id: Identifier of the new book, whose file the archive placed.
+        :type project_id: ProjectId
+        :returns: The project of the new book.
+        :rtype: Project
+        :raises NotFoundError: If no file was placed for the book.
+        :raises BookTooNewError: If the file is at a revision this code does not ship.
+        :raises InvalidArchiveError: If the file is not an SQLite database, or does not hold exactly one project.
+        """
+        try:
+            async with self._books.use(project_id) as database:
+                return await database.write(
+                    partial(_rename_the_project, project_id),
+                    kind=BlockKind.BOOK,
+                    book=project_id,
+                    wait_seconds=self._wait_seconds,
+                )
+        except DatabaseError as error:
+            raise InvalidArchiveError(NOT_A_DATABASE) from error
+
+    @override
     async def stored_books(self) -> Collection[ProjectId]:
         """Return the books that have a file under the storage root.
 
@@ -221,3 +271,37 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         :raises BookBusyError: If the writer or SQLite's write lock was not free within the wait limit.
         """
         return await self._catalogue.write(work, kind=BlockKind.OTHER, book=None, wait_seconds=self._wait_seconds)
+
+
+def _copy_of_database(session: Session) -> bytes:
+    """Copy the database of the session's connection into memory with SQLite's backup, and return the copy as a file.
+
+    :param session: Session of a transaction that reads the book.
+    :type session: Session
+    :returns: The database file as SQLite writes it.
+    :rtype: bytes
+    """
+    # The transaction of the session has just checked the connection out, so the driver's connection is open
+    source = cast('sqlite3.Connection', session.connection().connection.driver_connection)
+    with closing(sqlite3.connect(MEMORY_DATABASE)) as copy:
+        source.backup(copy)
+        return copy.serialize()
+
+
+def _rename_the_project(project_id: ProjectId, session: Session) -> Project:
+    """Give the one project of a book file the identifier of the book it now is.
+
+    No other table of a book names the project, so the row of the project is all that changes.
+
+    :param project_id: Identifier of the new book.
+    :type project_id: ProjectId
+    :param session: Session of the transaction of the change.
+    :type session: Session
+    :returns: The project under its new identifier.
+    :rtype: Project
+    :raises InvalidArchiveError: If the file does not hold exactly one project.
+    """
+    if session.scalar(select(func.count()).select_from(ProjectRow)) != 1:
+        raise InvalidArchiveError(NOT_ONE_PROJECT)
+    session.execute(update(ProjectRow).values(id=project_id))
+    return SqlAlchemyBookRepositories(session).projects.get(project_id)

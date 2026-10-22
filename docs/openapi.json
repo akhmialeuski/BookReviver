@@ -399,6 +399,158 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/archive": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Export Project",
+        "description": "Download the archive of a book, which another instance imports as a book of its own.\n\nThe archive is a ZIP file of the database of the book and every file of its sources and derived files, streamed as\nit is written and named after the title of the book.",
+        "operationId": "export_project_api_v1_projects__project_id__archive_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the project",
+              "title": "Project Id"
+            },
+            "description": "Identifier of the project"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The archive of the book",
+            "content": {
+              "application/zip": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/archive": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Import Project",
+        "description": "Import the archive of a book as a new project of the signed-in account, and point to it in ``Location``.\n\nThe book keeps its pages, versions, history, recipes and settings, and gets a new identifier, so the same archive\ncan be imported twice. An archive that is not the archive of a book is refused, and so is one exported by a newer\nrelease.",
+        "operationId": "import_project_api_v1_projects_archive_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "archive": {
+                    "type": "string",
+                    "contentMediaType": "application/octet-stream",
+                    "title": "Archive",
+                    "description": "The archive of a book, as an export of BookReviver writes it"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "archive"
+                ],
+                "title": "ArchiveForm",
+                "description": "The form of the import of a book: the archive another instance exported.\n\n:ivar archive: The uploaded archive of the book."
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSchema"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/sources": {
       "get": {
         "tags": [

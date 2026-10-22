@@ -11,6 +11,7 @@ from bookreviver.domain.errors import (
     BookBusyError,
     ConflictError,
     DomainError,
+    InvalidArchiveError,
     InvalidParametersError,
     NotFoundError,
     PermissionDeniedError,
@@ -130,6 +131,7 @@ PROBLEM_BY_ERROR: dict[type[DomainError], type[ApiProblem]] = {
     UnsupportedTransformError: Conflict,
     UnsupportedSourceError: BadRequest,
     UploadRejectedError: BadRequest,
+    InvalidArchiveError: BadRequest,
     BookBusyError: ServiceUnavailable,
 }
 

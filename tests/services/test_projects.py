@@ -1,5 +1,7 @@
 """Tests for the project use cases, against the database of the test and the local stores over a temporary directory."""
 
+import io
+import zipfile
 from datetime import timedelta
 from typing import TYPE_CHECKING, override
 
@@ -8,10 +10,10 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.storage import LocalSourceStore
+from bookreviver.adapters.storage import LocalBookArchive, LocalSourceStore
 from bookreviver.domain.changes import BookDetailsChanges, ProjectChanges
 from bookreviver.domain.enums import ImagePolicy, Orthography
-from bookreviver.domain.errors import NotFoundError
+from bookreviver.domain.errors import DomainError, NotFoundError
 from bookreviver.domain.values import BookDetails, SliceRequest
 from bookreviver.services.library import Library
 from bookreviver.services.projects import ProjectFiles, ProjectService
@@ -41,9 +43,11 @@ pytestmark = pytest.mark.anyio
 NOW = EPOCH + timedelta(days=1)
 PAGE_COUNT: int = 2
 NEW_TITLE: str = 'Renamed'
+# The name of the database in the archive of a book
+DATABASE_NAME: str = 'book.db'
 
 
-def _service(uow: UnitOfWork, sources: LocalSourceStore, assets: LocalAssetStore) -> ProjectService:
+def _service(uow: UnitOfWork, sources: LocalSourceStore, assets: LocalAssetStore, root: Path) -> ProjectService:
     """Build the project service for one request, over a unit of work, a catalogue with no processors and no jobs.
 
     :param uow: Unit of work of the request.
@@ -52,6 +56,8 @@ def _service(uow: UnitOfWork, sources: LocalSourceStore, assets: LocalAssetStore
     :type sources: LocalSourceStore
     :param assets: Asset store of the test.
     :type assets: LocalAssetStore
+    :param root: Storage root of the test, which the archive of the books packs and unpacks under.
+    :type root: Path
     :returns: The service, with a clock standing at ``NOW``.
     :rtype: ProjectService
     """
@@ -62,14 +68,17 @@ def _service(uow: UnitOfWork, sources: LocalSourceStore, assets: LocalAssetStore
         uow=uow,
         library=Library(uow=uow),
         clock=clock,
-        files=ProjectFiles(sources=sources, assets=assets),
+        files=ProjectFiles(sources=sources, assets=assets, archive=LocalBookArchive(root=root)),
         stages=stages,
     )
 
 
 @pytest.fixture
 def fx_service(
-    fx_uow: UnitOfWorkFactory, fx_source_store: LocalSourceStore, fx_asset_store: LocalAssetStore
+    fx_uow: UnitOfWorkFactory,
+    fx_source_store: LocalSourceStore,
+    fx_asset_store: LocalAssetStore,
+    fx_storage_root: Path,
 ) -> Callable[[], ProjectService]:
     """Return a function building the service for one request, with a clock standing at ``NOW``.
 
@@ -79,10 +88,12 @@ def fx_service(
     :type fx_source_store: LocalSourceStore
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
+    :param fx_storage_root: Storage root of the test.
+    :type fx_storage_root: Path
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], ProjectService]
     """
-    return lambda: _service(fx_uow(), fx_source_store, fx_asset_store)
+    return lambda: _service(fx_uow(), fx_source_store, fx_asset_store, fx_storage_root)
 
 
 class StoreFailedError(OSError):
@@ -131,7 +142,7 @@ def fx_flaky_service(
     :rtype: Callable[[], ProjectService]
     """
     sources = SourceStoreFailingOnce(root=fx_storage_root)
-    return lambda: _service(fx_uow(), sources, fx_asset_store)
+    return lambda: _service(fx_uow(), sources, fx_asset_store, fx_storage_root)
 
 
 async def _stored(uow: UnitOfWork, project: Project) -> Project:
@@ -523,6 +534,109 @@ class TestDeleteAll:
         await fx_service().delete_all(fx_actor)
 
 
+async def _archive(service: ProjectService, actor: Actor, project_id: ProjectId) -> io.BytesIO:
+    """Read the whole archive of a book the actor owns, as the browser downloads it.
+
+    :param service: The project service of the request.
+    :type service: ProjectService
+    :param actor: Account the service acts for.
+    :type actor: Actor
+    :param project_id: The book.
+    :type project_id: ProjectId
+    :returns: The archive, ready to be read from its start.
+    :rtype: io.BytesIO
+    """
+    archived = await service.export(actor, project_id)
+    return io.BytesIO(b''.join([piece async for piece in archived.pieces]))
+
+
+class TestExportAndImport:
+    """Tests for ProjectService.export() and import_archive(), which carry a book from one instance to another."""
+
+    async def test_an_imported_book_is_a_new_book_of_the_actor_with_the_pages_and_files_of_the_archive(
+        self,
+        fx_service: Callable[[], ProjectService],
+        fx_uow: UnitOfWorkFactory,
+        fx_files: BookFiles,
+        fx_actor: Actor,
+    ) -> None:
+        """Verify the import keeps the title, the page and its file, under a new identifier the actor owns.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], ProjectService]
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_files: Files of imported books in the stores the service works on.
+        :type fx_files: BookFiles
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project, page = make_project(), make_page()
+        await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
+        await fx_files.store(project.id, page)
+        archive = await _archive(fx_service(), fx_actor, project.id)
+
+        imported = await fx_service().import_archive(fx_actor, archive)
+
+        copy_id = imported.project.id
+        pages = await fx_uow().read_book(copy_id, lambda repos: repos.pages.list_window(SliceRequest()).items)
+        listed = await fx_service().list(fx_actor, SliceRequest())
+        expect(copy_id != project.id)
+        expect(imported.project.details == project.details)
+        expect([stored.id for stored in pages] == [page.id])
+        expect(fx_files.kept(page, project_id=copy_id))
+        expect([overview.project.id for overview in listed.items] == [copy_id, project.id])
+        assert_expectations()
+
+    async def test_a_file_that_is_no_archive_of_a_book_leaves_no_book_behind(
+        self, fx_service: Callable[[], ProjectService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
+    ) -> None:
+        """Verify an archive whose database holds no book is refused and its unpacked files are removed.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], ProjectService]
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        written = io.BytesIO()
+        with zipfile.ZipFile(written, mode='w') as archive:
+            archive.writestr(DATABASE_NAME, b'not a database')
+        written.seek(0)
+
+        with pytest.raises(DomainError):
+            await fx_service().import_archive(fx_actor, written)
+
+        expect(await fx_uow().stored_books() == [])
+        expect((await fx_service().list(fx_actor, SliceRequest())).total == 0)
+        assert_expectations()
+
+    async def test_another_accounts_book_is_not_exported(
+        self,
+        fx_service: Callable[[], ProjectService],
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+    ) -> None:
+        """Verify the export of a book of another account is refused as a missing book.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], ProjectService]
+        :param fx_database: The catalogue of the test.
+        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project()
+        await commit_project(fx_database, fx_uow(), project, owner=new_account_id())
+
+        with pytest.raises(NotFoundError):
+            await fx_service().export(fx_actor, project.id)
+
+
 class TestSweep:
     """Tests for ProjectService.sweep(), which finishes the creations and deletions that were broken off half way."""
 
@@ -661,7 +775,7 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
             await fx_uow().change_book(project.id, mark_opened)
 
         async with anyio.create_task_group() as group:
-            group.start_soon(_service(fx_uow(), sources, fx_asset_store).delete, fx_actor, project.id)
+            group.start_soon(_service(fx_uow(), sources, fx_asset_store, fx_storage_root).delete, fx_actor, project.id)
             await sources.reached.wait()
             group.start_soon(open_a_change)
             await anyio.wait_all_tasks_blocked()
