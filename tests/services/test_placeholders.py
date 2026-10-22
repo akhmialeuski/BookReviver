@@ -37,6 +37,7 @@ from tests.helpers.books import IMAGE
 from tests.helpers.builders import EPOCH, make_job, make_page, make_project, make_scan, make_source
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import FakeRenditionWriter
+from tests.helpers.fakes_imports import stored_book
 from tests.helpers.page_services import PREVIEW_CONTENT, THUMBNAIL_CONTENT, make_page_service
 from tests.helpers.seeding import commit_account, store_project
 
@@ -358,7 +359,7 @@ class TestAddPlaceholder:
 
         page = overview.page
         expect(
-            (page.origin, page.kind, page.label, page.notes)
+            (page.origin, page.kind, page.manual_label, page.notes)
             == (PageOrigin.PLACEHOLDER, PageKind.TITLE, THIRD_LABEL, LOST_NOTES)
         )
         expect((page.scan_id, page.slot, page.included) == (None, 0, True))
@@ -607,7 +608,9 @@ class TestAttachScan:
             (page.id, page.order_key, page.kind, page.notes)
             == (placeholder.id, PLACEHOLDER_ORDER_KEY, PageKind.COVER, PLACEHOLDER_NOTES)
         )
-        expect((page.origin, page.scan_id, page.slot, page.label) == (PageOrigin.SCAN, scan.id, 0, SPARE_SCAN_LABEL))
+        expect(
+            (page.origin, page.scan_id, page.slot, page.manual_label) == (PageOrigin.SCAN, scan.id, 0, SPARE_SCAN_LABEL)
+        )
         expect(
             (version.stage, version.processor, version.state) == (Stage.PAGE_SPLIT, SPLIT_NONE, VersionState.PENDING)
         )
@@ -651,7 +654,7 @@ class TestAttachScan:
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             """
-            repos.pages.update(evolve(repos.pages.get(placeholder.id), label=RIVAL_LABEL))
+            repos.pages.update(evolve(repos.pages.get(placeholder.id), manual_label=RIVAL_LABEL))
 
         async def bind() -> None:
             """Bind the scan to the placeholder and keep the overview."""
@@ -667,7 +670,7 @@ class TestAttachScan:
 
         [overview] = bound
         expect((overview.page.origin, overview.page.scan_id) == (PageOrigin.SCAN, scan.id))
-        expect(overview.page.label == RIVAL_LABEL)
+        expect(overview.label == RIVAL_LABEL)
         assert_expectations()
 
     async def test_keeps_the_label_the_placeholder_had(
@@ -690,13 +693,13 @@ class TestAttachScan:
         """
         book, placeholder = await _placeholder_book(fx_uow(), fx_asset_store, fx_actor)
         await fx_uow().change_book(
-            book.project.id, lambda repos, _project: repos.pages.update(evolve(placeholder, label=FIRST_LABEL))
+            book.project.id, lambda repos, _project: repos.pages.update(evolve(placeholder, manual_label=FIRST_LABEL))
         )
         scan = await _spare_scan(fx_uow(), fx_asset_store, book)
 
         overview = await fx_service().attach_scan(fx_actor, book.project.id, placeholder.id, scan.id)
 
-        assert overview.page.label == FIRST_LABEL
+        assert overview.label == FIRST_LABEL
 
     async def test_scan_of_another_project_and_an_unknown_scan_are_not_found(
         self,
@@ -1623,7 +1626,7 @@ class CountingOrderKeys(FractionalOrderKeys):
 
 
 async def _labels_in_book_order(uow: UnitOfWork, project: Project) -> list[str]:
-    """Read the labels of the committed pages of a project in the order of the book.
+    """Read the labels the committed pages of a project show, in the order of the book.
 
     :param uow: Unit of work to read through.
     :type uow: UnitOfWork
@@ -1632,7 +1635,7 @@ async def _labels_in_book_order(uow: UnitOfWork, project: Project) -> list[str]:
     :returns: The label of each page, in order key order.
     :rtype: list[str]
     """
-    return [page.label for page in await _stored_pages(uow, project)]
+    return (await stored_book(uow, project.id)).labels
 
 
 def _placeholder(label: str, anchor: PageAnchor | None = None) -> NewPage:
@@ -1729,7 +1732,7 @@ class TestAddMany:
         added = await service.add_many(fx_actor, book.project.id, new)
 
         expect(await _labels_in_book_order(fx_uow(), book.project) == ['', 'c', 'd', '', 'a', 'b', 'e', ''])
-        expect([overview.page.label for overview in added] == ['a', 'b', 'c', 'd', 'e'])
+        expect([overview.label for overview in added] == ['a', 'b', 'c', 'd', 'e'])
         expect([overview.position for overview in added] == [4, 5, 1, 2, 6])
         expect(keys.calls == 2)
         assert_expectations()

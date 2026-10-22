@@ -441,6 +441,19 @@ async def _pages(rig: ImportRig, project_id: ProjectId) -> list[Page]:
     return (await stored_book(rig.open_uow(), project_id)).pages
 
 
+async def _labels(rig: ImportRig, project_id: ProjectId) -> list[str]:
+    """Read the labels the pages of a project show, in book order, as the sections committed give them.
+
+    :param rig: Adapters of the import.
+    :type rig: ImportRig
+    :param project_id: Project owning the pages.
+    :type project_id: ProjectId
+    :returns: The labels.
+    :rtype: list[str]
+    """
+    return (await stored_book(rig.open_uow(), project_id)).labels
+
+
 async def _sections(rig: ImportRig, project_id: ProjectId) -> list[PaginationSection]:
     """Read the pagination sections of a project as committed, in the order they were made.
 
@@ -994,10 +1007,10 @@ class TestRunImport:
 
         await _import(fx_rig, fx_owner, fx_project.id, files)
 
-        scans, pages = await _scans(fx_rig, fx_project.id), await _pages(fx_rig, fx_project.id)
+        scans = await _scans(fx_rig, fx_project.id)
         expected = [*ROMAN_THEN_ARABIC_LABELS, '']
         expect([scan.source_label for scan in scans] == expected)
-        expect([page.label for page in pages] == expected)
+        expect(await _labels(fx_rig, fx_project.id) == expected)
         assert_expectations()
 
     async def test_makes_a_pagination_section_of_each_page_label_rule_of_a_pdf(
@@ -1027,7 +1040,7 @@ class TestRunImport:
         expect(by_start[pages[0].id].style is LabelStyle.ROMAN_LOWER)
         expect(by_start[pages[2].id].style is LabelStyle.ARABIC)
         expect({section.display for section in sections} == {NumberDisplay.PRINTED})
-        expect([page.label_manual for page in pages] == [False] * len(pages))
+        expect([page.manual_label is not None for page in pages] == [False] * len(pages))
         assert_expectations()
 
     async def test_keeps_a_page_label_no_section_gives_as_an_exception(
@@ -1050,8 +1063,8 @@ class TestRunImport:
         await _import(fx_rig, fx_owner, fx_project.id, [upload(LABELLED_PDF_NAME, content=labelled.read_bytes())])
 
         pages, sections = await _pages(fx_rig, fx_project.id), await _sections(fx_rig, fx_project.id)
-        expect([page.label for page in pages] == ['i', 'ii', PREFIX_ONLY_LABEL, PREFIX_ONLY_LABEL])
-        expect([page.label_manual for page in pages] == [False, False, True, True])
+        expect(await _labels(fx_rig, fx_project.id) == ['i', 'ii', PREFIX_ONLY_LABEL, PREFIX_ONLY_LABEL])
+        expect([page.manual_label is not None for page in pages] == [False, False, True, True])
         expect(
             sorted(section.display for section in sections)
             == sorted([NumberDisplay.PRINTED, NumberDisplay.NOT_COUNTED])
@@ -1080,7 +1093,7 @@ class TestRunImport:
 
         pages, sections = await _pages(fx_rig, fx_project.id), await _sections(fx_rig, fx_project.id)
         [stopper] = [section for section in sections if section.first_page_id == pages[-1].id]
-        expect([page.label for page in pages] == [*ROMAN_THEN_ARABIC_LABELS, ''])
+        expect(await _labels(fx_rig, fx_project.id) == [*ROMAN_THEN_ARABIC_LABELS, ''])
         expect(stopper.display is NumberDisplay.NOT_COUNTED)
         expect(len(sections) == len(ROMAN_THEN_ARABIC_RULES) + 1)
         assert_expectations()
@@ -1137,7 +1150,7 @@ class TestRunImport:
         size = len(ROMAN_THEN_ARABIC_LABELS)
         expect(len(sections) == 2 * len(ROMAN_THEN_ARABIC_RULES))
         expect(starts == {pages[0].id, pages[2].id, pages[size].id, pages[size + 2].id})
-        expect([page.label for page in pages] == [*ROMAN_THEN_ARABIC_LABELS, *ROMAN_THEN_ARABIC_LABELS])
+        expect(await _labels(fx_rig, fx_project.id) == [*ROMAN_THEN_ARABIC_LABELS, *ROMAN_THEN_ARABIC_LABELS])
         assert_expectations()
 
     async def test_writes_the_renditions_of_every_scan_and_the_base_version_of_every_page(

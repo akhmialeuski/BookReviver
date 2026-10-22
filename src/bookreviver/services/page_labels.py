@@ -1,18 +1,21 @@
-"""Keeping the printed numbers of the pages of a book in step with its pagination sections.
+"""Keeping the pagination sections of a book valid while its pages change, and telling which pages they renumber.
 
-The label of a page is computed from the sections by ``Pagination``, except for a label written by hand, which is an
-exception that no recompute changes. A use case that adds, deletes or moves pages, or changes a section, calls
-``recompute`` in the work of its ``change_book`` with the repositories of that work, so the numbers change in the
-transaction of the change itself, and only the pages whose label changes are written. ``recompute`` is synchronous and
-opens no transaction. The pages renumbered are announced after the transaction, as one ``PagesChanged`` of kind
-``edited``, by the asynchronous ``announce``.
+The label a page shows is computed when the page is read, from the sections by ``Pagination``, except for a manual
+label, which no section changes. Nothing computed is stored, so a change of the pages or of the sections writes no
+label. A use case that adds, deletes or moves pages, or changes a section, calls ``settle`` in the work of its
+``change_book`` with the repositories of that work, which refuses the change when a section can no longer write one of
+its numbers. ``settle`` is synchronous and opens no transaction.
 
-A section starts at a page and so does not survive the deletion of that page. ``recompute`` is told which pages are
-about to leave, and hands every section that starts at one of them to the next page that stays, or removes it when no
-page follows.
+A section starts at a page and so does not survive the deletion of that page. ``settle`` is told which pages are about
+to leave, and hands every section that starts at one of them to the next page that stays, or removes it when no page
+follows.
+
+A change of the pages announces its own pages, and the browser reads the whole book again for it. A change of a
+section touches no page, so it watches the labels with ``watching`` and announces the pages whose label changed as one
+``PagesChanged`` of kind ``edited``.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from attrs import evolve
 
@@ -24,15 +27,17 @@ from bookreviver.services.projects import book_pages
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
+    from types import TracebackType
 
     from bookreviver.domain.entities import Page, PaginationSection
     from bookreviver.domain.ids import PageId, ProjectId
+    from bookreviver.domain.pagination import Numbering
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import Clock, EventPublisher
 
 
 class PageLabels:
-    """Recomputes the labels of the pages of a book in the transaction of its caller, and announces them after it."""
+    """Settles the sections of a book in the transaction of its caller, and announces renumbered pages after it."""
 
     def __init__(self, *, publisher: EventPublisher, clock: Clock) -> None:
         """Stamp the pages and sections with a clock and announce the renumbered pages through a publisher.
@@ -44,22 +49,19 @@ class PageLabels:
         """
         self._publisher = publisher
         self._clock = clock
-        self._renumbered: list[PageId] = []
 
-    def recompute(
+    def settle(
         self,
         repos: BookRepositories,
         project_id: ProjectId,
         *,
         leaving: Collection[PageId] = (),
         unpin: Collection[PageId] = (),
-        force: bool = False,
-    ) -> list[Page]:
-        """Write the labels the sections give the pages of a project, in the transaction of the caller.
+    ) -> None:
+        """Hand on the sections of the pages that leave, and check that every section can number its pages.
 
         It writes through the repositories of its caller and opens no transaction, so it is called only from the work
-        of ``change_book`` or ``change``. A book without a section has no computed label to keep, so the call stops
-        after reading the sections, unless ``force`` says a section was just removed.
+        of ``change_book``. A book without a section has nothing to hand on and no number to check.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
@@ -68,50 +70,66 @@ class PageLabels:
         :param leaving: Pages the caller is about to delete. They take no part in the count, and the sections that
                         start at them are handed to the next page that stays.
         :type leaving: Collection[PageId]
-        :param unpin: Pages whose hand-written label is dropped, which gives their number back to the sections.
+        :param unpin: Pages whose manual label is dropped, which gives their number back to the sections.
         :type unpin: Collection[PageId]
-        :param force: Whether to recompute although the book has no section.
-        :type force: bool
-        :returns: The pages written, with their new labels, which ``announce`` reports after the transaction.
-        :rtype: list[Page]
         :raises ConflictError: If a section cannot write a number, such as 4000 in Roman numerals.
         """
-        sections = repos.pagination_sections.list_for_project(project_id)
-        if not sections and not force:
-            return []
+        if unpin:
+            moment = self._clock.now()
+            pinned = [page for page in repos.pages.list_by_ids(project_id, unpin) if page.manual_label is not None]
+            repos.pages.update_many([evolve(page, manual_label=None, updated_at=moment) for page in pinned])
+        if not (sections := repos.pagination_sections.list_for_project(project_id)):
+            return
         pages = book_pages(repos.pages, project_id)
         sections = self._hand_over(repos, sections, pages, set(leaving))
-        original = {page.id: page for page in pages}
-        staying = [
-            evolve(page, label_manual=False) if page.id in unpin else page for page in pages if page.id not in leaving
-        ]
         try:
-            labels = Pagination(sections, staying).labels()
+            Pagination(sections, [page for page in pages if page.id not in leaving]).labels()
         except ValueError as error:
             raise ConflictError(str(error)) from error
-        moment = self._clock.now()
-        changed = [
-            evolve(candidate, updated_at=moment)
-            for page in staying
-            if (candidate := evolve(page, label=labels[page.id])) != original[page.id]
-        ]
-        if changed:
-            repos.pages.update_many(changed)
-            self._renumbered.extend(page.id for page in changed)
-        return changed
 
-    async def announce(self, project_id: ProjectId) -> None:
-        """Tell the browser which pages were renumbered since the last announcement, after the transaction ended.
+    @staticmethod
+    def numbering(repos: BookRepositories, project_id: ProjectId, pages: Sequence[Page]) -> Numbering:
+        """Give some pages of a book the labels they show and the sections that govern them.
+
+        A section numbers the pages from its first page on, so a book with sections is read whole. A book without one
+        is not read at all: its pages show their manual labels or none.
+
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: BookRepositories
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :param pages: The pages to number, in book order.
+        :type pages: Sequence[Page]
+        :returns: The numbering of the pages, and of every other page of a book with sections.
+        :rtype: Numbering
+        """
+        sections = repos.pagination_sections.list_for_project(project_id)
+        return Pagination(sections, book_pages(repos.pages, project_id) if sections else pages).numbering()
+
+    def watching(self, repos: BookRepositories, project_id: ProjectId) -> LabelWatch:
+        """Watch the labels of the pages of a book for the ones a block of code changes.
+
+        :param repos: Repositories of the transaction the block runs in.
+        :type repos: BookRepositories
+        :param project_id: Project whose sections the block changes.
+        :type project_id: ProjectId
+        :returns: The watch, which is entered with ``with`` around the block, inside the work of the caller.
+        :rtype: LabelWatch
+        """
+        return LabelWatch(repos=repos, project_id=project_id)
+
+    async def announce(self, project_id: ProjectId, page_ids: Sequence[PageId]) -> None:
+        """Tell the browser which pages were renumbered, after the transaction ended.
 
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
+        :param page_ids: The pages whose label changed, none for a change that renumbered nothing.
+        :type page_ids: Sequence[PageId]
         """
-        if not self._renumbered:
-            return
-        page_ids, self._renumbered = self._renumbered, []
-        await self._publisher.publish(
-            PagesChanged(project_id=project_id, page_ids=list(dict.fromkeys(page_ids)), change=PageChange.EDITED)
-        )
+        if page_ids:
+            await self._publisher.publish(
+                PagesChanged(project_id=project_id, page_ids=list(page_ids), change=PageChange.EDITED)
+            )
 
     def _hand_over(
         self,
@@ -153,3 +171,61 @@ class PageLabels:
             else:
                 settled.append(repos.pagination_sections.update(moved))
         return settled
+
+
+class LabelWatch:
+    """Finds the pages whose label a block of code changes, by reading the labels of the book before and after it.
+
+    The watch is a synchronous context manager entered inside the work of ``change_book``, and the caller announces
+    the pages after the work. A block that raises finds nothing.
+
+    :ivar renumbered: The pages whose label changed, in book order, which are none until a block ends without an error.
+    """
+
+    def __init__(self, *, repos: BookRepositories, project_id: ProjectId) -> None:
+        """Watch the labels of a project through the repositories of the caller's transaction.
+
+        :param repos: Repositories of the transaction the block runs in.
+        :type repos: BookRepositories
+        :param project_id: Project whose sections the block changes.
+        :type project_id: ProjectId
+        """
+        self._repos = repos
+        self._project_id = project_id
+        self._before: dict[PageId, str] = {}
+        self.renumbered: list[PageId] = []
+
+    def __enter__(self) -> Self:
+        """Read the labels the pages show before the block.
+
+        :returns: The watch itself.
+        :rtype: Self
+        """
+        self._before = self._labels()
+        return self
+
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
+    ) -> None:
+        """Compare the labels after a block that ended without an error with those before it.
+
+        :param exc_type: Type of the exception the block raised, or None.
+        :type exc_type: type[BaseException] | None
+        :param exc_value: The exception the block raised, or None.
+        :type exc_value: BaseException | None
+        :param traceback: Traceback of the exception, or None.
+        :type traceback: TracebackType | None
+        """
+        if exc_type is not None:
+            return
+        after = self._labels()
+        self.renumbered = [page_id for page_id, label in after.items() if self._before.get(page_id) != label]
+
+    def _labels(self) -> dict[PageId, str]:
+        """Compute the label every page of the book shows.
+
+        :returns: The label of every page by identifier, in book order.
+        :rtype: dict[PageId, str]
+        """
+        sections = self._repos.pagination_sections.list_for_project(self._project_id)
+        return Pagination(sections, book_pages(self._repos.pages, self._project_id)).labels()

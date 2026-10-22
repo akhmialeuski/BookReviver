@@ -171,8 +171,8 @@ class PageChanges:
         :rtype: Page
         """
         given = {name: value for name, value in asdict(self, recurse=False).items() if value is not None}
-        if self.label is not None:
-            given['label_manual'] = bool(self.label)
+        if (label := given.pop('label', None)) is not None:
+            given['manual_label'] = label or None
         # A leaf stands in place of the scan of a blank page only
         if self.kind is not None and self.kind is not PageKind.BLANK:
             given['blank_fill'] = BlankFill.SCAN

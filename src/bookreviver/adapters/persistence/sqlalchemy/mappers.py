@@ -291,15 +291,14 @@ class PageMapper(RowMapper[Page, PageRow]):
 
         :param row: Page row loaded from the database.
         :type row: PageRow
-        :returns: Page with its order key, label, kind, origin and scan.
+        :returns: Page with its order key, manual label, kind, origin and scan.
         :rtype: Page
         """
         return Page(
             id=PageId(row.id),
             project_id=ProjectId(row.project_id),
             order_key=row.order_key,
-            label=row.label,
-            label_manual=row.label_manual,
+            manual_label=row.manual_label,
             kind=row.kind,
             content_type=row.content_type,
             content_by_hand=row.content_by_hand,
@@ -327,8 +326,7 @@ class PageMapper(RowMapper[Page, PageRow]):
             id=entity.id,
             project_id=entity.project_id,
             order_key=entity.order_key,
-            label=entity.label,
-            label_manual=entity.label_manual,
+            manual_label=entity.manual_label,
             kind=entity.kind,
             content_type=entity.content_type,
             content_by_hand=entity.content_by_hand,

@@ -1205,7 +1205,7 @@ class TestPageRepository:
         project = make_project()
         book = [make_page(project_id=project.id, order_key=key) for key in (KEY_A0, KEY_A1)]
         await store_project(fx_uow(), project, *book, owner=await fx_new_owner())
-        moved = [evolve(page, label=PAGE_LABEL, included=False) for page in book]
+        moved = [evolve(page, manual_label=PAGE_LABEL, included=False) for page in book]
 
         def update_and_read(repos: BookRepositories, _project: Project) -> list[Page]:
             """Update both pages, then read them back in the same transaction.
@@ -1271,7 +1271,7 @@ class TestPageRepository:
         page = make_page(project_id=project.id)
         await store_project(fx_uow(), project, page, owner=await fx_new_owner())
         changed = evolve(
-            page, order_key=KEY_A0_UPPER, label=PAGE_LABEL, kind=PageKind.TITLE, included=False, notes='Stamp'
+            page, order_key=KEY_A0_UPPER, manual_label=PAGE_LABEL, kind=PageKind.TITLE, included=False, notes='Stamp'
         )
         await fx_uow().change_book(project.id, lambda repos, _project: repos.pages.update(changed))
         assert await fx_uow().read_book(page.project_id, lambda repos: repos.pages.get(page.id)) == changed

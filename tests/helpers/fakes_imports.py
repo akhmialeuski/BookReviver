@@ -27,6 +27,7 @@ from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ImagingSettings
+from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.values import SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
@@ -92,6 +93,12 @@ class StoredBook(NamedTuple):
     scans: list[Scan]
     pages: list[Page]
     sections: list[PaginationSection]
+
+    @property
+    def labels(self) -> list[str]:
+        """The labels the pages show, in book order, computed from the sections as a read of the pages does."""
+        labels = Pagination(self.sections, self.pages).labels()
+        return [labels[page.id] for page in self.pages]
 
 
 async def stored_book(uow: UnitOfWork, project_id: ProjectId) -> StoredBook:

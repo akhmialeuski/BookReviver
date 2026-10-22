@@ -87,8 +87,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
             make_page(project_id=project.id, order_key=key),
             kind=kind,
             included=included,
-            label=STALE_LABEL,
-            label_manual=True,
+            manual_label=STALE_LABEL,
             notes='Kept',
         )
         for key, (kind, included) in zip(keys, LAYOUT, strict=True)

@@ -952,7 +952,7 @@ class TestChangeWait:
             :param _project: Project of the book, which the work does not need.
             :type _project: Project
             """
-            repos.pages.update(evolve(repos.pages.get(page.id), label=FIRST_LABEL))
+            repos.pages.update(evolve(repos.pages.get(page.id), manual_label=FIRST_LABEL))
 
         def note_page(repos: BookRepositories, _project: Project) -> None:
             """Read the page and write its notes.
@@ -970,7 +970,7 @@ class TestChangeWait:
             tasks.start_soon(second.change_book, project_id, note_page)
             await anyio.wait_all_tasks_blocked()
         stored = await fx_uow().read_book(project_id, lambda repos: repos.pages.get(page.id))
-        assert (stored.label, stored.notes) == (FIRST_LABEL, STAMP)
+        assert (stored.manual_label, stored.notes) == (FIRST_LABEL, STAMP)
 
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)
     async def test_changes_waiting_for_one_holder_run_in_the_order_they_asked(

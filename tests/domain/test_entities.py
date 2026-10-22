@@ -182,6 +182,12 @@ class TestPage:
         page = evolve(make_page(project_id=make_project().id), origin=PageOrigin.SCAN)
         assert (page.origin, page.scan_id) == (PageOrigin.SCAN, None)
 
+    def test_an_empty_manual_label_is_refused(self) -> None:
+        """Verify a manual label is never empty, since None is what leaves the number to the sections."""
+        page = make_page(project_id=make_project().id)
+        with pytest.raises(ValueError, match='manual_label'):
+            evolve(page, manual_label='')
+
 
 class TestPageVersion:
     """Tests for PageVersion invariants."""
@@ -402,7 +408,11 @@ class TestPageContent:
 
 
 class TestRecipe:
-    """Tests for Recipe."""
+    """Tests for Recipe.
+
+    :ivar ON: A step that is enabled.
+    :ivar OFF: A step that is disabled.
+    """
 
     ON: Step = Step(processor_key='geometry.on')
     OFF: Step = Step(processor_key='geometry.off', enabled=False)

@@ -109,9 +109,9 @@ class TestProjectMapper:
     """Tests for ProjectMapper."""
 
     async def test_every_field_survives_the_database(self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId) -> None:
-        """Verify a project with a full description, a lossless policy and a cover page reads back unchanged.
+        """Verify a project with a full description, and a lossless policy reads back unchanged.
 
-        :param fx_database: Fresh SQLite database with every table created.
+        :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
@@ -144,7 +144,7 @@ class TestPageMapper:
     async def test_every_field_survives_the_database(self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId) -> None:
         """Verify an excluded right half of a spread with its label, kind and notes reads back unchanged.
 
-        :param fx_database: Fresh SQLite database with every table created.
+        :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
@@ -154,7 +154,7 @@ class TestPageMapper:
         scan = make_scan(source=source, number=11)
         page = evolve(
             make_page(project_id=project.id, order_key='a0V', scan=scan),
-            label=ROMAN_LABEL,
+            manual_label=ROMAN_LABEL,
             kind=PageKind.PLATE,
             slot=2,
             included=False,
@@ -179,7 +179,7 @@ class TestPageVersionMapper:
     ) -> None:
         """Verify a split version with its input, parameters, crop transform, data and renditions reads back unchanged.
 
-        :param fx_database: Fresh SQLite database with every table created.
+        :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
@@ -219,7 +219,7 @@ class TestPageVersionMapper:
     ) -> None:
         """Verify each kind of transform reads back with its argument.
 
-        :param fx_database: Fresh SQLite database with every table created.
+        :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
@@ -242,7 +242,7 @@ class TestSourceMapper:
     async def test_every_field_survives_the_database(self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId) -> None:
         """Verify an indirect DjVu source with its files, metadata and suggestion reads back unchanged.
 
-        :param fx_database: Fresh SQLite database with every table created.
+        :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
@@ -277,7 +277,7 @@ class TestSourceMapper:
     ) -> None:
         """Verify a rejected or skipped file with no kind and no type, a reason and a detail reads back unchanged.
 
-        :param fx_database: Fresh SQLite database with every table created.
+        :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
@@ -307,7 +307,7 @@ class TestScanMapper:
     async def test_every_field_survives_the_database(self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId) -> None:
         """Verify a scan with every fact, a label and ready renditions reads back equal to what was stored.
 
-        :param fx_database: Fresh SQLite database with every table created.
+        :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId

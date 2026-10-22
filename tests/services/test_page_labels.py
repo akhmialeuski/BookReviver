@@ -68,8 +68,7 @@ async def _commit_book(uow: UnitOfWork, owner: Actor) -> tuple[Project, list[Pag
             make_page(project_id=project.id, order_key=key),
             kind=kind,
             included=included,
-            label=STALE_LABEL,
-            label_manual=True,
+            manual_label=STALE_LABEL,
         )
         for key, (kind, included) in zip(keys, LAYOUT, strict=True)
     ]
@@ -158,7 +157,8 @@ class TestUpdate:
 
         stored = await fx_uow().read_book(project.id, lambda repos: repos.pages.get(pages[2].id))
         expect(
-            (stored.label, stored.kind, stored.included, stored.notes) == (NEW_LABEL, PageKind.OTHER, False, NEW_NOTES)
+            (stored.manual_label, stored.kind, stored.included, stored.notes)
+            == (NEW_LABEL, PageKind.OTHER, False, NEW_NOTES)
         )
         expect(stored.updated_at == LATER)
         expect((stored.id, stored.order_key, stored.scan_id) == (pages[2].id, pages[2].order_key, pages[2].scan_id))
@@ -217,8 +217,8 @@ class TestUpdate:
         await fx_service().update(fx_actor, project.id, pages[3].id, PageChanges(label=''))
 
         stored = (await _stored(fx_uow(), project.id))[pages[3].id]
-        assert evolve(stored, label=STALE_LABEL, label_manual=True, updated_at=EPOCH) == pages[3]
-        assert (stored.label, stored.label_manual) == ('', False)
+        assert evolve(stored, manual_label=STALE_LABEL, updated_at=EPOCH) == pages[3]
+        assert stored.manual_label is None
 
     async def test_missing_page_page_of_another_project_and_foreign_project_are_not_found(
         self,
@@ -251,7 +251,7 @@ class TestUpdate:
         with pytest.raises(NotFoundError):
             await fx_service().update(fx_actor, stranger.id, strangers_pages[0].id, PageChanges(label='1'))
         stored = await _stored(fx_uow(), project.id)
-        assert [stored[page.id].label for page in pages] == [STALE_LABEL] * len(pages)
+        assert [stored[page.id].manual_label for page in pages] == [STALE_LABEL] * len(pages)
 
 
 class TestConcurrentWrites:
