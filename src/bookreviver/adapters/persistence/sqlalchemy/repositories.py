@@ -35,8 +35,10 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import PROJECT_ID_COLUMN, LibraryRow, RecipeProfileRow
 from bookreviver.adapters.persistence.sqlalchemy.database import SQLITE_DIALECT
+from bookreviver.adapters.persistence.sqlalchemy.groups import PageGroups
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     BookPlaceMapper,
+    GroupValuesMapper,
     LibraryEntryMapper,
     PageHistoryMapper,
     PageMapper,
@@ -55,6 +57,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     BOOK_PLACE_ID,
     EMPTY_TEXT,
     BookPlaceRow,
+    GroupValuesRow,
     PageHistoryRow,
     PageRow,
     PageStageRow,
@@ -107,9 +110,10 @@ from bookreviver.domain.ids import (
     RecipeProfileId,
     ScanId,
     SourceId,
+    StepId,
 )
 from bookreviver.domain.stage_summaries import StageTally, StepTally
-from bookreviver.domain.step_values import StepValues, StepValuesKey
+from bookreviver.domain.step_values import StepValues
 from bookreviver.domain.values import PageSize, PageStageKey, PageStepKey, Slice
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
@@ -134,7 +138,7 @@ from bookreviver.ports.persistence import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterator, Mapping, Sequence
+    from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
     from datetime import datetime
 
     from advanced_alchemy.base import ModelProtocol
@@ -147,7 +151,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import (
         BookPlace,
     )
-    from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
+    from bookreviver.domain.ids import AccountId, ChangeBatchId
+    from bookreviver.domain.step_values import StepValuesKey
     from bookreviver.domain.values import ProcessorRef, SliceRequest
 
 
@@ -442,6 +447,12 @@ class StepValuesRows(RowRepository[StepValuesRow]):
     """Rows of the ``step_values`` table."""
 
     model_type = StepValuesRow
+
+
+class GroupValuesRows(RowRepository[GroupValuesRow]):
+    """Rows of the ``group_values`` table."""
+
+    model_type = GroupValuesRow
 
 
 class PageHistoryRows(RowRepository[PageHistoryRow]):
@@ -829,14 +840,16 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
                   have.
     """
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, groups: PageGroups) -> None:
         """Create the repository over the ``pages`` table.
 
         :param session: Session of the unit of work.
         :type session: Session
+        :param groups: The groups of the book on the session, which name the group of a page.
+        :type groups: PageGroups
         """
         pages = PageRows(session=session)
-        super().__init__(rows=pages, mapper=PageMapper())
+        super().__init__(rows=pages, mapper=PageMapper(groups))
         self._pages = pages
 
     @override
@@ -1500,76 +1513,200 @@ class SqlAlchemyPageStepStateRepository(
         return [self._mapper.to_entity(row) for row in rows]
 
 
-class SqlAlchemyStepValuesRepository(
-    SqlAlchemyKeyedRepository[StepValues, StepValuesKey, StepValuesRow], StepValuesRepository
-):
-    """The values of the steps for the odd pages, the even pages and the groups, addressed by project, step and part."""
+class SqlAlchemyStepValuesRepository(StepValuesRepository):
+    """The values of the steps for the odd pages, the even pages and the groups, addressed by step and part.
 
-    def __init__(self, session: Session) -> None:
-        """Create the repository over the ``step_values`` table.
+    The values of the odd and the even pages are rows of ``step_values`` and those of a group rows of
+    ``group_values``, so every key of a row is a primary key with no null in it. Each table has a keyed repository of
+    its own, and the key of the values says which one holds them.
+
+    :ivar _groups: The groups of the book on the session.
+    :ivar _parity_rows: The rows of the values of the odd and the even pages.
+    :ivar _group_rows: The rows of the values of the groups.
+    :ivar _parity_mapper: Translation of the values of the odd and the even pages.
+    :ivar _group_mapper: Translation of the values of a group.
+    :ivar _parity: The values of the odd and the even pages, under the primary key of their table.
+    :ivar _grouped: The values of the groups, under the primary key of their table.
+    """
+
+    def __init__(self, session: Session, groups: PageGroups) -> None:
+        """Create the repository over the ``step_values`` and the ``group_values`` tables.
 
         :param session: Session of the unit of work.
         :type session: Session
+        :param groups: The groups of the book on the session, which name the group of the values of a group.
+        :type groups: PageGroups
         """
-        super().__init__(rows=StepValuesRows(session=session), mapper=StepValuesMapper())
+        self._groups = groups
+        self._parity_rows = StepValuesRows(session=session)
+        self._group_rows = GroupValuesRows(session=session)
+        self._parity_mapper = StepValuesMapper()
+        self._group_mapper = GroupValuesMapper(groups)
+        self._parity = SqlAlchemyKeyedRepository[StepValues, tuple[StepId, ValueScope], StepValuesRow](
+            rows=self._parity_rows, mapper=self._parity_mapper
+        )
+        self._grouped = SqlAlchemyKeyedRepository[StepValues, tuple[StepId, int], GroupValuesRow](
+            rows=self._group_rows, mapper=self._group_mapper
+        )
 
-    @staticmethod
-    def _primary_key(key: StepValuesKey) -> tuple[StepId, ValueScope, str]:
-        """Order a key as the columns of the primary key of the table.
+    def _group_key(self, key: StepValuesKey) -> tuple[StepId, int]:
+        """Order the key of the values of a group as the primary key of ``group_values``.
 
-        :param key: The step and the part of the pages.
+        :param key: Key of the values of a group.
         :type key: StepValuesKey
-        :returns: The primary key of the row, as the row repository takes a composite key.
-        :rtype: tuple[StepId, ValueScope, str]
+        :returns: The step and the key of the group.
+        :rtype: tuple[StepId, int]
+        :raises NotFoundError: If the book has no group of this label, so no values are stored for it.
         """
-        return key.step_id, key.scope, key.group_label
+        if (group_id := self._groups.find(key.group_label)) is None:
+            raise NotFoundError(key)
+        return key.step_id, group_id
+
+    def _each_table(
+        self,
+        entities: Sequence[StepValues],
+        write: Callable[[KeyedRepository[StepValues, Any], Sequence[StepValues]], Sequence[StepValues]],
+    ) -> Sequence[StepValues]:
+        """Write the values of the odd and the even pages and the values of the groups each to its table.
+
+        :param entities: The values to write.
+        :type entities: Sequence[StepValues]
+        :param write: The write of several values to one table.
+        :type write: Callable[[KeyedRepository[StepValues, Any], Sequence[StepValues]], Sequence[StepValues]]
+        :returns: The values as stored, in the given order.
+        :rtype: Sequence[StepValues]
+        """
+        parity = [values for values in entities if values.scope is not ValueScope.GROUP]
+        grouped = [values for values in entities if values.scope is ValueScope.GROUP]
+        stored = {values.key: values for values in (*write(self._parity, parity), *write(self._grouped, grouped))}
+        return [stored[values.key] for values in entities]
 
     @override
     def get(self, entity_id: StepValuesKey) -> StepValues:
         """Return the values one part of the pages has for one step.
 
-        :param entity_id: The project, the step and the part of the pages.
+        :param entity_id: The step and the part of the pages.
         :type entity_id: StepValuesKey
         :returns: The stored values.
         :rtype: StepValues
         :raises NotFoundError: If the part changes no field of the step.
         """
-        row = self._rows.get(self._primary_key(entity_id))
-        return self._mapper.to_entity(row)
+        if entity_id.scope is ValueScope.GROUP:
+            return self._grouped.get(self._group_key(entity_id))
+        return self._parity.get((entity_id.step_id, entity_id.scope))
+
+    @override
+    def find(self, key: StepValuesKey) -> StepValues | None:
+        """Return the values one part of the pages has for one step, read as :meth:`get` reads them.
+
+        :param key: The step and the part of the pages.
+        :type key: StepValuesKey
+        :returns: The values, or None.
+        :rtype: StepValues | None
+        """
+        try:
+            return self.get(key)
+        except NotFoundError:
+            return None
+
+    @override
+    def add(self, entity: StepValues) -> StepValues:
+        """Store the values of a part of the pages that has none for the step yet.
+
+        :param entity: The values to store.
+        :type entity: StepValues
+        :returns: The values as stored.
+        :rtype: StepValues
+        :raises ConflictError: If the part has values for the step already.
+        """
+        [stored] = self.add_many([entity])
+        return stored
+
+    @override
+    def add_many(self, entities: Sequence[StepValues]) -> Sequence[StepValues]:
+        """Store the values of several parts of the pages that have none for their steps yet.
+
+        :param entities: The values to store.
+        :type entities: Sequence[StepValues]
+        :returns: The values as stored, in the given order.
+        :rtype: Sequence[StepValues]
+        :raises ConflictError: If a part has values for its step already.
+        """
+        return self._each_table(entities, lambda table, part: table.add_many(part))
+
+    @override
+    def update(self, entity: StepValues) -> StepValues:
+        """Replace the values a part of the pages has for a step.
+
+        :param entity: The values with their new fields.
+        :type entity: StepValues
+        :returns: The values as stored.
+        :rtype: StepValues
+        :raises NotFoundError: If the part has no values for the step.
+        """
+        if entity.scope is ValueScope.GROUP:
+            self._group_key(entity.key)
+            return self._grouped.update(entity)
+        return self._parity.update(entity)
+
+    @override
+    def save_many(self, entities: Sequence[StepValues]) -> Sequence[StepValues]:
+        """Store the values of several parts of the pages, each replacing those under its key, all of them or none.
+
+        :param entities: The values to store.
+        :type entities: Sequence[StepValues]
+        :returns: The values as stored, in the given order.
+        :rtype: Sequence[StepValues]
+        """
+        return self._each_table(entities, lambda table, part: table.save_many(part))
 
     @override
     def delete(self, entity_id: StepValuesKey) -> None:
         """Remove the values one part of the pages has for one step.
 
-        :param entity_id: The project, the step and the part of the pages.
+        :param entity_id: The step and the part of the pages.
         :type entity_id: StepValuesKey
         :raises NotFoundError: If the part changes no field of the step.
         """
-        self._rows.delete(self._primary_key(entity_id))
+        if entity_id.scope is ValueScope.GROUP:
+            self._grouped.delete(self._group_key(entity_id))
+        else:
+            self._parity.delete((entity_id.step_id, entity_id.scope))
+
+    def _listed(self, **filters: Any) -> list[StepValues]:
+        """Read the values of both tables that match the filters, ordered by step, scope and group.
+
+        :param filters: Column values every row read has.
+        :type filters: Any
+        :returns: The values.
+        :rtype: list[StepValues]
+        """
+        order = list(ValueScope)
+        found = [
+            *(self._parity_mapper.to_entity(row) for row in self._parity_rows.get_many(**filters)),
+            *(self._group_mapper.to_entity(row) for row in self._group_rows.get_many(**filters)),
+        ]
+        return sorted(found, key=lambda values: (str(values.step_id), order.index(values.scope), values.group_label))
 
     @override
     def list_for_step(self, step_id: StepId) -> Sequence[StepValues]:
-        """Return the values every part of the pages of a project has for one step, by scope and group.
+        """Return the values every part of the pages has for one step, by scope and group.
 
-        :param step_id: The step of a recipe.
+        :param step_id: The step.
         :type step_id: StepId
         :returns: The values of the step.
         :rtype: Sequence[StepValues]
         """
-        order = list(ValueScope)
-        found = [self._mapper.to_entity(row) for row in self._rows.get_many(step_id=step_id)]
-        return sorted(found, key=lambda values: (order.index(values.scope), values.group_label))
+        return self._listed(step_id=step_id)
 
     @override
     def list_all(self) -> Sequence[StepValues]:
-        """Return the values of every step of a project, by step, scope and group.
+        """Return the values of every step of the book, by step, scope and group.
 
-        :returns: The values of the project.
+        :returns: The values of the book.
         :rtype: Sequence[StepValues]
         """
-        order = list(ValueScope)
-        found = [self._mapper.to_entity(row) for row in self._rows.get_many()]
-        return sorted(found, key=lambda values: (str(values.step_id), order.index(values.scope), values.group_label))
+        return self._listed()
 
 
 class SqlAlchemyPageHistoryRepository(
@@ -1577,13 +1714,15 @@ class SqlAlchemyPageHistoryRepository(
 ):
     """The history of the layers of the steps of the pages."""
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, groups: PageGroups) -> None:
         """Create the repository over the ``page_history`` table.
 
         :param session: Session of the unit of work.
         :type session: Session
+        :param groups: The groups of the book on the session, which name the group of a change of a group.
+        :type groups: PageGroups
         """
-        super().__init__(rows=PageHistoryRows(session=session), mapper=PageHistoryMapper())
+        super().__init__(rows=PageHistoryRows(session=session), mapper=PageHistoryMapper(groups))
 
     @override
     def add(self, entity: PageHistoryEntry) -> PageHistoryEntry:
@@ -1837,6 +1976,7 @@ class SqlAlchemyBookRepositories(BookRepositories):
     :ivar scans: Scan repository bound to the session.
     :ivar pages: Page repository bound to the session.
     :ivar pagination_sections: Pagination section repository bound to the session.
+    :ivar groups: The groups of the pages of the book on the session, which the unit of work prunes after a change.
     :ivar page_versions: Page version repository bound to the session.
     :ivar page_stages: Page stage repository bound to the session.
     :ivar page_step_states: Page step state repository bound to the session.
@@ -1852,15 +1992,16 @@ class SqlAlchemyBookRepositories(BookRepositories):
         :param session: Session of the transaction, owned and closed by the database that runs the work.
         :type session: Session
         """
+        self.groups = PageGroups(session)
         self.projects = SqlAlchemyProjectRepository(session)
         self.sources = SqlAlchemySourceRepository(session)
         self.scans = SqlAlchemyScanRepository(session)
-        self.pages = SqlAlchemyPageRepository(session)
+        self.pages = SqlAlchemyPageRepository(session, self.groups)
         self.pagination_sections = SqlAlchemyPaginationSectionRepository(session)
         self.page_versions = SqlAlchemyPageVersionRepository(session)
         self.page_stages = SqlAlchemyPageStageRepository(session)
         self.page_step_states = SqlAlchemyPageStepStateRepository(session)
-        self.page_history = SqlAlchemyPageHistoryRepository(session)
-        self.step_values = SqlAlchemyStepValuesRepository(session)
+        self.page_history = SqlAlchemyPageHistoryRepository(session, self.groups)
+        self.step_values = SqlAlchemyStepValuesRepository(session, self.groups)
         self.recipes = SqlAlchemyRecipeRepository(session)
         self.book_places = SqlAlchemyBookPlaceRepository(session)

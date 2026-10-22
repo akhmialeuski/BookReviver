@@ -23,6 +23,7 @@ from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow, Re
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     BOOK_PLACE_ID,
     BookPlaceRow,
+    GroupValuesRow,
     PageHistoryRow,
     PageRow,
     PageStageRow,
@@ -51,7 +52,7 @@ from bookreviver.domain.entities import (
     Scan,
     Source,
 )
-from bookreviver.domain.enums import ContributorRole, IdentifierScheme, PageKind, TransformKind
+from bookreviver.domain.enums import ContributorRole, IdentifierScheme, PageKind, TransformKind, ValueScope
 from bookreviver.domain.geometry import Point, Quad, Transform, geometry_from_data
 from bookreviver.domain.ids import (
     AccountId,
@@ -84,6 +85,8 @@ from bookreviver.domain.values import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+    from bookreviver.adapters.persistence.sqlalchemy.groups import PageGroups
 
 
 def contributors_to_json(contributors: Sequence[Contributor]) -> list[dict[str, str]]:
@@ -281,7 +284,18 @@ class ProjectMapper(RowMapper[Project, ProjectRow]):
 
 
 class PageMapper(RowMapper[Page, PageRow]):
-    """Translation of a page of the book, whose fields are page columns one to one."""
+    """Translation of a page of the book, whose fields are page columns one to one but for the group, named by its key.
+
+    :ivar _groups: The groups of the book.
+    """
+
+    def __init__(self, groups: PageGroups) -> None:
+        """Create the mapper over the groups of the book of the session.
+
+        :param groups: The groups of the book, which translate a label into the key of its row and back.
+        :type groups: PageGroups
+        """
+        self._groups = groups
 
     @override
     def to_entity(self, row: PageRow) -> Page:
@@ -305,7 +319,7 @@ class PageMapper(RowMapper[Page, PageRow]):
             blank_fill=row.blank_fill,
             included=row.included,
             notes=row.notes,
-            group_label=row.group_label,
+            group_label=self._groups.label_of(row.group_id),
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
@@ -332,7 +346,7 @@ class PageMapper(RowMapper[Page, PageRow]):
             blank_fill=entity.blank_fill,
             included=entity.included,
             notes=entity.notes,
-            group_label=entity.group_label,
+            group_id=self._groups.key_of(entity.group_label),
             created_at=entity.created_at,
             updated_at=entity.updated_at,
         )
@@ -709,7 +723,18 @@ class PageStepStateMapper(RowMapper[PageStepState, PageStepStateRow]):
 
 
 class PageHistoryMapper(RowMapper[PageHistoryEntry, PageHistoryRow]):
-    """Translation of a change of a layer of a step, whose values are stored as JSON objects."""
+    """Translation of a change of a layer of a step, whose values are stored as JSON objects and group by its key.
+
+    :ivar _groups: The groups of the book.
+    """
+
+    def __init__(self, groups: PageGroups) -> None:
+        """Create the mapper over the groups of the book of the session.
+
+        :param groups: The groups of the book, which translate a label into the key of its row and back.
+        :type groups: PageGroups
+        """
+        self._groups = groups
 
     @override
     def to_entity(self, row: PageHistoryRow) -> PageHistoryEntry:
@@ -727,7 +752,7 @@ class PageHistoryMapper(RowMapper[PageHistoryEntry, PageHistoryRow]):
             step_id=StepId(row.step_id),
             layer=row.layer,
             scope=row.scope,
-            group_label=row.group_label,
+            group_label=self._groups.label_of(row.group_id),
             before=row.before,
             after=row.after,
             source=row.source,
@@ -753,7 +778,7 @@ class PageHistoryMapper(RowMapper[PageHistoryEntry, PageHistoryRow]):
             step_id=entity.step_id,
             layer=entity.layer,
             scope=entity.scope,
-            group_label=entity.group_label,
+            group_id=self._groups.key_of(entity.group_label),
             before=None if entity.before is None else dict(entity.before),
             after=None if entity.after is None else dict(entity.after),
             source=entity.source,
@@ -765,39 +790,83 @@ class PageHistoryMapper(RowMapper[PageHistoryEntry, PageHistoryRow]):
 
 
 class StepValuesMapper(RowMapper[StepValues, StepValuesRow]):
-    """Translation of the values of a step for a part of the pages, whose fields are stored as a JSON object."""
+    """Translation of the values of a step for the odd or the even pages, whose fields are stored as a JSON object."""
 
     @override
     def to_entity(self, row: StepValuesRow) -> StepValues:
         """Build the values stored in ``row``.
 
-        :param row: Step values row loaded from the database.
+        :param row: Row of the values loaded from the database.
         :type row: StepValuesRow
-        :returns: The values.
+        :returns: The values of the step for the odd or the even pages.
         :rtype: StepValues
         """
         return StepValues(
-            stage=row.stage,
-            step_id=StepId(row.step_id),
-            scope=row.scope,
-            group_label=row.group_label,
-            params=row.params,
-            updated_at=row.updated_at,
+            stage=row.stage, step_id=StepId(row.step_id), scope=row.scope, params=row.params, updated_at=row.updated_at
         )
 
     @override
     def to_row(self, entity: StepValues) -> StepValuesRow:
         """Build the row of ``entity``.
 
-        :param entity: Values to store.
+        :param entity: Values of the odd or the even pages to store.
         :type entity: StepValues
-        :returns: Transient step values row.
+        :returns: Transient row of the values.
         :rtype: StepValuesRow
         """
         return StepValuesRow(
             step_id=entity.step_id,
             scope=entity.scope,
-            group_label=entity.group_label,
+            stage=entity.stage,
+            params=dict(entity.params),
+            updated_at=entity.updated_at,
+        )
+
+
+class GroupValuesMapper(RowMapper[StepValues, GroupValuesRow]):
+    """Translation of the values of a step for a group, whose group is named by its key.
+
+    :ivar _groups: The groups of the book.
+    """
+
+    def __init__(self, groups: PageGroups) -> None:
+        """Create the mapper over the groups of the book of the session.
+
+        :param groups: The groups of the book, which translate a label into the key of its row and back.
+        :type groups: PageGroups
+        """
+        self._groups = groups
+
+    @override
+    def to_entity(self, row: GroupValuesRow) -> StepValues:
+        """Build the values stored in ``row``.
+
+        :param row: Row of the values loaded from the database.
+        :type row: GroupValuesRow
+        :returns: The values of the step for the group.
+        :rtype: StepValues
+        """
+        return StepValues(
+            stage=row.stage,
+            step_id=StepId(row.step_id),
+            scope=ValueScope.GROUP,
+            group_label=self._groups.label_of(row.group_id),
+            params=row.params,
+            updated_at=row.updated_at,
+        )
+
+    @override
+    def to_row(self, entity: StepValues) -> GroupValuesRow:
+        """Build the row of ``entity``, making its group when the book has none of this label yet.
+
+        :param entity: Values of a group to store.
+        :type entity: StepValues
+        :returns: Transient row of the values.
+        :rtype: GroupValuesRow
+        """
+        return GroupValuesRow(
+            step_id=entity.step_id,
+            group_id=self._groups.key_of(entity.group_label),
             stage=entity.stage,
             params=dict(entity.params),
             updated_at=entity.updated_at,

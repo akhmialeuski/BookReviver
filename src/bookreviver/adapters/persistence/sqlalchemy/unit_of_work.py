@@ -173,7 +173,10 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
 
     @staticmethod
     def _work_on_book[T](project_id: ProjectId, work: Callable[[BookRepositories, Project], T], session: Session) -> T:
-        """Read the project of a book on the session of a change, and hand it with the repositories to the work.
+        """Read the project of a book on the session of a change, hand it with the repositories to the work, then prune.
+
+        A group of pages is made by the first row that names it, so once the work is done the groups no row names any
+        longer are removed in the same transaction.
 
         :param project_id: Project whose book is changed.
         :type project_id: ProjectId
@@ -186,7 +189,9 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         :raises NotFoundError: If the project is not stored.
         """
         repositories = SqlAlchemyBookRepositories(session)
-        return work(repositories, repositories.projects.get(project_id))
+        done = work(repositories, repositories.projects.get(project_id))
+        repositories.groups.prune()
+        return done
 
     async def read_session[T](self, work: Callable[[Session], T]) -> T:
         """Run ``work`` over a session of the catalogue that only reads, which is not part of the port.
