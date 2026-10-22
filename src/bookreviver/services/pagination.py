@@ -16,7 +16,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from attrs import evolve, frozen
+from attrs import asdict, evolve, frozen
 
 from bookreviver.domain.entities import PaginationSection
 from bookreviver.domain.enums import LabelStyle, NumberDisplay
@@ -146,13 +146,7 @@ class PaginationService:
         moment = self._clock.now()
         section = PaginationSection(
             id=PaginationSectionId(uuid4()),
-            first_page_id=draft.first_page_id,
-            name=draft.name,
-            style=draft.style,
-            start=draft.start,
-            prefix=draft.prefix,
-            display=draft.display,
-            kinds=draft.kinds,
+            **asdict(draft, recurse=False),
             created_at=moment,
             updated_at=moment,
         )
@@ -217,13 +211,7 @@ class PaginationService:
             """
             section = evolve(
                 repos.pagination_sections.get(section_id),
-                first_page_id=draft.first_page_id,
-                name=draft.name,
-                style=draft.style,
-                start=draft.start,
-                prefix=draft.prefix,
-                display=draft.display,
-                kinds=draft.kinds,
+                **asdict(draft, recurse=False),
                 updated_at=self._clock.now(),
             )
             repos.pages.get(section.first_page_id)
