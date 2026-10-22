@@ -233,7 +233,7 @@ class TestPageValues:
         await values.set(key, STRENGTH_PARAMETER, STRONGER)
         await values.set(key, FAILING_PARAMETER, NOT_FAILING)
         history = await fx_kit.uow().read_book(
-            project.id, lambda repos: repos.page_step_changes.list_for_page(page.id, Stage.GEOMETRY)
+            project.id, lambda repos: repos.page_history.list_for_page(page.id, Stage.GEOMETRY)
         )
         expect(
             [(change.before, change.after) for change in history]
@@ -259,7 +259,7 @@ class TestPageValues:
         await run_stage(fx_kit, actor, project, GEOMETRY_RUN)
         again = await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         record = await stage_of(fx_kit, project.id, page, Stage.GEOMETRY)
-        history = await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_changes.list_for_page(page.id))
+        history = await fx_kit.uow().read_book(project.id, lambda repos: repos.page_history.list_for_page(page.id))
         expect(record.state is StageState.FRESH)
         expect(again.changes == ())
         expect(len(history) == 1)
@@ -278,7 +278,7 @@ class TestPageValues:
         with pytest.raises(InvalidParametersError):
             await PageValues(fx_kit, actor, project.id).set(key, UNKNOWN_FIELD, 1)
         state, history = await fx_kit.uow().read_book(
-            project.id, lambda repos: (repos.page_step_states.find(key), repos.page_step_changes.list_for_page(page.id))
+            project.id, lambda repos: (repos.page_step_states.find(key), repos.page_history.list_for_page(page.id))
         )
         expect(state is None)
         expect(history == [])
@@ -356,7 +356,7 @@ class TestTakingAPageValueBack:
         await run_stage(fx_kit, actor, project, GEOMETRY_RUN)
         await values.take_back(key, STRENGTH_PARAMETER)
         record = await stage_of(fx_kit, project.id, page, Stage.GEOMETRY)
-        history = await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_changes.list_for_page(page.id))
+        history = await fx_kit.uow().read_book(project.id, lambda repos: repos.page_history.list_for_page(page.id))
         expect(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.find(key)) is None)
         expect(record.state is StageState.STALE)
         expect((history[-1].before, history[-1].after) == ({STRENGTH_PARAMETER: STRONGER}, None))

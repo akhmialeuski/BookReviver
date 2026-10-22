@@ -5,7 +5,7 @@ import {
   useMutation,
   useQueryClient,
 } from '@tanstack/react-query';
-import type { PagePageStepChangeSchema, PageStepChangeSchema, Stage } from '@/api';
+import type { PageHistoryEntrySchema, PagePageHistoryEntrySchema, Stage } from '@/api';
 import {
   clearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteMutation,
   listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetInfiniteOptions,
@@ -64,11 +64,11 @@ export function invalidatePageLayers(queryClient: QueryClient): Promise<void> {
 
 /** The changes loaded so far, the newest first, and how many the step has on the page in all. */
 interface LoadedHistory {
-  changes: readonly PageStepChangeSchema[];
+  changes: readonly PageHistoryEntrySchema[];
   total: number;
 }
 
-function loadedOf(data: InfiniteData<PagePageStepChangeSchema>): LoadedHistory {
+function loadedOf(data: InfiniteData<PagePageHistoryEntrySchema>): LoadedHistory {
   return { changes: data.pages.flatMap((page) => page.items), total: data.pages[0]?.total ?? 0 };
 }
 

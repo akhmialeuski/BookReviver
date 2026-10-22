@@ -529,7 +529,7 @@ export type CarryOverSchema = {
     /**
      * Changes
      */
-    changes: Array<PageStepChangeSchema>;
+    changes: Array<PageHistoryEntrySchema>;
     /**
      * Skipped
      */
@@ -1318,6 +1318,82 @@ export type PageEditSchema = {
 export type PageFilter = 'all' | 'check' | 'bad' | 'left-out' | 'wide';
 
 /**
+ * PageHistoryEntrySchema
+ *
+ * One change of a layer of a step on a page.
+ *
+ * :ivar id: Identifier of the change.
+ * :ivar page_id: Page the change was made on.
+ * :ivar stage: Stage of the step.
+ * :ivar step_id: Identifier of the step.
+ * :ivar layer: The layer that changed.
+ * :ivar scope: Whose settings the layer holds: the page's own, or the odd pages, the even pages or a group it takes.
+ * :ivar group_label: Label of the group for the scope of a group, and empty for the others.
+ * :ivar before: Content of the layer before the change, or None when it was empty.
+ * :ivar after: Content of the layer after the change, or None when the change emptied it.
+ * :ivar source: What made the change.
+ * :ivar batch_id: Identifier shared by the changes of one batch, which are undone together, or None.
+ * :ivar undoes: The change this one takes back, or None for a change that is not an undo.
+ * :ivar undone: Whether a later change took this one back, so it no longer stands.
+ * :ivar created_at: When the change was made.
+ * :ivar sequence: Place of the change in the history of its page.
+ */
+export type PageHistoryEntrySchema = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Page Id
+     */
+    page_id: string;
+    stage: Stage;
+    /**
+     * Step Id
+     */
+    step_id: string;
+    layer: StepLayer;
+    scope: ValueScope;
+    /**
+     * Group Label
+     */
+    group_label: string;
+    /**
+     * Before
+     */
+    before: {
+        [key: string]: unknown;
+    } | null;
+    /**
+     * After
+     */
+    after: {
+        [key: string]: unknown;
+    } | null;
+    source: ChangeSource;
+    /**
+     * Batch Id
+     */
+    batch_id: string | null;
+    /**
+     * Undoes
+     */
+    undoes: string | null;
+    /**
+     * Undone
+     */
+    undone?: boolean;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Sequence
+     */
+    sequence: number;
+};
+
+/**
  * PageKind
  *
  * Role of a page in the printed book.
@@ -1486,82 +1562,6 @@ export type PageStageSchema = {
  * Where one page stands in one stage: the state of its record, or that the stage has not run on it yet.
  */
 export type PageStageStatus = 'not-run' | 'fresh' | 'stale' | 'failed';
-
-/**
- * PageStepChangeSchema
- *
- * One change of a layer of a step on a page.
- *
- * :ivar id: Identifier of the change.
- * :ivar page_id: Page the change was made on.
- * :ivar stage: Stage of the step.
- * :ivar step_id: Identifier of the step.
- * :ivar layer: The layer that changed.
- * :ivar scope: Whose settings the layer holds: the page's own, or the odd pages, the even pages or a group it takes.
- * :ivar group_label: Label of the group for the scope of a group, and empty for the others.
- * :ivar before: Content of the layer before the change, or None when it was empty.
- * :ivar after: Content of the layer after the change, or None when the change emptied it.
- * :ivar source: What made the change.
- * :ivar batch_id: Identifier shared by the changes of one batch, which are undone together, or None.
- * :ivar undoes: The change this one takes back, or None for a change that is not an undo.
- * :ivar undone: Whether a later change took this one back, so it no longer stands.
- * :ivar created_at: When the change was made.
- * :ivar sequence: Place of the change in the history of its page.
- */
-export type PageStepChangeSchema = {
-    /**
-     * Id
-     */
-    id: string;
-    /**
-     * Page Id
-     */
-    page_id: string;
-    stage: Stage;
-    /**
-     * Step Id
-     */
-    step_id: string;
-    layer: StepLayer;
-    scope: ValueScope;
-    /**
-     * Group Label
-     */
-    group_label: string;
-    /**
-     * Before
-     */
-    before: {
-        [key: string]: unknown;
-    } | null;
-    /**
-     * After
-     */
-    after: {
-        [key: string]: unknown;
-    } | null;
-    source: ChangeSource;
-    /**
-     * Batch Id
-     */
-    batch_id: string | null;
-    /**
-     * Undoes
-     */
-    undoes: string | null;
-    /**
-     * Undone
-     */
-    undone?: boolean;
-    /**
-     * Created At
-     */
-    created_at: string;
-    /**
-     * Sequence
-     */
-    sequence: number;
-};
 
 /**
  * PageStepSettingsSchema
@@ -1812,13 +1812,13 @@ export type PagePageEditSchema = {
 };
 
 /**
- * Page[PageStageSchema]
+ * Page[PageHistoryEntrySchema]
  */
-export type PagePageStageSchema = {
+export type PagePageHistoryEntrySchema = {
     /**
      * Items
      */
-    items: Array<PageStageSchema>;
+    items: Array<PageHistoryEntrySchema>;
     /**
      * Total
      */
@@ -1838,13 +1838,13 @@ export type PagePageStageSchema = {
 };
 
 /**
- * Page[PageStepChangeSchema]
+ * Page[PageStageSchema]
  */
-export type PagePageStepChangeSchema = {
+export type PagePageStageSchema = {
     /**
      * Items
      */
-    items: Array<PageStepChangeSchema>;
+    items: Array<PageStageSchema>;
     /**
      * Total
      */
@@ -3755,7 +3755,7 @@ export type UndoneSchema = {
     /**
      * Changes
      */
-    changes: Array<PageStepChangeSchema>;
+    changes: Array<PageHistoryEntrySchema>;
 };
 
 /**
@@ -3802,7 +3802,7 @@ export type ValueChangesSchema = {
     /**
      * Changes
      */
-    changes: Array<PageStepChangeSchema>;
+    changes: Array<PageHistoryEntrySchema>;
 };
 
 /**
@@ -7087,7 +7087,7 @@ export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetRes
     /**
      * Successful Response
      */
-    200: PagePageStepChangeSchema;
+    200: PagePageHistoryEntrySchema;
 };
 
 export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetResponse = ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetResponses[keyof ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetResponses];

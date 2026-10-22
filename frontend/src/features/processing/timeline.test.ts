@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { PageStepChangeSchema } from '@/api';
+import type { PageHistoryEntrySchema } from '@/api';
 import { version } from '@/features/processing/fixtures';
 import type { HistoryEntry } from '@/features/processing/results';
 import { TimelineFilter, timelineOf } from '@/features/processing/timeline';
 
 /** The timeline merges the changes of a step and the results by time, narrows them by a filter, and says how far it is certain. */
 
-function change(id: string, at: string): PageStepChangeSchema {
+function change(id: string, at: string): PageHistoryEntrySchema {
   return {
     id,
     page_id: 'page',

@@ -1,4 +1,4 @@
-import type { PageStepChangeSchema } from '@/api';
+import type { PageHistoryEntrySchema } from '@/api';
 import type { HistoryEntry } from '@/features/processing/results';
 
 /**
@@ -27,7 +27,7 @@ export const TIMELINE_FILTERS: readonly TimelineFilter[] = Object.values(Timelin
 
 /** One row of the timeline: a change of the history or a result. */
 export type TimelineRow =
-  | { kind: 'change'; id: string; at: string; change: PageStepChangeSchema }
+  | { kind: 'change'; id: string; at: string; change: PageHistoryEntrySchema }
   | { kind: 'result'; id: string; at: string; entry: HistoryEntry };
 
 /** The rows a filter lets through, and what is known about the rows that are not loaded. */
@@ -54,7 +54,7 @@ export interface Timeline {
  * @param filter What the reader narrows the list to; Good and Bad keep the results with that mark.
  */
 export function timelineOf(
-  changes: readonly PageStepChangeSchema[],
+  changes: readonly PageHistoryEntrySchema[],
   changesTotal: number,
   results: readonly HistoryEntry[],
   filter: TimelineFilter,

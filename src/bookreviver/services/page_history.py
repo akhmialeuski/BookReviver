@@ -21,7 +21,7 @@ from uuid import uuid4
 
 from attrs import evolve
 
-from bookreviver.domain.entities import PageStepChange, PageStepState
+from bookreviver.domain.entities import PageHistoryEntry, PageStepState
 from bookreviver.domain.enums import ChangeSource, ValueScope
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.history import ClearedStep, StepHistory
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.domain.entities import Actor, PageStage, Project, Recipe
-    from bookreviver.domain.ids import PageId, PageStepChangeId, PageVersionId, ProjectId
+    from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId, ProjectId
     from bookreviver.domain.values import PageStepKey
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
@@ -94,8 +94,8 @@ class PageHistoryService:
         return await self._uow.read_book(project_id, lambda repos: self._history(repos, key))
 
     async def undo(
-        self, actor: Actor, project_id: ProjectId, key: PageStepKey, change_id: PageStepChangeId | None
-    ) -> Sequence[PageStepChange]:
+        self, actor: Actor, project_id: ProjectId, key: PageStepKey, change_id: PageHistoryEntryId | None
+    ) -> Sequence[PageHistoryEntry]:
         """Take back the newest change of a step on a page, or every change back to a chosen one.
 
         A change of a batch brings the rest of its batch with it, whatever page the rest is on.
@@ -108,9 +108,9 @@ class PageHistoryService:
         :type key: PageStepKey
         :param change_id: The oldest change to take back, which takes back every change after it as well, or None for
                           the newest change alone.
-        :type change_id: PageStepChangeId | None
+        :type change_id: PageHistoryEntryId | None
         :returns: The undos that were written, which are none when the step has no change to take back.
-        :rtype: Sequence[PageStepChange]
+        :rtype: Sequence[PageHistoryEntry]
         :raises NotFoundError: If the actor has no such project, the project has no such page, or the step has no
                                standing change with this identifier.
         :raises ConflictError: If a layer changed after the change that is taken back, which a later change of the
@@ -118,7 +118,7 @@ class PageHistoryService:
         """
         await self._library.open(actor, project_id)
 
-        def work(repos: BookRepositories, _project: Project) -> tuple[Sequence[PageStepChange], list[PageStage]]:
+        def work(repos: BookRepositories, _project: Project) -> tuple[Sequence[PageHistoryEntry], list[PageStage]]:
             """Write the undos, put the layers and the values back, and mark the stages of the pages stale.
 
             :param repos: Repositories of the transaction.
@@ -126,7 +126,7 @@ class PageHistoryService:
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             :returns: The undos that were written, and the stage records that became stale.
-            :rtype: tuple[Sequence[PageStepChange], list[PageStage]]
+            :rtype: tuple[Sequence[PageHistoryEntry], list[PageStage]]
             :raises NotFoundError: If the project has no such page, or the step has no
                                    standing change with this identifier.
             :raises ConflictError: If a layer changed after the change that is taken back.
@@ -140,7 +140,7 @@ class PageHistoryService:
             batch = ChangeBatchId(uuid4()) if len(targets) > 1 else None
             stored: dict[PageStepKey, PageStepState | None] = {}
             working: dict[PageStepKey, PageStepState] = {}
-            written: list[PageStepChange] = []
+            written: list[PageHistoryEntry] = []
             for target in targets:
                 if target.scope is not ValueScope.PAGES:
                     continue
@@ -156,7 +156,7 @@ class PageHistoryService:
                 working[target.key] = reverted
                 written.append(
                     evolve(
-                        PageStepChange.between(state, reverted, target.layer, ChangeSource.UNDO),
+                        PageHistoryEntry.between(state, reverted, target.layer, ChangeSource.UNDO),
                         batch_id=batch,
                         undoes=target.id,
                     )
@@ -168,7 +168,7 @@ class PageHistoryService:
                     repos.page_step_states.delete(state_key)
             undone, parts_stale = self._take_parts_back(repos, targets, moment, batch)
             written.extend(undone)
-            added = repos.page_step_changes.add_many(written)
+            added = repos.page_history.add_many(written)
             stale = [*parts_stale]
             for page_id, stage in dict.fromkeys((change.page_id, change.stage) for change in added):
                 stale.extend(self._records.mark_stale(repos, page_id, stage))
@@ -240,7 +240,7 @@ class PageHistoryService:
             stored = repos.page_step_states.find(key)
             if stored is not None:
                 repos.page_step_states.delete(key)
-            changes = repos.page_step_changes.delete_for_step(key)
+            changes = repos.page_history.delete_for_step(key)
             versions = repos.page_versions.list_for_page(key.page_id)
             chain = StepVersions.of(versions, key.stage, step_places(recipes, key.step_id))
             if stored is None and not changes and not chain.doomed:
@@ -296,7 +296,7 @@ class PageHistoryService:
         :raises NotFoundError: If the project has no such page.
         """
         repos.pages.get(key.page_id)
-        changes = repos.page_step_changes.list_for_page(key.page_id, key.stage)
+        changes = repos.page_history.list_for_page(key.page_id, key.stage)
         return StepHistory(tuple(change for change in changes if change.step_id == key.step_id))
 
     @staticmethod
@@ -323,10 +323,10 @@ class PageHistoryService:
     def _take_parts_back(
         self,
         repos: BookRepositories,
-        targets: Sequence[PageStepChange],
+        targets: Sequence[PageHistoryEntry],
         moment: datetime,
         batch: ChangeBatchId | None,
-    ) -> tuple[Sequence[PageStepChange], Sequence[PageStage]]:
+    ) -> tuple[Sequence[PageHistoryEntry], Sequence[PageStage]]:
         """Write back the values of the odd pages, the even pages and the groups that the targets changed.
 
         The values of a part of the pages are stored once, and every page they reached has a change of them in its
@@ -342,21 +342,21 @@ class PageHistoryService:
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
         :param targets: The changes taken back, of any scope, of which those of pages are left to the caller.
-        :type targets: Sequence[PageStepChange]
+        :type targets: Sequence[PageHistoryEntry]
         :param moment: When the changes are taken back.
         :type moment: datetime
         :param batch: The batch the undos of one action share, or None.
         :type batch: ChangeBatchId | None
         :returns: The undos of the changes of the parts of the pages, and the stage records of the pages that went
                   stale.
-        :rtype: tuple[Sequence[PageStepChange], Sequence[PageStage]]
+        :rtype: tuple[Sequence[PageHistoryEntry], Sequence[PageStage]]
         :raises ConflictError: If the values of a part changed after the changes, by a change that is not taken back.
         """
-        parts: dict[StepValuesKey, list[PageStepChange]] = {}
+        parts: dict[StepValuesKey, list[PageHistoryEntry]] = {}
         for target in targets:
             if target.scope is not ValueScope.PAGES:
                 parts.setdefault(StepValuesKey(target.step_id, target.scope, target.group_label), []).append(target)
-        undone: list[PageStepChange] = []
+        undone: list[PageHistoryEntry] = []
         stale: list[PageStage] = []
         book = book_pages(repos.pages) if parts else []
         for key, changes in parts.items():
@@ -396,22 +396,22 @@ class PageHistoryService:
         return undone, stale
 
     @staticmethod
-    def _with_batches(repos: BookRepositories, chosen: Sequence[PageStepChange]) -> Sequence[PageStepChange]:
+    def _with_batches(repos: BookRepositories, chosen: Sequence[PageHistoryEntry]) -> Sequence[PageHistoryEntry]:
         """Add the rest of the batch of each chosen change, and keep the changes that still stand.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
         :param chosen: The standing changes of the step that are taken back.
-        :type chosen: Sequence[PageStepChange]
+        :type chosen: Sequence[PageHistoryEntry]
         :returns: The changes to take back, newest first within each page.
-        :rtype: Sequence[PageStepChange]
+        :rtype: Sequence[PageHistoryEntry]
         :raises NotFoundError: If a batch reaches a page that is not one of the project.
         """
         members = {change.id: change for change in chosen}
         for batch_id in {change.batch_id for change in chosen if change.batch_id is not None}:
-            for member in repos.page_step_changes.list_for_batch(batch_id):
+            for member in repos.page_history.list_for_batch(batch_id):
                 members.setdefault(member.id, member)
-        undone = {undo.undoes for undo in repos.page_step_changes.list_undoing(list(members))}
+        undone = {undo.undoes for undo in repos.page_history.list_undoing(list(members))}
         standing = [
             change for change in members.values() if change.source is not ChangeSource.UNDO and change.id not in undone
         ]

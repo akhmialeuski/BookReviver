@@ -26,7 +26,7 @@ from uuid import uuid4
 import anyio
 from attrs import evolve
 
-from bookreviver.domain.entities import PageEdit, PageStepChange, PageStepState
+from bookreviver.domain.entities import PageEdit, PageHistoryEntry, PageStepState
 from bookreviver.domain.enums import ChangeSource, EditorKind, Rendition, StepLayer
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import StorageKey
@@ -268,9 +268,9 @@ class EditService:
             repos.page_step_states.delete(state.key)
         else:
             repos.page_step_states.save(changed)
-        change = PageStepChange.between(state, changed, StepLayer.HAND, ChangeSource.USER)
+        change = PageHistoryEntry.between(state, changed, StepLayer.HAND, ChangeSource.USER)
         if change.before != change.after:
-            repos.page_step_changes.add(change)
+            repos.page_history.add(change)
 
     def _spec(self, repos: BookRepositories, key: PageStepKey) -> ProcessorSpec:
         """Find the spec of the processor of a step, by the step in the recipes of the stage.

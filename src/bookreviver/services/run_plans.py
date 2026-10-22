@@ -22,7 +22,7 @@ from bookreviver.services.projects import book_pages
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bookreviver.domain.entities import Actor, Page, PageStage, PageStepChange, PageStepState, Project, Recipe
+    from bookreviver.domain.entities import Actor, Page, PageHistoryEntry, PageStage, PageStepState, Project, Recipe
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, StepId
     from bookreviver.domain.values import StageRun
@@ -110,7 +110,7 @@ class RunPlan:
             own_pages=len(self._own_ids(states)),
         )
 
-    async def apply_mode(self) -> Sequence[PageStepChange]:
+    async def apply_mode(self) -> Sequence[PageHistoryEntry]:
         """Take the work the mode names away from the steps of the run on its pages, as one batch, in one transaction.
 
         Called outside any transaction, and it opens a ``change_book`` of its own. The recipes are chosen before it,
@@ -120,13 +120,13 @@ class RunPlan:
         that follows makes it again.
 
         :returns: The changes written, one for each layer removed, which are none when no page had any.
-        :rtype: Sequence[PageStepChange]
+        :rtype: Sequence[PageHistoryEntry]
         """
         if self._run.mode is not RunMode.DROP_OWN:
             return ()
         picked = await self._picked()
 
-        def work(repos: BookRepositories, _project: Project) -> Sequence[PageStepChange]:
+        def work(repos: BookRepositories, _project: Project) -> Sequence[PageHistoryEntry]:
             """Remove the settings and the manual edits of the steps of the run, as one batch.
 
             :param repos: Repositories of the transaction.
@@ -134,7 +134,7 @@ class RunPlan:
             :param _project: The project as the change finds it, which the removal does not read.
             :type _project: Project
             :returns: The changes written, one for each layer removed.
-            :rtype: Sequence[PageStepChange]
+            :rtype: Sequence[PageHistoryEntry]
             """
             batch = PageBatch(repos=repos, source=ChangeSource.RUN, moment=self._clock.now())
             for state in self._states_in(repos, picked):

@@ -23,8 +23,8 @@ from bookreviver.domain.errors import NotFoundError
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import PageStepChange, PageVersion
-    from bookreviver.domain.ids import ChangeBatchId, PageId, PageStepChangeId
+    from bookreviver.domain.entities import PageHistoryEntry, PageVersion
+    from bookreviver.domain.ids import ChangeBatchId, PageHistoryEntryId, PageId
 
 
 @frozen
@@ -34,28 +34,28 @@ class StepHistory:
     :ivar changes: The changes in the order they were written, which is the order of their sequence.
     """
 
-    changes: tuple[PageStepChange, ...]
+    changes: tuple[PageHistoryEntry, ...]
 
     @property
-    def undone(self) -> frozenset[PageStepChangeId]:
+    def undone(self) -> frozenset[PageHistoryEntryId]:
         """The identifiers of the changes an undo took back."""
         return frozenset(change.undoes for change in self.changes if change.undoes is not None)
 
     @property
-    def standing(self) -> tuple[PageStepChange, ...]:
+    def standing(self) -> tuple[PageHistoryEntry, ...]:
         """The changes that can still be undone: not an undo and not taken back, oldest first."""
         undone = self.undone
         return tuple(
             change for change in self.changes if change.source is not ChangeSource.UNDO and change.id not in undone
         )
 
-    def back_to(self, change_id: PageStepChangeId) -> Sequence[PageStepChange]:
+    def back_to(self, change_id: PageHistoryEntryId) -> Sequence[PageHistoryEntry]:
         """Return the changes an undo back to one change takes back: it and every standing change after it.
 
         :param change_id: The oldest change to take back.
-        :type change_id: PageStepChangeId
+        :type change_id: PageHistoryEntryId
         :returns: The standing changes from the newest down to the one named.
-        :rtype: Sequence[PageStepChange]
+        :rtype: Sequence[PageHistoryEntry]
         :raises NotFoundError: If the change is not in this history, is an undo, or was taken back already.
         """
         standing = self.standing
@@ -76,7 +76,7 @@ class CarryOver:
     """
 
     batch_id: ChangeBatchId
-    changes: tuple[PageStepChange, ...]
+    changes: tuple[PageHistoryEntry, ...]
     skipped: tuple[PageId, ...]
 
 
@@ -89,7 +89,7 @@ class ValueChanges:
     """
 
     batch_id: ChangeBatchId
-    changes: tuple[PageStepChange, ...]
+    changes: tuple[PageHistoryEntry, ...]
 
 
 @frozen

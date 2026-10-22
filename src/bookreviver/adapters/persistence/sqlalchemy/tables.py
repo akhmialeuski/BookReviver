@@ -1,7 +1,7 @@
 """Tables of a book, private to the SQLAlchemy persistence adapter, which every book keeps in a file of its own.
 
 The module declares the ``projects``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
-``page_step_states``, ``page_step_changes``, ``step_values``, ``pagination_sections``,
+``page_step_states``, ``page_history``, ``step_values``, ``pagination_sections``,
 ``book_places`` and ``recipes`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped`` annotations,
 ``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from :class:`BookTable`, which
 carries the bind key ``book``, so advanced-alchemy gives the tables of a book a ``MetaData`` of their own, apart from
@@ -112,7 +112,7 @@ class Relation(enum.StrEnum):
     VERSIONS = 'versions'
     STAGES = 'stages'
     STEP_STATES = 'step_states'
-    STEP_CHANGES = 'step_changes'
+    HISTORY = 'history'
     SOURCE = 'source'
     PAGE = 'page'
 
@@ -334,7 +334,7 @@ class PageRow(BookTable):
     :ivar versions: Versions of the page, never loaded implicitly.
     :ivar stages: Stage records of the page, never loaded implicitly.
     :ivar step_states: Settings and manual edits of the steps on the page, never loaded implicitly.
-    :ivar step_changes: History of the steps on the page, never loaded implicitly.
+    :ivar history: History of the steps on the page, never loaded implicitly.
     """
 
     __tablename__ = PAGES_TABLE
@@ -370,7 +370,7 @@ class PageRow(BookTable):
     step_states: Mapped[list[PageStepStateRow]] = relationship(
         back_populates=Relation.PAGE, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
-    step_changes: Mapped[list[PageStepChangeRow]] = relationship(
+    history: Mapped[list[PageHistoryRow]] = relationship(
         back_populates=Relation.PAGE, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
 
@@ -562,7 +562,7 @@ class StepValuesRow(BookTable):
     updated_at: Mapped[datetime]
 
 
-class PageStepChangeRow(BookTable):
+class PageHistoryRow(BookTable):
     """Row of one change of a layer of a step on a page, which the history of the page keeps and never rewrites.
 
     The step is named by its identifier with no foreign key, as in ``page_step_states``, since a change outlives a step
@@ -585,7 +585,7 @@ class PageStepChangeRow(BookTable):
     :ivar page: Page owning the change, never loaded implicitly.
     """
 
-    __tablename__ = 'page_step_changes'
+    __tablename__ = 'page_history'
     __table_args__ = (
         Index(None, PAGE_ID_COLUMN, STAGE_COLUMN),
         Index(None, 'batch_id'),
@@ -608,7 +608,7 @@ class PageStepChangeRow(BookTable):
     created_at: Mapped[datetime]
     sequence: Mapped[int]
 
-    page: Mapped[PageRow] = relationship(back_populates=Relation.STEP_CHANGES, lazy=NO_IMPLICIT_LOAD)
+    page: Mapped[PageRow] = relationship(back_populates=Relation.HISTORY, lazy=NO_IMPLICIT_LOAD)
 
 
 class BookPlaceRow(BookTable):

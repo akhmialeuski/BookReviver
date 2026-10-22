@@ -36,7 +36,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
 from bookreviver.domain.geometry import Transform, geometry_from_data
-from bookreviver.domain.ids import PageStepChangeId, PageVersionId, StorageKey
+from bookreviver.domain.ids import PageHistoryEntryId, PageVersionId, StorageKey
 from bookreviver.domain.values import (
     SHA256_PATTERN,
     MetadataSuggestion,
@@ -976,7 +976,7 @@ class PageStepState:
 
 
 @frozen(kw_only=True)
-class PageStepChange:
+class PageHistoryEntry:
     """One change of a layer of a step on a page, which the history of the page keeps and never rewrites.
 
     The values are the whole content of the layer before and after the change, so undoing a change writes ``before``
@@ -1001,7 +1001,7 @@ class PageStepChange:
                     added, so changes made at the same instant keep the order they were written in.
     """
 
-    id: PageStepChangeId
+    id: PageHistoryEntryId
     page_id: PageId
     stage: Stage
     step_id: StepId
@@ -1012,7 +1012,7 @@ class PageStepChange:
     after: MetadataMap | None = None
     source: ChangeSource
     batch_id: ChangeBatchId | None = None
-    undoes: PageStepChangeId | None = None
+    undoes: PageHistoryEntryId | None = None
     created_at: datetime
     sequence: int = 0
 
@@ -1037,7 +1037,7 @@ class PageStepChange:
         :rtype: Self
         """
         return cls(
-            id=PageStepChangeId(uuid4()),
+            id=PageHistoryEntryId(uuid4()),
             page_id=after.page_id,
             stage=after.stage,
             step_id=after.step_id,
@@ -1060,7 +1060,7 @@ class PageStepChange:
         """
         return evolve(
             self,
-            id=PageStepChangeId(uuid4()),
+            id=PageHistoryEntryId(uuid4()),
             before=self.after,
             after=self.before,
             source=ChangeSource.UNDO,
@@ -1086,7 +1086,7 @@ class PageStepChange:
         :rtype: Self
         """
         return cls(
-            id=PageStepChangeId(uuid4()),
+            id=PageHistoryEntryId(uuid4()),
             page_id=page_id,
             stage=after.stage,
             step_id=after.step_id,

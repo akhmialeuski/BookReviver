@@ -8,7 +8,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.entities import EDIT_HASH_FIELD, Actor, PageStepChange
+from bookreviver.domain.entities import EDIT_HASH_FIELD, Actor, PageHistoryEntry
 from bookreviver.domain.enums import (
     ChangeSource,
     EditorKind,
@@ -22,7 +22,7 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import JobChanged, PageStageChanged
 from bookreviver.domain.geometry import Rotation
-from bookreviver.domain.ids import ChangeBatchId, PageStepChangeId, StepId
+from bookreviver.domain.ids import ChangeBatchId, PageHistoryEntryId, StepId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, RecipeDraft, StageRun, Step, TileCut
 from tests.helpers.builders import make_page_step_state, new_account_id
@@ -55,7 +55,7 @@ STRONGEST: int = 3
 NOT_FAILING: bool = False
 OTHER_ORDER_KEY: str = 'a1'
 # A setting, an edit and the undo of the edit, which the clear test writes before it deletes them
-STEP_CHANGES: int = 3
+HISTORY: int = 3
 FIRST_ANGLE: float = 1.5
 SECOND_ANGLE: float = 2.5
 FIRST: NewPageEdit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=FIRST_ANGLE))
@@ -77,7 +77,7 @@ async def step_key(kit: ProcessingKit, project_id: ProjectId, page: Page) -> Pag
     return await kit.edit_key(project_id, page, Stage.GEOMETRY, FAKE_KEY)
 
 
-async def history_of(kit: ProcessingKit, actor: Actor, project: Project, key: PageStepKey) -> list[PageStepChange]:
+async def history_of(kit: ProcessingKit, actor: Actor, project: Project, key: PageStepKey) -> list[PageHistoryEntry]:
     """Read the changes of a step on a page as the history lists them, oldest first.
 
     :param kit: What the processing services of the test share.
@@ -89,7 +89,7 @@ async def history_of(kit: ProcessingKit, actor: Actor, project: Project, key: Pa
     :param key: The page, the stage and the step.
     :type key: PageStepKey
     :returns: The changes.
-    :rtype: list[PageStepChange]
+    :rtype: list[PageHistoryEntry]
     """
     return list((await kit.page_history().list(actor, project.id, key)).changes)
 
@@ -155,9 +155,9 @@ async def store_carried_batch(
         for at in keys:
             state = make_page_step_state(page_id=at.page_id, step_id=at.step_id, params={STRENGTH_PARAMETER: STRONGER})
             repos.page_step_states.save(state)
-            repos.page_step_changes.add(
+            repos.page_history.add(
                 evolve(
-                    PageStepChange.between(
+                    PageHistoryEntry.between(
                         make_page_step_state(page_id=at.page_id, step_id=at.step_id),
                         state,
                         StepLayer.SETTINGS,
@@ -369,7 +369,7 @@ class TestUndo:
         attempts = (
             (actor, other_project, None),
             (Actor(account_id=new_account_id()), project, None),
-            (actor, project, PageStepChangeId(uuid4())),
+            (actor, project, PageHistoryEntryId(uuid4())),
         )
         for who, book, change_id in attempts:
             with pytest.raises(NotFoundError):
@@ -465,9 +465,9 @@ class TestUndoOfABatch:
                 empty = make_page_step_state(page_id=at.page_id, step_id=at.step_id)
                 carried = evolve(empty, params={STRENGTH_PARAMETER: STRONGER})
                 repos.page_step_states.save(evolve(empty, params=params))
-                repos.page_step_changes.add(
+                repos.page_history.add(
                     evolve(
-                        PageStepChange.between(empty, carried, StepLayer.SETTINGS, ChangeSource.CARRY_OVER),
+                        PageHistoryEntry.between(empty, carried, StepLayer.SETTINGS, ChangeSource.CARRY_OVER),
                         batch_id=batch,
                     )
                 )
@@ -480,8 +480,7 @@ class TestUndoOfABatch:
             == {STRENGTH_PARAMETER: STRONGER}
         )
         expect(
-            len(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_changes.list_for_page(page.id)))
-            == 1
+            len(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_history.list_for_page(page.id))) == 1
         )
         assert_expectations()
 
@@ -504,7 +503,7 @@ class TestClear:
         await fx_kit.page_history().undo(actor, project.id, key, None)
         written = len(await history_of(fx_kit, actor, project, key))
         cleared = await fx_kit.page_history().clear(actor, project.id, key)
-        expect(cleared.changes == written == STEP_CHANGES)
+        expect(cleared.changes == written == HISTORY)
         expect([deleted.id for deleted in cleared.versions] == [version.id])
         expect(await history_of(fx_kit, actor, project, key) == [])
         expect(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.find(key)) is None)
@@ -625,17 +624,17 @@ class TestClear:
 
         def read_what_is_left(
             repos: BookRepositories,
-        ) -> tuple[Sequence[PageVersion], Sequence[PageStepChange], Sequence[PageStepState]]:
+        ) -> tuple[Sequence[PageVersion], Sequence[PageHistoryEntry], Sequence[PageStepState]]:
             """Read the versions, the changes and the states of the cleared step, in one snapshot.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :returns: The versions of the page, its changes of the stage, and the states of the step.
-            :rtype: tuple[Sequence[PageVersion], Sequence[PageStepChange], Sequence[PageStepState]]
+            :rtype: tuple[Sequence[PageVersion], Sequence[PageHistoryEntry], Sequence[PageStepState]]
             """
             return (
                 repos.page_versions.list_for_page(page.id),
-                repos.page_step_changes.list_for_page(page.id, Stage.GEOMETRY),
+                repos.page_history.list_for_page(page.id, Stage.GEOMETRY),
                 repos.page_step_states.list_for_step([page.id], Stage.GEOMETRY, key.step_id),
             )
 

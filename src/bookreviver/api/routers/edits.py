@@ -15,7 +15,7 @@ from fastapi_pagination import Page, Params
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.edits import CarryForm, CarryOverSchema, EditForm, PageEditSchema
-from bookreviver.api.schemas.page_history import PageStepChangeSchema
+from bookreviver.api.schemas.page_history import PageHistoryEntrySchema
 from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.ids import PageId, ProjectId, StepId
@@ -178,6 +178,6 @@ async def carry_over_edit(
     carried = await carry.carry(actor, address.project_id, form.to_request(address.key))
     return CarryOverSchema(
         batch_id=carried.batch_id,
-        changes=[PageStepChangeSchema.model_validate(change) for change in carried.changes],
+        changes=[PageHistoryEntrySchema.model_validate(change) for change in carried.changes],
         skipped=list(carried.skipped),
     )
