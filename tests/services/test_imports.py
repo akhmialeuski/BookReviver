@@ -723,7 +723,7 @@ class TestStartImport:
         :type fx_project: Project
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
-        :param fx_storage_root: Storage root under the test's temporary directory.
+        :param fx_storage_root: Storage root of the test, which holds the database of the book as well.
         :type fx_storage_root: Path
         """
         queued = fx_rig.fakes.board.put(make_job(project_id=fx_project.id))
@@ -732,7 +732,7 @@ class TestStartImport:
             await fx_rig.service().start_import(fx_owner, fx_project.id, [image_upload(fx_samples, IMAGE_NAME)])
 
         expect(fx_rig.fakes.board.put_jobs == [queued])
-        expect(not await anyio.Path(fx_storage_root).exists())
+        expect(not await anyio.Path(fx_storage_root / ProjectKeys(fx_project.id).incoming_area).exists())
         assert_expectations()
 
     async def test_project_with_an_import_running_raises_conflict_and_leaves_only_the_upload_of_that_import(
