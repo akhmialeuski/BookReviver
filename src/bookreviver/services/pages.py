@@ -9,9 +9,11 @@ Moving a page writes a new order key to the moved pages alone: the key lies betw
 place and the key of the page after it, which the repository finds while leaving the moved pages out, so the pages that
 stay never change. A group of pages, or every page of one source, is placed as one run that keeps its order in the
 book. Every change of a book is the work of one ``change_book``, which waits for any other change of that book, and
-publishes one ``PagesChanged`` event after the transaction, naming all the pages it touched. A change that adds,
-deletes or moves pages, or changes the kind or the inclusion of one, also recomputes the labels the pagination sections
-give the pages, in the same work, and announces the pages renumbered as a second ``PagesChanged``. The work is
+publishes one ``PagesChanged`` event after the transaction, naming all the pages it touched. The labels the pagination
+sections give the pages are computed when the pages are read, so a change that adds, deletes or moves pages, or changes
+the kind or the inclusion of one, writes no label: it settles the sections in the same work, which hands on the
+sections of the pages it deletes and refuses a number a section cannot write, and the browser reads the labels of the
+whole book again for its ``PagesChanged``. The work is
 synchronous and holds the repositories of its transaction, so the events, the files and the queue stay outside it. A
 job, such as the one that writes the images of the pages, reads and computes outside any transaction, and stores its
 result in a short ``change_book`` that reads again what the result depends on. A job queued after a change is queued in
@@ -78,12 +80,12 @@ from bookreviver.domain.errors import (
 from bookreviver.domain.events import PagesChanged, PageVersionReady
 from bookreviver.domain.ids import JobId, PageId
 from bookreviver.domain.keys import ProjectKeys
-from bookreviver.domain.pagination import Pagination
+from bookreviver.domain.pagination import Numbering
 from bookreviver.domain.values import ContentDetection, JobEnd, PageSize, PageStageKey, Slice, SliceRequest
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
 from bookreviver.services.book_measure import NORMALIZE_KEY
 from bookreviver.services.page_labels import PageLabels
-from bookreviver.services.projects import book_page, book_pages
+from bookreviver.services.projects import book_page
 from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.steps import StepRun
 
@@ -94,7 +96,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.changes import PageChanges
     from bookreviver.domain.entities import Actor, PageStage, PageVersion, Project
-    from bookreviver.domain.ids import PageVersionId, PaginationSectionId, ProjectId, ScanId, SourceId, StorageKey
+    from bookreviver.domain.ids import PageVersionId, ProjectId, ScanId, SourceId, StorageKey
     from bookreviver.domain.values import MetadataMap, NewPage, PageAnchor
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
@@ -326,10 +328,8 @@ class PageService:
                     self._records.mark_group_stale(repos, project_id, page_id, {before.group_label, page.group_label})
                 )
             # A label, a kind or an inclusion changes what the sections give the pages, the page itself included
-            if any(field is not None for field in (changes.label, changes.kind, changes.included)) and (
-                self._labels.recompute(repos, project_id)
-            ):
-                changed = repos.pages.get(page_id)
+            if any(field is not None for field in (changes.label, changes.kind, changes.included)):
+                self._labels.settle(repos, project_id)
             return self._overview(repos, changed), records
 
         overview, records = await self._uow.change_book(project_id, work)
@@ -428,8 +428,7 @@ class PageService:
             if size is not None:
                 full = project.image_policy.full_format(ColorMode.BILEVEL)
                 repos.page_versions.add(BaseVersions.blank(page=page, size=size, full=full, moment=moment))
-            if self._labels.recompute(repos, project_id):
-                page = repos.pages.get(page.id)
+            self._labels.settle(repos, project_id)
             return self._overview(repos, page), watch.turned
 
         overview, turned = await self._uow.change_book(project_id, work)
@@ -522,10 +521,7 @@ class PageService:
                     leaves.append(BaseVersions.blank(page=page, size=size, full=full, moment=moment))
             repos.page_versions.add_many(leaves)
 
-            # The new pages take the numbers of their sections, which the overviews show
-            if self._labels.recompute(repos, project_id):
-                stored = {page.id: page for page in repos.pages.list_by_ids(project_id, [p.id for p in added])}
-                pages = {index: stored[page.id] for index, page in enumerate(added)}
+            self._labels.settle(repos, project_id)
             overviews: dict[PageId, PageOverview] = {}
             for indexes in places.values():
                 run = [pages[index] for index in indexes]
@@ -740,7 +736,7 @@ class PageService:
             :raises NotFoundError: If the project has no such page.
             """
             page = self._page(repos, project_id, page_id)
-            self._labels.recompute(repos, project_id, leaving=[page.id])
+            self._labels.settle(repos, project_id, leaving=[page.id])
             with self._records.watching_sides(repos, project_id) as watch:
                 repos.pages.delete(page.id)
             return page, watch.turned
@@ -806,28 +802,27 @@ class PageService:
                 raise ConflictError(SCAN_NOT_CUT)
             taken = repos.pages.list_for_scan(scan_id)
             if taken and not take_over:
+                labels = self._labels.numbering(repos, project_id, taken).labels
                 raise ScanAlreadyInBookError(
                     [
-                        f'p. {page.label}' if page.label else f'position {repos.pages.count_before(page) + 1}'
+                        f'p. {labels[page.id]}' if labels[page.id] else f'position {repos.pages.count_before(page) + 1}'
                         for page in taken
                     ]
                 )
             if taken:
-                # Renumbering may write the placeholder too, so it is read again for the write below
-                self._labels.recompute(repos, project_id, leaving=[page.id for page in taken])
-                placeholder = self._page(repos, project_id, page_id)
+                self._labels.settle(repos, project_id, leaving=[page.id for page in taken])
             with self._records.watching_sides(repos, project_id) as watch:
                 for page in taken:
                     repos.pages.delete(page.id)
             moment = self._clock.now()
-            # The label of the scan is the one its source printed, so it is an exception of the sections, like one typed
+            # The label the source printed on the scan becomes a manual label of a page its sections leave unnumbered
+            shown = self._labels.numbering(repos, project_id, [placeholder]).labels[placeholder.id]
             page = evolve(
                 placeholder,
                 origin=PageOrigin.SCAN,
                 scan_id=scan_id,
                 slot=Page.WHOLE_SCAN,
-                label=placeholder.label or scan.source_label,
-                label_manual=placeholder.label_manual or (not placeholder.label and bool(scan.source_label)),
+                manual_label=placeholder.manual_label or (None if shown else scan.source_label or None),
                 updated_at=moment,
             )
             repos.pages.update(page)
@@ -917,8 +912,7 @@ class PageService:
             with self._records.watching_sides(repos, project_id) as watch:
                 [moved] = self._place(repos, project_id, [self._page(repos, project_id, page_id)], anchor)
                 repos.pages.update(moved)
-            if self._labels.recompute(repos, project_id):
-                moved = repos.pages.get(moved.id)
+            self._labels.settle(repos, project_id)
             return self._overview(repos, moved), watch.turned
 
         overview, turned = await self._uow.change_book(project_id, work)
@@ -1031,14 +1025,14 @@ class PageService:
             yield path
 
     def _overviews(
-        self, repos: BookRepositories, pages: Sequence[Page], first_position: int, *, with_sections: bool = True
+        self, repos: BookRepositories, pages: Sequence[Page], first_position: int, *, numbered: bool = True
     ) -> Sequence[PageOverview]:
-        """Attach positions and base versions to consecutive pages of a book, reading the versions in one call.
+        """Attach positions, base versions, labels and sections to consecutive pages of a book.
 
-        The section of a page is worked out on read, from the sections and the whole book, by the walk that numbers the
-        pages, so it can never disagree with their labels. It is not stored: the section that governs a page changes
-        with every section and every page that moves, and keeping it would mean writing pages that no label changes.
-        A book without sections costs no read of its pages.
+        The label and the section of a page are worked out on read, from the sections and the whole book, by the walk
+        that numbers the pages, so they can never disagree. Neither is stored: both change with every section and every
+        page that moves, and keeping them would mean writing pages that nobody touched. A book without sections costs
+        no read of its pages.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
@@ -1046,14 +1040,17 @@ class PageService:
         :type pages: Sequence[Page]
         :param first_position: Position of the first page in the book.
         :type first_position: int
-        :param with_sections: Whether to name the section of every page, which a caller that never shows it skips.
-        :type with_sections: bool
+        :param numbered: Whether to give every page its label and its section, which a caller that shows neither skips,
+                         leaving both empty.
+        :type numbered: bool
         :returns: The overviews of the pages, in the same order.
         :rtype: Sequence[PageOverview]
         """
-        section_ids: dict[PageId, PaginationSectionId | None] = {}
-        if with_sections and pages:
-            section_ids = self._section_ids(repos, pages[0].project_id)
+        numbering = (
+            self._labels.numbering(repos, pages[0].project_id, pages)
+            if numbered and pages
+            else Numbering(labels={}, section_ids={})
+        )
         versions = repos.page_versions.list_base_versions([page.id for page in pages])
         # The versions come earliest first, so the newest base version of a page wins
         newest = {version.page_id: version for version in versions}
@@ -1066,25 +1063,11 @@ class PageService:
                 position=first_position + index,
                 image_version=current.get(page.id, newest.get(page.id)),
                 source_id=sources.get(page.scan_id) if page.scan_id is not None else None,
-                section_id=section_ids.get(page.id),
+                section_id=numbering.section_ids.get(page.id),
+                label=numbering.labels.get(page.id, ''),
             )
             for index, page in enumerate(pages)
         ]
-
-    def _section_ids(self, repos: BookRepositories, project_id: ProjectId) -> dict[PageId, PaginationSectionId | None]:
-        """Name the section that governs each page of a book.
-
-        :param repos: Repositories of the transaction the caller runs in.
-        :type repos: BookRepositories
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :returns: The governing section by page identifier, empty for a book without sections.
-        :rtype: dict[PageId, PaginationSectionId | None]
-        """
-        sections = repos.pagination_sections.list_for_project(project_id)
-        if not sections:
-            return {}
-        return Pagination(sections, book_pages(repos.pages, project_id)).section_ids()
 
     def _current_images(self, repos: BookRepositories, pages: Sequence[Page]) -> Mapping[PageId, PageVersion]:
         """Find the version each page shows: the current version of the latest stage that has an image.
@@ -1161,8 +1144,7 @@ class PageService:
             id=PageId(uuid4()),
             project_id=project_id,
             order_key=key,
-            label=new_page.label,
-            label_manual=bool(new_page.label),
+            manual_label=new_page.label or None,
             kind=new_page.kind,
             origin=new_page.origin.page_origin,
             notes=new_page.notes,
@@ -1259,7 +1241,7 @@ class PageService:
             return moved, []
         with self._records.watching_sides(repos, project_id) as watch:
             repos.pages.update_many(moved)
-        self._labels.recompute(repos, project_id)
+        self._labels.settle(repos, project_id)
         return moved, watch.turned
 
     async def _announce(self, project_id: ProjectId, pages: Sequence[Page], change: PageChange) -> None:
@@ -1275,7 +1257,6 @@ class PageService:
         await self._publisher.publish(
             PagesChanged(project_id=project_id, page_ids=[page.id for page in pages], change=change)
         )
-        await self._labels.announce(project_id)
 
     async def _discard_files(self, project_id: ProjectId, pages: Sequence[Page]) -> None:
         """Remove every file of pages that were deleted, after the transaction that deleted them has ended.
@@ -1412,7 +1393,7 @@ class PageService:
         near = sorted(
             (
                 overview
-                for overview in self._overviews(repos, window.items, first, with_sections=False)
+                for overview in self._overviews(repos, window.items, first, numbered=False)
                 if overview.page.id != page.id
                 and overview.page.included
                 and not overview.page.is_leaf

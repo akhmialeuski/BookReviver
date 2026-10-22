@@ -3,22 +3,36 @@
 The sections of the main flow follow each other, and each lasts until the next one starts. A series by kind takes the
 pages of its kinds from its first page on, and lasts for a kind until another series that takes the kind starts, so it
 never interrupts the main flow: the pages it takes are not counted there. A page kept out of the book takes no number.
-A page whose label was written by hand keeps it, and still counts in its section, because a number typed over a page
-does not move the pages around it.
+A page with a manual label shows it, and still counts in its section, because a number typed over a page does not move
+the pages around it. The numbers are computed whenever the pages are read and never stored.
 """
 
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from attrs import frozen
+
 from bookreviver.domain.enums import LabelStyle, NumberDisplay
 from bookreviver.domain.page_label_rules import BookLabeling, PageLabelRule, PrintedNumber
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator, Sequence
+    from collections.abc import Iterable, Iterator, Mapping, Sequence
 
     from bookreviver.domain.entities import Page, PaginationSection
     from bookreviver.domain.enums import PageKind
     from bookreviver.domain.ids import PageId, PaginationSectionId
+
+
+@frozen(kw_only=True)
+class Numbering:
+    """What the sections of a book give each of its pages: the label it shows and the section that governs it.
+
+    :ivar labels: The label of every page by identifier, as ``Pagination.labels`` gives it.
+    :ivar section_ids: The governing section of every page by identifier, as ``Pagination.section_ids`` gives it.
+    """
+
+    labels: Mapping[PageId, str]
+    section_ids: Mapping[PageId, PaginationSectionId | None]
 
 
 class Pagination:
@@ -53,7 +67,7 @@ class Pagination:
         labels: dict[PageId, str] = {}
         for page, section, number in self._numbered():
             computed = section.label(number) if section is not None else ''
-            labels[page.id] = page.label if page.label_manual else computed
+            labels[page.id] = computed if page.manual_label is None else page.manual_label
         return labels
 
     def labeling(self) -> BookLabeling:
@@ -76,9 +90,9 @@ class Pagination:
                 continue
             index += 1
             style, prefix, value = LabelStyle.NONE, '', 1
-            if page.label_manual and page.label:
-                prefix = page.label
-                printed.append(PrintedNumber(index=index, label=page.label))
+            if page.manual_label is not None:
+                prefix = page.manual_label
+                printed.append(PrintedNumber(index=index, label=page.manual_label))
             elif section is not None and section.style is not LabelStyle.NONE:
                 style, prefix, value = section.style, section.prefix, number
                 if section.display is NumberDisplay.PRINTED:
@@ -86,6 +100,15 @@ class Pagination:
             if not rules or not rules[-1].continues(index, style=style, prefix=prefix, number=value):
                 rules.append(PageLabelRule(first_index=index, style=style, prefix=prefix, start=value))
         return BookLabeling(rules=rules, printed=printed)
+
+    def numbering(self) -> Numbering:
+        """Compute the label of every page together with the section that governs it.
+
+        :returns: The labels and the governing sections of the pages.
+        :rtype: Numbering
+        :raises ValueError: If a section cannot write a number, such as 4000 in Roman numerals.
+        """
+        return Numbering(labels=self.labels(), section_ids=self.section_ids())
 
     def section_ids(self) -> dict[PageId, PaginationSectionId | None]:
         """Find the section that governs each page, by the same walk over the book that numbers it.

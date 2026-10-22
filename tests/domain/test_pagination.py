@@ -226,23 +226,16 @@ class TestPagination:
     def test_a_label_written_by_hand_stays_and_the_page_still_counts(self) -> None:
         """Verify an exception keeps its label, and the pages after it are numbered as if it had its number."""
         pages = _book(*[PageKind.TEXT] * 3)
-        pages[1] = evolve(pages[1], label=HAND_WRITTEN, label_manual=True)
+        pages[1] = evolve(pages[1], manual_label=HAND_WRITTEN)
 
         assert _labels(pages, make_section(page=pages[0])) == ['1', HAND_WRITTEN, '3']
 
     def test_a_hand_written_label_stays_on_a_page_kept_out_of_the_book(self) -> None:
         """Verify an exception is kept whether or not its page takes part in the count."""
         pages = _book(*[PageKind.TEXT] * 2)
-        pages[1] = evolve(pages[1], included=False, label=HAND_WRITTEN, label_manual=True)
+        pages[1] = evolve(pages[1], included=False, manual_label=HAND_WRITTEN)
 
         assert _labels(pages, make_section(page=pages[0])) == ['1', HAND_WRITTEN]
-
-    def test_a_label_that_is_not_by_hand_is_replaced_by_the_computed_one(self) -> None:
-        """Verify a stale label of a page that is not an exception does not survive the computation."""
-        pages = _book(*[PageKind.TEXT] * 2)
-        pages[0] = evolve(pages[0], label='stale')
-
-        assert _labels(pages, make_section(page=pages[0])) == ['1', '2']
 
     def test_a_section_that_starts_at_no_page_of_the_book_is_ignored(self) -> None:
         """Verify a section of another book, which names a page this book lacks, takes no part."""
@@ -367,7 +360,7 @@ class TestLabeling:
     def test_a_label_by_hand_is_a_rule_of_its_own_and_the_section_goes_on_after_it(self) -> None:
         """Verify an exception is written as a prefix with no number, and its section resumes at the number it reached."""
         pages = _book(*[PageKind.TEXT] * 3)
-        pages[1] = evolve(pages[1], label=HAND_WRITTEN, label_manual=True)
+        pages[1] = evolve(pages[1], manual_label=HAND_WRITTEN)
 
         labeling = Pagination([make_section(page=pages[0])], pages).labeling()
 

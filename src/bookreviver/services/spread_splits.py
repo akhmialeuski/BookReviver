@@ -313,7 +313,7 @@ class SpreadSplit:
         :returns: The stage records of the pages that turned over and became stale, which the caller announces.
         :rtype: list[PageStage]
         """
-        self._labels.recompute(repos, self._project.id, leaving=[right.id for right in undoing.rights])
+        self._labels.settle(repos, self._project.id, leaving=[right.id for right in undoing.rights])
         with self._records.watching_sides(repos, self._project.id) as watch:
             for right in undoing.rights:
                 repos.pages.delete(right.id)
@@ -336,7 +336,6 @@ class SpreadSplit:
                     change=PageChange.REMOVED,
                 )
             )
-        await self._labels.announce(self._project.id)
 
     def _halves(self, repos: BookRepositories, page: Page, right_id: PageId | None = None) -> Halves:
         """Work out the two pages of the spread, without storing any of them.
@@ -583,8 +582,8 @@ class SpreadSplit:
         if len(made) > 1 and halves.left_changes:
             repos.pages.update(halves.left)
         if len(made) > 1 and halves.right_is_new:
-            # The new half takes its place in the numbering, which moves the pages after it on
-            self._labels.recompute(repos, self._project.id)
+            # The new half takes a number, which may be past what its section can write
+            self._labels.settle(repos, self._project.id)
         for version in made:
             if (earlier := repos.page_versions.find(version.id)) is None:
                 repos.page_versions.add(version)
@@ -622,4 +621,3 @@ class SpreadSplit:
             if earlier is None or earlier.state is not VersionState.READY:
                 await self._publisher.publish(PageVersionReady(project_id=self._project.id, version=version))
         await self._records.announce(self._project.id, changed)
-        await self._labels.announce(self._project.id)

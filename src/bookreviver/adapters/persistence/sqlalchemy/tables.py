@@ -32,7 +32,7 @@ from typing import Any, Final
 from uuid import UUID
 
 from advanced_alchemy.base import DefaultBase
-from sqlalchemy import JSON, ForeignKey, Index, String, UniqueConstraint, false, text
+from sqlalchemy import JSON, CheckConstraint, ForeignKey, Index, String, UniqueConstraint, false, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bookreviver.adapters.persistence.sqlalchemy.columns import CASCADE, SET_NULL, enum_by_value
@@ -100,6 +100,8 @@ VERSION_ID_LENGTH: Final = 16
 EMPTY_OBJECT: Final = '{}'
 # The rows of the partial unique index of ``sources``: the imported sources, which are the ones that join the book
 IMPORTED_SOURCE: Final = text(f"status = '{SourceStatus.IMPORTED}'")
+# A manual label is a label, so the empty label is never one; null leaves the number to the sections
+MANUAL_LABEL_GIVEN: Final = "manual_label <> ''"
 
 
 class Relation(enum.StrEnum):
@@ -334,8 +336,8 @@ class PageRow(BookTable):
     :ivar id: Page identifier, assigned by the domain.
     :ivar project_id: Project owning the page.
     :ivar order_key: Fractional index string, compared byte by byte, whose order is the order of the book.
-    :ivar label: Printed number of the page, or empty.
-    :ivar label_manual: Whether the label was written by hand, which a recompute of the numbers never changes.
+    :ivar manual_label: Printed number written by hand or taken from the scan, or null for the number the pagination
+                        sections give, which is computed on read and never stored. An empty label is never stored.
     :ivar kind: Role of the page in the book, stored by value.
     :ivar content_type: What the image of the page shows, stored by value, or null while it is not detected.
     :ivar content_by_hand: Whether the user set the content type, which the detection never changes.
@@ -356,14 +358,17 @@ class PageRow(BookTable):
     """
 
     __tablename__ = PAGES_TABLE
-    __table_args__ = (UniqueConstraint(PROJECT_ID_COLUMN, 'order_key'), UniqueConstraint('scan_id', 'slot'))
+    __table_args__ = (
+        UniqueConstraint(PROJECT_ID_COLUMN, 'order_key'),
+        UniqueConstraint('scan_id', 'slot'),
+        CheckConstraint(MANUAL_LABEL_GIVEN, name='manual_label_given'),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     project_id: Mapped[UUID] = mapped_column(ForeignKey(ProjectRow.id, ondelete=CASCADE))
     # Order keys compare byte by byte, which SQLite's default BINARY collation does
     order_key: Mapped[str] = mapped_column(String)
-    label: Mapped[str]
-    label_manual: Mapped[bool] = mapped_column(server_default=false())
+    manual_label: Mapped[str | None]
     kind: Mapped[PageKind] = mapped_column(enum_by_value(PageKind))
     content_type: Mapped[ContentType | None] = mapped_column(enum_by_value(ContentType))
     content_by_hand: Mapped[bool] = mapped_column(server_default=false())

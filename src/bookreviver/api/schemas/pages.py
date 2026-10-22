@@ -411,8 +411,8 @@ class PageSchema(ResponseModel):
         return cls(
             id=page.id,
             position=overview.position,
-            label=page.label,
-            label_manual=page.label_manual,
+            label=overview.label,
+            label_manual=page.manual_label is not None,
             section_id=overview.section_id,
             kind=page.kind,
             content_type=page.content,

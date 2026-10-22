@@ -3,8 +3,8 @@
 A source such as a PDF can carry page label rules: Roman numerals for the preface, Arabic ones from 1 for the text. At
 import each rule that a section can express becomes a section of the book that starts at the first scan of its run, so
 the book is paginated as the file was and the numbers follow the pages when they are inserted, deleted or moved. A page
-whose label is not what its section gives, such as ``12a`` or a label with a prefix and no number, keeps its label as an
-exception that no recompute changes. A rule a section cannot express becomes a section that does not count, so its
+whose label is not what its section gives, such as ``12a`` or a label with a prefix and no number, keeps its label as a
+manual label, which no section changes. A rule a section cannot express becomes a section that does not count, so its
 pages stay outside the count of the pages before them and after them.
 
 The pages of a source that has no rules do not continue the numbering of the sources before it, so a cover image that
@@ -36,7 +36,7 @@ class SourceLabels:
 
     :ivar sections: The sections to add to the book, in the order of the pages they start at; none for a source without
                     rules in a book that has no sections.
-    :ivar pages: The pages given, with ``label_manual`` set on those whose label their section does not give.
+    :ivar pages: The pages given, keeping as a manual label only the label of a scan that its section does not give.
     """
 
     def __init__(
@@ -50,7 +50,8 @@ class SourceLabels:
 
         :param rules: The rules of the source, in the order of its scans, as ``SourceAnalysis.label_rules``.
         :type rules: Sequence[PageLabelRule]
-        :param pages: The pages of the scans of the source in book order, each with the label its scan carries.
+        :param pages: The pages of the scans of the source in book order, each with the label its scan carries as its
+                      manual label.
         :type pages: Sequence[Page]
         :param moment: Time to stamp the sections with.
         :type moment: datetime
@@ -82,5 +83,7 @@ class SourceLabels:
                     updated_at=moment,
                 )
             )
-        computed = Pagination(self.sections, [evolve(page, label_manual=False) for page in pages]).labels()
-        self.pages = [evolve(page, label_manual=bool(page.label) and page.label != computed[page.id]) for page in pages]
+        computed = Pagination(self.sections, [evolve(page, manual_label=None) for page in pages]).labels()
+        self.pages = [
+            evolve(page, manual_label=None) if page.manual_label == computed[page.id] else page for page in pages
+        ]
