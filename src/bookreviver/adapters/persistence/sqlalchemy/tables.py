@@ -28,12 +28,12 @@ recipe was made from is named by its identifier alone, since no key can reach an
 
 import enum
 from datetime import datetime
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID
 
 from advanced_alchemy.base import DefaultBase
-from sqlalchemy import JSON, CheckConstraint, ForeignKey, Index, String, UniqueConstraint, false, text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import JSON, CheckConstraint, ForeignKey, Index, String, UniqueConstraint, false, func, select, text
+from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
 from bookreviver.adapters.persistence.sqlalchemy.columns import CASCADE, SET_NULL, enum_by_value
 from bookreviver.domain.enums import (
@@ -213,7 +213,7 @@ class SourceRow(BookTable):
     :ivar files: Name, size and digest of every staged file, the main file first, as JSON.
     :ivar size_bytes: Total size of the files in bytes.
     :ivar sha256: SHA-256 digest of the main file.
-    :ivar scan_count: Number of scans the source holds.
+    :ivar scan_count: Number of scans the source holds, counted when the row is read and never stored.
     :ivar metadata_: Technical metadata of the format, as JSON in the ``metadata`` column.
     :ivar suggestion: Description values found in the file, as JSON.
     :ivar status: Whether the file was imported, rejected or skipped, stored by value.
@@ -233,7 +233,9 @@ class SourceRow(BookTable):
     files: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
     size_bytes: Mapped[int]
     sha256: Mapped[str]
-    scan_count: Mapped[int]
+    # Mapped after ScanRow below, as a count of its rows, so the type checkers read it from here
+    if TYPE_CHECKING:
+        scan_count: Mapped[int]
     metadata_: Mapped[dict[str, Any]] = mapped_column(METADATA_COLUMN, JSON)
     suggestion: Mapped[dict[str, Any]] = mapped_column(JSON)
     status: Mapped[SourceStatus] = mapped_column(
@@ -299,6 +301,12 @@ class ScanRow(BookTable):
     renditions_full: Mapped[Rendition] = mapped_column(enum_by_value(Rendition), server_default=LEGACY_FULL_FORMAT)
 
     source: Mapped[SourceRow] = relationship(back_populates=Relation.SCANS, lazy=NO_IMPLICIT_LOAD)
+
+
+# The number of scans of a source is read with the source, as SQLAlchemy maps an SQL expression to an attribute
+SourceRow.scan_count = column_property(
+    select(func.count(ScanRow.id)).where(ScanRow.source_id == SourceRow.id).correlate_except(ScanRow).scalar_subquery()
+)
 
 
 class PageRow(BookTable):

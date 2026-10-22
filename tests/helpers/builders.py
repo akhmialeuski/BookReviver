@@ -123,7 +123,6 @@ FULL_DETAILS: BookDetails = BookDetails(
 PAGE_WIDTH_PX: int = 2200
 PAGE_HEIGHT_PX: int = 1561
 SOURCE_SIZE_BYTES: int = 4096
-SOURCE_SCAN_COUNT: int = 12
 # The base step of a page cut from a whole scan, the split being skipped
 SPLIT_NONE: ProcessorRef = ProcessorRef(key='split.none', version='1')
 # Length of a page version identifier in hexadecimal digits
@@ -250,7 +249,7 @@ def make_source(*, name: str = 'book.pdf', minutes: int = 0) -> Source:
         files=[SourceFile(name=name, size_bytes=SOURCE_SIZE_BYTES, sha256=sha256)],
         size_bytes=SOURCE_SIZE_BYTES,
         sha256=sha256,
-        scan_count=SOURCE_SCAN_COUNT,
+        scan_count=0,
         imported_at=EPOCH + timedelta(minutes=minutes),
     )
 
