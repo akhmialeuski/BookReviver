@@ -2,6 +2,7 @@
 
 import json
 from typing import TYPE_CHECKING, Any, NamedTuple
+from urllib.parse import quote
 
 import attrs
 import pytest
@@ -48,6 +49,13 @@ ORTHOGRAPHY_FIELD: str = 'orthography'
 UNKNOWN_FIELD: str = 'owner_id'
 PAGE_SIZE_PARAM: str = 'size'
 PAGE_NUMBER_PARAM: str = 'page'
+ARCHIVE_SUFFIX: str = '/archive'
+ARCHIVE_FIELD: str = 'archive'
+ARCHIVE_NAME: str = 'book.zip'
+ZIP_MEDIA_TYPE: str = 'application/zip'
+DISPOSITION_HEADER: str = 'content-disposition'
+# A title outside ASCII, which the name of the archive carries in UTF-8
+ARCHIVED_TITLE: str = 'Буквар'
 SCHEMA_ARG: str = 'schema'
 EXTRAS_ARG: str = 'extras'
 CASE_ARG: str = 'case'
@@ -634,3 +642,75 @@ class TestDeleteProject:
         expect(response.status_code == status.HTTP_404_NOT_FOUND)
         expect(fx_files.kept(page))
         assert_expectations()
+
+
+class TestArchive:
+    """Tests for GET /projects/{project_id}/archive and POST /projects/archive, the export and the import of a book."""
+
+    async def test_an_exported_book_is_imported_as_a_new_project(
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_files: BookFiles, fx_actor: Actor
+    ) -> None:
+        """Verify the export is a ZIP file named after the title, and its import is a new project with the same files.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_files: Files of imported books in the application's stores.
+        :type fx_files: BookFiles
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        """
+        project = make_project(title=ARCHIVED_TITLE)
+        page = make_page()
+        await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
+        await fx_files.store(project.id, page)
+
+        exported = await fx_client.get(f'{_project_path(project.id)}{ARCHIVE_SUFFIX}')
+        imported = await fx_client.post(
+            f'{PROJECTS_PATH}{ARCHIVE_SUFFIX}', files={ARCHIVE_FIELD: (ARCHIVE_NAME, exported.content, ZIP_MEDIA_TYPE)}
+        )
+
+        copy = ProjectSchema.model_validate(imported.json())
+        expect(exported.status_code == status.HTTP_200_OK)
+        expect(exported.headers[CONTENT_TYPE_HEADER] == ZIP_MEDIA_TYPE)
+        expect(quote(ARCHIVED_TITLE, safe='') in exported.headers[DISPOSITION_HEADER])
+        expect(imported.status_code == status.HTTP_201_CREATED)
+        expect(imported.headers[LOCATION_HEADER] == f'{TEST_BASE_URL}{_project_path(copy.id)}')
+        expect(copy.id != project.id and copy.details.title == ARCHIVED_TITLE)
+        expect(fx_files.kept(page, project_id=copy.id))
+        assert_expectations()
+
+    async def test_a_file_that_is_not_an_archive_is_a_problem(self, fx_client: httpx.AsyncClient) -> None:
+        """Verify a file that is not a ZIP archive is refused with 400 and no project is made.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        """
+        response = await fx_client.post(
+            f'{PROJECTS_PATH}{ARCHIVE_SUFFIX}', files={ARCHIVE_FIELD: (ARCHIVE_NAME, b'not an archive', ZIP_MEDIA_TYPE)}
+        )
+
+        expect(response.status_code == status.HTTP_400_BAD_REQUEST)
+        expect(response.headers[CONTENT_TYPE_HEADER] == PROBLEM_MEDIA_TYPE)
+        expect((await _list_projects(fx_client, {})).total == 0)
+        assert_expectations()
+
+    async def test_another_accounts_book_is_not_exported(
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+    ) -> None:
+        """Verify the archive of another account's book is not found.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_database: Database of the test, which the application runs on.
+        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        """
+        project = make_project()
+        await commit_project(fx_database, fx_uow(), project, owner=new_account_id())
+
+        response = await fx_client.get(f'{_project_path(project.id)}{ARCHIVE_SUFFIX}')
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND

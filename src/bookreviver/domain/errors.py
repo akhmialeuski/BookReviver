@@ -141,6 +141,13 @@ class UnsupportedSourceError(DomainError):
     """The files of a source are not a readable source of its kind, such as a damaged PDF or image file."""
 
 
+class InvalidArchiveError(DomainError):
+    """An uploaded archive is not the archive of a book.
+
+    It is not a ZIP file, holds no database of a book, or holds a file outside the directories of a book.
+    """
+
+
 class UploadRejectedError(DomainError):
     """The uploaded file set breaks an upload rule.
 

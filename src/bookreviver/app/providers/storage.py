@@ -6,9 +6,9 @@
 
 from dishka import Provider, Scope, provide
 
-from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
+from bookreviver.adapters.storage import LocalAssetStore, LocalBookArchive, LocalSourceStore
 from bookreviver.app.settings import Settings, StorageBackend
-from bookreviver.ports.storage import AssetStore, SourceStore
+from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
 
 
 class LocalStorageProvider(Provider):
@@ -37,6 +37,17 @@ class LocalStorageProvider(Provider):
         :rtype: AssetStore
         """
         return LocalAssetStore(root=settings.storage_root)
+
+    @provide
+    def book_archive(self, settings: Settings) -> BookArchive:
+        """Build the archive of whole books, which packs the directory of a book and unpacks one as a new book.
+
+        :param settings: Application settings, of which ``storage_root`` is read.
+        :type settings: Settings
+        :returns: The local book archive under the storage root.
+        :rtype: BookArchive
+        """
+        return LocalBookArchive(root=settings.storage_root)
 
 
 STORAGE_PROVIDERS: dict[StorageBackend, type[Provider]] = {

@@ -7,7 +7,7 @@ from uuid import uuid4
 from fastapi import UploadFile
 
 from bookreviver.domain.enums import Rendition
-from bookreviver.domain.ids import JobId, SourceId
+from bookreviver.domain.ids import JobId, SourceId, StorageKey
 from bookreviver.domain.keys import ProjectKeys
 from tests.helpers.builders import make_page_version
 
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.entities import Page
-    from bookreviver.domain.ids import PageId, ProjectId, StorageKey
+    from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.ports.storage import AssetStore, SourceStore
 
 # More than one read chunk of the local store, so staging has to stream
@@ -77,7 +77,7 @@ class BookFiles:
         self._sources = sources
         self._assets = assets
         self._root = root
-        self._stored: dict[PageId, tuple[StorageKey, StorageKey]] = {}
+        self._stored: dict[PageId, tuple[ProjectId, StorageKey, StorageKey]] = {}
 
     async def store(self, project_id: ProjectId, page: Page) -> None:
         """Store a source for the page's project and the full image of the page's base version, as an import would.
@@ -96,17 +96,23 @@ class BookFiles:
         image = keys.version_rendition(make_page_version(page_id=page.id), Rendition.FULL_JPEG)
         async with self._assets.writable(image) as path:
             path.write_bytes(PAGE_IMAGE_CONTENT)
-        self._stored[page.id] = (keys.source(source_id), image)
+        self._stored[page.id] = (project_id, keys.source(source_id), image)
 
-    def kept(self, page: Page) -> bool:
+    def kept(self, page: Page, *, project_id: ProjectId | None = None) -> bool:
         """Return whether the source stored for the page's project and the page's full image are still on disk.
 
         :param page: Page stored earlier with ``store``.
         :type page: Page
+        :param project_id: Another book that holds the same files under its own directory, such as an imported copy,
+                           or None for the book the files were stored for.
+        :type project_id: ProjectId | None
         :returns: True when both files are there with their content.
         :rtype: bool
         """
-        source, image = self._stored[page.id]
+        owner, source, image = self._stored[page.id]
+        if project_id is not None:
+            stored, copy = ProjectKeys(owner), ProjectKeys(project_id)
+            source, image = (StorageKey(copy.prefix + stored.relative(key)) for key in (source, image))
         return (self._root / source / SOURCE_NAME).is_file() and (self._root / image).read_bytes() == PAGE_IMAGE_CONTENT
 
     def gone(self, project_id: ProjectId) -> bool:

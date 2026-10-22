@@ -11,7 +11,7 @@ from dishka import make_async_container
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.settings import Settings
-from bookreviver.ports.storage import AssetStore, SourceStore
+from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
 from tests.helpers.job_boards import BoardAdapter
 from tests.helpers.seeding import commit_account
 from tests.helpers.step_executors import StepExecutorAdapter
@@ -142,6 +142,18 @@ async def fx_source_store(fx_storage: AsyncContainer) -> SourceStore:
     :rtype: SourceStore
     """
     return await fx_storage.get(SourceStore)
+
+
+@pytest.fixture
+async def fx_book_archive(fx_storage: AsyncContainer) -> BookArchive:
+    """Return the book archive of the storage backend under test, over the same root as its stores.
+
+    :param fx_storage: Container holding the provider of one storage backend.
+    :type fx_storage: AsyncContainer
+    :returns: The book archive the backend's provider builds.
+    :rtype: BookArchive
+    """
+    return await fx_storage.get(BookArchive)
 
 
 @pytest.fixture

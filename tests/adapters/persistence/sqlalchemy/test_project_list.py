@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
-from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
+from bookreviver.adapters.storage import LocalAssetStore, LocalBookArchive, LocalSourceStore
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.values import SliceRequest
 from bookreviver.services.library import Library
@@ -97,7 +97,9 @@ async def _statements_of_list(uow: UnitOfWork, board: JobBoard, owner_id: Accoun
         uow=uow,
         library=Library(uow=uow),
         clock=FixedClock(EPOCH),
-        files=ProjectFiles(sources=LocalSourceStore(root=root), assets=LocalAssetStore(root=root)),
+        files=ProjectFiles(
+            sources=LocalSourceStore(root=root), assets=LocalAssetStore(root=root), archive=LocalBookArchive(root=root)
+        ),
         stages=StageSummaries(catalogue=FakeCatalogue([]), board=board),
     )
     counter = StatementCounter()

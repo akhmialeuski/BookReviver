@@ -6,7 +6,8 @@ source the upload holds is promoted into a directory of its own, named by its ``
 number of sources of any kind that way, and deleting one source leaves the others. The ``AssetStore`` owns
 ``assets/``, where everything derived from the sources lives, such as the renditions of scans and page versions.
 
-Both stores write once and never replace what they store: a source is immutable once promoted, and a regenerated
+The ``BookArchive`` packs the directory of a book into one file and unpacks such a file into the directory of a new
+book. Both stores write once and never replace what they store: a source is immutable once promoted, and a regenerated
 asset gets a new key. Each store deletes everything of a project it holds, so deleting a project is one call to
 each. Local paths, not open files, cross these ports, because the imaging libraries read and write paths.
 """
@@ -15,9 +16,10 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import AsyncIterator, Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
     from pathlib import Path
+    from typing import BinaryIO
 
     from bookreviver.domain.ids import JobId, ProjectId, SourceId, StorageKey
     from bookreviver.domain.values import SourceFile
@@ -242,4 +244,39 @@ class AssetStore(ABC):
 
         :param project_id: Project whose derived files are removed.
         :type project_id: ProjectId
+        """
+
+
+class BookArchive(ABC):
+    """The archive of a whole book as one file: the copy of its database, its sources and its derived files.
+
+    Another instance takes the archive in as a new book, so the archive carries everything a book is, and nothing of an
+    upload still being received. The database comes first, so an archive cut short is never a book without one.
+    """
+
+    @abstractmethod
+    def export(self, project_id: ProjectId, database: bytes) -> AsyncIterator[bytes]:
+        """Stream the archive of a book in pieces, without holding it whole anywhere.
+
+        :param project_id: The book.
+        :type project_id: ProjectId
+        :param database: The copy of the database of the book, which the archive carries in place of the file.
+        :type database: bytes
+        :returns: The pieces of the archive, in order.
+        :rtype: AsyncIterator[bytes]
+        """
+
+    @abstractmethod
+    async def unpack(self, project_id: ProjectId, archive: BinaryIO) -> None:
+        """Place the content of an archive as the directory of a new book, its database first.
+
+        Every name in the archive is checked before anything is written, so a refused archive leaves nothing behind.
+
+        :param project_id: The new book, which has no directory yet.
+        :type project_id: ProjectId
+        :param archive: The archive, a file that can be read from any position.
+        :type archive: BinaryIO
+        :raises InvalidArchiveError: If the file is not a ZIP archive, holds no database, or holds a file outside what
+                                     the archive of a book carries.
+        :raises ConflictError: If the new book has a directory already.
         """

@@ -36,7 +36,7 @@ from bookreviver.domain.errors import InvalidIdentifierError, InvalidParametersE
 from bookreviver.domain.ids import PageId, PageVersionId, StepId
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import AsyncIterator, Sequence
 
     from attrs import Attribute
 
@@ -136,6 +136,18 @@ class BookIdentifier:
         :raises InvalidIdentifierError: If the value breaks the rules of the scheme.
         """
         return cls(scheme=scheme, value=scheme.normalize(raw))
+
+
+@frozen(kw_only=True)
+class ArchivedBook:
+    """The archive of a book on its way to the reader: the title it is named after and the stream of its pieces.
+
+    :ivar title: Title of the book, which names the file of the archive.
+    :ivar pieces: The pieces of the archive, in order, which the stream reads once.
+    """
+
+    title: str
+    pieces: AsyncIterator[bytes]
 
 
 @frozen(kw_only=True)
