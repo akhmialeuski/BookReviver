@@ -7461,7 +7461,7 @@
           "iiif"
         ],
         "summary": "Iiif-File",
-        "description": "Stream a stored file exactly as it was written, an image information document with its IIIF media type.",
+        "description": "Stream a stored file, and an image information document with its IIIF media type and the address of its pyramid.",
         "operationId": "iiif_file_api_v1_iiif__key__get",
         "parameters": [
           {

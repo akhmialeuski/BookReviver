@@ -41,5 +41,3 @@ ROUTERS = (
 )
 # Every endpoint lives below this prefix
 API_PREFIX: str = '/api/v1'
-# The path the IIIF routes are served from, with which the import cuts the pyramids' ``info.json`` ids
-IIIF_ROOT: str = f'{API_PREFIX}{iiif.IIIF_PREFIX}'

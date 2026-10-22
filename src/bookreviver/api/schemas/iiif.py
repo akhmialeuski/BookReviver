@@ -1,8 +1,8 @@
 """What the API knows of the IIIF Image API documents it serves, which is only how it names and types one.
 
-The image information document, ``info.json``, is written by the tiler next to the tiles of a pyramid, with the path
-of the IIIF route as its ``id``, and the route serves it exactly as it was written. The API therefore models neither
-the document nor its properties.
+The image information document, ``info.json``, is written by the tiler next to the tiles of a pyramid, and the route
+serves it with its ``id`` set to the address it was asked at, the one property the API touches. The API therefore
+models neither the document nor its other properties.
 """
 
 # Name of the image information document at the root of a tile pyramid

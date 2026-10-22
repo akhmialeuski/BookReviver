@@ -91,7 +91,6 @@ class StepRunner:
         executor: StepExecutor,
         renditions: RenditionWriter,
         tiler: Tiler,
-        iiif_root: str,
     ) -> None:
         """Run processors through the executor, storing files through the asset store.
 
@@ -103,14 +102,11 @@ class StepRunner:
         :type renditions: RenditionWriter
         :param tiler: Port cutting the pyramid, and the preview of a preview run.
         :type tiler: Tiler
-        :param iiif_root: Path the IIIF routes are mounted at, which a pyramid's ``info.json`` names as its address.
-        :type iiif_root: str
         """
         self._assets = assets
         self._executor = executor
         self._renditions = renditions
         self._tiler = tiler
-        self._iiif_root = iiif_root
 
     @asynccontextmanager
     async def execute(self, run: StepRun) -> AsyncIterator[StepResult]:
@@ -258,5 +254,5 @@ class StepRunner:
         await self._assets.delete_prefix(tiles)
         full = keys.version_rendition(version, version.renditions.full)
         async with self._assets.readable(full) as image, self._assets.writable(tiles) as target:
-            await self._tiler.tile(image, target, resource_id=f'{self._iiif_root}/{tiles}')
+            await self._tiler.tile(image, target)
         return evolve(version, tiles_ready=True)

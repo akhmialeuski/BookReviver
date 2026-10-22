@@ -104,13 +104,11 @@ class ImportLimits:
     :ivar max_files: Largest number of files in one upload.
     :ivar max_bytes: Largest total size of one upload in bytes.
     :ivar parallel_scans: Largest number of scans cut at the same time.
-    :ivar iiif_root: Path the IIIF routes are mounted at, which a pyramid's ``info.json`` names as its address.
     """
 
     max_files: int
     max_bytes: int
     parallel_scans: int
-    iiif_root: str
 
 
 @frozen(kw_only=True)
@@ -217,9 +215,7 @@ class ImportRun:
         self._runner = imaging.runner
         self._records = StageRecords(publisher=runtime.publisher, clock=runtime.clock)
         self._labels = PageLabels(publisher=runtime.publisher, clock=runtime.clock)
-        self._base_versions = BaseVersions(
-            assets=storage.assets, tiler=imaging.tiler, iiif_root=runtime.limits.iiif_root
-        )
+        self._base_versions = BaseVersions(assets=storage.assets, tiler=imaging.tiler)
         self._order_keys = runtime.order_keys
         self._publisher = runtime.publisher
         self._clock = runtime.clock

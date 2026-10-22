@@ -13,7 +13,6 @@ from attrs import evolve
 from dishka import Provider, Scope, provide
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.domain.entities import Actor, PageStage
 from bookreviver.domain.enums import (
     ImagePolicy,
@@ -164,7 +163,6 @@ class ProcessingKit:
             executor=InProcessStepExecutor(self.catalogue),
             renditions=self.writer,
             tiler=self.tiler,
-            iiif_root=IIIF_ROOT,
         )
 
     def parts(self, uow: UnitOfWork) -> ProcessingParts:

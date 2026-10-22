@@ -3,8 +3,8 @@
 ``dzsave`` with ``layout=IIIF3`` writes the whole static pyramid, ``info.json`` included, so no tile or descriptor is
 written by hand. Two of its habits shape this module. It writes ``vips-properties.xml`` into the directory holding the
 pyramid whatever ``keep`` says, so the pyramid is cut in a temporary directory next to the target and only the pyramid
-is moved out. It writes the ``id`` of ``info.json`` as its ``id`` option followed by the pyramid directory's name, so
-the pyramid is cut under the last segment of the resource id and moved to the target afterwards.
+is moved out. The ``id`` it writes into ``info.json`` is left at its default, since the API replaces it with the
+address the document is asked at.
 
 The source is opened with sequential access, so libvips streams it instead of decoding the whole page into memory.
 """
@@ -43,17 +43,15 @@ class VipsTiler(Tiler):
         self._jpeg_quality = jpeg_quality
 
     @override
-    async def tile(self, image: Path, target_dir: Path, *, resource_id: str) -> None:
+    async def tile(self, image: Path, target_dir: Path) -> None:
         """Cut the pyramid in a worker thread, since libvips blocks.
 
         :param image: Page image to cut.
         :type image: Path
         :param target_dir: Directory to create for the pyramid.
         :type target_dir: Path
-        :param resource_id: Path the pyramid is served from, written as the ``id`` of its ``info.json``.
-        :type resource_id: str
         """
-        await to_thread.run_sync(partial(self._tile, image, target_dir=target_dir, resource_id=resource_id))
+        await to_thread.run_sync(partial(self._tile, image, target_dir=target_dir))
 
     @override
     async def preview(self, image: Path, target: Path) -> None:
@@ -77,26 +75,21 @@ class VipsTiler(Tiler):
         """
         await to_thread.run_sync(partial(self._shrink, image, target=target, long_side_px=self._thumbnail_long_side_px))
 
-    def _tile(self, image: Path, *, target_dir: Path, resource_id: str) -> None:
+    def _tile(self, image: Path, *, target_dir: Path) -> None:
         """Cut the pyramid next to ``target_dir`` and move only the pyramid into place.
 
         :param image: Page image to cut.
         :type image: Path
         :param target_dir: Directory to create for the pyramid.
         :type target_dir: Path
-        :param resource_id: Path the pyramid is served from, whose last segment names the pyramid while it is cut.
-        :type resource_id: str
         """
-        # dzsave writes id as "<id>/<pyramid directory name>", so the pyramid is cut under the last segment
-        base_id, _, name = resource_id.rpartition('/')
-        # dzsave also writes vips-properties.xml into the directory holding the pyramid, which must not leak
+        # dzsave writes vips-properties.xml into the directory holding the pyramid, which must not leak
         with tempfile.TemporaryDirectory(dir=target_dir.parent) as scratch:
-            pyramid = Path(scratch) / name
+            pyramid = Path(scratch) / target_dir.name
             source = pyvips.Image.new_from_file(str(image), access=pyvips.enums.Access.SEQUENTIAL)
             source.dzsave(
                 str(pyramid),
                 layout=pyvips.enums.ForeignDzLayout.IIIF3,
-                id=base_id,
                 tile_size=self._tile_size_px,
                 Q=self._jpeg_quality,
             )

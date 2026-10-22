@@ -37,19 +37,16 @@ PAGES_BLANK: ProcessorRef = ProcessorRef(key='pages.blank', version='2')
 class BaseVersions:
     """Builds the base versions of pages and cuts the files of scans."""
 
-    def __init__(self, *, assets: AssetStore, tiler: Tiler, iiif_root: str) -> None:
+    def __init__(self, *, assets: AssetStore, tiler: Tiler) -> None:
         """Cut the files of scans through the asset store with the tiler.
 
         :param assets: Store of the derived files.
         :type assets: AssetStore
         :param tiler: Port cutting the pyramid, the preview and the thumbnail of an image.
         :type tiler: Tiler
-        :param iiif_root: Path the IIIF routes are mounted at, which a pyramid's ``info.json`` names as its address.
-        :type iiif_root: str
         """
         self._assets = assets
         self._tiler = tiler
-        self._iiif_root = iiif_root
 
     @staticmethod
     def split_none(*, page: Page, scan: Scan, state: VersionState, moment: datetime) -> PageVersion:
@@ -143,4 +140,4 @@ class BaseVersions:
                 await self._tiler.thumbnail(image, target)
             tiles = key(Rendition.TILES)
             async with self._assets.writable(tiles) as target:
-                await self._tiler.tile(image, target, resource_id=f'{self._iiif_root}/{tiles}')
+                await self._tiler.tile(image, target)

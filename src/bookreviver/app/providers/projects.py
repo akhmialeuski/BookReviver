@@ -2,7 +2,6 @@
 
 from dishka import Provider, Scope, provide
 
-from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import UnitOfWork
@@ -117,7 +116,7 @@ class ProjectsProvider(Provider):
         :returns: The builder of base versions and the runner of their processors.
         :rtype: PageImaging
         """
-        base_versions = BaseVersions(assets=assets, tiler=tiler, iiif_root=IIIF_ROOT)
+        base_versions = BaseVersions(assets=assets, tiler=tiler)
         return PageImaging(base_versions=base_versions, runner=runner)
 
     @provide

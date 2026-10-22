@@ -17,7 +17,6 @@ from datetime import timedelta
 from dishka import Provider, Scope, provide
 
 from bookreviver.adapters.execution.process_pool import ProcessPoolStepExecutor
-from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.app.plugins import EntryPointCatalogSource
 from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import RenditionWriter, Tiler
@@ -170,7 +169,7 @@ class ProcessingProvider(Provider):
         :returns: The runner.
         :rtype: StepRunner
         """
-        return StepRunner(assets=assets, executor=executor, renditions=renditions, tiler=tiler, iiif_root=IIIF_ROOT)
+        return StepRunner(assets=assets, executor=executor, renditions=renditions, tiler=tiler)
 
     @provide(scope=Scope.REQUEST)
     def processing_parts(

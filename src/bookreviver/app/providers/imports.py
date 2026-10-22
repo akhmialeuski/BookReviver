@@ -16,7 +16,6 @@ from contextlib import AsyncExitStack
 from dishka import AsyncContainer, Provider, Scope, provide
 
 from bookreviver.adapters.jobs.board import InMemoryJobBoard
-from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.app.jobs import job_runner
 from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
@@ -101,7 +100,6 @@ class ImportsProvider(Provider):
             max_files=settings.max_upload_files,
             max_bytes=settings.max_upload_bytes,
             parallel_scans=settings.imaging.parallel_scans,
-            iiif_root=IIIF_ROOT,
         )
 
     @provide(scope=Scope.APP)
