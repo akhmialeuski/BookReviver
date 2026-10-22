@@ -12,7 +12,6 @@ from bookreviver.domain.enums import (
     PICTURE_KINDS,
     BlankFill,
     ChangeSource,
-    CompareMode,
     ContentSource,
     ContentType,
     EditorKind,
@@ -21,7 +20,6 @@ from bookreviver.domain.enums import (
     JobState,
     NumberDisplay,
     OrderMode,
-    PageFilter,
     PageKind,
     PageOrigin,
     RecipeKind,
@@ -32,7 +30,6 @@ from bookreviver.domain.enums import (
     VersionOrigin,
     VersionScale,
     VersionState,
-    ViewMode,
 )
 from bookreviver.domain.errors import ConflictError, InvalidParametersError
 from bookreviver.domain.geometry import Transform, geometry_from_data
@@ -40,8 +37,10 @@ from bookreviver.domain.ids import PageHistoryEntryId, PageVersionId, StorageKey
 from bookreviver.domain.values import (
     SHA256_PATTERN,
     MetadataSuggestion,
+    NewBookPlace,
     PageStageKey,
     PageStepKey,
+    PaginationSectionDraft,
     Progress,
     Renditions,
     StageRun,
@@ -53,9 +52,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.enums import (
         FileType,
-        LabelStyle,
         PageSide,
-        PlaceMode,
         RejectionReason,
         ResultMark,
         ReviewReason,
@@ -80,7 +77,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.step_values import StepValues
     from bookreviver.domain.values import (
         BookDetails,
-        CanvasPosition,
         ImportRequest,
         MetadataMap,
         ProcessorRef,
@@ -367,7 +363,7 @@ class Page:
 
 
 @frozen(kw_only=True)
-class PaginationSection:
+class PaginationSection(PaginationSectionDraft):
     """A run of the pages of a book that is numbered by one rule, such as the Roman numbers of a preface.
 
     A section starts at its first page and lasts until the next section of its own flow starts. A section that names
@@ -375,35 +371,17 @@ class PaginationSection:
     those kinds from its first page on, wherever they stand, and keeps its own count, so the plates of a book get
     ``Plate I`` and ``Plate II`` without disturbing the numbers of the text.
 
+    The rule of a section is the :class:`PaginationSectionDraft` the user stated, which the section extends with its
+    identity. The section follows its first page when the page is moved.
+
     :ivar id: Identifier of the section.
-    :ivar first_page_id: The page the section starts at, so the section follows the page when it is moved.
-    :ivar name: Name the user sees, such as ``Preface``.
-    :ivar style: How the numbers of the section are written.
-    :ivar start: Number of the first counted page of the section, from 1.
-    :ivar prefix: Text written before every number, such as ``Plate ``; empty for none.
-    :ivar display: Whether the pages count, and whether their numbers are printed or only implied.
-    :ivar kinds: Kinds of page the section takes as a series by kind; empty for a section of the main flow.
     :ivar created_at: When the section was created.
     :ivar updated_at: When the section was last changed.
     """
 
     id: PaginationSectionId
-    first_page_id: PageId
-    name: str = ''
-    style: LabelStyle
-    start: int = field(default=1, validator=validators.ge(1))
-    prefix: str = ''
-    display: NumberDisplay = NumberDisplay.PRINTED
-    kinds: frozenset[PageKind] = frozenset()
     created_at: datetime
     updated_at: datetime
-
-    def __attrs_post_init__(self) -> None:
-        """Check that the first number can be written in the style.
-
-        :raises ValueError: If the style is Roman and the first number is above 3999.
-        """
-        self.style.write(self.start)
 
     @property
     def is_series(self) -> bool:
@@ -772,35 +750,15 @@ class PageStage:
 
 
 @frozen(kw_only=True)
-class BookPlace:
-    """Where the reader left the book: the stage, the page, the view and the position of the canvas.
+class BookPlace(NewBookPlace):
+    """Where the reader left the book: the place the reader reported, and the time it was stored.
 
-    A book has one owner and so one place, which is replaced whole each time the reader moves, and read when the book is
-    opened again, on any device. It holds the fields of ``NewBookPlace`` beside the book and the time of the last write.
+    A book has one place, which is replaced whole each time the reader moves, and read when the book is opened again, on
+    any device. Its fields are those of :class:`NewBookPlace`.
 
-    :ivar mode: Whether the reader was working on a stage or reading.
-    :ivar stage: Stage the reader was on, or last was on before reading.
-    :ivar page_id: Page that was open, or None for the first page.
-    :ivar scan_id: Scan that was open on the stages that work on scans, or None.
-    :ivar source_id: File that was chosen on the stages that work on files, or None.
-    :ivar view: How the canvas laid the pages out.
-    :ivar compare: How the result of the stage was compared with the one before it.
-    :ivar filter: Which pages the strip or the grid listed.
-    :ivar canvas: Zoom and centre of the canvas, or None for the fitted view.
-    :ivar strip_page_id: First page in sight in the strip or the grid, or None for the top.
     :ivar updated_at: When the place was last written.
     """
 
-    mode: PlaceMode
-    stage: Stage
-    page_id: PageId | None = None
-    scan_id: ScanId | None = None
-    source_id: SourceId | None = None
-    view: ViewMode = ViewMode.PAGE
-    compare: CompareMode = CompareMode.OFF
-    filter: PageFilter = PageFilter.ALL
-    canvas: CanvasPosition | None = None
-    strip_page_id: PageId | None = None
     updated_at: datetime
 
 
