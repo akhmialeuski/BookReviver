@@ -9,12 +9,20 @@ from sqlalchemy.exc import IntegrityError
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.adapters.persistence.sqlalchemy.mappers import SourceMapper
-from bookreviver.adapters.persistence.sqlalchemy.tables import PageRow, SourceRow
-from bookreviver.domain.entities import LibraryEntry
-from bookreviver.domain.enums import BlockKind, RejectionReason, SourceStatus
+from bookreviver.adapters.persistence.sqlalchemy.tables import PageRow, SourceRow, StepChangeRow
+from bookreviver.domain.entities import LibraryEntry, PageHistoryEntry
+from bookreviver.domain.enums import BlockKind, ChangeSource, RejectionReason, SourceStatus, ValueScope
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
-from tests.helpers.builders import EPOCH, make_page, make_project, make_source, new_account_id
+from tests.helpers.builders import (
+    EPOCH,
+    make_page,
+    make_page_history_entry,
+    make_project,
+    make_source,
+    make_step_values,
+    new_account_id,
+)
 from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
@@ -39,13 +47,13 @@ SECOND_NAME: str = 'second.pdf'
 UNIMPORTED_STATUSES: tuple[SourceStatus, ...] = (SourceStatus.REJECTED, SourceStatus.REJECTED, SourceStatus.SKIPPED)
 
 
-def count_rows(session: Session, table: type[PageRow | ProjectRow | ScanRow | SourceRow]) -> int:
+def count_rows(session: Session, table: type[PageRow | ProjectRow | ScanRow | SourceRow | StepChangeRow]) -> int:
     """Count the rows of a table in the transaction of the session.
 
     :param session: Session of the transaction.
     :type session: Session
     :param table: Table to count.
-    :type table: type[PageRow | ProjectRow | ScanRow | SourceRow]
+    :type table: type[PageRow | ProjectRow | ScanRow | SourceRow | StepChangeRow]
     :returns: Number of rows the transaction sees.
     :rtype: int
     """
@@ -75,6 +83,35 @@ class TestProjectRow:
         await uow.change_book(project.id, lambda repos, _project: repos.projects.update(renamed))
 
         assert await fx_book_sessions.read(project.id, lambda session: count_rows(session, PageRow)) == 1
+
+
+class TestStepChangeRow:
+    """Tests for StepChangeRow, which the histories of the pages it reached name."""
+
+    async def test_a_deleted_page_takes_its_own_change_and_leaves_one_another_page_names(
+        self, fx_uow: UnitOfWorkFactory, fx_book_sessions: BookSessions, fx_owner_id: AccountId
+    ) -> None:
+        """Verify deleting a page removes the change of its own layer, and keeps a change of values another page has.
+
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_book_sessions: Sessions of the files of the books of the test.
+        :type fx_book_sessions: BookSessions
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
+        """
+        project, deleted, kept = make_project(), make_page(order_key='a0'), make_page(order_key='b0')
+        uow = fx_uow()
+        await store_project(uow, project, deleted, kept, owner=fx_owner_id)
+        values = make_step_values(scope=ValueScope.ODD)
+        shared = PageHistoryEntry.of_values([deleted.id, kept.id], values, values, ChangeSource.USER)
+        own = make_page_history_entry(page_id=deleted.id)
+        await uow.change_book(project.id, lambda repos, _project: repos.page_history.add_many([*shared, own]))
+
+        await uow.change_book(project.id, lambda repos, _project: repos.pages.delete(deleted.id))
+
+        ids = await fx_book_sessions.read(project.id, lambda session: session.scalars(select(StepChangeRow.id)).all())
+        assert ids == [shared[0].id]
 
 
 class TestLibraryRow:

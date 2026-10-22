@@ -329,8 +329,8 @@ class PageHistoryService:
     ) -> tuple[Sequence[PageHistoryEntry], Sequence[PageStage]]:
         """Write back the values of the odd pages, the even pages and the groups that the targets changed.
 
-        The values of a part of the pages are stored once, and every page they reached has a change of them in its
-        history, the changes of one batch alike. The batches of one part are taken back from the newest, which is the
+        The values of a part of the pages are stored once, and so is a change of them, which the history of every page
+        it reached names under its one identifier. The batches of one part are taken back from the newest, which is the
         one that left the values as they are now, to the oldest, and the values are written once. Every change is then
         taken back in the history of its page.
 
@@ -381,7 +381,11 @@ class PageHistoryService:
                 repos.step_values.save(evolve(holder, params=current, updated_at=moment))
             elif stored is not None:
                 repos.step_values.delete(key)
-            undone.extend(change.taken_back(moment, batch) for change in changes)
+            # The undo of a change is one change too, so the undos of its pages share one identifier
+            undos: dict[PageHistoryEntryId, PageHistoryEntryId] = {}
+            for change in changes:
+                undo = change.taken_back(moment, batch)
+                undone.append(evolve(undo, id=undos.setdefault(change.id, undo.id)))
             kinds = {
                 recipe.kind
                 for recipe in repos.recipes.list_for_stage(stage)
@@ -407,11 +411,12 @@ class PageHistoryService:
         :rtype: Sequence[PageHistoryEntry]
         :raises NotFoundError: If a batch reaches a page that is not one of the project.
         """
-        members = {change.id: change for change in chosen}
+        # A change of the values of a part of the pages is one entry for each page, under one identifier
+        members = {(change.id, change.page_id): change for change in chosen}
         for batch_id in {change.batch_id for change in chosen if change.batch_id is not None}:
             for member in repos.page_history.list_for_batch(batch_id):
-                members.setdefault(member.id, member)
-        undone = {undo.undoes for undo in repos.page_history.list_undoing(list(members))}
+                members.setdefault((member.id, member.page_id), member)
+        undone = {undo.undoes for undo in repos.page_history.list_undoing({change_id for change_id, _ in members})}
         standing = [
             change for change in members.values() if change.source is not ChangeSource.UNDO and change.id not in undone
         ]

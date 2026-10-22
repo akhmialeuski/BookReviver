@@ -87,8 +87,8 @@ class PageBatch:
     def write_values(self, values: StepValues, params: MetadataMap, pages: Sequence[PageId]) -> StepValues:
         """Set the fields the odd pages, the even pages or a group change for a step, and keep the change for each page.
 
-        The values are stored once, and the history of each page that takes them gets a change, so the page shows the
-        change and an undo from any of them takes it back.
+        The values are stored once, and so is the change, which the history of each page that takes them names, so the
+        page shows the change and an undo from any of them takes it back.
 
         :param values: The values as they are stored, or empty ones for a part of the pages that has none yet.
         :type values: StepValues
@@ -108,8 +108,8 @@ class PageBatch:
         else:
             self._repos.step_values.save(changed)
         self._changes.extend(
-            evolve(PageHistoryEntry.of_values(page_id, values, changed, self._source), batch_id=self.batch_id)
-            for page_id in pages
+            evolve(change, batch_id=self.batch_id)
+            for change in PageHistoryEntry.of_values(pages, values, changed, self._source)
         )
         return changed
 

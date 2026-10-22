@@ -674,6 +674,8 @@ class TestUndoOfAValueForParts:
     ) -> None:
         """Verify an undo back to the first change of two takes the value from the second to the first to none.
 
+        A change of the even pages and its undo are each one change, which every page they reached names.
+
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
@@ -684,6 +686,7 @@ class TestUndoOfAValueForParts:
         await fx_kit.page_settings().change(actor, project.id, even, STRONGEST)
         newest = await fx_kit.page_history().undo(actor, project.id, key, None)
         expect(len(newest) == 2)
+        expect(len({change.id for change in first.changes}) == len({change.id for change in newest}) == 1)
         expect(
             [values.params for values in await stored_parts(fx_kit, project, step_id)]
             == [{STRENGTH_PARAMETER: STRONGER}]

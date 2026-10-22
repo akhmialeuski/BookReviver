@@ -1,14 +1,15 @@
 """Tables of a book, private to the SQLAlchemy persistence adapter, which every book keeps in a file of its own.
 
 The module declares the ``projects``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
-``page_step_states``, ``page_history``, ``page_groups``, ``step_values``, ``group_values``, ``pagination_sections``,
-``book_places`` and ``recipes`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped`` annotations,
-``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from :class:`BookTable`, which
-carries the bind key ``book``, so advanced-alchemy gives the tables of a book a ``MetaData`` of their own, apart from
-the tables of the catalogue in :mod:`bookreviver.adapters.persistence.sqlalchemy.catalogue`, and the migrations of the
-two schemas never meet. The base also brings the portable ``GUID`` and ``DateTimeUTC`` column types for ``UUID`` and
-``datetime`` annotations and the naming convention of keys and constraints. The tables are written for SQLite alone,
-the one database of the application, so no column or index carries a variant for another database.
+``page_step_states``, ``step_changes``, ``page_history``, ``page_groups``, ``step_values``, ``group_values``,
+``pagination_sections``, ``book_places`` and ``recipes`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped``
+annotations, ``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from
+:class:`BookTable`, which carries the bind key ``book``, so advanced-alchemy gives the tables of a book a ``MetaData``
+of their own, apart from the tables of the catalogue in :mod:`bookreviver.adapters.persistence.sqlalchemy.catalogue`,
+and the migrations of the two schemas never meet. The base also brings the portable ``GUID`` and ``DateTimeUTC`` column
+types for ``UUID`` and ``datetime`` annotations and the naming convention of keys and constraints. The tables are
+written for SQLite alone, the one database of the application, so no column or index carries a variant for another
+database.
 
 Rows never leave the adapter. The mappers in :mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turn them into
 frozen domain entities, so nothing outside this package depends on the shape of a table.
@@ -111,6 +112,8 @@ GROUP_OF_A_GROUP: Final = f"(scope = '{ValueScope.GROUP}') = (group_id IS NOT NU
 PARITY_SCOPE: Final = f"scope IN ('{ValueScope.ODD}', '{ValueScope.EVEN}')"
 # Column of the key of a group, which the rows of a group name
 GROUP_ID_COLUMN: Final = 'group_id'
+# Column of the change a row of the history of a page names
+CHANGE_ID_COLUMN: Final = 'change_id'
 
 
 class Relation(enum.StrEnum):
@@ -607,14 +610,15 @@ class GroupValuesRow(BookTable):
     updated_at: Mapped[datetime]
 
 
-class PageHistoryRow(BookTable):
-    """Row of one change of a layer of a step on a page, which the history of the page keeps and never rewrites.
+class StepChangeRow(BookTable):
+    """Row of one change of a layer of a step, which the histories of the pages it reached name and never rewrite.
 
+    A change of the page's own layer reaches that page, and a change of the values of the odd pages, the even pages or
+    a group reaches every page that took them, so the change is stored once and ``page_history`` links it to each page.
     The step is named by its identifier with no foreign key, as in ``page_step_states``, since a change outlives a step
     that is removed from its recipe. The values are the whole layer before and after the change, as JSON objects.
 
     :ivar id: Change identifier, assigned by the domain.
-    :ivar page_id: Page the change was made on.
     :ivar stage: Stage of the step, stored by value.
     :ivar step_id: Identifier of the step.
     :ivar layer: The layer that changed, stored by value.
@@ -626,26 +630,21 @@ class PageHistoryRow(BookTable):
     :ivar batch_id: Identifier shared by the changes of one batch, or null.
     :ivar undoes_id: The change this one takes back, with no foreign key like the step, or null.
     :ivar created_at: Time the change was made.
-    :ivar sequence: Place of the change in the history of its page, from one, unique within the page.
-    :ivar page: Page owning the change, never loaded implicitly.
     """
 
-    __tablename__ = 'page_history'
+    __tablename__ = 'step_changes'
     __table_args__ = (
-        Index(None, PAGE_ID_COLUMN, STAGE_COLUMN),
         Index(None, 'batch_id'),
         Index(None, 'undoes_id'),
         Index(None, GROUP_ID_COLUMN),
-        UniqueConstraint(PAGE_ID_COLUMN, SEQUENCE_COLUMN),
         CheckConstraint(GROUP_OF_A_GROUP, name='group_of_a_group'),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
-    page_id: Mapped[UUID] = mapped_column(ForeignKey(PageRow.id, ondelete=CASCADE))
     stage: Mapped[Stage] = mapped_column(enum_by_value(Stage))
     step_id: Mapped[UUID]
     layer: Mapped[StepLayer] = mapped_column(enum_by_value(StepLayer))
-    scope: Mapped[ValueScope] = mapped_column(enum_by_value(ValueScope), server_default=ValueScope.PAGES.value)
+    scope: Mapped[ValueScope] = mapped_column(enum_by_value(ValueScope))
     group_id: Mapped[int | None] = mapped_column(ForeignKey(PageGroupRow.id))
     before: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     after: Mapped[dict[str, Any] | None] = mapped_column(JSON)
@@ -653,9 +652,27 @@ class PageHistoryRow(BookTable):
     batch_id: Mapped[UUID | None]
     undoes_id: Mapped[UUID | None]
     created_at: Mapped[datetime]
-    sequence: Mapped[int]
+
+
+class PageHistoryRow(BookTable):
+    """Row of the history of a page: the place of one change in the order of the changes that reached the page.
+
+    :ivar page_id: Page the change reached.
+    :ivar sequence: Place of the change in the history of the page, from one, unique within the page.
+    :ivar change_id: The change, which reaches the page once.
+    :ivar page: Page owning the history, never loaded implicitly.
+    :ivar change: The change, loaded by the queries of the history with the row.
+    """
+
+    __tablename__ = 'page_history'
+    __table_args__ = (UniqueConstraint(PAGE_ID_COLUMN, CHANGE_ID_COLUMN), Index(None, CHANGE_ID_COLUMN))
+
+    page_id: Mapped[UUID] = mapped_column(ForeignKey(PageRow.id, ondelete=CASCADE), primary_key=True)
+    sequence: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    change_id: Mapped[UUID] = mapped_column(ForeignKey(StepChangeRow.id, ondelete=CASCADE))
 
     page: Mapped[PageRow] = relationship(back_populates=Relation.HISTORY, lazy=NO_IMPLICIT_LOAD)
+    change: Mapped[StepChangeRow] = relationship(lazy=NO_IMPLICIT_LOAD)
 
 
 class BookPlaceRow(BookTable):

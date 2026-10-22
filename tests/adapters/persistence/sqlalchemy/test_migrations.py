@@ -11,6 +11,7 @@ import shutil
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import UUID, uuid4
 
 import pytest
 from advanced_alchemy.alembic.commands import AlembicCommands
@@ -38,10 +39,12 @@ from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.container import build_container
 from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND, RUN, SCHEMA_AT
-from bookreviver.domain.enums import BlockKind, ValueScope
-from bookreviver.domain.ids import PageId
+from bookreviver.domain.entities import PageHistoryEntry
+from bookreviver.domain.enums import BlockKind, ChangeSource, ValueScope
+from bookreviver.domain.ids import ChangeBatchId, PageHistoryEntryId, PageId
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 from tests.helpers.builders import (
+    EPOCH,
     make_book_place,
     make_page,
     make_page_history_entry,
@@ -91,6 +94,12 @@ BEFORE_HISTORY: str = '179088fbcd7b'
 BEFORE_GROUPS: str = '6c4ad9b7af37'
 # The group the test of that revision puts a page, its values and a change of them in
 GROUP: str = 'Engravings'
+# The revision before the one that keeps each change of a step once
+BEFORE_CHANGES: str = '6ca3e79586aa'
+# The order key of the second page of that test, after the page of the stored book
+SECOND_ORDER_KEY: str = 'b0'
+# The fields the change of that test sets
+ANGLE: dict[str, int] = {'angle': 1}
 # A provider account, linked twice by the test of the unique key
 PROVIDER: str = 'google'
 PROVIDER_ACCOUNT: str = 'provider-account-1'
@@ -662,7 +671,7 @@ class TestHistoryRevision:
             expect(session.scalar(text('SELECT count(*) FROM page_step_changes')) == 1)
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
         with _session(fx_empty_book) as session:
-            expect(session.scalars(select(PageHistoryRow.id)).all() == [entry.id])
+            expect(session.scalars(select(PageHistoryRow.change_id)).all() == [entry.id])
         assert_expectations()
 
 
@@ -742,6 +751,64 @@ class TestGroupsRevision:
         with pytest.raises(RuntimeError, match='against their scope'):
             await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
         expect(await fx_empty_book.current_revisions() == (BEFORE_GROUPS,))
+        assert_expectations()
+
+
+class TestChangesRevision:
+    """Tests for the revision that keeps each change of a step once."""
+
+    async def test_a_change_of_two_pages_and_its_undo_keep_their_pages_both_ways(
+        self, fx_empty_book: SqlDatabase
+    ) -> None:
+        """Verify a change of values on two pages and its undo are an entry for each page down, and one change up.
+
+        Down, each page has an entry of the change and an entry of the undo naming it, the first page keeping the
+        identifier of the change. Up, the change and the undo are one row each, which the two histories name.
+
+        :param fx_empty_book: Database of a book with no table.
+        :type fx_empty_book: SqlDatabase
+        """
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        project_id = await _commit_book(fx_empty_book)
+        second = make_page(order_key=SECOND_ORDER_KEY)
+        with _session(fx_empty_book) as session:
+            pages = sorted([PageId(session.scalars(select(PageRow.id)).one()), second.id])
+        values = make_step_values(scope=ValueScope.ODD)
+        batch, undo_batch, undo_id = ChangeBatchId(uuid4()), ChangeBatchId(uuid4()), PageHistoryEntryId(uuid4())
+        changed = PageHistoryEntry.of_values(pages, values, evolve(values, params=ANGLE), ChangeSource.USER)
+        change = [evolve(entry, batch_id=batch) for entry in changed]
+        undo = [evolve(entry.taken_back(EPOCH, undo_batch), id=undo_id) for entry in change]
+
+        def record(session: Session) -> None:
+            """Store the second page, the change of both pages, and its undo.
+
+            :param session: Session of the transaction.
+            :type session: Session
+            """
+            repos = SqlAlchemyBookRepositories(session)
+            repos.pages.add(second)
+            repos.page_history.add_many([*change, *undo])
+
+        await fx_empty_book.write(
+            record, kind=BlockKind.BOOK, book=project_id, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS
+        )
+        await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_CHANGES)
+        with _session(fx_empty_book) as session:
+            rows = session.execute(text('SELECT id, page_id, undoes_id FROM page_history')).all()
+        entries = {UUID(bytes=row.page_id): UUID(bytes=row.id) for row in rows if row.undoes_id is None}
+        undoing = {UUID(bytes=row.page_id): UUID(bytes=row.undoes_id) for row in rows if row.undoes_id is not None}
+        expect(len({row.id for row in rows}) == len(rows) == 2 * len(pages))
+        expect(entries[pages[0]] == change[0].id)
+        expect(undoing == entries)
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        with _session(fx_empty_book) as session:
+            repos = SqlAlchemyBookRepositories(session)
+            expect(session.scalar(text('SELECT count(*) FROM step_changes')) == 2)
+            histories = [repos.page_history.list_for_page(page) for page in pages]
+        expect(
+            [[(entry.id, entry.undoes) for entry in history] for history in histories]
+            == [[(change[0].id, None), (undo_id, change[0].id)]] * 2
+        )
         assert_expectations()
 
 
