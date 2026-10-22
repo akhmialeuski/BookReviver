@@ -8,12 +8,18 @@ makes the file of each book in the directory the book already has under the stor
 book. A row moves with the columns the new table still has, so the owner of a book and the account of a place, which
 no table of a book keeps any more, stay behind.
 
+The file of a book is filled at the baseline revision of its schema, ``99e96bc47c3c``, whose tables are those of the
+shared database without the accounts, and then brought to the head, so the rows go through every later revision as the
+file of a book of that time would: a label typed by hand becomes a manual label, for one. The new file is made at the
+head like any new book, taken down to the baseline, filled and taken up again. The tables the copy writes are read from
+the file itself, never from the tables of the code, which describe the head.
+
 Each file is filled through SQLite's ``ATTACH``: the shared file is attached read only to a connection of the new file,
 and one ``INSERT ... SELECT`` for each table copies the rows that belong to the book. Which rows those are follows from
-the keys of the tables of a book: a table with a ``project_id`` names its book, and any other table reaches it through
-the key to a table already reached, as the versions of a page reach the book through the page. The rows are written
-in one transaction with foreign keys off, as the migrations run, and ``PRAGMA foreign_key_check`` runs before the
-commit, so a file is written whole or not at all.
+the keys of the tables of a book at the baseline: a table with a ``project_id`` names its book, and any other table
+reaches it through the key to a table already reached, as the versions of a page reach the book through the page. The
+rows are written in one transaction with foreign keys off, as the migrations run, and ``PRAGMA foreign_key_check`` runs
+before the commit, so a file is written whole or not at all.
 """
 
 import sqlite3
@@ -24,23 +30,28 @@ from uuid import UUID
 
 from anyio import to_thread
 from attrs import frozen
+from sqlalchemy import MetaData, create_engine
 from sqlalchemy.engine import make_url
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import USER_TABLE
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LIBRARY_TABLE
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema
-from bookreviver.adapters.persistence.sqlalchemy.tables import PROJECT_ID_COLUMN, PROJECTS_TABLE
+from bookreviver.adapters.persistence.sqlalchemy.tables import PROJECTS_TABLE
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.ids import ProjectId
 
 if TYPE_CHECKING:
-    from sqlalchemy import MetaData, Table
+    from sqlalchemy import Table
 
     from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 
 # The last revision of the shared database, the only one the split reads
 SHARED_REVISION: Final = '15e015051f5c'
+# The revision of the schema of a book whose tables hold the rows of the shared database as they were
+BOOK_BASELINE: Final = '99e96bc47c3c'
+# The column of the tables of a book at the baseline that names the book
+BOOK_COLUMN: Final = 'project_id'
 # The name the shared file is attached under on the connection of a new file
 SHARED: Final = 'shared'
 # The name SQLite gives the database of the connection itself
@@ -108,7 +119,12 @@ class SharedDatabaseSplit:
             except ConflictError as error:
                 err_msg = f'The book {project_id} has a database already, so the split would overwrite it.'
                 raise SplitRefusedError(err_msg) from error
-            await to_thread.run_sync(self._fill_book, self._books.path(project_id), project_id)
+            async with self._books.use(project_id) as database:
+                await to_thread.run_sync(database.migrations.downgrade, BOOK_BASELINE)
+                await database.dispose()
+                versions = database.config.alembic_config.version_table_name
+                await to_thread.run_sync(self._fill_book, self._books.path(project_id), project_id, versions)
+                await to_thread.run_sync(database.migrations.upgrade)
         return SplitReport(accounts=accounts, books=len(project_ids))
 
     def _require_shared(self) -> None:
@@ -180,15 +196,17 @@ class SharedDatabaseSplit:
             _commit_checked(connection)
             return _count(connection, USER_TABLE)
 
-    def _fill_book(self, target: Path, project_id: ProjectId) -> None:
-        """Copy the rows of one book into its new file.
+    def _fill_book(self, target: Path, project_id: ProjectId, versions: str) -> None:
+        """Copy the rows of one book into its new file, at the baseline revision of the schema of a book.
 
-        :param target: The new file of the book, a copy of the blank file.
+        :param target: The new file of the book, empty and at the baseline.
         :type target: Path
         :param project_id: The book.
         :type project_id: ProjectId
+        :param versions: Name of the version table of the file, which the copy leaves alone.
+        :type versions: str
         """
-        metadata = Schema.BOOK.metadata
+        metadata = _tables_of(target, leaving_out=versions)
         conditions = book_conditions(metadata)
         with closing(self._attached(target)) as connection:
             connection.execute(BEGIN_COPY)
@@ -213,7 +231,7 @@ class SharedDatabaseSplit:
 def book_conditions(metadata: MetaData) -> dict[str, str]:
     """Say for every table of a book which rows of the shared database belong to the book being copied.
 
-    :param metadata: The metadata of the tables of a book.
+    :param metadata: The tables of a book at the baseline, read from its file.
     :type metadata: MetaData
     :returns: For each table, the condition of a ``WHERE`` over the shared table, with the ``book`` parameter.
     :rtype: dict[str, str]
@@ -223,8 +241,8 @@ def book_conditions(metadata: MetaData) -> dict[str, str]:
     for table in metadata.sorted_tables:
         if table.name in conditions:
             continue
-        if PROJECT_ID_COLUMN in table.c:
-            conditions[table.name] = f'{PROJECT_ID_COLUMN} = :{BOOK_PARAMETER}'
+        if BOOK_COLUMN in table.c:
+            conditions[table.name] = f'{BOOK_COLUMN} = :{BOOK_PARAMETER}'
             continue
         parent = next((key for key in table.foreign_keys if key.column.table.name in conditions), None)
         if parent is None:
@@ -234,6 +252,25 @@ def book_conditions(metadata: MetaData) -> dict[str, str]:
         subquery = _select(f'"{parent.column.name}"', reached.name, condition=conditions[reached.name])
         conditions[table.name] = f'"{parent.parent.name}" IN ({subquery})'
     return conditions
+
+
+def _tables_of(path: Path, *, leaving_out: str) -> MetaData:
+    """Read the tables of a database file as they are, with their keys.
+
+    :param path: The file.
+    :type path: Path
+    :param leaving_out: Name of a table not to read, such as the version table.
+    :type leaving_out: str
+    :returns: The tables, sorted by their keys.
+    :rtype: MetaData
+    """
+    engine = create_engine(f'sqlite:///{path}')
+    try:
+        metadata = MetaData()
+        metadata.reflect(engine, only=lambda name, _metadata: name != leaving_out)
+    finally:
+        engine.dispose()
+    return metadata
 
 
 def _copy(
