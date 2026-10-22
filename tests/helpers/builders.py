@@ -166,7 +166,6 @@ def make_project(*, title: str = 'Book', minutes: int = 0) -> Project:
 
 def make_page(
     *,
-    project_id: ProjectId,
     order_key: str = 'a0',
     scan: Scan | None = None,
     kind: PageKind = PageKind.TEXT,
@@ -174,8 +173,6 @@ def make_page(
 ) -> Page:
     """Build an included page of the given project, cut from the whole of a scan or a placeholder without one.
 
-    :param project_id: Project owning the page.
-    :type project_id: ProjectId
     :param order_key: Order key placing the page in the book, unique within the project.
     :type order_key: str
     :param scan: Scan the page shows whole, or None for a placeholder.
@@ -189,7 +186,6 @@ def make_page(
     """
     return Page(
         id=PageId(uuid4()),
-        project_id=project_id,
         order_key=order_key,
         kind=kind,
         origin=PageOrigin.PLACEHOLDER if scan is None else PageOrigin.SCAN,
@@ -226,7 +222,6 @@ def make_section(
     moment = EPOCH + timedelta(minutes=minutes)
     return PaginationSection(
         id=PaginationSectionId(uuid4()),
-        project_id=page.project_id,
         first_page_id=page.id,
         style=style,
         display=display,
@@ -236,11 +231,9 @@ def make_section(
     )
 
 
-def make_source(*, project_id: ProjectId, name: str = 'book.pdf', minutes: int = 0) -> Source:
+def make_source(*, name: str = 'book.pdf', minutes: int = 0) -> Source:
     """Build a PDF source of one file imported ``minutes`` after the epoch, whose digest follows from its name.
 
-    :param project_id: Project owning the source.
-    :type project_id: ProjectId
     :param name: Name of the uploaded file; sources of different names have different digests.
     :type name: str
     :param minutes: Minutes after ``EPOCH`` the source was imported.
@@ -251,7 +244,6 @@ def make_source(*, project_id: ProjectId, name: str = 'book.pdf', minutes: int =
     sha256 = hashlib.sha256(name.encode()).hexdigest()
     return Source(
         id=SourceId(uuid4()),
-        project_id=project_id,
         kind=SourceKind.PDF,
         file_type=FileType.PDF,
         file_name=name,
@@ -274,7 +266,7 @@ def make_scan(*, source: Source, number: int) -> Scan:
     :rtype: Scan
     """
     facts = ScanFacts(width_px=PAGE_WIDTH_PX, height_px=PAGE_HEIGHT_PX, color_mode=ColorMode.GRAY)
-    return Scan(id=ScanId(uuid4()), project_id=source.project_id, source_id=source.id, number=number, facts=facts)
+    return Scan(id=ScanId(uuid4()), source_id=source.id, number=number, facts=facts)
 
 
 def make_page_version(*, page_id: PageId, minutes: int = 0) -> PageVersion:
@@ -306,8 +298,6 @@ def make_job(
 ) -> Job:
     """Build a job created ``minutes`` after the epoch, an import job unless told otherwise.
 
-    :param project_id: Project the job imports into.
-    :type project_id: ProjectId
     :param state: State of the job.
     :type state: JobState
     :param minutes: Minutes after ``EPOCH`` the job was created.
@@ -331,15 +321,12 @@ def make_job(
 
 def make_recipe(
     *,
-    project_id: ProjectId,
     stage: Stage = Stage.GEOMETRY,
     kind: RecipeKind = RecipeKind.TEXT,
     minutes: int = 0,
 ) -> Recipe:
     """Build a recipe of one deskew step, created ``minutes`` after the epoch.
 
-    :param project_id: Project owning the recipe.
-    :type project_id: ProjectId
     :param stage: Stage the recipe processes.
     :type stage: Stage
     :param kind: Kind of the pages the recipe processes.
@@ -352,7 +339,6 @@ def make_recipe(
     moment = EPOCH + timedelta(minutes=minutes)
     return Recipe(
         id=RecipeId(uuid4()),
-        project_id=project_id,
         stage=stage,
         kind=kind,
         steps=(Step(processor_key=DESKEW.key, params=DESKEW_PARAMS, step_id=DESKEW_STEP_ID),),
@@ -430,13 +416,9 @@ def make_page_stage(
     )
 
 
-def make_book_place(
-    *, project_id: ProjectId, stage: Stage = Stage.GEOMETRY, page_id: PageId | None = None
-) -> BookPlace:
+def make_book_place(*, stage: Stage = Stage.GEOMETRY, page_id: PageId | None = None) -> BookPlace:
     """Build the place of a reader who zoomed into a page of a stage in the spread layout.
 
-    :param project_id: Book the place is in.
-    :type project_id: ProjectId
     :param stage: Stage the reader was on.
     :type stage: Stage
     :param page_id: Page that was open, or None for the first page.
@@ -445,7 +427,6 @@ def make_book_place(
     :rtype: BookPlace
     """
     return BookPlace(
-        project_id=project_id,
         mode=PlaceMode.WORKSPACE,
         stage=stage,
         page_id=page_id,
@@ -571,7 +552,6 @@ def make_page_step_change(
 
 def make_step_values(
     *,
-    project_id: ProjectId,
     scope: ValueScope = ValueScope.EVEN,
     group_label: str = '',
     step_id: StepId = DESKEW_STEP_ID,
@@ -579,8 +559,6 @@ def make_step_values(
 ) -> StepValues:
     """Build the values of a step of the geometry stage for a part of the pages, by default the deskew step, even pages.
 
-    :param project_id: Project owning the step.
-    :type project_id: ProjectId
     :param scope: The odd pages, the even pages or a group.
     :type scope: ValueScope
     :param group_label: Label of the group, for the scope of a group.
@@ -593,7 +571,6 @@ def make_step_values(
     :rtype: StepValues
     """
     return StepValues(
-        project_id=project_id,
         stage=Stage.GEOMETRY,
         step_id=step_id,
         scope=scope,

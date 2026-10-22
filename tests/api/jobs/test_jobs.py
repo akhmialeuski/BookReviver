@@ -378,7 +378,7 @@ class TestStreamProjectEvents:
         :type fx_queued_job: Job
         """
         project_id = fx_queued_job.project_id
-        source = make_source(project_id=project_id)
+        source = make_source()
         scan = make_scan(source=source, number=0)
         page_id = PageId(uuid4())
         version = make_page_version(page_id=page_id)

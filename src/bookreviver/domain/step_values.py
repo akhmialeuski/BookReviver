@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.domain.enums import Stage
-    from bookreviver.domain.ids import PageId, ProjectId, StepId
+    from bookreviver.domain.ids import PageId, StepId
     from bookreviver.domain.values import MetadataMap
 
 NO_PAGES_NAMED: str = 'A value for pages names at least one page.'
@@ -62,16 +62,11 @@ def pages_changing_side(before: Sequence[PageId], after: Sequence[PageId]) -> li
 class StepValuesKey:
     """The key a part of the pages keeps its values of a step under.
 
-    The project is part of the key, since two books built from one profile keep the identifiers of its steps, and the
-    values of one must never reach a run or a save of the other.
-
-    :ivar project_id: Project owning the step.
     :ivar step_id: The step of a recipe.
     :ivar scope: The odd pages, the even pages or a group.
     :ivar group_label: Label of the group for the scope of a group, and empty for the others.
     """
 
-    project_id: ProjectId
     step_id: StepId
     scope: ValueScope
     group_label: str = ''
@@ -126,7 +121,6 @@ class ValueField:
 class StepValues:
     """The values of the fields of one step for the odd pages, the even pages, or the pages of one group.
 
-    :ivar project_id: Project owning the step, whose deletion removes the values.
     :ivar stage: Stage of the step.
     :ivar step_id: The step of a recipe.
     :ivar scope: The odd pages, the even pages or a group.
@@ -135,7 +129,6 @@ class StepValues:
     :ivar updated_at: When the values were last saved.
     """
 
-    project_id: ProjectId
     stage: Stage
     step_id: StepId
     scope: ValueScope
@@ -156,7 +149,7 @@ class StepValues:
     @property
     def key(self) -> StepValuesKey:
         """The key the values are stored under."""
-        return StepValuesKey(self.project_id, self.step_id, self.scope, self.group_label)
+        return StepValuesKey(self.step_id, self.scope, self.group_label)
 
     @property
     def is_empty(self) -> bool:

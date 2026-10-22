@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from bookreviver.domain.entities import Scan
+    from bookreviver.domain.ids import ProjectId
 
 
 class ScanQuery(Params):
@@ -154,17 +155,19 @@ class ScanSchema(ResponseModel):
     images: ImagePathsSchema | None
 
     @classmethod
-    def from_scan(cls, scan: Scan, request: Request) -> Self:
+    def from_scan(cls, scan: Scan, request: Request, *, project_id: ProjectId) -> Self:
         """Build the schema of a scan with the paths of its images once they are ready.
 
         :param scan: The scan.
         :type scan: Scan
         :param request: The request, whose application knows the route that serves the images.
         :type request: Request
+        :param project_id: Identifier of the project of the scan, whose files hold its images.
+        :type project_id: ProjectId
         :returns: The scan resource, with images once its renditions are ready.
         :rtype: Self
         """
-        keys = ProjectKeys(scan.project_id)
+        keys = ProjectKeys(project_id)
         images = None
         if scan.renditions.ready:
             images = ImagePathsSchema.of(

@@ -128,7 +128,7 @@ async def _commit_book(uow: UnitOfWork, actor: Actor, valued: tuple[ValueScope, 
     :rtype: Book
     """
     project = make_project()
-    pages = [make_page(project_id=project.id, order_key=f'a{number}') for number in range(PAGE_COUNT)]
+    pages = [make_page(order_key=f'a{number}') for number in range(PAGE_COUNT)]
     await store_project(uow, project, *pages, owner=actor.account_id)
 
     def save_records(repos: BookRepositories, _project: Project) -> None:
@@ -145,7 +145,7 @@ async def _commit_book(uow: UnitOfWork, actor: Actor, valued: tuple[ValueScope, 
         if valued is not None:
             scope, stage = valued
             group_label = GROUP if scope is ValueScope.GROUP else ''
-            values = make_step_values(project_id=project.id, scope=scope, group_label=group_label)
+            values = make_step_values(scope=scope, group_label=group_label)
             repos.step_values.save(evolve(values, stage=stage))
 
     await uow.change_book(project.id, save_records)

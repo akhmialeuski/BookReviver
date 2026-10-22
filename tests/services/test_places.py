@@ -171,4 +171,4 @@ class TestPlaceService:
             await places.find(stranger, project.id)
         with pytest.raises(NotFoundError):
             await places.save(stranger, project.id, _place())
-        assert await fx_uow().read_book(project.id, lambda repos: repos.book_places.find(project.id)) is None
+        assert await fx_uow().read_book(project.id, lambda repos: repos.book_places.find()) is None

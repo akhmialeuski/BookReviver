@@ -345,8 +345,12 @@ class ProcessingKit:
             uow=uow, records=parts.records, starter=parts.starter, assets=self.assets, clock=self.clock
         )
 
-    async def edit_key(self, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
+    async def edit_key(self, project_id: ProjectId, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
         """Give the key of the edit of a step of the recipe of the kind of a page in a stage, found by its processor.
+
+        :param project_id: Identifier of the project of the page.
+
+        :type project_id: ProjectId
 
         :param page: Page the edit belongs to.
         :type page: Page
@@ -357,7 +361,7 @@ class ProcessingKit:
         :returns: The key of the edit of that step.
         :rtype: PageStepKey
         """
-        recipe = await self.parts(self.uow()).recipes.of_kind(page.project_id, stage, page.recipe_kind)
+        recipe = await self.parts(self.uow()).recipes.of_kind(project_id, stage, page.recipe_kind)
         step = next(step for step in recipe.steps if step.processor_key == processor_key)
         return PageStepKey(page.id, stage, step.step_id)
 
@@ -398,9 +402,9 @@ class ProcessingKit:
         :returns: The page and its scan.
         :rtype: tuple[Page, Scan]
         """
-        source = make_source(project_id=project.id, name=f'{order_key}.pdf')
+        source = make_source(name=f'{order_key}.pdf')
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
-        page = make_page(project_id=project.id, order_key=order_key, scan=scan, kind=kind)
+        page = make_page(order_key=order_key, scan=scan, kind=kind)
 
         def add_scan_page(repos: BookRepositories, _project: Project) -> None:
             """Add the source, its scan and the page that shows the scan.
@@ -421,8 +425,14 @@ class ProcessingKit:
                 target.write_bytes(image)
         return page, scan
 
-    async def seed_base_version(self, page: Page, *, image: bytes = IMAGE_CONTENT) -> PageVersion:
+    async def seed_base_version(
+        self, project_id: ProjectId, page: Page, *, image: bytes = IMAGE_CONTENT
+    ) -> PageVersion:
         """Commit the ready base version of a page, with its files and its stage record.
+
+        :param project_id: Identifier of the project of the page.
+
+        :type project_id: ProjectId
 
         :param page: Page that has a scan.
         :type page: Page
@@ -439,7 +449,7 @@ class ProcessingKit:
             tiles_ready=True,
             data={'width_px': IMAGE_SIZE_PX, 'height_px': IMAGE_SIZE_PX},
         )
-        keys = ProjectKeys(page.project_id)
+        keys = ProjectKeys(project_id)
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
             async with self.assets.writable(keys.version_rendition(version, rendition)) as target:
                 target.write_bytes(image)
@@ -463,7 +473,7 @@ class ProcessingKit:
                 )
             )
 
-        await self.uow().change_book(page.project_id, add_base_version)
+        await self.uow().change_book(project_id, add_base_version)
         return version
 
     async def store_files(self, version: PageVersion, project_id: ProjectId) -> None:
@@ -562,11 +572,13 @@ async def mark_log(kit: ProcessingKit, project_id: ProjectId, version: PageVersi
     return await kit.uow().read_book(project_id, lambda repos: repos.result_mark_changes.list_for_version(version.id))
 
 
-async def found_stage(kit: ProcessingKit, page: Page, stage: Stage) -> PageStage | None:
+async def found_stage(kit: ProcessingKit, project_id: ProjectId, page: Page, stage: Stage) -> PageStage | None:
     """Read the record of a stage of a page as committed, which is None for a stage that has not run on the page.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Identifier of the project of the page.
+    :type project_id: ProjectId
     :param page: The page.
     :type page: Page
     :param stage: The stage.
@@ -574,16 +586,18 @@ async def found_stage(kit: ProcessingKit, page: Page, stage: Stage) -> PageStage
     :returns: The record, or None.
     :rtype: PageStage | None
     """
-    return await kit.uow().read_book(
-        page.project_id, lambda repos: repos.page_stages.find(PageStageKey(page.id, stage))
-    )
+    return await kit.uow().read_book(project_id, lambda repos: repos.page_stages.find(PageStageKey(page.id, stage)))
 
 
-async def stage_versions(kit: ProcessingKit, page: Page, stage: Stage | None) -> Slice[PageVersion]:
+async def stage_versions(
+    kit: ProcessingKit, project_id: ProjectId, page: Page, stage: Stage | None
+) -> Slice[PageVersion]:
     """Read the versions a page has made in a stage or in all, as committed, the earliest first.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Identifier of the project of the page.
+    :type project_id: ProjectId
     :param page: The page.
     :type page: Page
     :param stage: The stage, or None for every stage.
@@ -592,7 +606,7 @@ async def stage_versions(kit: ProcessingKit, page: Page, stage: Stage | None) ->
     :rtype: Slice[PageVersion]
     """
     return await kit.uow().read_book(
-        page.project_id,
+        project_id,
         lambda repos: repos.page_versions.list_for_stage(page.id, stage, None, SliceRequest(limit=VERSIONS_WINDOW)),
     )
 

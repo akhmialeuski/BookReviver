@@ -29,7 +29,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import Line, Point
-from bookreviver.domain.ids import ChangeBatchId, PageId, PageStepChangeId, PageVersionId, ProjectId, StepId
+from bookreviver.domain.ids import ChangeBatchId, PageId, PageStepChangeId, PageVersionId, StepId
 from bookreviver.domain.stage_summaries import StepTally
 from bookreviver.domain.values import PageStageKey, PageStepKey, ProcessorRef, SliceRequest, Step
 from tests.helpers.builders import (
@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bookreviver.domain.entities import Page, PageStage, PageStepChange, PageVersion, Project
+    from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.step_values import StepValues
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from tests.contracts.conftest import OwnerFactory
@@ -138,25 +139,23 @@ async def _store_page(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory) -
     :rtype: tuple[ProjectId, PageId]
     """
     project = make_project()
-    page = make_page(project_id=project.id)
+    page = make_page()
     await store_project(uow_factory(), project, page, owner=await new_owner())
     return project.id, page.id
 
 
-def _blank_page(project_id: ProjectId, order_key: str) -> Page:
+def _blank_page(order_key: str) -> Page:
     """Build a page that has an image, a blank leaf, since a placeholder has none.
 
-    :param project_id: Project owning the page.
-    :type project_id: ProjectId
     :param order_key: Order key placing the page in the book.
     :type order_key: str
     :returns: The page.
     :rtype: Page
     """
-    return evolve(make_page(project_id=project_id, order_key=order_key), origin=PageOrigin.BLANK)
+    return evolve(make_page(order_key=order_key), origin=PageOrigin.BLANK)
 
 
-async def _add_marked_head(uow: UnitOfWork, page: Page) -> PageVersionId:
+async def _add_marked_head(uow: UnitOfWork, project_id: ProjectId, page: Page) -> PageVersionId:
     """Store a base version of a page and a version of the geometry stage marked for review.
 
     :param uow: Unit of work to add to, in which the project of the page is stored.
@@ -168,7 +167,7 @@ async def _add_marked_head(uow: UnitOfWork, page: Page) -> PageVersionId:
     """
     base = make_page_version(page_id=page.id)
     head = evolve(_version(base), review=ReviewReason.LOW_CONFIDENCE)
-    await uow.change_book(page.project_id, lambda repos, _project: repos.page_versions.add_many([base, head]))
+    await uow.change_book(project_id, lambda repos, _project: repos.page_versions.add_many([base, head]))
     return head.id
 
 
@@ -223,8 +222,8 @@ class TestRecipeRepository:
         uow = fx_uow()
         project = make_project()
         await store_project(uow, project, owner=await fx_new_owner())
-        first = make_recipe(project_id=project.id, kind=RecipeKind.BLANK)
-        second = make_recipe(project_id=project.id, kind=RecipeKind.BLANK, minutes=1)
+        first = make_recipe(kind=RecipeKind.BLANK)
+        second = make_recipe(kind=RecipeKind.BLANK, minutes=1)
         await uow.change_book(project.id, lambda repos, _project: repos.recipes.add(first))
         with pytest.raises(ConflictError):
             await uow.change_book(project.id, lambda repos, _project: repos.recipes.add(second))
@@ -242,16 +241,12 @@ class TestRecipeRepository:
         uow = fx_uow()
         project = make_project()
         await store_project(uow, project, owner=await fx_new_owner())
-        recipes = [
-            make_recipe(project_id=project.id, kind=kind, minutes=index) for index, kind in enumerate(RecipeKind)
-        ]
-        other_stage = make_recipe(project_id=project.id, stage=Stage.CLEANUP)
+        recipes = [make_recipe(kind=kind, minutes=index) for index, kind in enumerate(RecipeKind)]
+        other_stage = make_recipe(stage=Stage.CLEANUP)
         await uow.change_book(
             project.id, lambda repos, _project: repos.recipes.add_many([*reversed(recipes), other_stage])
         )
-        listed = await fx_uow().read_book(
-            project.id, lambda repos: repos.recipes.list_for_stage(project.id, Stage.GEOMETRY)
-        )
+        listed = await fx_uow().read_book(project.id, lambda repos: repos.recipes.list_for_stage(Stage.GEOMETRY))
         assert [recipe.id for recipe in listed] == [recipe.id for recipe in recipes]
 
     async def test_list_for_project_returns_the_recipes_of_each_stage_in_pipeline_order(
@@ -266,16 +261,16 @@ class TestRecipeRepository:
         """
         owner_id = await fx_new_owner()
         project, other = make_project(), make_project()
-        cleanup = make_recipe(project_id=project.id, stage=Stage.CLEANUP)
-        geometry = make_recipe(project_id=project.id)
-        picture = make_recipe(project_id=project.id, kind=RecipeKind.BW_PICTURE, minutes=1)
-        elsewhere = make_recipe(project_id=other.id)
+        cleanup = make_recipe(stage=Stage.CLEANUP)
+        geometry = make_recipe()
+        picture = make_recipe(kind=RecipeKind.BW_PICTURE, minutes=1)
+        elsewhere = make_recipe()
         uow = fx_uow()
         for owned in (project, other):
             await store_project(uow, owned, owner=owner_id)
         await uow.change_book(project.id, lambda repos, _project: repos.recipes.add_many([cleanup, picture, geometry]))
         await uow.change_book(other.id, lambda repos, _project: repos.recipes.add(elsewhere))
-        listed = await fx_uow().read_book(project.id, lambda repos: repos.recipes.list_for_project(project.id))
+        listed = await fx_uow().read_book(project.id, lambda repos: repos.recipes.list_all())
         assert [recipe.id for recipe in listed] == [geometry.id, picture.id, cleanup.id]
 
     async def test_steps_survive_the_store(self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
@@ -288,7 +283,7 @@ class TestRecipeRepository:
         """
         uow = fx_uow()
         project = make_project()
-        plain = make_recipe(project_id=project.id)
+        plain = make_recipe()
         other = Step(processor_key='geometry.other', params={}, enabled=False)
         recipe = evolve(plain, steps=(*plain.steps, other, evolve(plain.steps[0], step_id=StepId(uuid4()))))
         await store_project(uow, project, owner=await fx_new_owner())
@@ -296,15 +291,15 @@ class TestRecipeRepository:
         assert await fx_uow().read_book(project.id, lambda repos: repos.recipes.get(recipe.id)) == recipe
 
     async def test_recipe_of_a_missing_project_is_not_found(self, fx_uow: UnitOfWorkFactory) -> None:
-        """Reject a recipe whose project is not stored.
+        """Reject a recipe of a book that is not stored, which has no file to hold it.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         """
         uow = fx_uow()
-        recipe = make_recipe(project_id=ProjectId(new_account_id()))
+        recipe = make_recipe()
         with pytest.raises(NotFoundError):
-            await uow.change_book(recipe.project_id, lambda repos, _project: repos.recipes.add(recipe))
+            await uow.change_book(make_project().id, lambda repos, _project: repos.recipes.add(recipe))
 
     async def test_deleting_a_recipe_leaves_its_pages_without_it(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -317,7 +312,7 @@ class TestRecipeRepository:
         :type fx_new_owner: OwnerFactory
         """
         project_id, page_id = await _store_page(fx_uow, fx_new_owner)
-        recipe = make_recipe(project_id=project_id)
+        recipe = make_recipe()
 
         def add_recipe_and_record(repos: BookRepositories, _project: Project) -> None:
             """Add the recipe and a stage record that names it.
@@ -348,7 +343,7 @@ class TestRecipeRepository:
         :type fx_new_owner: OwnerFactory
         """
         project_id, _ = await _store_page(fx_uow, fx_new_owner)
-        recipe = make_recipe(project_id=project_id)
+        recipe = make_recipe()
         await fx_uow().change_book(project_id, lambda repos, _project: repos.recipes.add(recipe))
         await fx_uow().delete_book(project_id)
         with pytest.raises(NotFoundError):
@@ -508,7 +503,7 @@ class TestPageStageRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        pages = [make_page(project_id=project.id, order_key=f'a{index}') for index in range(3)]
+        pages = [make_page(order_key=f'a{index}') for index in range(3)]
         first, second, other = (page.id for page in pages)
         uow = fx_uow()
         await store_project(uow, project, *pages, owner=await fx_new_owner())
@@ -545,7 +540,7 @@ class TestPageStageRepository:
     async def test_queries_by_recipe_and_by_stage_of_a_project(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the records of a recipe and the records of a stage of a project are found, and only those.
+        """Verify the records of a recipe and of a stage are found, and neither another stage nor another book.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -555,7 +550,7 @@ class TestPageStageRepository:
         project_id, page_id = await _store_page(fx_uow, fx_new_owner)
         other_project_id, other_page_id = await _store_page(fx_uow, fx_new_owner)
         uow = fx_uow()
-        recipe = make_recipe(project_id=project_id)
+        recipe = make_recipe()
         mine = make_page_stage(page_id=page_id, recipe_id=recipe.id)
         theirs = make_page_stage(page_id=other_page_id)
 
@@ -577,11 +572,10 @@ class TestPageStageRepository:
             project_id,
             lambda repos: (
                 repos.page_stages.list_for_recipe(recipe.id),
-                repos.page_stages.list_for_project_stage(project_id, Stage.GEOMETRY),
-                repos.page_stages.list_for_project_stage(other_project_id, Stage.CLEANUP),
+                repos.page_stages.list_for_stage(Stage.GEOMETRY),
             ),
         )
-        assert found == ([mine], [mine], [])
+        assert found == ([mine], [mine])
 
     async def test_list_fresh_returns_the_fresh_records_of_the_book(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -679,9 +673,7 @@ class TestPageStageRepository:
             repos.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.CLEANUP))
 
         await uow.change_book(project_id, add_versions_and_records)
-        assert set(await uow.read_book(project_id, lambda repos: repos.page_stages.head_ids(project_id))) == {
-            version.id
-        }
+        assert set(await uow.read_book(project_id, lambda repos: repos.page_stages.head_ids())) == {version.id}
 
     async def test_tally_counts_the_records_of_each_stage_by_state_and_review(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -698,13 +690,13 @@ class TestPageStageRepository:
         owner_id = await fx_new_owner()
         project, other = make_project(), make_project()
         uow = fx_uow()
-        marked, stale, failed = (_blank_page(project.id, f'a{number}') for number in range(3))
-        placeholder = make_page(project_id=project.id, order_key='b0')
-        elsewhere = _blank_page(other.id, 'a0')
+        marked, stale, failed = (_blank_page(f'a{number}') for number in range(3))
+        placeholder = make_page(order_key='b0')
+        elsewhere = _blank_page('a0')
         await store_project(uow, project, marked, stale, failed, placeholder, owner=owner_id)
         await store_project(uow, other, elsewhere, owner=owner_id)
-        marked_head = await _add_marked_head(uow, marked)
-        failed_head = await _add_marked_head(uow, failed)
+        marked_head = await _add_marked_head(uow, project.id, marked)
+        failed_head = await _add_marked_head(uow, project.id, failed)
         records = [
             make_page_stage(page_id=marked.id, head_version_id=marked_head),
             make_page_stage(page_id=stale.id, state=StageState.STALE),
@@ -716,10 +708,9 @@ class TestPageStageRepository:
         await uow.change_book(
             other.id, lambda repos, _project: repos.page_stages.save(make_page_stage(page_id=elsewhere.id))
         )
-        tallies = await fx_uow().read_book(project.id, lambda repos: repos.page_stages.tally(project.id))
+        tallies = await fx_uow().read_book(project.id, lambda repos: repos.page_stages.tally())
         counts = {(tally.stage, tally.fresh, tally.stale, tally.failed, tally.review, tally.check) for tally in tallies}
         assert counts == {(Stage.GEOMETRY, 1, 1, 1, 1, 3), (Stage.CLEANUP, 1, 0, 0, 0, 0)}
-        assert {tally.project_id for tally in tallies} == {project.id}
 
     async def test_tally_counts_a_page_both_stale_and_marked_once_in_check(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -733,15 +724,15 @@ class TestPageStageRepository:
         """
         project = make_project()
         uow = fx_uow()
-        both, clean = (_blank_page(project.id, f'a{number}') for number in range(2))
+        both, clean = (_blank_page(f'a{number}') for number in range(2))
         await store_project(uow, project, both, clean, owner=await fx_new_owner())
-        head_id = await _add_marked_head(uow, both)
+        head_id = await _add_marked_head(uow, project.id, both)
         records = [
             make_page_stage(page_id=both.id, head_version_id=head_id, state=StageState.STALE),
             make_page_stage(page_id=clean.id),
         ]
         await uow.change_book(project.id, partial(_save_records, records=records))
-        [tally] = await fx_uow().read_book(project.id, lambda repos: repos.page_stages.tally(project.id))
+        [tally] = await fx_uow().read_book(project.id, lambda repos: repos.page_stages.tally())
         assert (tally.fresh, tally.stale, tally.review, tally.check) == (1, 1, 1, 1)
 
     async def test_step_tally_counts_the_pages_stopped_at_each_step(
@@ -759,9 +750,9 @@ class TestPageStageRepository:
         owner_id = await fx_new_owner()
         project, other = make_project(), make_project()
         uow = fx_uow()
-        first, second, whole, failed = (_blank_page(project.id, f'a{number}') for number in range(4))
-        placeholder = make_page(project_id=project.id, order_key='b1')
-        elsewhere = _blank_page(other.id, 'a1')
+        first, second, whole, failed = (_blank_page(f'a{number}') for number in range(4))
+        placeholder = make_page(order_key='b1')
+        elsewhere = _blank_page('a1')
         await store_project(uow, project, first, second, whole, failed, placeholder, owner=owner_id)
         await store_project(uow, other, elsewhere, owner=owner_id)
         stopped = [
@@ -778,7 +769,7 @@ class TestPageStageRepository:
         await uow.change_book(project.id, partial(_save_records, records=stopped))
         await uow.change_book(other.id, lambda repos, _project: repos.page_stages.save(elsewhere_stopped))
         [tally], steps = await fx_uow().read_book(
-            project.id, lambda repos: (repos.page_stages.tally(project.id), repos.page_stages.step_tally(project.id))
+            project.id, lambda repos: (repos.page_stages.tally(), repos.page_stages.step_tally())
         )
         assert steps == [StepTally(stage=Stage.GEOMETRY, through_step=0, pages=2)]
         assert tally.partial == 2
@@ -1113,8 +1104,8 @@ class TestStepValuesRepository:
         :type fx_new_owner: OwnerFactory
         """
         project_id, _ = await _store_page(fx_uow, fx_new_owner)
-        first = make_step_values(project_id=project_id, params={MAX_ANGLE: 3})
-        replacement = make_step_values(project_id=project_id, params={MAX_ANGLE: 7, METHOD: PROJECTION})
+        first = make_step_values(params={MAX_ANGLE: 3})
+        replacement = make_step_values(params={MAX_ANGLE: 7, METHOD: PROJECTION})
 
         def save_twice(repos: BookRepositories, _project: Project) -> None:
             """Save values and then other values for the same step and part of the pages.
@@ -1143,15 +1134,13 @@ class TestStepValuesRepository:
         """
         project_id, _ = await _store_page(fx_uow, fx_new_owner)
         parts = [
-            make_step_values(project_id=project_id, scope=ValueScope.GROUP, group_label=INDEX_GROUP),
-            make_step_values(project_id=project_id, scope=ValueScope.EVEN, params={MAX_ANGLE: 4}),
-            make_step_values(project_id=project_id, scope=ValueScope.ODD, params={MAX_ANGLE: 5}),
-            make_step_values(project_id=project_id, scope=ValueScope.GROUP, group_label=APPENDIX_GROUP),
+            make_step_values(scope=ValueScope.GROUP, group_label=INDEX_GROUP),
+            make_step_values(scope=ValueScope.EVEN, params={MAX_ANGLE: 4}),
+            make_step_values(scope=ValueScope.ODD, params={MAX_ANGLE: 5}),
+            make_step_values(scope=ValueScope.GROUP, group_label=APPENDIX_GROUP),
         ]
         await fx_uow().change_book(project_id, partial(_save_values, values=parts))
-        listed = await fx_uow().read_book(
-            project_id, lambda repos: repos.step_values.list_for_step(project_id, DESKEW_STEP_ID)
-        )
+        listed = await fx_uow().read_book(project_id, lambda repos: repos.step_values.list_for_step(DESKEW_STEP_ID))
         assert [(values.scope, values.group_label) for values in listed] == [
             (ValueScope.GROUP, APPENDIX_GROUP),
             (ValueScope.GROUP, INDEX_GROUP),
@@ -1171,18 +1160,18 @@ class TestStepValuesRepository:
         """
         project_id, _ = await _store_page(fx_uow, fx_new_owner)
         other_project_id, _ = await _store_page(fx_uow, fx_new_owner)
-        mine = make_step_values(project_id=project_id)
-        other_step = make_step_values(project_id=project_id, step_id=StepId(uuid4()))
-        other_stage = evolve(make_step_values(project_id=project_id, step_id=StepId(uuid4())), stage=Stage.CLEANUP)
-        other_book = make_step_values(project_id=other_project_id, step_id=StepId(uuid4()))
+        mine = make_step_values()
+        other_step = make_step_values(step_id=StepId(uuid4()))
+        other_stage = evolve(make_step_values(step_id=StepId(uuid4())), stage=Stage.CLEANUP)
+        other_book = make_step_values(step_id=StepId(uuid4()))
         uow = fx_uow()
         await uow.change_book(project_id, partial(_save_values, values=[mine, other_step, other_stage]))
         await uow.change_book(other_project_id, lambda repos, _project: repos.step_values.save(other_book))
         listed = await fx_uow().read_book(
             project_id,
             lambda repos: (
-                repos.step_values.list_for_step(project_id, DESKEW_STEP_ID),
-                repos.step_values.list_for_project(project_id),
+                repos.step_values.list_for_step(DESKEW_STEP_ID),
+                repos.step_values.list_all(),
             ),
         )
         assert listed == (
@@ -1202,8 +1191,8 @@ class TestStepValuesRepository:
         """
         first_id, _ = await _store_page(fx_uow, fx_new_owner)
         second_id, _ = await _store_page(fx_uow, fx_new_owner)
-        first = make_step_values(project_id=first_id, params={MAX_ANGLE: 3})
-        second = make_step_values(project_id=second_id, params={MAX_ANGLE: 9})
+        first = make_step_values(params={MAX_ANGLE: 3})
+        second = make_step_values(params={MAX_ANGLE: 9})
         uow = fx_uow()
         await uow.change_book(first_id, lambda repos, _project: repos.step_values.save(first))
         await uow.change_book(second_id, lambda repos, _project: repos.step_values.save(second))
@@ -1219,19 +1208,18 @@ class TestStepValuesRepository:
             return await fx_uow().read_book(
                 book_id,
                 lambda repos: (
-                    repos.step_values.list_for_step(book_id, DESKEW_STEP_ID),
+                    repos.step_values.list_for_step(DESKEW_STEP_ID),
                     repos.step_values.find(first.key),
                     repos.step_values.find(second.key),
                 ),
             )
 
+        # The two books keep one key in two files, so each finds its own values under it
         before = [await values_of(book_id) for book_id in (first_id, second_id)]
-        expect(before == [([first], first, None), ([second], None, second)])
+        expect(before == [([first], first, first), ([second], second, second)])
         await fx_uow().change_book(first_id, lambda repos, _project: repos.step_values.delete(first.key))
-        after = await fx_uow().read_book(
-            second_id, lambda repos: (repos.step_values.find(first.key), repos.step_values.find(second.key))
-        )
-        expect(after == (None, second))
+        after = [await values_of(book_id) for book_id in (first_id, second_id)]
+        expect(after == [([], None, None), ([second], second, second)])
         assert_expectations()
 
     async def test_delete_removes_one_part_and_a_missing_one_is_not_found(
@@ -1245,8 +1233,8 @@ class TestStepValuesRepository:
         :type fx_new_owner: OwnerFactory
         """
         project_id, _ = await _store_page(fx_uow, fx_new_owner)
-        even = make_step_values(project_id=project_id)
-        odd = make_step_values(project_id=project_id, scope=ValueScope.ODD)
+        even = make_step_values()
+        odd = make_step_values(scope=ValueScope.ODD)
         uow = fx_uow()
         await uow.change_book(project_id, partial(_save_values, values=[even, odd]))
         await fx_uow().change_book(project_id, lambda repos, _project: repos.step_values.delete(even.key))
@@ -1258,15 +1246,15 @@ class TestStepValuesRepository:
         assert found == (None, odd)
 
     async def test_values_of_a_project_that_is_not_stored_are_refused(self, fx_uow: UnitOfWorkFactory) -> None:
-        """Verify values need the book of their project, which is what removes them with it.
+        """Verify values need a stored book, whose file holds them and is deleted with them.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         """
         uow = fx_uow()
-        values = make_step_values(project_id=ProjectId(uuid4()))
+        values = make_step_values()
         with pytest.raises(NotFoundError):
-            await uow.change_book(values.project_id, lambda repos, _project: repos.step_values.save(values))
+            await uow.change_book(make_project().id, lambda repos, _project: repos.step_values.save(values))
 
     async def test_deleting_the_project_deletes_its_values(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1281,19 +1269,17 @@ class TestStepValuesRepository:
         project_id, _ = await _store_page(fx_uow, fx_new_owner)
         other_project_id, _ = await _store_page(fx_uow, fx_new_owner)
         uow = fx_uow()
-        kept = make_step_values(project_id=other_project_id, scope=ValueScope.ODD)
-        mine = make_step_values(project_id=project_id)
+        kept = make_step_values(scope=ValueScope.ODD)
+        mine = make_step_values()
         await uow.change_book(project_id, lambda repos, _project: repos.step_values.save(mine))
         await uow.change_book(other_project_id, lambda repos, _project: repos.step_values.save(kept))
         await fx_uow().delete_book(project_id)
         remaining = await fx_uow().read_book(
-            other_project_id, lambda repos: repos.step_values.list_for_step(other_project_id, DESKEW_STEP_ID)
+            other_project_id, lambda repos: repos.step_values.list_for_step(DESKEW_STEP_ID)
         )
         assert remaining == [kept]
         with pytest.raises(NotFoundError):
-            await fx_uow().read_book(
-                project_id, lambda repos: repos.step_values.list_for_step(project_id, DESKEW_STEP_ID)
-            )
+            await fx_uow().read_book(project_id, lambda repos: repos.step_values.list_for_step(DESKEW_STEP_ID))
 
 
 class TestPageStepChangeRepository:
@@ -1404,7 +1390,7 @@ class TestPageStepChangeRepository:
         :type fx_new_owner: OwnerFactory
         """
         project_id, first_page = await _store_page(fx_uow, fx_new_owner)
-        second_page = make_page(project_id=project_id, order_key=SECOND_ORDER_KEY)
+        second_page = make_page(order_key=SECOND_ORDER_KEY)
         batch = ChangeBatchId(uuid4())
         members = [
             evolve(make_page_step_change(page_id=page_id), batch_id=batch)
@@ -1471,7 +1457,7 @@ class TestPageStepChangeRepository:
         :type fx_new_owner: OwnerFactory
         """
         project_id, page_id = await _store_page(fx_uow, fx_new_owner)
-        other_page = make_page(project_id=project_id, order_key=SECOND_ORDER_KEY)
+        other_page = make_page(order_key=SECOND_ORDER_KEY)
         doomed = [make_page_step_change(page_id=page_id) for _ in range(3)]
         undo = evolve(make_page_step_change(page_id=page_id), source=ChangeSource.UNDO, undoes=doomed[0].id)
         carried = evolve(
@@ -1761,9 +1747,7 @@ class TestPageVersionProcessing:
             repos.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.CLEANUP, head_version_id=head.id))
 
         await uow.change_book(project_id, add_versions_and_head)
-        found = await uow.read_book(
-            project_id, lambda repos: repos.page_versions.collectable(project_id, PREVIEW_CUTOFF)
-        )
+        found = await uow.read_book(project_id, lambda repos: repos.page_versions.collectable(PREVIEW_CUTOFF))
         assert {version.id for version in found} == {orphan.id, recent.id, old_preview.id}
 
     async def test_collectable_keeps_a_version_marked_good_or_commented_with_its_inputs(
@@ -1789,9 +1773,7 @@ class TestPageVersionProcessing:
         unjudged = _version(base)
         versions = [base, input_of_good, good, commented, commented_bad, plain_bad, unjudged]
         await uow.change_book(project_id, lambda repos, _project: repos.page_versions.add_many(versions))
-        found = await uow.read_book(
-            project_id, lambda repos: repos.page_versions.collectable(project_id, PREVIEW_CUTOFF)
-        )
+        found = await uow.read_book(project_id, lambda repos: repos.page_versions.collectable(PREVIEW_CUTOFF))
         assert {version.id for version in found} == {plain_bad.id, unjudged.id}
 
     async def test_collectable_keeps_the_inputs_of_every_version_that_stays(
@@ -1828,9 +1810,7 @@ class TestPageVersionProcessing:
             repos.page_stages.save(make_page_stage(page_id=page_id, stage=Stage.CLEANUP, head_version_id=reader.id))
 
         await uow.change_book(project_id, add_versions_and_reader)
-        found = await uow.read_book(
-            project_id, lambda repos: repos.page_versions.collectable(project_id, PREVIEW_CUTOFF)
-        )
+        found = await uow.read_book(project_id, lambda repos: repos.page_versions.collectable(PREVIEW_CUTOFF))
         assert {version.id for version in found} == {chain_start.id, chain_end.id}
 
     async def test_delete_many_removes_the_versions_and_ignores_missing_ones(

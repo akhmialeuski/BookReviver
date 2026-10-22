@@ -172,8 +172,8 @@ class ChangeKind(NamedTuple):
         """
         if self.of_book:
             return (
-                make_recipe(project_id=book.project.id, stage=list(Stage)[number]),
-                make_source(project_id=book.project.id, name=f'{number}.pdf'),
+                make_recipe(stage=list(Stage)[number]),
+                make_source(name=f'{number}.pdf'),
             )
         return (
             make_recipe_profile(account_id=book.owner_id, minutes=number),
@@ -211,8 +211,8 @@ class ChangeKind(NamedTuple):
         :rtype: set[Any]
         """
         if self.of_book:
-            return {recipe.id for recipe in repos.recipes.list_for_project(book.project.id)} | {
-                source.id for source in repos.sources.list_for_project(book.project.id)
+            return {recipe.id for recipe in repos.recipes.list_all()} | {
+                source.id for source in repos.sources.list_all()
             }
         listed = repos.library.list_for_owner(book.owner_id, SLICE_ALL).items
         return {profile.id for profile in repos.recipe_profiles.list_for_account(book.owner_id)} | {
@@ -349,18 +349,18 @@ async def fx_book_rows(fx_uow: UnitOfWorkFactory, fx_book: Book) -> dict[str, Ro
     :rtype: dict[str, Row]
     """
     project = fx_book.project
-    source = make_source(project_id=project.id)
+    source = make_source()
     scan = make_scan(source=source, number=0)
-    page = make_page(project_id=project.id, scan=scan)
+    page = make_page(scan=scan)
     section = make_section(page=page)
     version = make_page_version(page_id=page.id)
     stage = make_page_stage(page_id=page.id, stage=Stage.GEOMETRY)
     state = make_page_step_state(page_id=page.id)
-    values = make_step_values(project_id=project.id)
+    values = make_step_values()
     step_change = make_page_step_change(page_id=page.id)
     mark_change = make_result_mark_change(version_id=version.id)
-    recipe = make_recipe(project_id=project.id)
-    place = make_book_place(project_id=project.id)
+    recipe = make_recipe()
+    place = make_book_place()
 
     def add_rows(repos: BookRepositories, _project: Project) -> None:
         """Add one row to every repository that holds the content of the book.
@@ -381,7 +381,7 @@ async def fx_book_rows(fx_uow: UnitOfWorkFactory, fx_book: Book) -> dict[str, Ro
         repos.page_step_changes.add(step_change)
         repos.result_mark_changes.add(mark_change)
         repos.recipes.add(recipe)
-        repos.book_places.add(place)
+        repos.book_places.save(place)
 
     await fx_uow().change_book(project.id, add_rows)
     return {
@@ -394,14 +394,14 @@ async def fx_book_rows(fx_uow: UnitOfWorkFactory, fx_book: Book) -> dict[str, Ro
         'sources': Row(
             source,
             evolve(source, imported_at=source.imported_at + ONE_MINUTE),
-            make_source(project_id=project.id, name='other.pdf'),
+            make_source(name='other.pdf'),
             source.id,
         ),
         'scans': Row(scan, evolve(scan, source_label=RENAMED), make_scan(source=source, number=1), scan.id),
         'pages': Row(
             page,
             evolve(page, updated_at=page.updated_at + ONE_MINUTE),
-            make_page(project_id=project.id, order_key='a1'),
+            make_page(order_key='a1'),
             page.id,
         ),
         'pagination_sections': Row(
@@ -438,14 +438,14 @@ async def fx_book_rows(fx_uow: UnitOfWorkFactory, fx_book: Book) -> dict[str, Ro
         'recipes': Row(
             recipe,
             evolve(recipe, updated_at=recipe.updated_at + ONE_MINUTE),
-            make_recipe(project_id=project.id, stage=Stage.CLEANUP),
+            make_recipe(stage=Stage.CLEANUP),
             recipe.id,
         ),
         'book_places': Row(
             place,
             evolve(place, updated_at=place.updated_at + ONE_MINUTE),
-            make_book_place(project_id=project.id, stage=Stage.CLEANUP),
-            place.key,
+            make_book_place(stage=Stage.CLEANUP),
+            None,
         ),
     }
 
@@ -669,9 +669,7 @@ class TestBookLifecycle:
             :type project: Project
             """
             await fx_uow().create_book(project)
-            await fx_uow().change_book(
-                project.id, lambda repos, _project: repos.pages.add(make_page(project_id=project.id))
-            )
+            await fx_uow().change_book(project.id, lambda repos, _project: repos.pages.add(make_page()))
 
         for project in (doomed, kept):
             await book_with_a_page(project)
@@ -682,7 +680,7 @@ class TestBookLifecycle:
             await fx_uow().read_book(doomed.id, lambda repos: repos.projects.get(doomed.id))
         with pytest.raises(NotFoundError, match=str(doomed.id)):
             await fx_uow().change_book(doomed.id, lambda _repos, _project: None)
-        remaining = await fx_uow().read_book(kept.id, lambda repos: repos.pages.list_for_project(kept.id, SLICE_ALL))
+        remaining = await fx_uow().read_book(kept.id, lambda repos: repos.pages.list_window(SLICE_ALL))
         assert remaining.total == 1
 
     async def test_deleting_a_book_again_or_one_never_stored_does_nothing(self, fx_uow: UnitOfWorkFactory) -> None:
@@ -708,14 +706,12 @@ class TestBookLifecycle:
         """
         project = make_project()
         await fx_uow().create_book(project)
-        await fx_uow().change_book(
-            project.id, lambda repos, _project: repos.pages.add(make_page(project_id=project.id))
-        )
+        await fx_uow().change_book(project.id, lambda repos, _project: repos.pages.add(make_page()))
         await fx_uow().delete_book(project.id)
 
         await fx_uow().create_book(project)
 
-        pages = await fx_uow().read_book(project.id, lambda repos: repos.pages.list_for_project(project.id, SLICE_ALL))
+        pages = await fx_uow().read_book(project.id, lambda repos: repos.pages.list_window(SLICE_ALL))
         assert pages.total == 0
 
     async def test_stored_books_lists_the_books_that_have_a_store(self, fx_uow: UnitOfWorkFactory) -> None:
@@ -940,7 +936,7 @@ class TestChangeWait:
         :type fx_book: Book
         """
         project_id = fx_book.project.id
-        page = make_page(project_id=project_id)
+        page = make_page()
         holder, first, second = fx_uow(), fx_uow(), fx_uow()
         await first.change_book(project_id, lambda repos, _project: repos.pages.add(page))
 

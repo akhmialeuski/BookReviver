@@ -68,18 +68,19 @@ class PageLinks:
         self._request = request
         self._response = response
 
-    def created(self, overview: PageOverview) -> PageSchema:
+    def created(self, project_id: ProjectId, overview: PageOverview) -> PageSchema:
         """Point to a page just created in the ``Location`` header, and return its schema.
 
+        :param project_id: Identifier of the project the page was added to.
+        :type project_id: ProjectId
         :param overview: The new page with its position.
         :type overview: PageOverview
         :returns: The page resource.
         :rtype: PageSchema
         """
-        page = overview.page
-        address = self._request.url_for(RouteName.PAGE, project_id=page.project_id, page_id=page.id)
+        address = self._request.url_for(RouteName.PAGE, project_id=project_id, page_id=overview.page.id)
         self._response.headers[LOCATION_HEADER] = str(address)
-        return PageSchema.from_overview(overview, self._request)
+        return PageSchema.from_overview(overview, self._request, project_id=project_id)
 
 
 @router.get('/{project_id}/pages')
@@ -106,7 +107,8 @@ async def list_pages(
     :returns: One page of the manifest, whose items carry their position in the whole book.
     :rtype: ManifestPage[PageSchema]
     """
-    pager = Pager[PageOverview, PageSchema](params, partial(PageSchema.from_overview, request=request))
+    schema_of = partial(PageSchema.from_overview, request=request, project_id=project_id)
+    pager = Pager[PageOverview, PageSchema](params, schema_of)
     return pager.page(await pages.manifest(actor, project_id, pager.request, included_only=params.included))
 
 
@@ -134,7 +136,7 @@ async def get_page(
     :returns: The page with its position in the book.
     :rtype: PageSchema
     """
-    return PageSchema.from_overview(await pages.get(actor, project_id, page_id), request)
+    return PageSchema.from_overview(await pages.get(actor, project_id, page_id), request, project_id=project_id)
 
 
 @router.post('/{project_id}/pages/{page_id}/move')
@@ -164,7 +166,7 @@ async def move_page(
     :rtype: PageSchema
     """
     moved = await pages.move(actor, address.project_id, address.page_id, body.anchor)
-    return PageSchema.from_overview(moved, request)
+    return PageSchema.from_overview(moved, request, project_id=address.project_id)
 
 
 @router.post('/{project_id}/pages/move', status_code=status.HTTP_204_NO_CONTENT)
@@ -283,7 +285,7 @@ async def update_page(
     :rtype: PageSchema
     """
     changed = await pages.update(actor, address.project_id, address.page_id, body.to_changes())
-    return PageSchema.from_overview(changed, request)
+    return PageSchema.from_overview(changed, request, project_id=address.project_id)
 
 
 @router.post('/{project_id}/pages/labels', status_code=status.HTTP_204_NO_CONTENT)
@@ -370,7 +372,7 @@ async def create_page(
     :returns: The new page.
     :rtype: PageSchema
     """
-    return links.created(await pages.add(actor, project_id, body.to_new_page()))
+    return links.created(project_id, await pages.add(actor, project_id, body.to_new_page()))
 
 
 @router.post('/{project_id}/pages/batch', status_code=status.HTTP_201_CREATED)
@@ -404,7 +406,7 @@ async def create_pages(
     :rtype: list[PageSchema]
     """
     added = await pages.add_many(actor, project_id, [page.to_new_page() for page in body])
-    return [PageSchema.from_overview(overview, request) for overview in added]
+    return [PageSchema.from_overview(overview, request, project_id=project_id) for overview in added]
 
 
 @router.delete('/{project_id}/pages/{page_id}', status_code=status.HTTP_204_NO_CONTENT)
@@ -450,4 +452,4 @@ async def attach_scan(
     :rtype: PageSchema
     """
     bound = await pages.attach_scan(actor, address.project_id, address.page_id, body.scan_id, take_over=body.take_over)
-    return PageSchema.from_overview(bound, request)
+    return PageSchema.from_overview(bound, request, project_id=address.project_id)

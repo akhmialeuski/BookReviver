@@ -4,24 +4,24 @@ from typing import TYPE_CHECKING
 
 import pytest
 from attrs import evolve
-from delayed_assert import assert_expectations, expect
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
-from bookreviver.adapters.persistence.sqlalchemy.mappers import PageMapper, SourceMapper
-from bookreviver.adapters.persistence.sqlalchemy.tables import PageRow, ProjectRow, ScanRow, SourceRow
+from bookreviver.adapters.persistence.sqlalchemy.mappers import SourceMapper
+from bookreviver.adapters.persistence.sqlalchemy.tables import PageRow, SourceRow
 from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.enums import BlockKind, RejectionReason, SourceStatus
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
-from tests.helpers.builders import EPOCH, make_page, make_project, make_scan, make_source, new_account_id
+from tests.helpers.builders import EPOCH, make_page, make_project, make_source, new_account_id
 from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.tables import ProjectRow, ScanRow
     from bookreviver.domain.ids import AccountId
     from tests.helpers.database import BookSessions, UnitOfWorkFactory
 
@@ -55,59 +55,6 @@ def count_rows(session: Session, table: type[PageRow | ProjectRow | ScanRow | So
 class TestProjectRow:
     """Tests for ProjectRow together with the foreign keys and relationships of its pages."""
 
-    async def test_database_deletes_pages_with_their_project(
-        self, fx_uow: UnitOfWorkFactory, fx_book_sessions: BookSessions, fx_owner_id: AccountId
-    ) -> None:
-        """Verify a plain SQL delete of a project row removes its pages through the foreign keys.
-
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_book_sessions: Sessions of the files of the books of the test.
-        :type fx_book_sessions: BookSessions
-        :param fx_owner_id: Committed account owning the project.
-        :type fx_owner_id: AccountId
-        """
-        project = make_project()
-        await store_project(fx_uow(), project, make_page(project_id=project.id), owner=fx_owner_id)
-
-        # A bulk statement bypasses the ORM, so only the database can remove the dependent rows
-        await fx_book_sessions.write(
-            project.id, lambda session: session.execute(delete(ProjectRow).where(ProjectRow.id == project.id))
-        )
-
-        assert await fx_book_sessions.read(project.id, lambda session: count_rows(session, PageRow)) == 0
-
-    async def test_database_deletes_sources_and_scans_with_their_project(
-        self, fx_uow: UnitOfWorkFactory, fx_book_sessions: BookSessions, fx_owner_id: AccountId
-    ) -> None:
-        """Verify a plain SQL delete of a project row removes its sources and their scans through the foreign keys.
-
-        A source belongs to the project and a scan to both its source and the project, so the scans go with either.
-
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_book_sessions: Sessions of the files of the books of the test.
-        :type fx_book_sessions: BookSessions
-        :param fx_owner_id: Committed account owning the project.
-        :type fx_owner_id: AccountId
-        """
-        project = make_project()
-        source = make_source(project_id=project.id)
-        scans = [make_scan(source=source, number=number) for number in range(SCAN_COUNT)]
-        await store_project(fx_uow(), project, owner=fx_owner_id, sources=[source], scans=scans)
-
-        # A bulk statement bypasses the ORM, so only the database can remove the dependent rows
-        await fx_book_sessions.write(
-            project.id, lambda session: session.execute(delete(ProjectRow).where(ProjectRow.id == project.id))
-        )
-
-        sources, stored_scans = await fx_book_sessions.read(
-            project.id, lambda session: (count_rows(session, SourceRow), count_rows(session, ScanRow))
-        )
-        expect(sources == 0)
-        expect(stored_scans == 0)
-        assert_expectations()
-
     async def test_update_keeps_pages(
         self, fx_uow: UnitOfWorkFactory, fx_book_sessions: BookSessions, fx_owner_id: AccountId
     ) -> None:
@@ -122,40 +69,12 @@ class TestProjectRow:
         """
         project = make_project()
         uow = fx_uow()
-        await store_project(uow, project, make_page(project_id=project.id), owner=fx_owner_id)
+        await store_project(uow, project, make_page(), owner=fx_owner_id)
 
         renamed = evolve(project, details=evolve(project.details, title='Renamed'))
         await uow.change_book(project.id, lambda repos, _project: repos.projects.update(renamed))
 
         assert await fx_book_sessions.read(project.id, lambda session: count_rows(session, PageRow)) == 1
-
-    async def test_sqlite_rejects_a_page_of_a_missing_project(
-        self, fx_uow: UnitOfWorkFactory, fx_book_sessions: BookSessions, fx_owner_id: AccountId
-    ) -> None:
-        """Verify SQLite enforces the foreign key, which it ignores unless the connection turns it on.
-
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_book_sessions: Sessions of the files of the books of the test.
-        :type fx_book_sessions: BookSessions
-        :param fx_owner_id: Committed account owning the book the page is written into.
-        :type fx_owner_id: AccountId
-        """
-        project = make_project()
-        await store_project(fx_uow(), project, owner=fx_owner_id)
-        orphan = PageMapper().to_row(make_page(project_id=make_project().id))
-
-        def add_and_flush(session: Session) -> None:
-            """Add the page to the session and flush it, so SQLite checks its key.
-
-            :param session: Session of a transaction that writes.
-            :type session: Session
-            """
-            session.add(orphan)
-            session.flush()
-
-        with pytest.raises(IntegrityError, match=SQLITE_FOREIGN_KEY_FAILED):
-            await fx_book_sessions.write(project.id, add_and_flush)
 
 
 class TestLibraryRow:
@@ -210,11 +129,9 @@ class TestSourceRow:
         :type fx_owner_id: AccountId
         """
         project = make_project()
-        first = make_source(project_id=project.id, name=FIRST_NAME)
+        first = make_source(name=FIRST_NAME)
         await store_project(fx_uow(), project, owner=fx_owner_id, sources=[first])
-        second = SourceMapper().to_row(
-            evolve(make_source(project_id=project.id, name=SECOND_NAME), sha256=first.sha256)
-        )
+        second = SourceMapper().to_row(evolve(make_source(name=SECOND_NAME), sha256=first.sha256))
 
         def add_and_flush(session: Session) -> None:
             """Add the second source to the session and flush it, so SQLite checks its index.
@@ -242,11 +159,11 @@ class TestSourceRow:
         :type fx_owner_id: AccountId
         """
         project = make_project()
-        imported = make_source(project_id=project.id, name=FIRST_NAME)
+        imported = make_source(name=FIRST_NAME)
         await store_project(fx_uow(), project, owner=fx_owner_id, sources=[imported])
         unimported = [
             evolve(
-                make_source(project_id=project.id, name=SECOND_NAME),
+                make_source(name=SECOND_NAME),
                 sha256=imported.sha256,
                 scan_count=0,
                 status=status,

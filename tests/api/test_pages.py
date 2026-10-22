@@ -73,12 +73,10 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     :rtype: Book
     """
     project = make_project()
-    source = make_source(project_id=project.id)
+    source = make_source()
     scans = [make_scan(source=source, number=number) for number in range(2)]
     shown = [scans[0], None, scans[1]]
-    pages = [
-        make_page(project_id=project.id, order_key=key, scan=scan) for key, scan in zip(STORED_KEYS, shown, strict=True)
-    ]
+    pages = [make_page(order_key=key, scan=scan) for key, scan in zip(STORED_KEYS, shown, strict=True)]
     pages[2] = evolve(pages[2], included=False)
     versions = [
         evolve(make_page_version(page_id=pages[0].id), renditions=Renditions(ready=True)),
@@ -192,7 +190,7 @@ class TestListPages:
         """
         policy = ImagePolicy.LOSSLESS if full is Rendition.FULL_JPEG else ImagePolicy.COMPACT
         project = evolve(make_project(), image_policy=policy)
-        page = make_page(project_id=project.id)
+        page = make_page()
         version = evolve(make_page_version(page_id=page.id), renditions=Renditions(ready=True, full=full))
         await store_project(fx_uow(), project, page, owner=fx_actor.account_id, versions=[version])
 
@@ -254,7 +252,7 @@ class TestListPages:
         :type fx_uow: UnitOfWorkFactory
         """
         project = make_project()
-        await commit_project(fx_database, fx_uow(), project, make_page(project_id=project.id), owner=new_account_id())
+        await commit_project(fx_database, fx_uow(), project, make_page(), owner=new_account_id())
 
         response = await fx_client.get(f'{PROJECTS_PATH}/{project.id}/pages')
 
@@ -317,7 +315,7 @@ class TestGetPage:
         :type fx_actor: Actor
         """
         other = make_project()
-        foreign = make_page(project_id=other.id)
+        foreign = make_page()
         await store_project(fx_uow(), other, foreign, owner=fx_actor.account_id)
 
         responses = [await fx_client.get(f'{fx_book.path}/{page_id}') for page_id in (uuid4(), foreign.id)]
@@ -337,7 +335,7 @@ class TestGetPage:
         :type fx_uow: UnitOfWorkFactory
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         await commit_project(fx_database, fx_uow(), project, page, owner=new_account_id())
 
         response = await fx_client.get(f'{PROJECTS_PATH}/{project.id}/pages/{page.id}')

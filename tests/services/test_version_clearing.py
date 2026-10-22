@@ -38,7 +38,7 @@ class TestClear:
         :type fx_asset_store: LocalAssetStore
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         kept, deleted = (
             evolve(make_page_version(page_id=page.id, minutes=n), state=VersionState.READY) for n in (1, 2)
         )
@@ -73,7 +73,7 @@ class TestClear:
         :type monkeypatch: pytest.MonkeyPatch
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         chosen = evolve(make_page_version(page_id=page.id), state=VersionState.READY)
         await commit_project(fx_database, fx_uow(), project, page, owner=new_account_id(), versions=[chosen])
         await fx_uow().change_book(

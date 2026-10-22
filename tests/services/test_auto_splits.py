@@ -58,7 +58,7 @@ async def choose(kit: ProcessingKit, actor: Actor, project: Project, page: Page,
     :param choice: The decision.
     :type choice: SplitChoice
     """
-    key = await kit.edit_key(page, Stage.PAGE_SPLIT, SPLIT_AUTO)
+    key = await kit.edit_key(project.id, page, Stage.PAGE_SPLIT, SPLIT_AUTO)
     await kit.edits().save(actor, project.id, key, NewPageEdit(kind=choice.editor, geometry=choice), None)
 
 
@@ -120,7 +120,7 @@ class TestAutomaticSplit:
         await fx_cv_kit.seed_scan_page(project, image=png_bytes(draw_blank()))
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         pages = await book_of(fx_cv_kit, project)
-        heads = [await head_of(fx_cv_kit, page, Stage.PAGE_SPLIT) for page in pages]
+        heads = [await head_of(fx_cv_kit, project.id, page, Stage.PAGE_SPLIT) for page in pages]
         assert [head.review for head in heads] == [ReviewReason.UNSURE_GUTTER] * 2
 
 
@@ -140,7 +140,7 @@ class TestSplitChoice:
         await run_over_every_page(fx_cv_kit, actor, project)
         pages = await book_of(fx_cv_kit, project)
         expect([page.slot for page in pages] == [Page.WHOLE_SCAN, Page.WHOLE_SCAN, Page.LEFT_HALF, Page.RIGHT_HALF])
-        expect((await stage_of(fx_cv_kit, pages[0], Stage.PAGE_SPLIT)).state is StageState.FRESH)
+        expect((await stage_of(fx_cv_kit, project.id, pages[0], Stage.PAGE_SPLIT)).state is StageState.FRESH)
         assert_expectations()
 
     async def test_without_a_confirmation_the_choice_of_one_page_fails_and_deletes_nothing(
@@ -156,7 +156,7 @@ class TestSplitChoice:
         await choose(fx_cv_kit, actor, project, first, SplitChoice(pages=SplitChoice.ONE_PAGE))
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT, page_ids=(first.id,)))
         expect(len(await book_of(fx_cv_kit, project)) == len(WHOLE_BOOK_SLOTS))
-        expect((await stage_of(fx_cv_kit, first, Stage.PAGE_SPLIT)).state is StageState.FAILED)
+        expect((await stage_of(fx_cv_kit, project.id, first, Stage.PAGE_SPLIT)).state is StageState.FAILED)
         assert_expectations()
 
     async def test_two_pages_for_a_single_page_survives_a_run_on_all_pages(self, fx_cv_kit: ProcessingKit) -> None:
@@ -187,7 +187,7 @@ class TestSplitChoice:
         await choose(fx_cv_kit, actor, project, single, SplitChoice(pages=SplitChoice.TWO_PAGES))
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         await fx_cv_kit.edits().delete(
-            actor, project.id, await fx_cv_kit.edit_key(single, Stage.PAGE_SPLIT, SPLIT_AUTO)
+            actor, project.id, await fx_cv_kit.edit_key(project.id, single, Stage.PAGE_SPLIT, SPLIT_AUTO)
         )
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT, confirm_unsplit=True))
         pages = await book_of(fx_cv_kit, project)

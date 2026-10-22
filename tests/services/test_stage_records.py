@@ -75,9 +75,9 @@ class TestMarkRecipeStale:
         :type fx_events: RecordingEventBus
         """
         project = make_project()
-        first, second, third = (make_page(project_id=project.id, order_key=key) for key in PAGE_ORDER_KEYS)
+        first, second, third = (make_page(order_key=key) for key in PAGE_ORDER_KEYS)
         await commit_project(fx_database, fx_uow(), project, first, second, third, owner=new_account_id())
-        recipe = make_recipe(project_id=project.id)
+        recipe = make_recipe()
         fresh_first = make_page_stage(page_id=first.id, recipe_id=recipe.id)
         fresh_second = make_page_stage(page_id=second.id, recipe_id=recipe.id)
         failed = make_page_stage(page_id=third.id, recipe_id=recipe.id, state=StageState.FAILED)
@@ -128,9 +128,9 @@ class TestMarkRecipeStale:
         :type fx_page_stage_writes: PageStageWrites
         """
         project = make_project()
-        pages = [make_page(project_id=project.id, order_key=key) for key in PAGE_ORDER_KEYS]
+        pages = [make_page(order_key=key) for key in PAGE_ORDER_KEYS]
         await commit_project(fx_database, fx_uow(), project, *pages, owner=new_account_id())
-        recipe = make_recipe(project_id=project.id)
+        recipe = make_recipe()
         fresh = [make_page_stage(page_id=page.id, recipe_id=recipe.id) for page in pages]
         uow = fx_uow()
         records = StageRecords(publisher=fx_events, clock=fx_clock)

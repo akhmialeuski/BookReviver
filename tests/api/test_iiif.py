@@ -70,7 +70,7 @@ async def _store_book(uow: UnitOfWork, assets: AssetStore, owner: AccountId) -> 
     :rtype: Book
     """
     project = make_project()
-    page = make_page(project_id=project.id)
+    page = make_page()
     version = make_page_version(page_id=page.id)
     await store_project(uow, project, page, owner=owner, versions=[version])
     keys = ProjectKeys(project.id)

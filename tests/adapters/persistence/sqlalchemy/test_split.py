@@ -155,11 +155,9 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
     """
     owner_id = new_account_id()
     first, second = make_project(title='First'), make_project(title='Second', minutes=1)
-    source = make_source(project_id=first.id)
+    source = make_source()
     scan = make_scan(source=source, number=0)
-    pages = [
-        make_page(project_id=first.id, order_key=f'a{index}', scan=scan if not index else None) for index in range(2)
-    ]
+    pages = [make_page(order_key=f'a{index}', scan=scan if not index else None) for index in range(2)]
     pages[1] = evolve(pages[1], manual_label=MANUAL_LABEL)
     version = make_page_version(page_id=pages[0].id)
     parts = directory / PARTS
@@ -197,7 +195,7 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
         repos.pages.add_many(pages)
         repos.page_versions.add(version)
         repos.page_stages.add(make_page_stage(page_id=pages[0].id, head_version_id=version.id))
-        repos.book_places.save(make_book_place(project_id=first.id, page_id=pages[1].id))
+        repos.book_places.save(make_book_place(page_id=pages[1].id))
 
     def store_second(session: Session) -> None:
         """Store the second book, with one page.
@@ -207,7 +205,7 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
         """
         repos = SqlAlchemyBookRepositories(session)
         repos.projects.add(second)
-        repos.pages.add(make_page(project_id=second.id))
+        repos.pages.add(make_page())
 
     files = [parts / name for name in ('catalogue.db', 'first.db', 'second.db')]
     await _write_at_baseline(files[0], Schema.CATALOGUE, CATALOGUE_BASELINE, store_catalogue)
@@ -278,13 +276,13 @@ class TestSplit:
             fx_shared.first.id,
             lambda repos: (
                 repos.projects.get(fx_shared.first.id),
-                repos.pages.list_for_project(fx_shared.first.id, SliceRequest()).total,
-                len(repos.sources.list_for_project(fx_shared.first.id)),
-                repos.book_places.find(fx_shared.first.id),
+                repos.pages.list_window(SliceRequest()).total,
+                len(repos.sources.list_all()),
+                repos.book_places.find(),
             ),
         )
         second_pages = await uow.read_book(
-            fx_shared.second.id, lambda repos: repos.pages.list_for_project(fx_shared.second.id, SliceRequest()).total
+            fx_shared.second.id, lambda repos: repos.pages.list_window(SliceRequest()).total
         )
         expect((report.accounts, report.books) == (1, 2))
         expect({entry.project_id for entry in entries.items} == {fx_shared.first.id, fx_shared.second.id})

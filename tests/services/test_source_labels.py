@@ -10,7 +10,7 @@ from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.domain.enums import LabelStyle, NumberDisplay
 from bookreviver.domain.page_label_rules import PageLabelRule
 from bookreviver.services.source_labels import SourceLabels
-from tests.helpers.builders import EPOCH, make_page, make_project
+from tests.helpers.builders import EPOCH, make_page
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page
@@ -27,11 +27,9 @@ def _pages(*labels: str) -> list[Page]:
     :returns: Pages whose labels are manual labels, as an import makes the label that comes with a scan.
     :rtype: list[Page]
     """
-    project = make_project()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(labels))
     return [
-        evolve(make_page(project_id=project.id, order_key=key), manual_label=label or None)
-        for key, label in zip(keys, labels, strict=True)
+        evolve(make_page(order_key=key), manual_label=label or None) for key, label in zip(keys, labels, strict=True)
     ]
 
 

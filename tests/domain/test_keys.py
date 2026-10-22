@@ -28,7 +28,7 @@ class TestPrefix:
 
     def test_every_built_key_lies_under_the_prefix(self) -> None:
         """Verify every area, source, scan and page key of the project starts with its prefix."""
-        source = make_source(project_id=PROJECT_ID)
+        source = make_source()
         keys = [
             KEYS.incoming_area,
             KEYS.sources_area,
@@ -54,7 +54,7 @@ class TestAreas:
 
     def test_source_files_and_derived_files_never_share_a_prefix(self) -> None:
         """Verify an upload and a source lie outside the assets area, so deleting assets never reaches them."""
-        source_id = make_source(project_id=PROJECT_ID).id
+        source_id = make_source().id
         expect(KEYS.incoming(JOB_ID).startswith(f'{KEYS.incoming_area}/'))
         expect(KEYS.source(source_id).startswith(f'{KEYS.sources_area}/'))
         expect(not KEYS.source(source_id).startswith(KEYS.assets_area))
@@ -74,23 +74,17 @@ class TestScanRendition:
         :param rendition: Derived file of the scan.
         :type rendition: Rendition
         """
-        source = make_source(project_id=PROJECT_ID)
+        source = make_source()
         scan = make_scan(source=source, number=SCAN_NUMBER)
         expected = f'{PREFIX}assets/scans/{source.id}/{SCAN_NUMBER}/v1/{rendition}'
         assert KEYS.scan_rendition(scan, rendition) == expected
 
     def test_key_changes_with_renditions_version(self) -> None:
         """Verify renditions cut again get new keys, so cached URLs never serve stale images."""
-        scan = make_scan(source=make_source(project_id=PROJECT_ID), number=0)
+        scan = make_scan(source=make_source(), number=0)
         again = evolve(scan, renditions=Renditions(version=2))
         first, second = KEYS.scan_rendition(scan, Rendition.TILES), KEYS.scan_rendition(again, Rendition.TILES)
         assert (first.endswith('/0/v1/iiif'), second.endswith('/0/v2/iiif')) == (True, True)
-
-    def test_scan_of_another_project_is_refused(self) -> None:
-        """Verify a scan of another project gets no key here, so its files never land in the wrong book."""
-        scan = make_scan(source=make_source(project_id=OTHER_PROJECT_ID), number=0)
-        with pytest.raises(ValueError, match=str(OTHER_PROJECT_ID)):
-            KEYS.scan_rendition(scan, Rendition.FULL_JPEG)
 
 
 class TestScanDirectory:
@@ -98,17 +92,11 @@ class TestScanDirectory:
 
     def test_directory_holds_every_rendition_of_the_scan(self) -> None:
         """Verify the directory of a scan's renditions is the parent of each rendition's key, so one prefix removes them."""
-        scan = make_scan(source=make_source(project_id=PROJECT_ID), number=SCAN_NUMBER)
+        scan = make_scan(source=make_source(), number=SCAN_NUMBER)
         directory = KEYS.scan_directory(scan)
         expect(directory == f'{PREFIX}assets/scans/{scan.source_id}/{SCAN_NUMBER}/v1')
         expect(all(KEYS.scan_rendition(scan, rendition) == f'{directory}/{rendition}' for rendition in Rendition))
         assert_expectations()
-
-    def test_directory_of_a_scan_of_another_project_is_refused(self) -> None:
-        """Verify a scan of another project gets no directory here, so nothing of it is removed from this book."""
-        scan = make_scan(source=make_source(project_id=OTHER_PROJECT_ID), number=0)
-        with pytest.raises(ValueError, match=str(OTHER_PROJECT_ID)):
-            KEYS.scan_directory(scan)
 
 
 class TestVersionDirectory:
@@ -166,7 +154,7 @@ class TestOwning:
         :param rendition: Derived file of the scan.
         :type rendition: Rendition
         """
-        scan = make_scan(source=make_source(project_id=PROJECT_ID), number=0)
+        scan = make_scan(source=make_source(), number=0)
         assert ProjectKeys.owning(KEYS.scan_rendition(scan, rendition)) == KEYS
 
     @pytest.mark.parametrize(

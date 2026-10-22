@@ -161,7 +161,7 @@ async def list_scans(
     :returns: One page of scans.
     :rtype: Page[ScanSchema]
     """
-    pager = Pager[Scan, ScanSchema](query, partial(ScanSchema.from_scan, request=request))
+    pager = Pager[Scan, ScanSchema](query, partial(ScanSchema.from_scan, request=request, project_id=project_id))
     return pager.page(await sources.scans(actor, project_id, pager.request, source_id=query.source_id))
 
 

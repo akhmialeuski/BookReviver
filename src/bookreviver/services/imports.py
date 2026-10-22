@@ -234,9 +234,7 @@ class ImportRun:
 
         :raises JobCancelledError: If the job was cancelled, which the first report after it finds out.
         """
-        unready = await self._uow.read_book(
-            self._job.project_id, lambda repos: repos.scans.list_unready(self._job.project_id)
-        )
+        unready = await self._uow.read_book(self._job.project_id, lambda repos: repos.scans.list_unready())
         await self._report(total=len(unready))
         await self._import_sources(list(self._files))
         await self._cut_scans()
@@ -251,7 +249,6 @@ class ImportRun:
         rows = [
             Source(
                 id=SourceId(uuid4()),
-                project_id=self._job.project_id,
                 kind=None if (file_type := FileType.from_name(name)) is None else file_type.source_kind,
                 file_type=file_type,
                 file_name=name,
@@ -306,9 +303,7 @@ class ImportRun:
         """
         files = [self._files[name] for name in uploaded.names]
         main = files[0]
-        twin = await self._uow.read_book(
-            self._job.project_id, lambda repos: repos.sources.find_by_sha256(self._job.project_id, main.sha256)
-        )
+        twin = await self._uow.read_book(self._job.project_id, lambda repos: repos.sources.find_by_sha256(main.sha256))
         if twin is not None:
             await self._reject(
                 uploaded.names,
@@ -326,7 +321,6 @@ class ImportRun:
         moment = self._clock.now()
         source = Source(
             id=SourceId(uuid4()),
-            project_id=self._job.project_id,
             kind=uploaded.kind,
             file_type=uploaded.file_type,
             file_name=main.name,
@@ -341,7 +335,6 @@ class ImportRun:
         scans = [
             Scan(
                 id=ScanId(uuid4()),
-                project_id=source.project_id,
                 source_id=source.id,
                 number=number,
                 source_label=analysis.label_of(number),
@@ -360,13 +353,10 @@ class ImportRun:
             :returns: The pages as stored, and whether the description of the book changed.
             :rtype: tuple[list[Page], bool]
             """
-            order_keys = self._order_keys.spread(
-                lower=repos.pages.last_order_key(source.project_id), upper=None, count=len(scans)
-            )
+            order_keys = self._order_keys.spread(lower=repos.pages.last_order_key(), upper=None, count=len(scans))
             pages = [
                 Page(
                     id=PageId(uuid4()),
-                    project_id=source.project_id,
                     order_key=order_key,
                     manual_label=scan.source_label or None,
                     origin=PageOrigin.SCAN,
@@ -382,7 +372,7 @@ class ImportRun:
                 rules=analysis.label_rules,
                 pages=pages,
                 moment=moment,
-                book_has_sections=bool(repos.pagination_sections.list_for_project(source.project_id)),
+                book_has_sections=bool(repos.pagination_sections.list_all()),
             )
             pages = source_labels.pages
             repos.sources.add(source)
@@ -391,10 +381,10 @@ class ImportRun:
             if source_labels.sections:
                 repos.pagination_sections.add_many(source_labels.sections)
             # The new pages may take numbers past what a section of the book can write
-            self._labels.settle(repos, source.project_id)
+            self._labels.settle(repos)
             return pages, self._describe_book(repos, project, analysis.suggestion)
 
-        pages, described = await self._uow.change_book(source.project_id, store)
+        pages, described = await self._uow.change_book(self._job.project_id, store)
 
         def retract(repos: BookRepositories, _project: Project) -> None:
             """Delete the pages and the source, which takes their scans with it.
@@ -409,20 +399,20 @@ class ImportRun:
             repos.sources.delete(source.id)
 
         try:
-            await self._sources.promote(source.project_id, self._job.id, source.id, names=list(uploaded.names))
+            await self._sources.promote(self._job.project_id, self._job.id, source.id, names=list(uploaded.names))
         except Exception:
             # The source is stored and its files are not moved, and nothing would repair it once the job ends, so it
             # is taken back whole. Its pages go first, since deleting the source only empties their scan.
-            await self._uow.change_book(source.project_id, retract)
+            await self._uow.change_book(self._job.project_id, retract)
             raise
         self.imported.append(source.id)
         self._handled.update(uploaded.names)
-        await self._publisher.publish(SourceImported(project_id=source.project_id, source=source))
+        await self._publisher.publish(SourceImported(project_id=self._job.project_id, source=source))
         await self._publisher.publish(
-            PagesChanged(project_id=source.project_id, page_ids=[page.id for page in pages], change=PageChange.ADDED)
+            PagesChanged(project_id=self._job.project_id, page_ids=[page.id for page in pages], change=PageChange.ADDED)
         )
         if described:
-            await self._publisher.publish(ProjectChanged(project_id=source.project_id))
+            await self._publisher.publish(ProjectChanged(project_id=self._job.project_id))
         await self._report(done=len(uploaded.names), total=len(scans))
 
     def _describe_book(self, repos: BookRepositories, project: Project, suggestion: MetadataSuggestion) -> bool:
@@ -464,9 +454,9 @@ class ImportRun:
             :returns: The scans to cut in the order of the book, and the kind of each imported source by identifier.
             :rtype: tuple[Sequence[Scan], dict[SourceId, SourceKind]]
             """
-            sources = repos.sources.list_for_project(self._job.project_id)
+            sources = repos.sources.list_all()
             kinds = {source.id: source.kind for source in sources if source.kind is not None}
-            return repos.scans.list_unready(self._job.project_id), kinds
+            return repos.scans.list_unready(), kinds
 
         scans, kinds = await self._uow.read_book(self._job.project_id, read)
         pending = iter(scans)
@@ -519,13 +509,13 @@ class ImportRun:
 
         # A cancellation stops the run before the next scan is cut
         await self._report()
-        project, pages = await self._uow.change_book(scan.project_id, start)
+        project, pages = await self._uow.change_book(self._job.project_id, start)
         full = project.image_policy.full_format(scan.facts.color_mode)
         ready = evolve(scan, renditions=Renditions(ready=True, version=scan.renditions.version, full=full))
         of_scan = partial(self._keys.scan_rendition, ready)
         await self._assets.delete_prefix(self._keys.scan_directory(scan))
         async with (
-            self._sources.source_files(scan.project_id, scan.source_id) as files,
+            self._sources.source_files(self._job.project_id, scan.source_id) as files,
             self._assets.writable(of_scan(full)) as target,
         ):
             await self._rasterizer.extract(kind, files, scan.number, target, full=full)
@@ -558,7 +548,7 @@ class ImportRun:
             :rtype: tuple[bool, list[PageStage]]
             """
             # The scan and its pages are read again, since the book may have changed while the files were cut
-            unready = {unready_scan.id for unready_scan in repos.scans.list_unready(scan.project_id)}
+            unready = {unready_scan.id for unready_scan in repos.scans.list_unready()}
             current = {page.id for page in repos.pages.list_for_scan(scan.id)}
             if scan.id not in unready or current != {page.id for page in pages}:
                 return False, []
@@ -571,7 +561,7 @@ class ImportRun:
             repos.scans.update(ready)
             return True, changed
 
-        fits, changed = await self._uow.change_book(scan.project_id, finish)
+        fits, changed = await self._uow.change_book(self._job.project_id, finish)
         if not fits:
             # The scan stays unready for the next run to cut, and the files made for it are of no version or scan
             logger.warning('Scan %s was changed or deleted while its images were cut, so they were not stored', scan.id)
@@ -580,8 +570,8 @@ class ImportRun:
                 await self._assets.delete_prefix(self._keys.version_directory(version))
             await self._report(total=-1)
             return
-        await self._publisher.publish(ScanReady(project_id=scan.project_id, scan=ready))
-        await self._records.announce(scan.project_id, changed)
+        await self._publisher.publish(ScanReady(project_id=self._job.project_id, scan=ready))
+        await self._records.announce(self._job.project_id, changed)
         await self._report(done=1)
 
     async def _reject(
@@ -608,7 +598,6 @@ class ImportRun:
         files = [self._files[name] for name in names]
         source = Source(
             id=SourceId(uuid4()),
-            project_id=self._job.project_id,
             kind=None if uploaded is None else uploaded.kind,
             file_type=None if uploaded is None else uploaded.file_type,
             file_name=names[0],
@@ -806,7 +795,7 @@ class ImportService:
             pages = await self._uow.read_book(
                 project_id,
                 lambda repos: [
-                    page.id for source_id in run.imported for page in repos.pages.list_for_source(project_id, source_id)
+                    page.id for source_id in run.imported for page in repos.pages.list_for_source(source_id)
                 ],
             )
             if pages:

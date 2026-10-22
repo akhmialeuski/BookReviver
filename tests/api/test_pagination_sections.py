@@ -74,7 +74,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     """
     project = make_project()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=PAGE_COUNT)
-    pages = [make_page(project_id=project.id, order_key=key) for key in keys]
+    pages = [make_page(order_key=key) for key in keys]
     await store_project(fx_uow(), project, *pages, owner=fx_actor.account_id)
     return Book(project=project, pages=pages)
 
@@ -113,7 +113,7 @@ class TestCreateSection:
         section = PaginationSectionSchema.model_validate_json(response.content)
         expect(response.status_code == status.HTTP_201_CREATED)
         expect((section.first_page_id, section.name, section.start) == (fx_book.pages[1].id, 'Preface', 3))
-        expect((section.display, section.kinds, section.project_id) == (NumberDisplay.COUNTED, [], fx_book.project.id))
+        expect((section.display, section.kinds) == (NumberDisplay.COUNTED, []))
         expect(await _labels(fx_client, fx_book) == ['', '[iii]', '[iv]', '[v]'])
         assert_expectations()
 
@@ -228,7 +228,7 @@ class TestCreateSection:
         :type fx_uow: UnitOfWorkFactory
         """
         stranger = make_project()
-        page = make_page(project_id=stranger.id)
+        page = make_page()
         await commit_project(fx_database, fx_uow(), stranger, page, owner=new_account_id())
 
         foreign_page = await fx_client.post(

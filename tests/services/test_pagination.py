@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Page, PaginationSection, Project
+    from bookreviver.domain.ids import ProjectId
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from bookreviver.services.pagination import PaginationService
@@ -108,7 +109,7 @@ async def _commit_book(
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(layout))
     pages = [
         evolve(
-            make_page(project_id=project.id, order_key=key),
+            make_page(order_key=key),
             kind=kind,
             included=included,
             manual_label=label or None,
@@ -130,17 +131,18 @@ def _text_book(count: int) -> tuple[tuple[PageKind, bool], ...]:
     return ((TEXT, True),) * count
 
 
-async def _labels(uow: UnitOfWork, pages: list[Page]) -> list[str]:
+async def _labels(uow: UnitOfWork, project_id: ProjectId, pages: list[Page]) -> list[str]:
     """Read the labels pages show, as the sections and the manual labels committed give them on read.
 
     :param uow: Unit of work to read through.
     :type uow: UnitOfWork
+    :param project_id: Identifier of the project of the pages.
+    :type project_id: ProjectId
     :param pages: Pages to read the labels of.
     :type pages: list[Page]
     :returns: The label of each page, in the order given.
     :rtype: list[str]
     """
-    project_id = pages[0].project_id
 
     def read(repos: BookRepositories) -> list[str]:
         """Read the pages as they are stored and number them.
@@ -150,8 +152,8 @@ async def _labels(uow: UnitOfWork, pages: list[Page]) -> list[str]:
         :returns: The label of each page, in the order given.
         :rtype: list[str]
         """
-        stored = repos.pages.list_by_ids(project_id, [page.id for page in pages])
-        labels = PageLabels.numbering(repos, project_id, stored).labels
+        stored = repos.pages.list_by_ids([page.id for page in pages])
+        labels = PageLabels.numbering(repos, stored).labels
         return [labels[page.id] for page in pages]
 
     return await uow.read_book(project_id, read)
@@ -167,7 +169,7 @@ async def _sections(uow: UnitOfWork, project: Project) -> list[PaginationSection
     :returns: The sections of the project.
     :rtype: list[PaginationSection]
     """
-    found = await uow.read_book(project.id, lambda repos: repos.pagination_sections.list_for_project(project.id))
+    found = await uow.read_book(project.id, lambda repos: repos.pagination_sections.list_all())
     return sorted(found, key=lambda section: (section.created_at, section.id))
 
 
@@ -209,10 +211,10 @@ class TestSections:
         project, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(5))
 
         await fx_pagination().add(fx_actor, project.id, _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
-        expect(await _labels(fx_uow(), pages) == ['i', ROMAN_2, ROMAN_3, ROMAN_4, 'v'])
+        expect(await _labels(fx_uow(), project.id, pages) == ['i', ROMAN_2, ROMAN_3, ROMAN_4, 'v'])
         await fx_pagination().add(fx_actor, project.id, _draft(pages[2]))
 
-        expect(await _labels(fx_uow(), pages) == ['i', ROMAN_2, '1', '2', '3'])
+        expect(await _labels(fx_uow(), project.id, pages) == ['i', ROMAN_2, '1', '2', '3'])
         expect(
             fx_events.published
             == [
@@ -241,7 +243,7 @@ class TestSections:
         )
         await fx_pagination().add(fx_actor, project.id, _draft(pages[3]))
 
-        assert await _labels(fx_uow(), pages) == ['[i]', '[ii]', '[iii]', '1', '2']
+        assert await _labels(fx_uow(), project.id, pages) == ['[i]', '[ii]', '[iii]', '1', '2']
 
     async def test_a_page_that_is_not_counted_takes_no_number(
         self, fx_pagination: Callable[[], PaginationService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
@@ -260,7 +262,7 @@ class TestSections:
         await fx_pagination().add(fx_actor, project.id, _draft(pages[0], display=NumberDisplay.NOT_COUNTED))
         await fx_pagination().add(fx_actor, project.id, _draft(pages[2]))
 
-        assert await _labels(fx_uow(), pages) == ['', '', '1', '2']
+        assert await _labels(fx_uow(), project.id, pages) == ['', '', '1', '2']
 
     async def test_plates_get_their_own_series_without_breaking_the_text_count(
         self, fx_pagination: Callable[[], PaginationService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
@@ -282,7 +284,7 @@ class TestSections:
             fx_actor, project.id, _draft(pages[0], style=LabelStyle.ROMAN_UPPER, prefix=PLATE_PREFIX, kinds=PLATES)
         )
 
-        assert await _labels(fx_uow(), pages) == ['Plate I', '1', '2', 'Plate II', '3', 'Plate III']
+        assert await _labels(fx_uow(), project.id, pages) == ['Plate I', '1', '2', 'Plate II', '3', 'Plate III']
 
     async def test_a_label_written_by_hand_stays_when_a_section_is_made(
         self,
@@ -311,7 +313,7 @@ class TestSections:
 
         await fx_pagination().add(fx_actor, project.id, _draft(pages[0]))
 
-        expect(await _labels(fx_uow(), pages) == ['1', HAND_WRITTEN, '3'])
+        expect(await _labels(fx_uow(), project.id, pages) == ['1', HAND_WRITTEN, '3'])
         # The numbers of the section are computed on read, so making it writes no page
         expect(fx_page_writes.page_ids == set())
         assert_expectations()
@@ -366,10 +368,10 @@ class TestSections:
         body = await fx_pagination().add(fx_actor, project.id, _draft(pages[2]))
 
         await fx_pagination().remove(fx_actor, project.id, body.id)
-        expect(await _labels(fx_uow(), pages) == ['i', ROMAN_2, ROMAN_3, ROMAN_4])
+        expect(await _labels(fx_uow(), project.id, pages) == ['i', ROMAN_2, ROMAN_3, ROMAN_4])
         await fx_pagination().remove(fx_actor, project.id, preface.id)
 
-        expect(await _labels(fx_uow(), pages) == [''] * len(pages))
+        expect(await _labels(fx_uow(), project.id, pages) == [''] * len(pages))
         expect(await _sections(fx_uow(), project) == [])
         assert_expectations()
 
@@ -393,7 +395,7 @@ class TestSections:
             fx_actor, project.id, body.id, _draft(pages[3], start=5, name=SECTION_NAME)
         )
 
-        expect(await _labels(fx_uow(), pages) == ['i', ROMAN_2, ROMAN_3, '5', '6'])
+        expect(await _labels(fx_uow(), project.id, pages) == ['i', ROMAN_2, ROMAN_3, '5', '6'])
         expect(
             (updated.id, updated.first_page_id, updated.start, updated.name) == (body.id, pages[3].id, 5, SECTION_NAME)
         )
@@ -502,7 +504,7 @@ class TestSections:
             )
 
         expect(await _sections(fx_uow(), project) == [])
-        expect(await _labels(fx_uow(), pages) == [''] * len(pages))
+        expect(await _labels(fx_uow(), project.id, pages) == [''] * len(pages))
         assert_expectations()
 
 
@@ -546,7 +548,15 @@ class TestNumberPages:
 
         # The cover, the plate and the page kept out keep their label; the other four pages take 10 to 13
         first, second, third, fourth = case.labels
-        assert await _labels(fx_uow(), pages) == [STALE_LABEL, first, second, STALE_LABEL, third, STALE_LABEL, fourth]
+        assert await _labels(fx_uow(), project.id, pages) == [
+            STALE_LABEL,
+            first,
+            second,
+            STALE_LABEL,
+            third,
+            STALE_LABEL,
+            fourth,
+        ]
 
     async def test_numbering_a_range_makes_a_section_a_series_for_the_skipped_kinds_and_no_closing_at_the_end(
         self, fx_pagination: Callable[[], PaginationService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
@@ -615,7 +625,10 @@ class TestNumberPages:
             PageNumbering(first_page_id=pages[2].id, last_page_id=pages[4].id, style=LabelStyle.ARABIC),
         )
 
-        expect(await _labels(fx_uow(), pages) == [STALE_LABEL, STALE_LABEL, '1', '2', '3', STALE_LABEL, STALE_LABEL])
+        expect(
+            await _labels(fx_uow(), project.id, pages)
+            == [STALE_LABEL, STALE_LABEL, '1', '2', '3', STALE_LABEL, STALE_LABEL]
+        )
         expect(fx_page_writes.page_ids == {pages[2].id, pages[3].id, pages[4].id})
         expect(
             fx_events.published
@@ -657,10 +670,10 @@ class TestNumberPages:
 
         await fx_pagination().number(fx_actor, project.id, evolve(first, style=LabelStyle.ARABIC, start=FIRST_NUMBER))
 
-        expect(await _labels(fx_uow(), pages) == ['10', '11', '12', '13'])
+        expect(await _labels(fx_uow(), project.id, pages) == ['10', '11', '12', '13'])
         expect(len(await _sections(fx_uow(), project)) == 1)
         stored = await fx_uow().read_book(
-            project.id, lambda repos: repos.pages.list_by_ids(project.id, [page.id for page in pages])
+            project.id, lambda repos: repos.pages.list_by_ids([page.id for page in pages])
         )
         expect(len(stored) == len(pages) and all(page.manual_label is None for page in stored))
         assert_expectations()
@@ -687,7 +700,7 @@ class TestNumberPages:
             PageNumbering(first_page_id=pages[2].id, last_page_id=pages[-1].id, style=LabelStyle.ARABIC),
         )
 
-        expect(await _labels(fx_uow(), pages) == ['i', ROMAN_2, '1', '2', '3', '4'])
+        expect(await _labels(fx_uow(), project.id, pages) == ['i', ROMAN_2, '1', '2', '3', '4'])
         expect(before in await _sections(fx_uow(), project))
         expect(len(await _sections(fx_uow(), project)) == 2)
         assert_expectations()
@@ -712,7 +725,7 @@ class TestNumberPages:
             PageNumbering(first_page_id=pages[4].id, last_page_id=pages[4].id, style=LabelStyle.ROMAN_LOWER, start=7),
         )
 
-        assert (await _labels(fx_uow(), pages))[4] == 'vii'
+        assert (await _labels(fx_uow(), project.id, pages))[4] == 'vii'
 
     async def test_range_that_runs_backwards_conflicts_and_changes_nothing(
         self,
@@ -741,7 +754,7 @@ class TestNumberPages:
                 PageNumbering(first_page_id=pages[4].id, last_page_id=pages[1].id, style=LabelStyle.ARABIC),
             )
 
-        expect(await _labels(fx_uow(), pages) == [STALE_LABEL] * len(pages))
+        expect(await _labels(fx_uow(), project.id, pages) == [STALE_LABEL] * len(pages))
         expect((await _sections(fx_uow(), project), fx_events.published) == ([], []))
         assert_expectations()
 
@@ -843,7 +856,7 @@ class TestNumberPages:
         await fx_pagination().number(fx_actor, project.id, numbering)
 
         counted = [pages[1], pages[2], pages[4], pages[6]]
-        labels = await _labels(fx_uow(), counted)
+        labels = await _labels(fx_uow(), project.id, counted)
         expect(
             previewed
             == [NumberedPage(page_id=page.id, label=label) for page, label in zip(counted, labels, strict=True)]
@@ -965,7 +978,7 @@ class TestRecomputeInPageUseCases:
         )
 
         expect(added.label == '3')
-        expect(await _labels(fx_uow(), pages) == ['1', '2', '4', '5'])
+        expect(await _labels(fx_uow(), project.id, pages) == ['1', '2', '4', '5'])
         # The browser reads the whole book again for the added page, so the renumbered ones are not announced
         expect(
             fx_events.published
@@ -1007,7 +1020,7 @@ class TestRecomputeInPageUseCases:
         )
 
         expect((added.label, added.page.manual_label) == (HAND_WRITTEN, HAND_WRITTEN))
-        expect(await _labels(fx_uow(), pages) == ['1', '2', '4'])
+        expect(await _labels(fx_uow(), project.id, pages) == ['1', '2', '4'])
         assert_expectations()
 
     async def test_deleting_a_page_renumbers_the_pages_after_it(
@@ -1036,7 +1049,7 @@ class TestRecomputeInPageUseCases:
 
         await fx_service().delete(fx_actor, project.id, pages[1].id)
 
-        expect(await _labels(fx_uow(), [pages[0], pages[2], pages[3]]) == ['1', '2', '3'])
+        expect(await _labels(fx_uow(), project.id, [pages[0], pages[2], pages[3]]) == ['1', '2', '3'])
         # The browser reads the whole book again for the deleted page, so the renumbered ones are not announced
         expect(
             fx_events.published
@@ -1069,7 +1082,7 @@ class TestRecomputeInPageUseCases:
         await fx_service().delete(fx_actor, project.id, pages[2].id)
 
         survivors = [pages[0], pages[1], pages[3], pages[4]]
-        expect(await _labels(fx_uow(), survivors) == ['i', ROMAN_2, '1', '2'])
+        expect(await _labels(fx_uow(), project.id, survivors) == ['i', ROMAN_2, '1', '2'])
         sections = {section.id: section for section in await _sections(fx_uow(), project)}
         expect(sections[body.id].first_page_id == pages[3].id)
         assert_expectations()
@@ -1128,7 +1141,7 @@ class TestRecomputeInPageUseCases:
         sections = {section.id: section for section in await _sections(fx_uow(), project)}
         expect(doomed.id not in sections)
         expect(sections[body.id].first_page_id == pages[3].id)
-        expect(await _labels(fx_uow(), [pages[0], pages[1], pages[3]]) == ['i', ROMAN_2, '1'])
+        expect(await _labels(fx_uow(), project.id, [pages[0], pages[1], pages[3]]) == ['i', ROMAN_2, '1'])
         assert_expectations()
 
     async def test_moving_a_page_renumbers_the_pages_by_their_new_places_and_keeps_labels_by_hand(
@@ -1165,7 +1178,7 @@ class TestRecomputeInPageUseCases:
         )
 
         order = [pages[0], pages[4], pages[1], pages[2], pages[3]]
-        expect(await _labels(fx_uow(), order) == ['1', '2', HAND_WRITTEN, '4', '5'])
+        expect(await _labels(fx_uow(), project.id, order) == ['1', '2', HAND_WRITTEN, '4', '5'])
         expect(moved.label == '2')
         expect(
             fx_events.published
@@ -1198,7 +1211,7 @@ class TestRecomputeInPageUseCases:
         )
 
         # The section starts at the first page of the book once more, which is page 3 now, where it began at page 1
-        assert await _labels(fx_uow(), [pages[2], pages[3], pages[0], pages[1]]) == ['', '', '1', '2']
+        assert await _labels(fx_uow(), project.id, [pages[2], pages[3], pages[0], pages[1]]) == ['', '', '1', '2']
 
     async def test_a_section_follows_its_first_page_when_the_page_moves(
         self,
@@ -1224,7 +1237,12 @@ class TestRecomputeInPageUseCases:
 
         await fx_service().move(fx_actor, project.id, pages[2].id, PageAnchor(page_id=pages[3].id, side=Side.AFTER))
 
-        assert await _labels(fx_uow(), [pages[0], pages[1], pages[3], pages[2]]) == ['i', ROMAN_2, ROMAN_3, '1']
+        assert await _labels(fx_uow(), project.id, [pages[0], pages[1], pages[3], pages[2]]) == [
+            'i',
+            ROMAN_2,
+            ROMAN_3,
+            '1',
+        ]
 
     async def test_a_page_of_a_kind_a_series_takes_follows_the_series_once_its_kind_changes(
         self,
@@ -1251,7 +1269,7 @@ class TestRecomputeInPageUseCases:
         updated = await fx_service().update(fx_actor, project.id, pages[1].id, PageChanges(kind=PageKind.PLATE))
 
         expect(updated.label == FIRST_PLATE)
-        expect(await _labels(fx_uow(), pages) == ['1', FIRST_PLATE, '2', '3'])
+        expect(await _labels(fx_uow(), project.id, pages) == ['1', FIRST_PLATE, '2', '3'])
         assert_expectations()
 
     async def test_a_page_kept_out_of_the_book_takes_no_number(
@@ -1275,10 +1293,10 @@ class TestRecomputeInPageUseCases:
         project, pages = await self._numbered_book(fx_pagination, fx_uow(), fx_actor, 3)
 
         await fx_service().update(fx_actor, project.id, pages[1].id, PageChanges(included=False))
-        expect(await _labels(fx_uow(), pages) == ['1', '', '2'])
+        expect(await _labels(fx_uow(), project.id, pages) == ['1', '', '2'])
         await fx_service().update(fx_actor, project.id, pages[1].id, PageChanges(included=True))
 
-        expect(await _labels(fx_uow(), pages) == ['1', '2', '3'])
+        expect(await _labels(fx_uow(), project.id, pages) == ['1', '2', '3'])
         assert_expectations()
 
     async def test_a_typed_label_is_an_exception_and_clearing_it_gives_the_page_back_to_its_section(
@@ -1304,11 +1322,11 @@ class TestRecomputeInPageUseCases:
         typed = await fx_service().update(fx_actor, project.id, pages[1].id, PageChanges(label=HAND_WRITTEN))
         await fx_service().delete(fx_actor, project.id, pages[0].id)
         expect((typed.label, typed.page.manual_label) == (HAND_WRITTEN, HAND_WRITTEN))
-        expect(await _labels(fx_uow(), [pages[1], pages[2]]) == [HAND_WRITTEN, '2'])
+        expect(await _labels(fx_uow(), project.id, [pages[1], pages[2]]) == [HAND_WRITTEN, '2'])
         cleared = await fx_service().update(fx_actor, project.id, pages[1].id, PageChanges(label=''))
 
         expect((cleared.label, cleared.page.manual_label) == ('1', None))
-        expect(await _labels(fx_uow(), [pages[1], pages[2]]) == ['1', '2'])
+        expect(await _labels(fx_uow(), project.id, [pages[1], pages[2]]) == ['1', '2'])
         assert_expectations()
 
     async def test_a_book_without_sections_keeps_every_label_it_has(
@@ -1335,6 +1353,6 @@ class TestRecomputeInPageUseCases:
         await fx_service().move(fx_actor, project.id, pages[2].id, PageAnchor(page_id=pages[0].id, side=Side.BEFORE))
         await fx_service().delete(fx_actor, project.id, pages[1].id)
 
-        expect(await _labels(fx_uow(), [pages[0], pages[2]]) == [STALE_LABEL] * 2)
+        expect(await _labels(fx_uow(), project.id, [pages[0], pages[2]]) == [STALE_LABEL] * 2)
         expect(fx_page_writes.page_ids == {pages[2].id})
         assert_expectations()

@@ -64,8 +64,7 @@ class StepRows:
         """
         if not pages:
             return {}
-        project_id = pages[0].project_id
-        recipes = {recipe.id: recipe for recipe in repos.recipes.list_for_stage(project_id, self._stage)}
+        recipes = {recipe.id: recipe for recipe in repos.recipes.list_for_stage(self._stage)}
         key = next(
             (
                 step.processor_key
@@ -82,7 +81,7 @@ class StepRows:
             placed = self._place(repos, [page.id for page in pages], recipes, records, heads)
             return {page.id: placed[page.id] for page in pages}
         # What a step found is compared with the whole book, so the step is placed on every page of the stage
-        book = {record.page_id: record for record in repos.page_stages.list_for_project_stage(project_id, self._stage)}
+        book = {record.page_id: record for record in repos.page_stages.list_for_stage(self._stage)}
         book_heads = {
             version.id: version
             for version in repos.page_versions.list_by_ids(

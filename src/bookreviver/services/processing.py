@@ -25,7 +25,6 @@ from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import CollectionReport, PageStageKey, Slice, StepPreview, TileCut
 from bookreviver.domain.version_chains import stage_depths, step_places, versions_of_step
 from bookreviver.services.processing_parts import PROJECT_BUSY
-from bookreviver.services.projects import book_page
 from bookreviver.services.run_plans import RunPlan
 
 if TYPE_CHECKING:
@@ -151,7 +150,7 @@ class ProcessingService:
             :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
                                             usual order.
             """
-            recipe = self._recipes.get(repos, project_id, key.recipe_id, stage=key.stage)
+            recipe = self._recipes.get(repos, key.recipe_id, stage=key.stage)
             return self._recipes.rewrite(repos, recipe, draft), self._records.mark_recipe_stale(repos, recipe.id)
 
         changed, stale = await self._uow.change_book(project_id, work)
@@ -186,7 +185,7 @@ class ProcessingService:
             :raises NotFoundError: If a page is not in the book.
             """
             if (page_ids := run.page_ids) is not None:
-                repos.pages.list_by_ids(project_id, page_ids)
+                repos.pages.list_by_ids(page_ids)
 
         await self._recipes.recipes(project_id, stage, checking=check)
         if run.through_step is not None:
@@ -248,7 +247,7 @@ class ProcessingService:
                                or running.
         """
         await self._library.open(actor, project_id)
-        await self._uow.read_book(project_id, lambda repos: book_page(repos, project_id, preview.page_id))
+        await self._uow.read_book(project_id, lambda repos: repos.pages.get(preview.page_id))
         checked = StepPreview(
             page_id=preview.page_id,
             stage=preview.stage,
@@ -286,7 +285,7 @@ class ProcessingService:
             :rtype: Sequence[PageStage]
             :raises NotFoundError: If the project has no such page.
             """
-            book_page(repos, project_id, page_id)
+            repos.pages.get(page_id)
             return repos.page_stages.list_for_page(page_id)
 
         records = await self._uow.read_book(project_id, work)
@@ -327,7 +326,7 @@ class ProcessingService:
         """
         await self._library.open(actor, project_id)
         await self._uow.read_book(
-            project_id, lambda repos: self._choosable(repos, book_page(repos, project_id, page_id), stage, version_id)
+            project_id, lambda repos: self._choosable(repos, repos.pages.get(page_id), stage, version_id)
         )
         if await self._starter.free_of_previews(project_id):
             raise ConflictError(PROJECT_BUSY)
@@ -346,7 +345,7 @@ class ProcessingService:
                                    such version.
             :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage.
             """
-            version = self._choosable(repos, book_page(repos, project_id, page_id), stage, version_id)
+            version = self._choosable(repos, repos.pages.get(page_id), stage, version_id)
             previous = repos.page_stages.find(key)
             return version, self._records.set_head(
                 repos, key, head_version_id=version_id, recipe_id=None if previous is None else previous.recipe_id
@@ -402,7 +401,7 @@ class ProcessingService:
                                    stage has the step.
             :raises InvalidParametersError: If a step is asked for without its stage.
             """
-            book_page(repos, project_id, page_id)
+            repos.pages.get(page_id)
             step_id = version_filter.step_id
             if step_id is None:
                 return repos.page_versions.list_for_stage(
@@ -410,7 +409,7 @@ class ProcessingService:
                 )
             if version_filter.stage is None:
                 raise InvalidParametersError(STEP_NEEDS_STAGE)
-            recipes = repos.recipes.list_for_stage(project_id, version_filter.stage)
+            recipes = repos.recipes.list_for_stage(version_filter.stage)
             if not any(step.step_id == step_id for recipe in recipes for step in recipe.steps):
                 raise NotFoundError(step_id)
             found = repos.page_versions.list_for_page(page_id)
@@ -456,7 +455,7 @@ class ProcessingService:
             :raises NotFoundError: If the project has no such page, or the page has no
                                    such version.
             """
-            book_page(repos, project_id, page_id)
+            repos.pages.get(page_id)
             return self._version_of(repos, page_id, version_id)
 
         return await self._uow.read_book(project_id, work)
@@ -509,7 +508,7 @@ class ProcessingService:
             :rtype: Sequence[PageVersion]
             :raises NotFoundError: If the actor has no such project.
             """
-            return repos.page_versions.collectable(project_id, collection.previews_older_than)
+            return repos.page_versions.collectable(collection.previews_older_than)
 
         old = await self._uow.read_book(project_id, work)
         keys = ProjectKeys(project_id)
@@ -575,7 +574,7 @@ class ProcessingService:
                                    version, or a version of the chain was deleted.
             :raises UnsupportedTransformError: If a version of the chain follows a mesh.
             """
-            book_page(repos, project_id, page_id)
+            repos.pages.get(page_id)
             version = self._version_of(repos, page_id, version_id)
             mapped = list(points)
             while True:

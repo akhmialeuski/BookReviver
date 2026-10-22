@@ -159,7 +159,7 @@ async def _record_unimported(uow: UnitOfWork, project_id: ProjectId) -> tuple[So
     :rtype: tuple[Source, Source]
     """
     rejected = evolve(
-        make_source(project_id=project_id, name='copy.pdf', minutes=2),
+        make_source(name='copy.pdf', minutes=2),
         status=SourceStatus.REJECTED,
         rejection=RejectionReason.DUPLICATE,
         kind=None,
@@ -167,7 +167,7 @@ async def _record_unimported(uow: UnitOfWork, project_id: ProjectId) -> tuple[So
         detail=DUPLICATE_DETAIL,
     )
     skipped = evolve(
-        make_source(project_id=project_id, name='skipped.pdf', minutes=3),
+        make_source(name='skipped.pdf', minutes=3),
         status=SourceStatus.SKIPPED,
         kind=None,
         file_type=None,
@@ -683,7 +683,5 @@ class TestDeleteUnimported:
         with pytest.raises(NotFoundError):
             await fx_service().delete_unimported(fx_actor, fx_strangers_book.project.id)
 
-        kept = await fx_uow().read_book(
-            fx_strangers_book.project.id, lambda repos: repos.sources.list_unimported(fx_strangers_book.project.id)
-        )
+        kept = await fx_uow().read_book(fx_strangers_book.project.id, lambda repos: repos.sources.list_unimported())
         assert list(kept) == list(recorded)

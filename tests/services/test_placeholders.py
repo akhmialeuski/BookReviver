@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Job, Page, PageOverview, PageVersion, Project, Scan, Source
     from bookreviver.domain.enums import ColorMode
+    from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.values import RenditionInfo
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import JobControl
@@ -151,13 +152,13 @@ async def _commit_book(
     :rtype: BookOfScans
     """
     project = make_project()
-    source = make_source(project_id=project.id)
+    source = make_source()
     scans = []
     for number, (width, height, dpi) in enumerate(sizes):
         scan = make_scan(source=source, number=number)
         facts = evolve(scan.facts, width_px=width, height_px=height, dpi_x=dpi, dpi_y=dpi)
         scans.append(evolve(scan, facts=facts, renditions=Renditions(ready=True), source_label=f'[{number}]'))
-    pages = [make_page(project_id=project.id, order_key=f'a{number}', scan=scan) for number, scan in enumerate(scans)]
+    pages = [make_page(order_key=f'a{number}', scan=scan) for number, scan in enumerate(scans)]
     versions = [
         BaseVersions.split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH)
         for page, scan in zip(pages, scans, strict=True)
@@ -183,7 +184,7 @@ async def _placeholder_book(uow: UnitOfWork, assets: LocalAssetStore, owner: Act
     :rtype: tuple[BookOfScans, Page]
     """
     book = await _commit_book(uow, assets, owner)
-    page = make_page(project_id=book.project.id, order_key=PLACEHOLDER_ORDER_KEY)
+    page = make_page(order_key=PLACEHOLDER_ORDER_KEY)
     placeholder = evolve(page, kind=PageKind.COVER, notes=PLACEHOLDER_NOTES)
     await uow.change_book(book.project.id, lambda repos, _project: repos.pages.add(placeholder))
     return book, placeholder
@@ -201,7 +202,7 @@ async def _spare_scan(uow: UnitOfWork, assets: LocalAssetStore, book: BookOfScan
     :returns: The scan, with its label ``xii``.
     :rtype: Scan
     """
-    source = make_source(project_id=book.project.id, name='cover.jpg', minutes=5)
+    source = make_source(name='cover.jpg', minutes=5)
     scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True), source_label=SPARE_SCAN_LABEL)
 
     def add_scan(repos: BookRepositories, _project: Project) -> None:
@@ -221,17 +222,19 @@ async def _spare_scan(uow: UnitOfWork, assets: LocalAssetStore, book: BookOfScan
     return scan
 
 
-async def _stored_versions(uow: UnitOfWork, page: Page) -> list[PageVersion]:
+async def _stored_versions(uow: UnitOfWork, project_id: ProjectId, page: Page) -> list[PageVersion]:
     """Read the committed versions of a page.
 
     :param uow: Unit of work to read through.
     :type uow: UnitOfWork
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
     :param page: The page.
     :type page: Page
     :returns: Its versions, the earliest first.
     :rtype: list[PageVersion]
     """
-    return list(await uow.read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id)))
+    return list(await uow.read_book(project_id, lambda repos: repos.page_versions.list_for_page(page.id)))
 
 
 async def _stored_pages(uow: UnitOfWork, *projects: Project) -> list[Page]:
@@ -253,7 +256,7 @@ async def _stored_pages(uow: UnitOfWork, *projects: Project) -> list[Page]:
         :returns: Its pages.
         :rtype: list[Page]
         """
-        return await uow.read_book(project.id, lambda repos: book_pages(repos.pages, project.id))
+        return await uow.read_book(project.id, lambda repos: book_pages(repos.pages))
 
     return [page for project in projects for page in await pages_of(project)]
 
@@ -365,7 +368,7 @@ class TestAddPlaceholder:
         expect((page.scan_id, page.slot, page.included) == (None, 0, True))
         expect(page.order_key > book.pages[0].order_key)
         expect((overview.position, overview.image_version) == (1, None))
-        expect(await _stored_versions(fx_uow(), page) == [])
+        expect(await _stored_versions(fx_uow(), book.project.id, page) == [])
         expect(_job_kinds(board) == [])
         expect(
             events.published == [PagesChanged(project_id=book.project.id, page_ids=[page.id], change=PageChange.ADDED)]
@@ -473,14 +476,14 @@ class TestAddBlank:
         first = await fx_service().add(fx_actor, book.project.id, new)
         second = await fx_service().add(fx_actor, book.project.id, new)
 
-        [version] = await _stored_versions(fx_uow(), first.page)
+        [version] = await _stored_versions(fx_uow(), book.project.id, first.page)
         expect(first.page.origin is PageOrigin.BLANK)
         expect(
             (version.stage, version.processor, version.state) == (Stage.PAGE_ORDER, PAGES_BLANK, VersionState.PENDING)
         )
         expect(PageSize.from_data(version.data) == PageSize(width_px=200, height_px=300, dpi=200.0))
         expect(version.renditions == Renditions(ready=False, full=Rendition.FULL_PNG))
-        expect(len(await _stored_versions(fx_uow(), second.page)) == 1)
+        expect(len(await _stored_versions(fx_uow(), book.project.id, second.page)) == 1)
         expect(_job_kinds(fx_board) == [(JobKind.PREPARE_PAGES, JobState.QUEUED)])
         assert_expectations()
 
@@ -515,9 +518,9 @@ class TestAddBlank:
             fx_actor, book.project.id, NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
         )
 
-        [version] = await _stored_versions(fx_uow(), overview.page)
+        [version] = await _stored_versions(fx_uow(), book.project.id, overview.page)
         expect(PageSize.from_data(version.data) == PageSize(width_px=round((102 + 300) / 2), height_px=250, dpi=None))
-        again_version = (await _stored_versions(fx_uow(), again.page))[0]
+        again_version = (await _stored_versions(fx_uow(), book.project.id, again.page))[0]
         expect(PageSize.from_data(again_version.data) == PageSize.from_data(version.data))
         assert_expectations()
 
@@ -541,7 +544,7 @@ class TestAddBlank:
             fx_actor, project.id, NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=size)
         )
 
-        [version] = await _stored_versions(fx_uow(), overview.page)
+        [version] = await _stored_versions(fx_uow(), project.id, overview.page)
         assert PageSize.from_data(version.data) == size
 
     async def test_without_a_size_and_without_pages_with_images_conflicts_and_stores_nothing(
@@ -563,7 +566,7 @@ class TestAddBlank:
         :type fx_board: FakeJobBoard
         """
         project = make_project()
-        await store_project(fx_uow(), project, make_page(project_id=project.id), owner=fx_actor.account_id)
+        await store_project(fx_uow(), project, make_page(), owner=fx_actor.account_id)
 
         with pytest.raises(ConflictError):
             await fx_service().add(fx_actor, project.id, NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK))
@@ -603,7 +606,7 @@ class TestAttachScan:
         overview = await fx_service().attach_scan(fx_actor, book.project.id, placeholder.id, scan.id)
 
         page = overview.page
-        [version] = await _stored_versions(fx_uow(), page)
+        [version] = await _stored_versions(fx_uow(), book.project.id, page)
         expect(
             (page.id, page.order_key, page.kind, page.notes)
             == (placeholder.id, PLACEHOLDER_ORDER_KEY, PageKind.COVER, PLACEHOLDER_NOTES)
@@ -757,7 +760,7 @@ class TestAttachScan:
         scan = await _spare_scan(fx_uow(), fx_asset_store, book)
         page = book.pages[0]
         if origin is PageOrigin.BLANK:
-            page = evolve(make_page(project_id=book.project.id, order_key='a9'), origin=PageOrigin.BLANK)
+            page = evolve(make_page(order_key='a9'), origin=PageOrigin.BLANK)
             await fx_uow().change_book(book.project.id, lambda repos, _project: repos.pages.add(page))
 
         with pytest.raises(NotAPlaceholderError):
@@ -924,11 +927,12 @@ class TestDelete:
         await fx_service().delete(fx_actor, book.project.id, doomed.id)
 
         stored_ids = {page.id for page in await _stored_pages(fx_uow(), book.project)}
-        versions = [*await _stored_versions(fx_uow(), doomed), *await _stored_versions(fx_uow(), kept)]
+        versions = [
+            *await _stored_versions(fx_uow(), book.project.id, doomed),
+            *await _stored_versions(fx_uow(), book.project.id, kept),
+        ]
         scans = await fx_uow().read_book(book.project.id, lambda repos: repos.scans.list_by_ids([book.scans[0].id]))
-        sources = await fx_uow().read_book(
-            book.project.id, lambda repos: repos.sources.list_for_project(book.project.id)
-        )
+        sources = await fx_uow().read_book(book.project.id, lambda repos: repos.sources.list_all())
         expect(doomed.id not in stored_ids and kept.id in stored_ids)
         expect([version.page_id for version in versions] == [kept.id])
         expect(not (fx_storage_root / keys.page(doomed.id)).exists())
@@ -1043,7 +1047,7 @@ class TestPrepareImages:
 
         await fx_board.run_queued()
 
-        [version] = await _stored_versions(fx_uow(), overview.page)
+        [version] = await _stored_versions(fx_uow(), project.id, overview.page)
         directory = fx_storage_root / ProjectKeys(project.id).version_directory(version)
         expect(version.state is VersionState.READY)
         expect(version.renditions == Renditions(ready=True, full=Rendition.FULL_PNG))
@@ -1081,7 +1085,7 @@ class TestPrepareImages:
 
         await fx_runtime[2].run_queued()
 
-        [version] = await _stored_versions(fx_uow(), placeholder)
+        [version] = await _stored_versions(fx_uow(), book.project.id, placeholder)
         copy = fx_storage_root / ProjectKeys(book.project.id).version_rendition(version, Rendition.FULL_JPEG)
         expect(version.state is VersionState.READY)
         expect(version.renditions == Renditions(ready=True, full=Rendition.FULL_JPEG))
@@ -1168,7 +1172,7 @@ class TestPrepareImages:
 
         await board.run_queued()
 
-        [failed] = await _stored_versions(fx_uow(), first.page)
+        [failed] = await _stored_versions(fx_uow(), project.id, first.page)
         [failed_job] = _prepare_jobs(board)
         expect(failed.state is VersionState.FAILED)
         expect(
@@ -1177,11 +1181,11 @@ class TestPrepareImages:
         expect((failed_job.state, failed_job.error) == (JobState.FAILED, PAGES_FAILED.format(count=1)))
         second = await service().add(fx_actor, project.id, new)
         await board.run_queued()
-        [again] = await _stored_versions(fx_uow(), first.page)
+        [again] = await _stored_versions(fx_uow(), project.id, first.page)
         [_, later_job] = _prepare_jobs(board)
         expect(again.state is VersionState.READY)
         expect(VersionData.ERROR not in again.data)
-        expect((await _stored_versions(fx_uow(), second.page))[0].state is VersionState.READY)
+        expect((await _stored_versions(fx_uow(), project.id, second.page))[0].state is VersionState.READY)
         expect(later_job.state is JobState.SUCCEEDED)
         assert_expectations()
 
@@ -1213,7 +1217,7 @@ class TestPrepareImages:
 
         await fx_board.run_queued()
 
-        [version] = await _stored_versions(fx_uow(), placeholder)
+        [version] = await _stored_versions(fx_uow(), book.project.id, placeholder)
         expect(version.state is VersionState.FAILED)
         expect('deleted' in version.data[VersionData.ERROR])
         assert_expectations()
@@ -1252,7 +1256,7 @@ class TestPrepareImages:
         await fx_board.run_queued()
 
         expect(fx_board.get(job.id).state is JobState.CANCELLED)
-        expect((await _stored_versions(fx_uow(), overview.page))[0].state is VersionState.PENDING)
+        expect((await _stored_versions(fx_uow(), project.id, overview.page))[0].state is VersionState.PENDING)
         expect(len(fx_events.published) == published)
         assert_expectations()
 
@@ -1402,8 +1406,10 @@ class TestPrepareImagesWhileTheBookChanges:
         [kept] = [page for page in pages if page.id != gone]
         job = runner_board.get(queued.id)
         expect((job.state, job.error, job.progress.done, job.progress.total) == (JobState.SUCCEEDED, '', 2, 2))
-        expect([version.state for version in await _stored_versions(fx_uow(), kept)] == [VersionState.READY])
-        expect(await _stored_versions(fx_uow(), next(page for page in pages if page.id == gone)) == [])
+        expect(
+            [version.state for version in await _stored_versions(fx_uow(), project.id, kept)] == [VersionState.READY]
+        )
+        expect(await _stored_versions(fx_uow(), project.id, next(page for page in pages if page.id == gone)) == [])
         expect(
             [event.version.page_id for event in events.published if isinstance(event, PageVersionReady)] == [kept.id]
         )
@@ -1452,7 +1458,7 @@ class TestPrepareImagesWhileTheBookChanges:
         await board.run_queued()
 
         [job] = _prepare_jobs(board)
-        [version] = await _stored_versions(fx_uow(), leaf)
+        [version] = await _stored_versions(fx_uow(), project.id, leaf)
         expect((version.state, version.data[VersionData.ERROR]) == (VersionState.FAILED, UNEXPECTED_FAILURE))
         expect((job.state, job.error) == (JobState.FAILED, PAGES_FAILED.format(count=1)))
         expect(job.finished_at is not None)
@@ -1525,7 +1531,7 @@ class TestPrepareImagesWhileTheBookChanges:
         expect(queued_while_running == [1])
         expect([job.kind for job in _prepare_jobs(board)] == [JobKind.PREPARE_PAGES, JobKind.PREPARE_PAGES])
         expect(
-            [(await _stored_versions(fx_uow(), page))[0].state for page in (first, *added)]
+            [(await _stored_versions(fx_uow(), project.id, page))[0].state for page in (first, *added)]
             == [VersionState.READY, VersionState.READY]
         )
         expect({board.get(job.id).state for job in board.put_jobs} == {JobState.SUCCEEDED})
@@ -1593,7 +1599,7 @@ class TestAddBlankWithoutSizedPages:
         made = await fx_service().add(fx_actor, book.project.id, evolve(blank, size=PageSize(width_px=8, height_px=9)))
 
         expect('has an image' not in str(refused.value))
-        made_version = (await _stored_versions(fx_uow(), made.page))[0]
+        made_version = (await _stored_versions(fx_uow(), book.project.id, made.page))[0]
         expect(PageSize.from_data(made_version.data) == PageSize(width_px=8, height_px=9))
         assert_expectations()
 
@@ -1768,9 +1774,12 @@ class TestAddMany:
 
         added = await fx_service().add_many(fx_actor, book.project.id, new)
 
-        sizes = [PageSize.from_data((await _stored_versions(fx_uow(), added[i].page))[0].data) for i in (0, 2)]
+        sizes = [
+            PageSize.from_data((await _stored_versions(fx_uow(), book.project.id, added[i].page))[0].data)
+            for i in (0, 2)
+        ]
         expect(sizes == [PageSize(width_px=200, height_px=300, dpi=200.0), sized])
-        expect(await _stored_versions(fx_uow(), added[1].page) == [])
+        expect(await _stored_versions(fx_uow(), book.project.id, added[1].page) == [])
         expect([job.kind for job in fx_board.put_jobs] == [JobKind.PREPARE_PAGES])
         assert_expectations()
 

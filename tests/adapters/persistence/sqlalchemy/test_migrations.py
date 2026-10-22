@@ -32,7 +32,7 @@ from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND, RUN, SCHEMA_AT
 from bookreviver.domain.enums import BlockKind
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
-from tests.helpers.builders import make_page, make_page_version, make_project, make_scan, make_source
+from tests.helpers.builders import make_book_place, make_page, make_page_version, make_project, make_scan, make_source
 from tests.helpers.seeding import commit_account
 
 if TYPE_CHECKING:
@@ -62,6 +62,9 @@ UNKNOWN_VALUE: str = 'no-such-kind'
 # The revision before the one that keeps only the manual labels of the pages, and a label written by hand
 BEFORE_MANUAL_LABELS: str = '9bcd8efc6540'
 MANUAL_LABEL: str = 'xii'
+# The revision before the one that keeps no book key, and the tables that had the key
+BEFORE_BOOK_KEYS: str = '2ec5b0830b62'
+BOOK_KEYED: tuple[str, ...] = ('sources', 'scans', 'pages', 'book_places')
 # A provider account, linked twice by the test of the unique key
 PROVIDER: str = 'google'
 PROVIDER_ACCOUNT: str = 'provider-account-1'
@@ -71,20 +74,20 @@ TEST_REVISION: str = 'test_revision'
 TEST_REVISION_MESSAGE: str = 'A revision a test adds after the baseline.'
 # The line of script.py.mako that opens the body of schema_upgrades, after which a test writes its operations
 SCHEMA_UPGRADES_DOCSTRING: str = '    """Change the schema to this revision."""'
-# The column REBUILD_PROJECTS adds
+# The column REBUILD_PAGES adds
 REBUILT_COLUMN: str = 'probe'
-# Adds a column to projects, which batch mode on SQLite does by copying, dropping and renaming the table
-REBUILD_PROJECTS: str = f"""    with op.batch_alter_table('projects', recreate='always') as batch_op:
+# Adds a column to pages, which batch mode on SQLite does by copying, dropping and renaming the table
+REBUILD_PAGES: str = f"""    with op.batch_alter_table('pages', recreate='always') as batch_op:
         batch_op.add_column(sa.Column('{REBUILT_COLUMN}', sa.String(), nullable=False, server_default=''))"""
-# Rebuilds projects, then deletes every project, which leaves the rows of its book pointing at no project while
-# foreign keys are off, so the migration changes both the schema and the rows before its check fails
-ORPHAN_THE_BOOK: str = f"{REBUILD_PROJECTS}\n    op.execute('DELETE FROM projects')"
+# Rebuilds pages, then deletes every page, which leaves the versions of the book pointing at no page while foreign
+# keys are off, so the migration changes both the schema and the rows before its check fails
+ORPHAN_THE_VERSIONS: str = f"{REBUILD_PAGES}\n    op.execute('DELETE FROM pages')"
 # Changes the type of a column of a table, which only a comparison of types notices
 RETYPE_A_COLUMN: str = """    with op.batch_alter_table({table!r}) as batch_op:
         batch_op.alter_column({column!r}, type_=sa.{new_type}())"""
 # Changes nothing, standing for a revision of a branch that the checked-out code does not ship
 NO_CHANGE: str = ''
-# The tables holding the rows of a book, each of which refers to the project or to a row that does
+# The tables holding the rows of a book that the test writes
 BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (ProjectRow, SourceRow, ScanRow, PageRow, PageVersionRow)
 
 
@@ -187,6 +190,20 @@ def _checks(database: SqlDatabase) -> dict[str, set[str]]:
         return {table: {str(check['name']) for check in inspector.get_check_constraints(table)} for table in tables}
 
 
+def _primary_keys(database: SqlDatabase) -> dict[str, list[str]]:
+    """Read the columns of the primary key of every table of a database, the version table left out.
+
+    :param database: The database.
+    :type database: SqlDatabase
+    :returns: The columns of the primary key of each table, in key order.
+    :rtype: dict[str, list[str]]
+    """
+    with database.engine.connect() as connection:
+        inspector = inspect(connection)
+        tables = set(inspector.get_table_names()) - {database.config.alembic_config.version_table_name}
+        return {table: list(inspector.get_pk_constraint(table)['constrained_columns']) for table in tables}
+
+
 async def _migrate(database: SqlDatabase, command: Callable[..., None], *args: str) -> None:
     """Run an Alembic command in a worker thread, after closing the connections the test opened.
 
@@ -210,9 +227,9 @@ async def _commit_book(database: SqlDatabase) -> ProjectId:
     :rtype: ProjectId
     """
     project = make_project()
-    source = make_source(project_id=project.id)
+    source = make_source()
     scan = make_scan(source=source, number=0)
-    page = make_page(project_id=project.id, scan=scan)
+    page = make_page(scan=scan)
 
     def store(session: Session) -> None:
         """Store the book in the order its keys need.
@@ -288,10 +305,10 @@ class TestBaseline:
         await _migrate(database, migrations.check)
         assert left == [database.config.alembic_config.version_table_name]
 
-    async def test_the_revisions_add_every_check_of_the_tables(
+    async def test_the_revisions_add_every_check_and_primary_key_of_the_tables(
         self, fx_empty_database: SqlDatabase, tmp_path: Path
     ) -> None:
-        """Verify the revisions leave every ``CHECK`` the tables declare, which ``alembic check`` does not compare.
+        """Verify the revisions leave every ``CHECK`` and primary key the tables declare, which ``alembic check`` skips.
 
         A file built by the revisions and one built from the tables are read back by SQLAlchemy's inspector, which reads
         the checks of SQLite from the SQL of each table.
@@ -308,7 +325,9 @@ class TestBaseline:
         try:
             with reference.engine.begin() as connection:
                 fx_empty_database.schema.metadata.create_all(connection)
-            assert _checks(fx_empty_database) == _checks(reference)
+            expect(_checks(fx_empty_database) == _checks(reference))
+            expect(_primary_keys(fx_empty_database) == _primary_keys(reference))
+            assert_expectations()
         finally:
             await reference.dispose()
 
@@ -529,16 +548,63 @@ class TestLabelsRevision:
             session.execute(text("UPDATE pages SET manual_label = ''"))
 
 
+class TestBookKeyRevision:
+    """Tests for the revision that keeps no book key in the tables of a book."""
+
+    async def test_the_rows_stay_and_the_downgrade_gives_every_row_its_book(self, fx_empty_book: SqlDatabase) -> None:
+        """Verify the rows outlive the revision both ways, the place is keyed 1, and the downgrade names the book.
+
+        :param fx_empty_book: Database of a book with no table.
+        :type fx_empty_book: SqlDatabase
+        """
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        project_id = await _commit_book(fx_empty_book)
+        await fx_empty_book.write(
+            lambda session: SqlAlchemyBookRepositories(session).book_places.save(make_book_place()),
+            kind=BlockKind.BOOK,
+            book=project_id,
+            wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
+        )
+        await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_BOOK_KEYS)
+        with _session(fx_empty_book) as session:
+            for table in BOOK_KEYED:
+                named = session.scalars(text(f'SELECT DISTINCT project_id FROM "{table}"')).all()
+                expect(named == [project_id.bytes], table)
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        with _session(fx_empty_book) as session:
+            for row_table in BOOK_TABLES:
+                expect(session.scalar(select(func.count()).select_from(row_table)) == 1, row_table.__tablename__)
+            expect(session.scalars(text('SELECT id FROM book_places')).all() == [1])
+        assert_expectations()
+
+    async def test_the_database_refuses_a_second_place(self, fx_empty_book: SqlDatabase) -> None:
+        """Verify the place of a book is one row, which plain SQL cannot add to.
+
+        :param fx_empty_book: Database of a book with no table.
+        :type fx_empty_book: SqlDatabase
+        """
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        project_id = await _commit_book(fx_empty_book)
+        await fx_empty_book.write(
+            lambda session: SqlAlchemyBookRepositories(session).book_places.save(make_book_place()),
+            kind=BlockKind.BOOK,
+            book=project_id,
+            wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
+        )
+        with _session(fx_empty_book) as session, pytest.raises(IntegrityError, match='CHECK constraint failed'):
+            session.execute(text('UPDATE book_places SET id = 2'))
+
+
 class TestEnv:
     """Tests for the environment, which runs a migration on SQLite with foreign keys off and checks them afterwards."""
 
-    async def test_batch_rebuild_of_projects_keeps_the_rows_of_its_book(
+    async def test_batch_rebuild_of_pages_keeps_the_rows_of_the_book(
         self, fx_empty_book: SqlDatabase, tmp_path: Path
     ) -> None:
-        """Verify a revision rebuilding projects in batch mode leaves every row of the book and every check of the table.
+        """Verify a revision rebuilding pages in batch mode leaves every row of the book and every check of the table.
 
-        With foreign keys on, dropping the old projects table would cascade to the sources, scans, pages and
-        versions, and a rebuild that did not carry the checks over would leave the values of the table unchecked.
+        With foreign keys on, dropping the old pages table would cascade to the versions of the pages, and a rebuild
+        that did not carry the checks over would leave the values of the table unchecked.
 
         :param fx_empty_book: Database of a book with no table.
         :type fx_empty_book: SqlDatabase
@@ -547,22 +613,22 @@ class TestEnv:
         """
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
         await _commit_book(fx_empty_book)
-        checks = _checks(fx_empty_book)[ProjectRow.__tablename__]
-        migrations = _migrations_with_revision(fx_empty_book, tmp_path / COPIED_MIGRATIONS, REBUILD_PROJECTS)
+        checks = _checks(fx_empty_book)[PageRow.__tablename__]
+        migrations = _migrations_with_revision(fx_empty_book, tmp_path / COPIED_MIGRATIONS, REBUILD_PAGES)
         await _migrate(fx_empty_book, migrations.upgrade, HEAD)
         with _session(fx_empty_book) as session:
             for table in BOOK_TABLES:
                 expect(session.scalar(select(func.count()).select_from(table)) == 1, table.__tablename__)
-        expect(checks and _checks(fx_empty_book)[ProjectRow.__tablename__] == checks)
+        expect(checks and _checks(fx_empty_book)[PageRow.__tablename__] == checks)
         assert_expectations()
 
-    async def test_rows_left_without_their_project_roll_the_migration_back(
+    async def test_rows_left_without_their_page_roll_the_migration_back(
         self, fx_empty_book: SqlDatabase, tmp_path: Path
     ) -> None:
         """Verify a revision orphaning the rows of a book fails, and leaves the schema, rows and revision it found.
 
-        The revision rebuilds projects and then deletes them, so both its schema change and its row change have to
-        be undone, and the file must stay at the baseline.
+        The revision rebuilds pages and then deletes them, so both its schema change and its row change have to be
+        undone, and the file must stay at the revision it was at.
 
         :param fx_empty_book: Database of a book with no table.
         :type fx_empty_book: SqlDatabase
@@ -572,14 +638,14 @@ class TestEnv:
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
         await _commit_book(fx_empty_book)
         baseline = await fx_empty_book.current_revisions()
-        migrations = _migrations_with_revision(fx_empty_book, tmp_path / COPIED_MIGRATIONS, ORPHAN_THE_BOOK)
+        migrations = _migrations_with_revision(fx_empty_book, tmp_path / COPIED_MIGRATIONS, ORPHAN_THE_VERSIONS)
         with pytest.raises(RuntimeError, match='foreign key to no row'):
             await _migrate(fx_empty_book, migrations.upgrade, HEAD)
         with _session(fx_empty_book) as session:
             for table in BOOK_TABLES:
                 expect(session.scalar(select(func.count()).select_from(table)) == 1, table.__tablename__)
         with fx_empty_book.engine.connect() as connection:
-            columns = inspect(connection).get_columns(ProjectRow.__tablename__)
+            columns = inspect(connection).get_columns(PageRow.__tablename__)
         expect(REBUILT_COLUMN not in {column['name'] for column in columns})
         expect(await fx_empty_book.current_revisions() == baseline)
         assert_expectations()

@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from bookreviver.domain.entities import PageOverview
+    from bookreviver.domain.ids import ProjectId
 
 EXACTLY_ONE_ANCHOR: str = 'Give exactly one of before_page_id and after_page_id.'
 AT_MOST_ONE_ANCHOR: str = 'Give at most one of before_page_id and after_page_id.'
@@ -391,20 +392,22 @@ class PageSchema(ResponseModel):
     updated_at: datetime
 
     @classmethod
-    def from_overview(cls, overview: PageOverview, request: Request) -> Self:
+    def from_overview(cls, overview: PageOverview, request: Request, *, project_id: ProjectId) -> Self:
         """Build the schema of a page with the paths of its images.
 
         :param overview: The page with its position and base version.
         :type overview: PageOverview
         :param request: The request, whose application knows the route that serves the images.
         :type request: Request
+        :param project_id: Identifier of the project of the page, whose files hold its images.
+        :type project_id: ProjectId
         :returns: The page resource, with images once its base version has them cut.
         :rtype: Self
         """
         page, version = overview.page, overview.image_version
         images = None
         if version is not None and version.renditions is not None and version.renditions.ready:
-            keys = ProjectKeys(page.project_id)
+            keys = ProjectKeys(project_id)
             images = ImagePathsSchema.of(
                 request, lambda rendition: keys.version_rendition(version, rendition), full=version.renditions.full
             )

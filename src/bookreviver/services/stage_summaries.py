@@ -25,7 +25,7 @@ from bookreviver.services.step_rows import StepRows
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
-    from bookreviver.domain.entities import PageVersion, Project, ProjectOverview, Recipe
+    from bookreviver.domain.entities import PageVersion, ProjectOverview, Recipe
     from bookreviver.domain.enums import RecipeKind
     from bookreviver.domain.ids import PageVersionId, StepId
     from bookreviver.domain.stage_summaries import StageTally, StepTally
@@ -60,21 +60,19 @@ class StageSummaries:
         :returns: One summary for each stage, with the recipe of each kind of page when the stage has them.
         :rtype: list[StageSummary]
         """
-        project_id = overview.project.id
-        tallies = {tally.stage: tally for tally in repos.page_stages.tally(project_id)}
+        tallies = {tally.stage: tally for tally in repos.page_stages.tally()}
         recipes: defaultdict[Stage, list[Recipe]] = defaultdict(list)
-        for recipe in repos.recipes.list_for_project(project_id):
+        for recipe in repos.recipes.list_all():
             recipes[recipe.stage].append(recipe)
-        kinds = repos.pages.kind_tally(project_id)
+        kinds = repos.pages.kind_tally()
         stopped: defaultdict[Stage, list[StepTally]] = defaultdict(list)
-        for step_tally in repos.page_stages.step_tally(project_id):
+        for step_tally in repos.page_stages.step_tally():
             stopped[step_tally.stage].append(step_tally)
         return self._summarize(overview, tallies, recipes, kinds, stopped)
 
     def rows(
         self,
         repos: BookRepositories,
-        project: Project,
         stage: Stage,
         request: SliceRequest,
         step_id: StepId | None = None,
@@ -83,8 +81,6 @@ class StageSummaries:
 
         :param repos: Repositories of the transaction the caller runs in, which are only read.
         :type repos: BookRepositories
-        :param project: The book.
-        :type project: Project
         :param stage: The stage.
         :type stage: Stage
         :param request: Offset and limit of the window of pages.
@@ -98,7 +94,7 @@ class StageSummaries:
         :rtype: Slice[StageRow]
         :raises NotFoundError: If no recipe of the stage has the step.
         """
-        pages = repos.pages.list_for_project(project.id, request)
+        pages = repos.pages.list_window(request)
         records = {
             record.page_id: record
             for record in repos.page_stages.list_for_pages([page.id for page in pages.items])
@@ -189,9 +185,9 @@ class StageSummaries:
         :returns: The overview with its progress.
         :rtype: ProjectOverview
         """
-        project_id = overview.project.id
-        tallies = {tally.stage: tally for tally in repos.page_stages.tally(project_id)}
-        running = {job.stage for job in self._board.jobs_of({project_id}, active=True) if job.stage is not None}
+        tallies = {tally.stage: tally for tally in repos.page_stages.tally()}
+        jobs = self._board.jobs_of({overview.project.id}, active=True)
+        running = {job.stage for job in jobs if job.stage is not None}
         return evolve(overview, progress=BookProgress.of(self._summarize(overview, tallies, {}, {}, {}), running))
 
     def _summarize(

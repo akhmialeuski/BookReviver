@@ -49,7 +49,7 @@ def _scan() -> Scan:
     :returns: The scan, a gray JPEG.
     :rtype: Scan
     """
-    source = make_source(project_id=make_project().id)
+    source = make_source()
     scan = make_scan(source=source, number=0)
     return evolve(scan, renditions=Renditions(ready=True))
 
@@ -85,8 +85,8 @@ class Rig:
             iiif_root=IIIF_ROOT,
         )
         self.scan = _scan()
-        self.keys = ProjectKeys(self.scan.project_id)
-        page = make_page(project_id=self.scan.project_id, scan=self.scan)
+        self.keys = ProjectKeys(make_project().id)
+        page = make_page(scan=self.scan)
         self.version = BaseVersions.split_none(page=page, scan=self.scan, state=VersionState.PENDING, moment=EPOCH)
 
     async def store_scan(self) -> None:
