@@ -1,4 +1,4 @@
-"""Tests for the mark and the comment of a result and the log of their changes."""
+"""Tests for the mark and the comment of a result."""
 
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -38,7 +38,7 @@ def _marks(kit: ProcessingKit) -> ResultMarksService:
     :rtype: ResultMarksService
     """
     uow = kit.uow()
-    return ResultMarksService(uow=uow, library=Library(uow=uow), clock=kit.clock)
+    return ResultMarksService(uow=uow, library=Library(uow=uow))
 
 
 class TestSet:
@@ -60,10 +60,8 @@ class TestSet:
         expect(stored == evolve(version, mark=ResultMark.BAD, comment=COMMENT))
         assert_expectations()
 
-    async def test_mark_and_comment_can_be_changed_and_taken_off_and_every_change_is_logged(
-        self, fx_kit: ProcessingKit
-    ) -> None:
-        """Verify three changes leave three log entries with the values before and after, in order.
+    async def test_mark_and_comment_can_be_changed_and_taken_off(self, fx_kit: ProcessingKit) -> None:
+        """Verify the version holds the mark and the comment of the last of three changes, the mark taken off.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -75,32 +73,23 @@ class TestSet:
             actor, project.id, page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
         )
         await _marks(fx_kit).set(actor, project.id, page.id, version.id, ResultNote(mark=None, comment=COMMENT))
-        log = await _marks(fx_kit).changes(actor, project.id, page.id, version.id)
-        assert [
-            (c.sequence, c.mark_before, c.mark_after, c.comment_before, c.comment_after, c.created_at) for c in log
-        ] == [
-            (1, None, ResultMark.GOOD, '', '', EPOCH),
-            (2, ResultMark.GOOD, ResultMark.BAD, '', COMMENT, EPOCH + LATER),
-            (3, ResultMark.BAD, None, COMMENT, COMMENT, EPOCH + LATER),
-        ]
+        stored = await fx_kit.stored_version(project.id, version.id)
+        assert (stored.mark, stored.comment) == (None, COMMENT)
 
-    async def test_setting_what_is_stored_writes_nothing(self, fx_kit: ProcessingKit) -> None:
-        """Verify a request equal to the stored mark and comment adds no entry to the log.
+    async def test_setting_what_is_stored_answers_the_stored_version(self, fx_kit: ProcessingKit) -> None:
+        """Verify a request equal to the stored mark and comment answers the version as it is stored.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
         actor, project, page, version = await ran_geometry(fx_kit)
-        await _marks(fx_kit).set(
+        marked = await _marks(fx_kit).set(
             actor, project.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
         )
-        await _marks(fx_kit).set(
+        again = await _marks(fx_kit).set(
             actor, project.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
         )
-        untouched = await _marks(fx_kit).set(actor, project.id, page.id, version.id, ResultNote(mark=None, comment=''))
-        await _marks(fx_kit).set(actor, project.id, page.id, version.id, ResultNote(mark=None, comment=''))
-        log = await _marks(fx_kit).changes(actor, project.id, page.id, version.id)
-        assert (len(log), untouched.mark) == (2, None)
+        assert again == marked == await fx_kit.stored_version(project.id, version.id)
 
     async def test_a_preview_takes_no_mark(self, fx_kit: ProcessingKit) -> None:
         """Verify a preview, which a collection deletes, is refused with a conflict.
@@ -131,7 +120,7 @@ class TestSet:
             )
 
     async def test_a_project_of_another_account_is_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Verify another account can neither mark nor read the log of a result of the book.
+        """Verify another account cannot mark a result of the book.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -142,8 +131,6 @@ class TestSet:
             await _marks(fx_kit).set(
                 stranger, project.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
             )
-        with pytest.raises(NotFoundError):
-            await _marks(fx_kit).changes(stranger, project.id, page.id, version.id)
 
     async def test_a_comment_keeps_the_version_and_its_notes_through_a_collection(self, fx_kit: ProcessingKit) -> None:
         """Verify a collection that follows a run deletes neither the version with a comment nor its mark and files.

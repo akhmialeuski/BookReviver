@@ -31,7 +31,6 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     PaginationSectionRow,
     ProjectRow,
     RecipeRow,
-    ResultMarkChangeRow,
     ScanRow,
     SourceRow,
     StepValuesRow,
@@ -49,7 +48,6 @@ from bookreviver.domain.entities import (
     Project,
     Recipe,
     RecipeProfile,
-    ResultMarkChange,
     Scan,
     Source,
 )
@@ -65,7 +63,6 @@ from bookreviver.domain.ids import (
     ProjectId,
     RecipeId,
     RecipeProfileId,
-    ResultMarkChangeId,
     ScanId,
     SourceId,
     StepId,
@@ -804,50 +801,6 @@ class StepValuesMapper(RowMapper[StepValues, StepValuesRow]):
             stage=entity.stage,
             params=dict(entity.params),
             updated_at=entity.updated_at,
-        )
-
-
-class ResultMarkChangeMapper(RowMapper[ResultMarkChange, ResultMarkChangeRow]):
-    """Translation of a change of the mark or the comment of a result, which is one row of plain columns."""
-
-    @override
-    def to_entity(self, row: ResultMarkChangeRow) -> ResultMarkChange:
-        """Build the change stored in ``row``.
-
-        :param row: Result mark change row loaded from the database.
-        :type row: ResultMarkChangeRow
-        :returns: The change.
-        :rtype: ResultMarkChange
-        """
-        return ResultMarkChange(
-            id=ResultMarkChangeId(row.id),
-            version_id=PageVersionId(row.version_id),
-            mark_before=row.mark_before,
-            mark_after=row.mark_after,
-            comment_before=row.comment_before,
-            comment_after=row.comment_after,
-            created_at=row.created_at,
-            sequence=row.sequence,
-        )
-
-    @override
-    def to_row(self, entity: ResultMarkChange) -> ResultMarkChangeRow:
-        """Build the row of ``entity``.
-
-        :param entity: Change to store.
-        :type entity: ResultMarkChange
-        :returns: Transient result mark change row.
-        :rtype: ResultMarkChangeRow
-        """
-        return ResultMarkChangeRow(
-            id=entity.id,
-            version_id=entity.version_id,
-            mark_before=entity.mark_before,
-            mark_after=entity.mark_after,
-            comment_before=entity.comment_before,
-            comment_after=entity.comment_after,
-            created_at=entity.created_at,
-            sequence=entity.sequence,
         )
 
 

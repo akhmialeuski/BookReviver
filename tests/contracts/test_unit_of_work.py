@@ -37,7 +37,6 @@ from tests.helpers.builders import (
     make_project,
     make_recipe,
     make_recipe_profile,
-    make_result_mark_change,
     make_scan,
     make_section,
     make_source,
@@ -358,7 +357,6 @@ async def fx_book_rows(fx_uow: UnitOfWorkFactory, fx_book: Book) -> dict[str, Ro
     state = make_page_step_state(page_id=page.id)
     values = make_step_values()
     step_change = make_page_step_change(page_id=page.id)
-    mark_change = make_result_mark_change(version_id=version.id)
     recipe = make_recipe()
     place = make_book_place()
 
@@ -379,7 +377,6 @@ async def fx_book_rows(fx_uow: UnitOfWorkFactory, fx_book: Book) -> dict[str, Ro
         repos.page_step_states.add(state)
         repos.step_values.add(values)
         repos.page_step_changes.add(step_change)
-        repos.result_mark_changes.add(mark_change)
         repos.recipes.add(recipe)
         repos.book_places.save(place)
 
@@ -428,12 +425,6 @@ async def fx_book_rows(fx_uow: UnitOfWorkFactory, fx_book: Book) -> dict[str, Ro
             evolve(step_change, created_at=step_change.created_at + ONE_MINUTE),
             make_page_step_change(page_id=page.id),
             step_change.id,
-        ),
-        'result_mark_changes': Row(
-            mark_change,
-            evolve(mark_change, created_at=mark_change.created_at + ONE_MINUTE),
-            make_result_mark_change(version_id=version.id),
-            mark_change.id,
         ),
         'recipes': Row(
             recipe,

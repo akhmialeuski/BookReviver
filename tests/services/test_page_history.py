@@ -25,7 +25,7 @@ from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import ChangeBatchId, PageStepChangeId, StepId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import NewPageEdit, PageStageKey, PageStepKey, RecipeDraft, StageRun, Step, TileCut
-from tests.helpers.builders import make_page_step_state, make_result_mark_change, new_account_id
+from tests.helpers.builders import make_page_step_state, new_account_id
 from tests.helpers.page_batches import PageValues
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import run_stage
@@ -41,7 +41,6 @@ if TYPE_CHECKING:
         PageStepState,
         PageVersion,
         Project,
-        ResultMarkChange,
     )
     from bookreviver.domain.ids import ProjectId
     from bookreviver.ports.persistence import BookRepositories
@@ -610,10 +609,10 @@ class TestClear:
         expect(record is None)
         assert_expectations()
 
-    async def test_the_results_that_read_the_step_go_with_their_marks_their_rows_and_their_files(
+    async def test_the_results_that_read_the_step_go_with_their_rows_and_their_files(
         self, fx_kit: ProcessingKit
     ) -> None:
-        """Verify a clear of the first step deletes both results of the chain, their mark logs and their directories.
+        """Verify a clear of the first step deletes both results of the chain and their directories.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -621,45 +620,30 @@ class TestClear:
         actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
         key = PageStepKey(page.id, Stage.GEOMETRY, step_ids[0])
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
-        await fx_kit.uow().change_book(
-            project.id,
-            lambda repos, _project: repos.result_mark_changes.add_many(
-                [make_result_mark_change(version_id=version.id) for version in made]
-            ),
-        )
         expect([await has_files(fx_kit, project, version) for version in made] == [True, True])
         cleared = await fx_kit.page_history().clear(actor, project.id, key)
 
         def read_what_is_left(
             repos: BookRepositories,
-        ) -> tuple[
-            Sequence[PageVersion],
-            Sequence[PageStepChange],
-            Sequence[PageStepState],
-            list[Sequence[ResultMarkChange]],
-        ]:
-            """Read the versions, the changes, the states and the mark logs of the cleared step, in one snapshot.
+        ) -> tuple[Sequence[PageVersion], Sequence[PageStepChange], Sequence[PageStepState]]:
+            """Read the versions, the changes and the states of the cleared step, in one snapshot.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :returns: The versions of the page, its changes of the stage, the states of the step, and the mark log of
-                      each made version.
-            :rtype: tuple[Sequence[PageVersion], Sequence[PageStepChange], Sequence[PageStepState],
-                    list[Sequence[ResultMarkChange]]]
+            :returns: The versions of the page, its changes of the stage, and the states of the step.
+            :rtype: tuple[Sequence[PageVersion], Sequence[PageStepChange], Sequence[PageStepState]]
             """
             return (
                 repos.page_versions.list_for_page(page.id),
                 repos.page_step_changes.list_for_page(page.id, Stage.GEOMETRY),
                 repos.page_step_states.list_for_step([page.id], Stage.GEOMETRY, key.step_id),
-                [repos.result_mark_changes.list_for_version(version.id) for version in made],
             )
 
-        remaining, changes, states, marks = await fx_kit.uow().read_book(project.id, read_what_is_left)
+        remaining, changes, states = await fx_kit.uow().read_book(project.id, read_what_is_left)
         expect({version.id for version in cleared.versions} == {version.id for version in made})
         expect({version.id for version in remaining} == {made[0].input_id})
         expect(changes == [])
         expect(states == [])
-        expect(marks == [[], []])
         expect([await has_files(fx_kit, project, version) for version in made] == [False, False])
         assert_expectations()
 
@@ -682,33 +666,26 @@ class TestClear:
                 project.id, lambda repos: repos.page_versions.list_for_page(other.id)
             )
         }
-        await fx_kit.uow().change_book(
-            project.id,
-            lambda repos, _project: repos.result_mark_changes.add(make_result_mark_change(version_id=first.id)),
-        )
         await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
 
-        def read_what_stays(repos: BookRepositories) -> tuple[Sequence[PageVersion], Sequence[PageVersion], int]:
-            """Read the versions of both pages and the mark log of the first result, in one snapshot.
+        def read_what_stays(repos: BookRepositories) -> tuple[Sequence[PageVersion], Sequence[PageVersion]]:
+            """Read the versions of both pages, in one snapshot.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :returns: The versions of the cleared page, those of the other page, and the number of changes in the mark
-                      log of the first result.
-            :rtype: tuple[Sequence[PageVersion], Sequence[PageVersion], int]
+            :returns: The versions of the cleared page and those of the other page.
+            :rtype: tuple[Sequence[PageVersion], Sequence[PageVersion]]
             """
             return (
                 repos.page_versions.list_for_page(page.id),
                 repos.page_versions.list_for_page(other.id),
-                len(repos.result_mark_changes.list_for_version(first.id)),
             )
 
-        of_page, of_other, marks = await fx_kit.uow().read_book(project.id, read_what_stays)
+        of_page, of_other = await fx_kit.uow().read_book(project.id, read_what_stays)
         kept = {version.id for version in of_page}
         expect(second.id not in kept and first.id in kept and first.input_id in kept)
         expect(len(before) > 1)
         expect({version.id for version in of_other} == before)
-        expect(marks == 1)
         expect(await has_files(fx_kit, project, first))
         assert_expectations()
 

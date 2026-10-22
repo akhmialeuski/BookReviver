@@ -1,7 +1,7 @@
 """Tables of a book, private to the SQLAlchemy persistence adapter, which every book keeps in a file of its own.
 
 The module declares the ``projects``, ``sources``, ``scans``, ``pages``, ``page_versions``, ``page_stages``,
-``page_step_states``, ``page_step_changes``, ``step_values``, ``result_mark_changes``, ``pagination_sections``,
+``page_step_states``, ``page_step_changes``, ``step_values``, ``pagination_sections``,
 ``book_places`` and ``recipes`` tables in the SQLAlchemy 2.0 declarative style: ``Mapped`` annotations,
 ``mapped_column`` and ``relationship`` with ``back_populates``. Every table derives from :class:`BookTable`, which
 carries the bind key ``book``, so advanced-alchemy gives the tables of a book a ``MetaData`` of their own, apart from
@@ -609,32 +609,6 @@ class PageStepChangeRow(BookTable):
     sequence: Mapped[int]
 
     page: Mapped[PageRow] = relationship(back_populates=Relation.STEP_CHANGES, lazy=NO_IMPLICIT_LOAD)
-
-
-class ResultMarkChangeRow(BookTable):
-    """Row of one change of the mark or the comment of a result, which the log of the result never rewrites.
-
-    :ivar id: Change identifier, assigned by the domain.
-    :ivar version_id: Version the change was made on, whose deletion removes the change.
-    :ivar mark_before: Mark before the change, stored by value, or null for a result that had none.
-    :ivar mark_after: Mark after the change, stored by value, or null when the change took it off.
-    :ivar comment_before: Comment before the change, or empty.
-    :ivar comment_after: Comment after the change, or empty.
-    :ivar created_at: Time the change was made.
-    :ivar sequence: Place of the change in the log of its version, from one, unique within the version.
-    """
-
-    __tablename__ = 'result_mark_changes'
-    __table_args__ = (UniqueConstraint('version_id', SEQUENCE_COLUMN),)
-
-    id: Mapped[UUID] = mapped_column(primary_key=True)
-    version_id: Mapped[str] = mapped_column(ForeignKey(PageVersionRow.id, ondelete=CASCADE))
-    mark_before: Mapped[ResultMark | None] = mapped_column(enum_by_value(ResultMark, name='mark_before'))
-    mark_after: Mapped[ResultMark | None] = mapped_column(enum_by_value(ResultMark, name='mark_after'))
-    comment_before: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
-    comment_after: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
-    created_at: Mapped[datetime]
-    sequence: Mapped[int]
 
 
 class BookPlaceRow(BookTable):

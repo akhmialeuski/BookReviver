@@ -480,9 +480,8 @@ async def collect_versions(
     """Delete the versions nothing needs, in the background, and answer with the queued job.
 
     A version goes when it is not current, not in the chain of inputs of a current version, not a base version, not
-    marked Good and without a comment, and, for a preview, older than its retention period. It goes with its files, its
-    row and the log of its marks. A collection that is queued or running already is the answer. A run queues one by
-    itself when it ends.
+    marked Good and without a comment, and, for a preview, older than its retention period. It goes with its files and
+    its row. A collection that is queued or running already is the answer. A run queues one by itself when it ends.
 
     \N{FORM FEED}
     :param project_id: Identifier of the project.
