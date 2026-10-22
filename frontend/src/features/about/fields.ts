@@ -16,9 +16,9 @@ export const HEIGHT_CM_MIN = 1;
 const LANGUAGE_CODE = /^[a-z]{3}$/;
 const LANGUAGE_SEPARATORS = /[\s,;]+/;
 
-/** Everything the tab edits: the description of the book, its image policy and its cover. */
+/** Everything the tab edits: the description of the book and its image policy. */
 export type EditableFields = Omit<BookDetailsSchema, 'primary_author'> &
-  Pick<ProjectSchema, 'image_policy' | 'cover_page_id'>;
+  Pick<ProjectSchema, 'image_policy'>;
 
 /** The name of one editable field. */
 export type FieldKey = keyof EditableFields;
@@ -72,7 +72,6 @@ export const FIELD_KEYS = [
   'copy_notes',
   'notes',
   'image_policy',
-  'cover_page_id',
 ] as const satisfies readonly FieldKey[];
 
 /** Why a value is not sent, which the tab words next to the field. */
@@ -100,11 +99,11 @@ export interface SavePlan {
  * Take the editable fields of a book as the server holds them.
  *
  * @param project The book.
- * @returns Its description without the derived `primary_author`, with its image policy and cover.
+ * @returns Its description without the derived `primary_author`, with its image policy.
  */
 export function toFields(project: ProjectSchema): EditableFields {
   const { primary_author: _derived, ...details } = project.details;
-  return { ...details, image_policy: project.image_policy, cover_page_id: project.cover_page_id };
+  return { ...details, image_policy: project.image_policy };
 }
 
 /** Tell whether two values of fields hold the same, looking inside lists and into the members of a row. */

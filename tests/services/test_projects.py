@@ -9,7 +9,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.storage import LocalSourceStore
-from bookreviver.domain.changes import BookDetailsChanges, CoverChange, ProjectChanges
+from bookreviver.domain.changes import BookDetailsChanges, ProjectChanges
 from bookreviver.domain.enums import ImagePolicy, Orthography
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.values import BookDetails, SliceRequest
@@ -291,56 +291,24 @@ class TestGet:
 class TestUpdate:
     """Tests for ProjectService.update()."""
 
-    async def test_sets_and_clears_the_cover_and_sets_the_image_policy(
+    async def test_sets_the_image_policy(
         self, fx_service: Callable[[], ProjectService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify a page of the project becomes its cover, an empty cover change removes it, and the policy changes.
+        """Verify the image policy of the project changes.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], ProjectService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
         project = make_project()
-        page = make_page(project_id=project.id)
-        await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
-
-        covered = await fx_service().update(
-            fx_actor, project.id, ProjectChanges(cover=CoverChange(page_id=page.id), image_policy=ImagePolicy.LOSSLESS)
-        )
-        cleared = await fx_service().update(fx_actor, project.id, ProjectChanges(cover=CoverChange(page_id=None)))
-
-        expect((covered.project.cover_page_id, covered.project.image_policy) == (page.id, ImagePolicy.LOSSLESS))
-        expect((cleared.project.cover_page_id, cleared.project.image_policy) == (None, ImagePolicy.LOSSLESS))
-        assert_expectations()
-
-    async def test_cover_outside_the_project_is_not_found_and_changes_nothing(
-        self,
-        fx_service: Callable[[], ProjectService],
-        fx_uow: UnitOfWorkFactory,
-        fx_actor: Actor,
-    ) -> None:
-        """Verify a page of another project cannot become the cover, and the project keeps its state.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], ProjectService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        """
-        project = make_project()
-        other = make_project()
-        foreign = make_page(project_id=other.id)
         await store_project(fx_uow(), project, owner=fx_actor.account_id)
-        await store_project(fx_uow(), other, foreign, owner=fx_actor.account_id)
 
-        with pytest.raises(NotFoundError):
-            await fx_service().update(fx_actor, project.id, ProjectChanges(cover=CoverChange(page_id=foreign.id)))
+        changed = await fx_service().update(fx_actor, project.id, ProjectChanges(image_policy=ImagePolicy.LOSSLESS))
 
-        assert await _stored(fx_uow(), project) == project
+        assert changed.project.image_policy == ImagePolicy.LOSSLESS
 
     async def test_changes_given_fields_and_touches_the_project(
         self,

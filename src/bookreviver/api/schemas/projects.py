@@ -2,7 +2,7 @@
 
 ``ProjectUpdate`` is a JSON Merge Patch (RFC 7396) of the description and of the project's own settings: a field left
 out keeps its value, and a field sent as null is cleared to the value a new project has for it, an empty string, an
-empty list, no height, an unknown orthography, script or rights status, the compact image policy or no cover page. A
+empty list, no height, an unknown orthography, script or rights status, or the compact image policy. A
 list is replaced as a whole, because a merge patch cannot change an array item by item.
 The title can be replaced but never cleared, so it is left out of the null variants of the OpenAPI schema and a null
 title is refused. Pydantic declares no field that may be omitted but not null outside its experimental ``MISSING``
@@ -39,7 +39,7 @@ from bookreviver.api.schemas.types import (
     Title,
     TitleList,
 )
-from bookreviver.domain.changes import BookDetailsChanges, CoverChange, ProjectChanges
+from bookreviver.domain.changes import BookDetailsChanges, ProjectChanges
 from bookreviver.domain.entities import Project
 from bookreviver.domain.enums import (
     ContributorRole,
@@ -57,7 +57,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import ProjectOverview
 
 TITLE_FIELD: str = 'title'
-COVER_FIELD: str = 'cover_page_id'
 IMAGE_POLICY_FIELD: str = 'image_policy'
 TITLE_NOT_CLEARABLE: str = 'The title can be changed but not cleared.'
 
@@ -225,7 +224,6 @@ class ProjectUpdate(RequestModel):
     :ivar copy_notes: New marks of the scanned copy, or None to clear them.
     :ivar notes: New notes, or None to clear them.
     :ivar image_policy: New way to store the images of new scans and page versions, or None to set the default.
-    :ivar cover_page_id: New cover page, which must be a page of the project, or None to fall back to the first page.
     """
 
     title: Title | SkipJsonSchema[None] = None
@@ -256,7 +254,6 @@ class ProjectUpdate(RequestModel):
     copy_notes: LongText | None = None
     notes: LongText | None = None
     image_policy: ImagePolicy | None = None
-    cover_page_id: PageId | None = None
 
     @field_validator(TITLE_FIELD)
     @classmethod
@@ -281,7 +278,6 @@ class ProjectUpdate(RequestModel):
         :raises InvalidIdentifierError: If an identifier breaks the rules of its scheme, which the schema has checked.
         """
         sent = {name: getattr(self, name) for name in self.model_fields_set}
-        cover = CoverChange(page_id=sent.pop(COVER_FIELD)) if COVER_FIELD in sent else None
         image_policy = None
         if IMAGE_POLICY_FIELD in sent:
             image_policy = sent.pop(IMAGE_POLICY_FIELD) or Project.DEFAULT_IMAGE_POLICY
@@ -289,7 +285,7 @@ class ProjectUpdate(RequestModel):
         details: dict[str, Any] = {
             name: empty[name].default if value is None else _domain_value(value) for name, value in sent.items()
         }
-        return ProjectChanges(details=BookDetailsChanges(**details), image_policy=image_policy, cover=cover)
+        return ProjectChanges(details=BookDetailsChanges(**details), image_policy=image_policy)
 
 
 class BookDetailsSchema(ResponseModel):
@@ -361,7 +357,8 @@ class ProjectSchema(ResponseModel):
     :ivar id: Identifier of the project.
     :ivar details: Bibliographic description of the book.
     :ivar image_policy: How the images of the project's scans and page versions are stored.
-    :ivar cover_page_id: Page whose thumbnail the project list shows, or None for the first page of the book.
+    :ivar cover_page_id: Page the library shows as the cover, the first page of the kind ``cover`` or else the first
+                         page of the book, or None for a book without pages.
     :ivar page_count: Number of pages of the book, without the pages kept out of it.
     :ivar source_count: Number of sources the book was assembled from.
     :ivar scan_count: Number of scans in all the sources.
@@ -398,7 +395,7 @@ class ProjectSchema(ResponseModel):
             id=project.id,
             details=BookDetailsSchema.model_validate(project.details),
             image_policy=project.image_policy,
-            cover_page_id=project.cover_page_id,
+            cover_page_id=overview.cover_page_id,
             page_count=overview.page_count,
             source_count=overview.source_count,
             scan_count=overview.scan_count,

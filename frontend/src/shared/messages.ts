@@ -340,14 +340,6 @@ export const MESSAGES = {
       } satisfies Record<ImagePolicy, { label: string; description: string }>,
       note: 'Black-and-white pages are always stored as PNG. A change applies to the images written after it, and the images already stored stay as they are.',
     },
-    cover: {
-      title: 'Cover in the library',
-      empty: 'The book has no pages yet, so there is nothing to choose from.',
-      page: (number: number, kind: string) => `#${number} ${kind}`,
-      choose: (name: string) => `Use ${name} as the cover`,
-      showAll: 'Show all pages',
-      showFewer: 'Show fewer pages',
-    },
     suggestion: {
       found: (file: string, what: string) => `The file ${file} suggests ${what}.`,
       fields: {

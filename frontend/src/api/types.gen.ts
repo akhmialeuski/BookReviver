@@ -2668,7 +2668,8 @@ export type ProjectCreate = {
  * :ivar id: Identifier of the project.
  * :ivar details: Bibliographic description of the book.
  * :ivar image_policy: How the images of the project's scans and page versions are stored.
- * :ivar cover_page_id: Page whose thumbnail the project list shows, or None for the first page of the book.
+ * :ivar cover_page_id: Page the library shows as the cover, the first page of the kind ``cover`` or else the first
+ * page of the book, or None for a book without pages.
  * :ivar page_count: Number of pages of the book, without the pages kept out of it.
  * :ivar source_count: Number of sources the book was assembled from.
  * :ivar scan_count: Number of scans in all the sources.
@@ -2748,7 +2749,6 @@ export type ProjectSchema = {
  * :ivar copy_notes: New marks of the scanned copy, or None to clear them.
  * :ivar notes: New notes, or None to clear them.
  * :ivar image_policy: New way to store the images of new scans and page versions, or None to set the default.
- * :ivar cover_page_id: New cover page, which must be a page of the project, or None to fall back to the first page.
  */
 export type ProjectUpdate = {
     /**
@@ -2851,10 +2851,6 @@ export type ProjectUpdate = {
      */
     notes?: string | null;
     image_policy?: ImagePolicy | null;
-    /**
-     * Cover Page Id
-     */
-    cover_page_id?: string | null;
 };
 
 /**

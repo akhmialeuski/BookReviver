@@ -2,7 +2,6 @@
 
 import json
 from typing import TYPE_CHECKING, Any, NamedTuple
-from uuid import uuid4
 
 import attrs
 import pytest
@@ -12,7 +11,7 @@ from fastapi_pagination import Page
 
 from bookreviver.api.schemas.projects import BookDetailsSchema, ProjectCreate, ProjectSchema, ProjectUpdate
 from bookreviver.api.schemas.types import CONTRIBUTORS_MAX_LENGTH, HEIGHT_CM_MAX, TITLE_MAX_LENGTH
-from bookreviver.domain.enums import ContributorRole, IdentifierScheme, ImagePolicy, Orthography
+from bookreviver.domain.enums import ContributorRole, IdentifierScheme, ImagePolicy, Orthography, PageKind
 from bookreviver.domain.values import BookDetails, Contributor
 from tests.conftest import TEST_BASE_URL
 from tests.helpers.builders import FULL_DETAILS, make_page, make_project, make_scan, make_source, new_account_id
@@ -165,7 +164,7 @@ class TestSchemas:
         (SCHEMA_ARG, EXTRAS_ARG),
         [
             (ProjectCreate, frozenset[str]()),
-            (ProjectUpdate, frozenset({COVER_FIELD, IMAGE_POLICY_FIELD})),
+            (ProjectUpdate, frozenset({IMAGE_POLICY_FIELD})),
             (BookDetailsSchema, frozenset({'primary_author'})),
         ],
         ids=['create', 'update', 'details'],
@@ -488,44 +487,14 @@ class TestUpdateProject:
         expect((updated.details.title, updated.details.notes) == (TITLE, NOTES))
         assert_expectations()
 
-    async def test_sets_the_cover_and_the_image_policy_and_null_clears_them(
+    async def test_sets_the_image_policy_and_null_restores_the_default(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify a page of the project becomes the cover and the policy changes, and null restores their defaults.
+        """Verify the image policy changes, and null restores the policy a new project has.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: The signed-in account.
-        :type fx_actor: Actor
-        """
-        project = make_project()
-        page = make_page(project_id=project.id)
-        await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
-
-        set_response = await fx_client.patch(
-            _project_path(project.id), json={COVER_FIELD: str(page.id), IMAGE_POLICY_FIELD: ImagePolicy.LOSSLESS}
-        )
-        cleared_response = await fx_client.patch(
-            _project_path(project.id), json={COVER_FIELD: None, IMAGE_POLICY_FIELD: None}
-        )
-
-        was, now = (
-            ProjectSchema.model_validate_json(response.content) for response in (set_response, cleared_response)
-        )
-        expect((was.cover_page_id, was.image_policy) == (page.id, ImagePolicy.LOSSLESS))
-        expect((now.cover_page_id, now.image_policy) == (None, ImagePolicy.COMPACT))
-        assert_expectations()
-
-    async def test_cover_that_is_not_a_page_of_the_project_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
-    ) -> None:
-        """Verify a page identifier the project does not have is refused with 404 and the cover stays empty.
-
-        :param fx_client: Client of the running application.
-        :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
@@ -533,10 +502,37 @@ class TestUpdateProject:
         project = make_project()
         await store_project(fx_uow(), project, owner=fx_actor.account_id)
 
-        response = await fx_client.patch(_project_path(project.id), json={COVER_FIELD: str(uuid4())})
+        set_response = await fx_client.patch(_project_path(project.id), json={IMAGE_POLICY_FIELD: ImagePolicy.LOSSLESS})
+        cleared_response = await fx_client.patch(_project_path(project.id), json={IMAGE_POLICY_FIELD: None})
 
-        expect(response.status_code == status.HTTP_404_NOT_FOUND)
-        expect((await _read_project(fx_client, project.id)).cover_page_id is None)
+        was, now = (
+            ProjectSchema.model_validate_json(response.content) for response in (set_response, cleared_response)
+        )
+        expect(was.image_policy == ImagePolicy.LOSSLESS)
+        expect(now.image_policy == ImagePolicy.COMPACT)
+        assert_expectations()
+
+    async def test_the_cover_is_the_first_page_of_the_kind_cover_and_is_not_chosen_by_hand(
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
+    ) -> None:
+        """Verify the project names its first page of the kind cover as the cover, and a request cannot choose one.
+
+        :param fx_client: Client of the running application.
+        :type fx_client: httpx.AsyncClient
+        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_actor: The signed-in account.
+        :type fx_actor: Actor
+        """
+        project = make_project()
+        title = make_page(project_id=project.id, order_key='a0', kind=PageKind.TITLE)
+        cover = make_page(project_id=project.id, order_key='a1', kind=PageKind.COVER)
+        await store_project(fx_uow(), project, title, cover, owner=fx_actor.account_id)
+
+        chosen = await fx_client.patch(_project_path(project.id), json={COVER_FIELD: str(title.id)})
+
+        expect((await _read_project(fx_client, project.id)).cover_page_id == cover.id)
+        expect(chosen.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
         assert_expectations()
 
     @pytest.mark.parametrize(CASE_ARG, INVALID_UPDATE_CASES, ids=INVALID_UPDATE_IDS)

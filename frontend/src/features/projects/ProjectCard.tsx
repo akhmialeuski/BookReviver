@@ -1,10 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import type { PageSchema, ProjectSchema } from '@/api';
-import {
-  listPagesApiV1ProjectsProjectIdPagesGetOptions,
-  pageApiV1ProjectsProjectIdPagesPageIdGetOptions,
-} from '@/api/@tanstack/react-query.gen';
+import { pageApiV1ProjectsProjectIdPagesPageIdGetOptions } from '@/api/@tanstack/react-query.gen';
 import { PageThumbnail } from '@/features/pages/PageThumbnail';
 import { nextStageOf, progressSegments } from '@/features/stages/progress';
 import { STAGE_STATUS_TONE } from '@/features/stages/stages';
@@ -15,27 +12,21 @@ import { Card } from '@/shared/ui/card';
 /**
  * One book of the library: its cover, title and author, the ten stages as a bar, and the stage it goes to next.
  *
- * The whole card opens the book, and the book opens on the stage it is at. The cover is the page the book names,
- * else its first page, which the list of books does not carry, so the card reads that page itself.
+ * The whole card opens the book, and the book opens on the stage it is at. The server names the cover, the first page
+ * of the kind cover or else the first page of the book, and the card reads that page itself, since the list of books
+ * does not carry it.
  */
 
 /** Read the page the library shows as the cover of a book, or undefined while it loads or when there is none. */
 function useCoverPage(project: ProjectSchema): PageSchema | undefined {
-  const chosenId = project.cover_page_id;
-  const chosen = useQuery({
+  const coverId = project.cover_page_id;
+  const cover = useQuery({
     ...pageApiV1ProjectsProjectIdPagesPageIdGetOptions({
-      path: { project_id: project.id, page_id: chosenId ?? '' },
+      path: { project_id: project.id, page_id: coverId ?? '' },
     }),
-    enabled: chosenId !== null,
+    enabled: coverId !== null,
   });
-  const first = useQuery({
-    ...listPagesApiV1ProjectsProjectIdPagesGetOptions({
-      path: { project_id: project.id },
-      query: { size: 1 },
-    }),
-    enabled: chosenId === null && project.page_count > 0,
-  });
-  return chosenId === null ? first.data?.items[0] : chosen.data;
+  return coverId === null ? undefined : cover.data;
 }
 
 export function ProjectCard({ project }: { project: ProjectSchema }): React.JSX.Element {

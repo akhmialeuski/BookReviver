@@ -233,7 +233,6 @@ class ProjectMapper(RowMapper[Project, ProjectRow]):
             id=ProjectId(row.id),
             details=details,
             image_policy=row.image_policy,
-            cover_page_id=None if row.cover_page_id is None else PageId(row.cover_page_id),
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
@@ -278,7 +277,6 @@ class ProjectMapper(RowMapper[Project, ProjectRow]):
             copy_notes=details.copy_notes,
             notes=details.notes,
             image_policy=entity.image_policy,
-            cover_page_id=entity.cover_page_id,
             created_at=entity.created_at,
             updated_at=entity.updated_at,
         )
