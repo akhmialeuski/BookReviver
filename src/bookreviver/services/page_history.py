@@ -82,6 +82,8 @@ class PageHistoryService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param key: The page, the stage and the step.
         :type key: PageStepKey
         :returns: The changes of the step, oldest first, with which of them stand.
@@ -100,6 +102,8 @@ class PageHistoryService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param key: The page, the stage and the step.
         :type key: PageStepKey
         :param change_id: The oldest change to take back, which takes back every change after it as well, or None for
@@ -200,6 +204,8 @@ class PageHistoryService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param key: The page, the stage and the step.
         :type key: PageStepKey
         :returns: The number of changes deleted and the versions deleted, none of which when the step had nothing on the

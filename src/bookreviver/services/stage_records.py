@@ -184,6 +184,8 @@ class StageRecords:
 
         :param repos: Repositories of the transaction the block runs in.
         :type repos: BookRepositories
+        :param project_id: Project whose pages the block moves, adds or deletes.
+        :type project_id: ProjectId
         :returns: The watch, which is entered with ``with`` around the block, inside the work of the caller.
         :rtype: SideWatch
         """
@@ -267,6 +269,8 @@ class StageRecords:
     async def announce(self, project_id: ProjectId, records: Sequence[PageStage]) -> None:
         """Publish one event for each record that changed, after the transaction that wrote them has ended.
 
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
         :param records: The records that changed.
         :type records: Sequence[PageStage]
         """
@@ -327,6 +331,8 @@ class SideWatch:
         :type records: StageRecords
         :param repos: Repositories of the transaction the watched block runs in.
         :type repos: BookRepositories
+        :param project_id: Project owning the pages.
+        :type project_id: ProjectId
         """
         self._records = records
         self._repos = repos

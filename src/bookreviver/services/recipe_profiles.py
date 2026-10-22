@@ -302,6 +302,8 @@ class RecipeProfiles:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param key: The stage and the identifier of the recipe, which must belong to that stage.
         :type key: RecipeKey
         :param profile_id: Identifier of the profile, or None to unlink the recipe.
@@ -443,6 +445,8 @@ class RecipeProfiles:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param profile_id: Identifier of the profile.
         :type profile_id: RecipeProfileId
         :param kind: The kind of page whose recipe takes the steps.
@@ -475,6 +479,8 @@ class RecipeProfiles:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param key: The stage the request names and the identifier of the recipe, which must belong to that stage.
         :type key: RecipeKey
         :returns: The recipe as stored.
@@ -496,6 +502,8 @@ class RecipeProfiles:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param key: The stage and the identifier of the recipe.
         :type key: RecipeKey
         :param draft: The steps, and the profile they come from.

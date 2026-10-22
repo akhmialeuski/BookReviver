@@ -57,7 +57,10 @@ MASK_EDITORS: frozenset[EditorKind] = frozenset({EditorKind.BRUSH_MASK})
 
 
 class EditService:
-    """Saves, lists and deletes the manual edits of the pages of the acting account's projects."""
+    """Saves, lists and deletes the manual edits of the pages of the acting account's projects.
+
+    :ivar UPLOAD_CHUNK_BYTES: Bytes of a mask read from an upload at a time.
+    """
 
     # Bytes of a mask read from an upload at a time
     UPLOAD_CHUNK_BYTES: int = 1024 * 1024
@@ -98,6 +101,8 @@ class EditService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param key: The page, the stage and the step that reads the edit.
         :type key: PageStepKey
         :param edit: The shape the user drew and the editor that drew it.
@@ -180,6 +185,8 @@ class EditService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :param stage: The stage whose edits are listed.
@@ -212,6 +219,8 @@ class EditService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param key: The page, the stage and the step that reads the edit.
         :type key: PageStepKey
         :raises NotFoundError: If the actor has no such project, the project has no such page, or the step has no edit

@@ -230,6 +230,8 @@ class PageSettingsService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :param stage: The stage whose steps are listed.
@@ -286,6 +288,8 @@ class PageSettingsService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param field: The field and the pages, the odd pages, the even pages or the group the value is for.
         :type field: ValueField
         :param value: The value they use for the field, as JSON.
@@ -349,6 +353,8 @@ class PageSettingsService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
         :param field: The field and the pages, the odd pages, the even pages or the group the value was set for.
         :type field: ValueField
         :returns: The batch and the changes written, one on each page whose parameters change.

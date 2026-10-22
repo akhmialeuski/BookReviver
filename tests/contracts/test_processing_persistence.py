@@ -160,6 +160,8 @@ async def _add_marked_head(uow: UnitOfWork, project_id: ProjectId, page: Page) -
 
     :param uow: Unit of work to add to, in which the project of the page is stored.
     :type uow: UnitOfWork
+    :param project_id: Identifier of the project of the page.
+    :type project_id: ProjectId
     :param page: The page, which is stored.
     :type page: Page
     :returns: The identifier of the marked version.

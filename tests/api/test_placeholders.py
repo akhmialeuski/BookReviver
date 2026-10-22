@@ -127,6 +127,8 @@ async def _page(client: httpx.AsyncClient, book: Book, page_id: object) -> PageS
 
     :param client: Client of the running application.
     :type client: httpx.AsyncClient
+    :param book: Book of the signed-in account.
+    :type book: Book
     :param page_id: Identifier of the page.
     :type page_id: object
     :returns: The page.
