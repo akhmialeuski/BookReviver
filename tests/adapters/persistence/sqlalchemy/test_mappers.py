@@ -260,8 +260,10 @@ class TestSourceMapper:
             metadata=FULL_METADATA,
             suggestion=FULL_SUGGESTION,
         )
+        # The count is read from the scans of the source, so the source is stored with as many
+        scans = [make_scan(source=source, number=number) for number in range(source.scan_count)]
         uow = fx_uow()
-        await store_project(uow, project, sources=[source], owner=fx_owner_id)
+        await store_project(uow, project, sources=[source], scans=scans, owner=fx_owner_id)
         assert await uow.read_book(project.id, lambda repos: repos.sources.get(source.id)) == source
 
     @pytest.mark.parametrize(

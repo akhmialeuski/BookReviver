@@ -66,8 +66,9 @@ async def commit_book(
     :rtype: Book
     """
     project = make_project()
-    first = make_source(name='part1.pdf')
-    second = make_source(name='part2.pdf', minutes=1)
+    # Each source holds the scans made for it below, which is the number a read of the source counts
+    first = evolve(make_source(name='part1.pdf'), scan_count=SCANS_PER_SOURCE)
+    second = evolve(make_source(name='part2.pdf', minutes=1), scan_count=SCANS_PER_SOURCE)
     ready = Renditions(ready=True)
     scans = [
         evolve(make_scan(source=source, number=number), renditions=ready)

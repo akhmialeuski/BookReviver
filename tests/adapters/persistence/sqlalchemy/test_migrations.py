@@ -65,6 +65,8 @@ MANUAL_LABEL: str = 'xii'
 # The revision before the one that keeps no book key, and the tables that had the key
 BEFORE_BOOK_KEYS: str = '2ec5b0830b62'
 BOOK_KEYED: tuple[str, ...] = ('sources', 'scans', 'pages', 'book_places')
+# The revision before the one that counts the scans of a source on read
+BEFORE_SCAN_COUNT: str = '2b10e694550f'
 # A provider account, linked twice by the test of the unique key
 PROVIDER: str = 'google'
 PROVIDER_ACCOUNT: str = 'provider-account-1'
@@ -593,6 +595,22 @@ class TestBookKeyRevision:
         )
         with _session(fx_empty_book) as session, pytest.raises(IntegrityError, match='CHECK constraint failed'):
             session.execute(text('UPDATE book_places SET id = 2'))
+
+
+class TestScanCountRevision:
+    """Tests for the revision that counts the scans of a source when it is read."""
+
+    async def test_the_downgrade_writes_the_number_of_scans_of_every_source(self, fx_empty_book: SqlDatabase) -> None:
+        """Verify the column comes back holding the count of the scans of its source, which the head never stores.
+
+        :param fx_empty_book: Database of a book with no table.
+        :type fx_empty_book: SqlDatabase
+        """
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        await _commit_book(fx_empty_book)
+        await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_SCAN_COUNT)
+        with _session(fx_empty_book) as session:
+            assert session.scalars(text('SELECT scan_count FROM sources')).all() == [1]
 
 
 class TestEnv:

@@ -529,7 +529,6 @@ class SourceMapper(RowMapper[Source, SourceRow]):
             files=[asdict(stored) for stored in entity.files],
             size_bytes=entity.size_bytes,
             sha256=entity.sha256,
-            scan_count=entity.scan_count,
             metadata_=dict(entity.metadata),
             suggestion={
                 'title': entity.suggestion.title,
