@@ -477,7 +477,10 @@ class PageVersionRow(BookTable):
     processor_key: Mapped[str]
     processor_version: Mapped[str]
     # A string, since the table refers to itself before its class exists
-    input_id: Mapped[str | None] = mapped_column(ForeignKey(f'{PAGE_VERSIONS_TABLE}.{ID_COLUMN}', ondelete=SET_NULL))
+    # Indexed, since the deletion of a version by the collection looks up the versions that read it
+    input_id: Mapped[str | None] = mapped_column(
+        ForeignKey(f'{PAGE_VERSIONS_TABLE}.{ID_COLUMN}', ondelete=SET_NULL), index=True
+    )
     params: Mapped[dict[str, Any]] = mapped_column(JSON)
     transform: Mapped[dict[str, Any]] = mapped_column(JSON)
     data: Mapped[dict[str, Any]] = mapped_column(JSON)
@@ -660,8 +663,8 @@ class ResultMarkChangeRow(BookTable):
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     version_id: Mapped[str] = mapped_column(ForeignKey(PageVersionRow.id, ondelete=CASCADE))
-    mark_before: Mapped[ResultMark | None] = mapped_column(enum_by_value(ResultMark))
-    mark_after: Mapped[ResultMark | None] = mapped_column(enum_by_value(ResultMark))
+    mark_before: Mapped[ResultMark | None] = mapped_column(enum_by_value(ResultMark, name='mark_before'))
+    mark_after: Mapped[ResultMark | None] = mapped_column(enum_by_value(ResultMark, name='mark_after'))
     comment_before: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     comment_after: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     created_at: Mapped[datetime]
