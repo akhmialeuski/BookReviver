@@ -368,8 +368,7 @@ class ImportRun:
                     id=PageId(uuid4()),
                     project_id=source.project_id,
                     order_key=order_key,
-                    label=scan.source_label,
-                    label_manual=bool(scan.source_label),
+                    manual_label=scan.source_label or None,
                     origin=PageOrigin.SCAN,
                     scan_id=scan.id,
                     created_at=moment,
@@ -391,8 +390,8 @@ class ImportRun:
             repos.pages.add_many(pages)
             if source_labels.sections:
                 repos.pagination_sections.add_many(source_labels.sections)
-            # A page without the label of its source takes the number its section gives it
-            self._labels.recompute(repos, source.project_id)
+            # The new pages may take numbers past what a section of the book can write
+            self._labels.settle(repos, source.project_id)
             return pages, self._describe_book(repos, project, analysis.suggestion)
 
         pages, described = await self._uow.change_book(source.project_id, store)
@@ -422,7 +421,6 @@ class ImportRun:
         await self._publisher.publish(
             PagesChanged(project_id=source.project_id, page_ids=[page.id for page in pages], change=PageChange.ADDED)
         )
-        await self._labels.announce(source.project_id)
         if described:
             await self._publisher.publish(ProjectChanged(project_id=source.project_id))
         await self._report(done=len(uploaded.names), total=len(scans))

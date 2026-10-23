@@ -168,7 +168,7 @@ class TestUpdateMany:
         :type fx_stored_book: tuple[Project, list[Page]]
         """
         project, pages = fx_stored_book
-        updated = [evolve(page, label=UPDATED_LABEL, included=False) for page in pages]
+        updated = [evolve(page, manual_label=UPDATED_LABEL, included=False) for page in pages]
 
         counts = await _statements_of(fx_uow(), fx_books, project, [lambda repos: repos.pages.update_many(updated)])
 

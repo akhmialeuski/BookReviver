@@ -251,7 +251,7 @@ class TestPdfLabelWriter:
         project = make_project()
         keys = FractionalOrderKeys().spread(lower=None, upper=None, count=BOOK_PAGES)
         pages = [make_page(project_id=project.id, order_key=key, kind=PageKind.TEXT) for key in keys]
-        pages[3] = evolve(pages[3], label=HAND_WRITTEN, label_manual=True)
+        pages[3] = evolve(pages[3], manual_label=HAND_WRITTEN)
         sections = [make_section(page=pages[0], style=LabelStyle.ROMAN_LOWER), make_section(page=pages[2])]
         pagination = Pagination(sections, pages)
         path = _pdf(tmp_path)

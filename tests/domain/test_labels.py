@@ -144,35 +144,35 @@ class TestPageChanges:
 
     def test_replaces_given_fields_and_keeps_the_rest(self) -> None:
         """Verify a field left as None stays, and an empty string clears a label."""
-        page = evolve(make_page(project_id=make_project().id), label='xii', notes='Stamp')
+        page = evolve(make_page(project_id=make_project().id), manual_label='xii', notes='Stamp')
 
         changed = PageChanges(label='', kind=PageKind.PLATE, included=False).apply_to(page)
 
-        expect((changed.label, changed.kind, changed.included) == ('', PageKind.PLATE, False))
+        expect((changed.manual_label, changed.kind, changed.included) == (None, PageKind.PLATE, False))
         expect(changed.notes == 'Stamp')
-        expect(evolve(changed, label='xii', kind=page.kind, included=True) == page)
+        expect(evolve(changed, manual_label='xii', kind=page.kind, included=True) == page)
         assert_expectations()
 
-    @pytest.mark.parametrize(('label', 'manual'), [('xii', True), ('', False)])
-    def test_a_label_that_is_given_is_an_exception_unless_it_is_empty(self, label: str, *, manual: bool) -> None:
-        """Verify a label written by hand is an exception to the sections, and an empty one gives the page back to them.
+    @pytest.mark.parametrize(('label', 'manual_label'), [('xii', 'xii'), ('', None)])
+    def test_a_label_that_is_given_is_a_manual_label_unless_it_is_empty(
+        self, label: str, manual_label: str | None
+    ) -> None:
+        """Verify a label written by hand becomes the manual label, and an empty one gives the page back to the sections.
 
         :param label: The label of the change.
         :type label: str
-        :param manual: Whether the page is then labelled by hand.
-        :type manual: bool
+        :param manual_label: The manual label the page then has.
+        :type manual_label: str | None
         """
-        page = evolve(make_page(project_id=make_project().id), label=TYPED_LABEL, label_manual=True)
+        page = evolve(make_page(project_id=make_project().id), manual_label=TYPED_LABEL)
 
-        changed = PageChanges(label=label).apply_to(page)
-
-        assert (changed.label, changed.label_manual) == (label, manual)
+        assert PageChanges(label=label).apply_to(page).manual_label == manual_label
 
     def test_other_fields_leave_the_label_exception_alone(self) -> None:
         """Verify a change of the kind keeps a label written by hand."""
-        page = evolve(make_page(project_id=make_project().id), label=TYPED_LABEL, label_manual=True)
+        page = evolve(make_page(project_id=make_project().id), manual_label=TYPED_LABEL)
 
-        assert PageChanges(kind=PageKind.PLATE).apply_to(page).label_manual is True
+        assert PageChanges(kind=PageKind.PLATE).apply_to(page).manual_label == TYPED_LABEL
 
     def test_a_content_type_that_is_given_is_set_by_hand(self) -> None:
         """Verify the user's content type is kept apart from the one the detection found, which never replaces it."""

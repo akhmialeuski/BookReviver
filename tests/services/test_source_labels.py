@@ -24,13 +24,13 @@ def _pages(*labels: str) -> list[Page]:
 
     :param labels: Label of each page in book order, empty for none.
     :type labels: str
-    :returns: Pages whose labels are marked as written by hand, as an import marks a label that comes with a scan.
+    :returns: Pages whose labels are manual labels, as an import makes the label that comes with a scan.
     :rtype: list[Page]
     """
     project = make_project()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(labels))
     return [
-        evolve(make_page(project_id=project.id, order_key=key), label=label, label_manual=bool(label))
+        evolve(make_page(project_id=project.id, order_key=key), manual_label=label or None)
         for key, label in zip(keys, labels, strict=True)
     ]
 
@@ -56,7 +56,7 @@ class TestSourceLabels:
 
         expect([section.first_page_id for section in labels.sections] == [pages[0].id])
         expect([section.display for section in labels.sections] == [NumberDisplay.NOT_COUNTED])
-        expect([page.label_manual for page in labels.pages] == [False, True])
+        expect([page.manual_label is not None for page in labels.pages] == [False, True])
         assert_expectations()
 
     def test_a_source_that_has_pages_and_rules_makes_its_own_sections_in_a_book_with_sections(self) -> None:
@@ -70,7 +70,7 @@ class TestSourceLabels:
             [(section.first_page_id, section.display) for section in labels.sections]
             == [(pages[0].id, NumberDisplay.PRINTED)]
         )
-        expect([page.label_manual for page in labels.pages] == [False, False])
+        expect([page.manual_label is not None for page in labels.pages] == [False, False])
         assert_expectations()
 
     def test_each_rule_makes_a_printed_section_that_starts_at_its_first_page(self) -> None:
@@ -99,7 +99,7 @@ class TestSourceLabels:
 
         labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH, book_has_sections=False)
 
-        assert [page.label_manual for page in labels.pages] == [False, False, False]
+        assert [page.manual_label is not None for page in labels.pages] == [False, False, False]
 
     def test_a_label_the_section_does_not_give_stays_an_exception(self) -> None:
         """Verify a label that differs from the one its section computes is kept by hand, and the others are not."""
@@ -108,7 +108,7 @@ class TestSourceLabels:
 
         labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH, book_has_sections=False)
 
-        assert [page.label_manual for page in labels.pages] == [False, True, False]
+        assert [page.manual_label is not None for page in labels.pages] == [False, True, False]
 
     def test_a_rule_a_section_cannot_express_makes_a_section_that_does_not_count(self) -> None:
         """Verify a rule that writes a prefix alone makes a section outside the count, with its labels by hand."""
@@ -121,7 +121,7 @@ class TestSourceLabels:
         labels = SourceLabels(rules=rules, pages=pages, moment=EPOCH, book_has_sections=False)
 
         expect([section.display for section in labels.sections] == [NumberDisplay.PRINTED, NumberDisplay.NOT_COUNTED])
-        expect([page.label_manual for page in labels.pages] == [False, True, True])
+        expect([page.manual_label is not None for page in labels.pages] == [False, True, True])
         assert_expectations()
 
     def test_pages_before_the_first_rule_make_a_section_that_does_not_count(self) -> None:
@@ -133,7 +133,7 @@ class TestSourceLabels:
 
         expect([section.first_page_id for section in labels.sections] == [pages[0].id, pages[2].id])
         expect([section.display for section in labels.sections] == [NumberDisplay.NOT_COUNTED, NumberDisplay.PRINTED])
-        expect([page.label_manual for page in labels.pages] == [False, False, False])
+        expect([page.manual_label is not None for page in labels.pages] == [False, False, False])
         assert_expectations()
 
     @pytest.mark.parametrize(

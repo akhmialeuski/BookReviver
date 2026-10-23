@@ -281,10 +281,9 @@ class Page:
     :ivar id: Identifier of the page, which names its storage directory.
     :ivar project_id: Project owning the page.
     :ivar order_key: Fractional index string whose byte order is the order of the pages in the book.
-    :ivar label: Printed number, such as ``xii``, ``12`` or ``[4]``, or empty for an unnumbered page. It is computed
-                 from the pagination sections of the project, except when ``label_manual`` is set.
-    :ivar label_manual: Whether the label was written by hand, or came with the scan, which makes it an exception that
-                        a recompute of the numbers of the book never changes.
+    :ivar manual_label: Printed number written by hand or taken from the scan, such as ``xii``, which the page shows in
+                        place of the number its pagination section gives, or None for the number of the section. The
+                        number of a section is never stored, since every page added, moved or removed changes it.
     :ivar kind: Role of the page in the book.
     :ivar content_type: What the image of the page shows as the program found it, or as the user set it when
                         ``content_by_hand`` is set, or None while the content is not detected, which leaves it to the
@@ -312,8 +311,7 @@ class Page:
     id: PageId
     project_id: ProjectId
     order_key: str = field(validator=validators.min_len(1))
-    label: str = ''
-    label_manual: bool = False
+    manual_label: str | None = field(default=None, validator=validators.optional(validators.min_len(1)))
     kind: PageKind = PageKind.TEXT
     content_type: ContentType | None = None
     content_by_hand: bool = False
@@ -585,6 +583,8 @@ class PageOverview:
                      without a scan.
     :ivar section_id: The pagination section that governs the page, or None for a page kept out of the book, a page
                       before the first section and a book without sections.
+    :ivar label: Printed number the page shows: its manual label, or the number its section gives, or empty for an
+                 unnumbered page.
     """
 
     page: Page
@@ -592,6 +592,7 @@ class PageOverview:
     image_version: PageVersion | None = None
     source_id: SourceId | None = None
     section_id: PaginationSectionId | None = None
+    label: str = ''
 
 
 @frozen(kw_only=True)
