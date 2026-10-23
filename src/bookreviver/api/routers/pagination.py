@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Path, status
 from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
+from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.pagination import PaginationSectionBody, PaginationSectionSchema
 from bookreviver.domain.entities import PaginationSection
@@ -22,7 +23,7 @@ from bookreviver.services.pagination import PaginationService
 
 PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
 
-router = APIRouter(prefix='/projects', tags=['pagination'], route_class=DishkaRoute)
+router = APIRouter(prefix='/projects', tags=['pagination'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 
 @dataclass(frozen=True)

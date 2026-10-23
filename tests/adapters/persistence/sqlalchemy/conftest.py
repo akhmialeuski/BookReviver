@@ -18,7 +18,7 @@ from bookreviver.domain.values import JobEnd
 from tests.helpers.builders import make_project
 from tests.helpers.database import BookSessions, copy_schema_template, database_file
 from tests.helpers.fakes_imports import DEFAULT_PARALLEL_SCANS, ImportRig
-from tests.helpers.fakes_jobs import JobFakes
+from tests.helpers.fakes_jobs import JobFakes, RecordingEventBus
 from tests.helpers.seeding import commit_account, store_project
 from tests.helpers.tracers import AskingTracer
 from tests.helpers.wait_limits import IMPATIENT_SECONDS
@@ -241,7 +241,9 @@ def fx_traced_uow(fx_traced_database: SqlDatabase, fx_traced_books: BookDatabase
         :returns: A new unit of work.
         :rtype: UnitOfWork
         """
-        return SqlAlchemyUnitOfWork(fx_traced_database, fx_traced_books, wait_seconds=wait_seconds)
+        return SqlAlchemyUnitOfWork(
+            fx_traced_database, fx_traced_books, publisher=RecordingEventBus(), wait_seconds=wait_seconds
+        )
 
     return open_unit_of_work
 
@@ -266,7 +268,9 @@ def fx_impatient_uow(fx_traced_database: SqlDatabase, fx_impatient_books: BookDa
         :returns: A new unit of work.
         :rtype: UnitOfWork
         """
-        return SqlAlchemyUnitOfWork(fx_traced_database, fx_impatient_books, wait_seconds=wait_seconds)
+        return SqlAlchemyUnitOfWork(
+            fx_traced_database, fx_impatient_books, publisher=RecordingEventBus(), wait_seconds=wait_seconds
+        )
 
     return open_unit_of_work
 

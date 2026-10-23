@@ -13,6 +13,7 @@ from fastapi_problem.handler import add_exception_handler
 from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.api.auth import signed_in_user
+from bookreviver.api.freshness import NotModifiedError, not_modified
 from bookreviver.api.problems import problem_handler
 from bookreviver.api.routing import API_PREFIX, ROUTERS
 from bookreviver.app.container import build_container
@@ -128,6 +129,8 @@ def create_app(
     # then raises the error again, and uvicorn closes the connection the answer went out on, so a client that reuses it
     # fails with a reset. A domain error is an answer the API means to give, so ExceptionMiddleware handles it and stops
     app.add_exception_handler(DomainError, problems)
+    # A read of a book that still holds is answered 304 without the problem body fastapi-problem gives an HTTPException
+    app.add_exception_handler(NotModifiedError, not_modified)
     add_pagination(app)
     accounts = account_routes(resolved, sign_in_throttle(), social_clients)
     api = APIRouter(prefix=API_PREFIX)

@@ -16,7 +16,7 @@ from contextlib import AsyncExitStack
 from typing import Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka, inject
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Header, Path
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from fastapi_pagination import Page
 
@@ -24,6 +24,8 @@ from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import (
+    BookChangedSchema,
+    BookResetSchema,
     EventName,
     JobQuery,
     JobSchema,
@@ -36,6 +38,7 @@ from bookreviver.api.schemas.jobs import (
 )
 from bookreviver.domain.entities import Job
 from bookreviver.domain.events import (
+    BookChanged,
     DomainEvent,
     JobChanged,
     PagesChanged,
@@ -46,6 +49,7 @@ from bookreviver.domain.events import (
     SourceImported,
 )
 from bookreviver.domain.ids import JobId, ProjectId
+from bookreviver.services.freshness import BookFreshness
 from bookreviver.services.jobs import JobService
 
 # Module-level aliases: FastAPI and dishka read route annotations at runtime
@@ -143,18 +147,44 @@ async def open_event_stream(
 
 @project_events.get('/{project_id}/events', response_class=EventSourceResponse, name=RouteName.PROJECT_EVENTS)
 async def stream_project_events(
+    project_id: ProjectIdPath,
     events: Annotated[ProjectEvents, Depends(open_event_stream)],
+    actor: ActorDep,
+    freshness: FromDishka[BookFreshness],
+    last_event_id: Annotated[str | None, Header()] = None,
 ) -> AsyncIterator[ServerSentEvent]:
     """Stream the project's events as they happen: jobs, imported sources, ready scans, pages, versions, description.
 
+    A committed change of the book is a ``book-changed`` event whose id is the new version of the book. The stream keeps
+    no changes, so a browser that comes back with the id of an older version is sent ``book-reset`` first.
+
     \N{FORM FEED}
-    :param events: The project's events, subscribed to by ``open_event_stream``.
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
+    :param events: The project's events, subscribed to by ``open_event_stream`` before the version is read.
     :type events: ProjectEvents
+    :param actor: The signed-in account.
+    :type actor: Actor
+    :param freshness: Freshness of the reads of the books of the request, which knows the version of the book.
+    :type freshness: BookFreshness
+    :param last_event_id: The id of the last event the browser received before it reconnected, or None.
+    :type last_event_id: str | None
     :returns: Iterator yielding one server-sent event per domain event the browser listens to.
     :rtype: AsyncIterator[ServerSentEvent]
     """
+    if last_event_id is not None:
+        current = await freshness.version(actor, project_id)
+        if last_event_id != str(current):
+            reset = BookResetSchema(project_id=project_id, version=current)
+            yield ServerSentEvent(event=EventName.BOOK_RESET, id=str(current), data=reset)
     async for event in events:
         match event:
+            case BookChanged(project_id=changed_id, version=book_version, resources=resources):
+                yield ServerSentEvent(
+                    event=EventName.BOOK_CHANGED,
+                    id=str(book_version),
+                    data=BookChangedSchema(project_id=changed_id, version=book_version, resources=sorted(resources)),
+                )
             case JobChanged(job=job):
                 yield ServerSentEvent(event=EventName.JOB_CHANGED, data=JobSchema.model_validate(job))
             case SourceImported(project_id=project_id, source=source):

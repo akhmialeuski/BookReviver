@@ -977,6 +977,9 @@ export const listProjectJobsApiV1ProjectsProjectIdJobsGet = <ThrowOnError extend
  * Project-Events
  *
  * Stream the project's events as they happen: jobs, imported sources, ready scans, pages, versions, description.
+ *
+ * A committed change of the book is a ``book-changed`` event whose id is the new version of the book. The stream keeps
+ * no changes, so a browser that comes back with the id of an older version is sent ``book-reset`` first.
  */
 export const projectEventsApiV1ProjectsProjectIdEventsGet = <ThrowOnError extends boolean = false>(options: Options<ProjectEventsApiV1ProjectsProjectIdEventsGetData, ThrowOnError, unknown>): Promise<ServerSentEventsResult<ProjectEventsApiV1ProjectsProjectIdEventsGetResponses>> => (options.client ?? client).sse.get<ProjectEventsApiV1ProjectsProjectIdEventsGetResponses, ProjectEventsApiV1ProjectsProjectIdEventsGetErrors, ThrowOnError>({ url: '/api/v1/projects/{project_id}/events', ...options });
 

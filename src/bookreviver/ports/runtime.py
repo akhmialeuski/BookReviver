@@ -122,6 +122,19 @@ class JobBoard(ABC):
         """
 
     @abstractmethod
+    def revision(self, project_id: ProjectId) -> str:
+        """Return a mark that changes whenever a job of a book is put, started, advanced, cancelled or ended.
+
+        A read of a book that shows its jobs is fresh while the version of the book and this mark are both the same.
+        The mark names the process too, so it never repeats after a restart, when the jobs held before are gone.
+
+        :param project_id: The book.
+        :type project_id: ProjectId
+        :returns: The mark of the jobs of the book.
+        :rtype: str
+        """
+
+    @abstractmethod
     async def cancel(self, job_id: JobId) -> Job:
         """Cancel a job: a queued one is dropped and never runs, a running one stops at the boundary of its task.
 

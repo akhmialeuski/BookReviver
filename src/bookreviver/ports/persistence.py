@@ -1052,6 +1052,18 @@ class UnitOfWork(ABC):
         """
 
     @abstractmethod
+    async def book_version(self, project_id: ProjectId) -> int:
+        """Return the version of a book, which every committed change that wrote a part of the book raised by one.
+
+        :param project_id: The book.
+        :type project_id: ProjectId
+        :returns: The version of the book.
+        :rtype: int
+        :raises NotFoundError: If the book is not stored.
+        :raises BookTooNewError: If the store of the book is at a revision this code does not ship.
+        """
+
+    @abstractmethod
     async def snapshot_book(self, project_id: ProjectId) -> bytes:
         """Return a copy of the store of a book as one committed state of it, for the archive of the book.
 

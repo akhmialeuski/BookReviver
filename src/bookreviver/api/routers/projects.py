@@ -19,6 +19,7 @@ from fastapi_pagination import Page, Params
 from pydantic import ValidationError
 
 from bookreviver.api.auth import ActorDep
+from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.projects import ArchiveForm, ProjectCreate, ProjectSchema, ProjectUpdate
@@ -63,7 +64,7 @@ async def read_archive(request: Request, _actor: ActorDep) -> AsyncIterator[Uplo
         await form.close()
 
 
-router = APIRouter(prefix='/projects', tags=['projects'], route_class=DishkaRoute)
+router = APIRouter(prefix='/projects', tags=['projects'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 
 @router.get('')
