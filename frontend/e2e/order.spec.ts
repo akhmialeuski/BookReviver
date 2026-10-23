@@ -32,7 +32,7 @@ function tile(page: Page, id: string) {
 }
 
 function bookIdOf(page: Page): string {
-  const id = new URL(page.url()).pathname.match(/\/projects\/([^/]+)/)?.[1];
+  const id = new URL(page.url()).pathname.match(/\/books\/([^/]+)/)?.[1];
   if (id === undefined) {
     throw new Error(`The address ${page.url()} names no book`);
   }

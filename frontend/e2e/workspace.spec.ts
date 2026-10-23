@@ -44,7 +44,7 @@ test('a reader works through the stages of a book', async ({ page }) => {
   await test.step('a new book opens on the Import stage', async () => {
     await openLibrary(page);
     await createBook(page, 'A book by stages');
-    await expect(page).toHaveURL(/\/projects\/[^/]+\/stages\/import$/);
+    await expect(page).toHaveURL(/\/books\/[^/]+\/stages\/import$/);
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await expect(page.getByTestId('stage-title')).toHaveText('Import');
     await expect(

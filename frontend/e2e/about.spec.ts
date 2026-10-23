@@ -79,7 +79,7 @@ test('a reader describes a book and finds the description after a reload', async
     await page.getByRole('button', { name: 'Delete the book' }).click();
     await expect(page.getByText('Delete this book?')).toBeVisible();
     await page.getByRole('button', { name: 'Delete book', exact: true }).click();
-    await expect(page).toHaveURL(/\/projects(\?.*)?$/);
+    await expect(page).toHaveURL(/\/books(\?.*)?$/);
     await expect(page.getByTestId('book-card').filter({ hasText: renamed })).toHaveCount(0);
   });
 });
