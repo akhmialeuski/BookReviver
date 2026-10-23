@@ -31,7 +31,7 @@ const mocks = vi.hoisted(() => ({
   processing: undefined as Processing | undefined,
 }));
 const sdk = vi.hoisted(() => ({
-  project: vi.fn(),
+  book: vi.fn(),
   pages: vi.fn(),
   rows: vi.fn(),
   stages: vi.fn(),
@@ -39,10 +39,10 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  projectApiV1ProjectsProjectIdGet: sdk.project,
-  listPagesApiV1ProjectsProjectIdPagesGet: sdk.pages,
-  listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet: sdk.rows,
-  listStagesApiV1ProjectsProjectIdStagesGet: sdk.stages,
+  bookApiV1BooksBookIdGet: sdk.book,
+  listPagesApiV1BooksBookIdPagesGet: sdk.pages,
+  listStagePagesApiV1BooksBookIdStagesStagePagesGet: sdk.rows,
+  listStagesApiV1BooksBookIdStagesGet: sdk.stages,
 }));
 vi.mock('@/features/processing/CompareCanvas', () => ({
   CompareCanvas: (props: CanvasProps) => {
@@ -64,7 +64,7 @@ vi.mock('@/features/workspace/useStepWorkspace', () => ({
 }));
 vi.mock('@/features/editors/useEditorSession', () => ({ useEditorSession: () => null }));
 
-const PROJECT_ID = 'project';
+const BOOK_ID = 'book';
 const LIST = { total: 1, page: 1, size: 1000, pages: 1 };
 const SAVED = recipe('r1');
 const BAR = barStepsOf(SAVED, []);
@@ -130,7 +130,7 @@ describe('StageScreen', () => {
       root.render(
         <QueryClientProvider client={client}>
           <StageScreen
-            projectId={PROJECT_ID}
+            bookId={BOOK_ID}
             stage="geometry"
             search={{ compare: CompareMode.Swipe }}
             stepId={stepId}
@@ -145,8 +145,8 @@ describe('StageScreen', () => {
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     mocks.compareCanvas.mockReset();
-    mocks.processing = processing({ projectId: PROJECT_ID, recipes: [SAVED], recipe: SAVED });
-    sdk.project.mockReset().mockResolvedValue({ data: { id: PROJECT_ID } });
+    mocks.processing = processing({ bookId: BOOK_ID, recipes: [SAVED], recipe: SAVED });
+    sdk.book.mockReset().mockResolvedValue({ data: { id: BOOK_ID } });
     sdk.pages.mockReset().mockResolvedValue({ data: { ...LIST, items: [page('p1')] } });
     sdk.rows.mockReset().mockResolvedValue({ data: { ...LIST, items: [ROW] } });
     sdk.stages.mockReset().mockResolvedValue({ data: { ...LIST, items: [] } });

@@ -11,7 +11,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { processor, recipe, step } from '@/features/processing/fixtures';
 import { redirectToDefaultStep } from '@/features/workspace/defaultStep';
-import { Route as stageRoute } from '@/routes/_authenticated/projects/$projectId/stages.$stage';
+import { Route as stageRoute } from '@/routes/_authenticated/books/$bookId/stages.$stage';
 
 /**
  * The address of a stage with a step bar that names no step: the router sends it to the step the stage opens on, in place
@@ -39,8 +39,8 @@ const sdk = vi.hoisted(() => ({ processors: vi.fn(), recipes: vi.fn(), rows: vi.
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
   listProcessorsApiV1ProcessorsGet: sdk.processors,
-  listRecipesApiV1ProjectsProjectIdStagesStageRecipesGet: sdk.recipes,
-  listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet: sdk.rows,
+  listRecipesApiV1BooksBookIdStagesStageRecipesGet: sdk.recipes,
+  listStagePagesApiV1BooksBookIdStagesStagePagesGet: sdk.rows,
 }));
 vi.mock('@/features/workspace/StageScreen', () => ({
   StageScreen: () => <p data-testid="stage-screen" />,
@@ -52,9 +52,9 @@ vi.mock('@/features/place/PlaceWriterContext', async (importOriginal) => ({
   useBookPlaceWriter: () => null,
 }));
 
-const STAGE_PATH = '/projects/book/stages/geometry';
-const VIEWER_PATH = '/projects/book/viewer';
-const STEP_ROUTE = '/projects/$projectId/stages/$stage/steps/$stepId';
+const STAGE_PATH = '/books/book/stages/geometry';
+const VIEWER_PATH = '/books/book/viewer';
+const STEP_ROUTE = '/books/$bookId/stages/$stage/steps/$stepId';
 
 /** With no page run yet, the stage opens on the last step of the recipe. */
 const DEFAULT_STEP = 'step-2';
@@ -116,9 +116,9 @@ describe('the route of a stage', () => {
   function mount(entries: string[], viewerLoader: Deferred<void>) {
     const rootRoute = createRootRouteWithContext<{ queryClient: QueryClient }>()();
     const layout = createRoute({ getParentRoute: () => rootRoute, id: '/_authenticated' });
-    const project = createRoute({ getParentRoute: () => layout, path: '/projects/$projectId' });
+    const book = createRoute({ getParentRoute: () => layout, path: '/books/$bookId' });
     const stage = createRoute({
-      getParentRoute: () => project,
+      getParentRoute: () => book,
       path: '/stages/$stage',
       validateSearch: stageRoute.options.validateSearch,
       component: stageRoute.options.component,
@@ -136,7 +136,7 @@ describe('the route of a stage', () => {
     });
     const withStep = createRoute({ getParentRoute: () => stage, path: '/steps/$stepId' });
     const viewer = createRoute({
-      getParentRoute: () => project,
+      getParentRoute: () => book,
       path: '/viewer',
       loader: () => viewerLoader.promise,
       component: () => <p data-testid="viewer" />,
@@ -145,7 +145,7 @@ describe('the route of a stage', () => {
     const router = createRouter({
       routeTree: rootRoute.addChildren([
         layout.addChildren([
-          project.addChildren([stage.addChildren([withoutStep, withStep]), viewer]),
+          book.addChildren([stage.addChildren([withoutStep, withStep]), viewer]),
         ]),
       ]),
       history: createMemoryHistory({ initialEntries: entries }),
@@ -173,7 +173,7 @@ describe('the route of a stage', () => {
   });
 
   it('stays on a stage that has no step bar, and reads nothing for it', async () => {
-    const entries = ['/projects/book/stages/page-split'];
+    const entries = ['/books/book/stages/page-split'];
     const { router } = mount(entries, deferred<void>());
 
     await act(async () => {
@@ -181,7 +181,7 @@ describe('the route of a stage', () => {
     });
     await vi.waitFor(() => expect(shown('stage-screen')).toBe(true));
 
-    expect(entries).toEqual(['/projects/book/stages/page-split']);
+    expect(entries).toEqual(['/books/book/stages/page-split']);
     expect(sdk.processors).not.toHaveBeenCalled();
   });
 

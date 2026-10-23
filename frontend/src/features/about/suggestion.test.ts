@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MetadataSuggestionSchema } from '@/api';
 import { toFields } from './fields';
-import { projectWith } from './fixtures';
+import { bookWith } from './fixtures';
 import { planSuggestion, suggestionSummary } from './suggestion';
 
 /**
@@ -30,7 +30,7 @@ const NAMES = {
 
 describe('planSuggestion', () => {
   it('changes nothing for a suggestion that is empty', () => {
-    const plan = planSuggestion(toFields(projectWith()), NOTHING);
+    const plan = planSuggestion(toFields(bookWith()), NOTHING);
 
     expect(plan.changes).toEqual({});
     expect(plan.rows).toEqual([]);
@@ -38,7 +38,7 @@ describe('planSuggestion', () => {
 
   it('changes nothing for values the description already has', () => {
     const current = toFields(
-      projectWith({ title: 'Notes', publisher: 'Suvorin', languages: ['rus'] }),
+      bookWith({ title: 'Notes', publisher: 'Suvorin', languages: ['rus'] }),
     );
 
     const plan = planSuggestion(current, {
@@ -52,7 +52,7 @@ describe('planSuggestion', () => {
   });
 
   it('replaces a single value that differs, the title included', () => {
-    const current = toFields(projectWith({ title: 'Zapiski', publisher: 'Suvorin' }));
+    const current = toFields(bookWith({ title: 'Zapiski', publisher: 'Suvorin' }));
 
     const plan = planSuggestion(current, {
       ...NOTHING,
@@ -70,7 +70,7 @@ describe('planSuggestion', () => {
 
   it('adds the entries a list lacks and keeps the entries it has', () => {
     const current = toFields(
-      projectWith({
+      bookWith({
         contributors: [{ name: 'Sokolov', role: 'aut' }],
         subjects: ['Prose'],
       }),

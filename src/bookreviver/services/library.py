@@ -11,7 +11,7 @@ from bookreviver.domain.errors import NotFoundError
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, LibraryEntry
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import UnitOfWork
 
 
@@ -26,18 +26,18 @@ class Library:
         """
         self._uow = uow
 
-    async def open(self, actor: Actor, project_id: ProjectId) -> LibraryEntry:
+    async def open(self, actor: Actor, book_id: BookId) -> LibraryEntry:
         """Return the entry of a book of the actor, before the use case reads or changes the book.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the book.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the book.
+        :type book_id: BookId
         :returns: The entry of the book, owned by the actor.
         :rtype: LibraryEntry
         :raises NotFoundError: If the library has no such book, or the book belongs to another account.
         """
-        entry = await self._uow.read(lambda repos: repos.library.get(project_id))
+        entry = await self._uow.read(lambda repos: repos.library.get(book_id))
         if not entry.is_owned_by(actor):
-            raise NotFoundError(project_id)
+            raise NotFoundError(book_id)
         return entry

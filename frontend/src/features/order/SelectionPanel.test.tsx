@@ -21,7 +21,7 @@ describe('SelectionPanel thumbnails', () => {
       root.render(
         <QueryClientProvider client={client}>
           <SelectionPanel
-            projectId="book"
+            bookId="book"
             selected={selected}
             thumbnails={thumbnails}
             gaps={[]}

@@ -41,12 +41,12 @@ const Scope = { Page: 'page', Selected: 'selected' } as const;
 type Scope = (typeof Scope)[keyof typeof Scope];
 
 export function ContentTypeMenu({
-  projectId,
+  bookId,
   items,
   currentId,
   selected,
 }: {
-  projectId: string;
+  bookId: string;
   /** Every page of the book with where it stands in the stage. */
   items: readonly StripItem[];
   /** The open page. */
@@ -54,9 +54,9 @@ export function ContentTypeMenu({
   /** The pages selected in the grid. */
   selected: ReadonlySet<string>;
 }): React.JSX.Element | null {
-  const update = useUpdatePages(projectId);
-  const detect = useDetectContent(projectId);
-  const activeJobs = useActiveJobs(projectId);
+  const update = useUpdatePages(bookId);
+  const detect = useDetectContent(bookId);
+  const activeJobs = useActiveJobs(bookId);
   const [scope, setScope] = useState<Scope>(Scope.Page);
   // The choice made and not yet settled, which the button shows at once, since a button that waits for the manifest to be
   // read again jumps back to its old value for a moment
@@ -163,7 +163,7 @@ export function ContentTypeMenu({
           onSelect={(event) => {
             // The menu stays open while the program works, so a failure is read where it is shown
             event.preventDefault();
-            detect.mutate({ path: { project_id: projectId }, body: { page_ids: ids } });
+            detect.mutate({ path: { book_id: bookId }, body: { page_ids: ids } });
           }}
         >
           {detecting ? <LoaderCircleIcon className="animate-spin" /> : null}

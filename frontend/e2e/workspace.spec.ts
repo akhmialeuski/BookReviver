@@ -3,8 +3,8 @@ import path from 'node:path';
 import { expect } from '@playwright/test';
 import {
   createBook,
+  openBookId,
   openLibrary,
-  openProjectId,
   readPlace,
   uploadFolder,
   writePagesFolder,
@@ -87,18 +87,16 @@ test('a reader works through the stages of a book', async ({ page }) => {
   });
 
   await test.step('the book opens on the stage it was left on, unless the stage cannot be worked on', async () => {
-    const projectId = openProjectId(page);
+    const bookId = openBookId(page);
     // The place is written a second after the last move, and a stage without a processor is not worked on
-    await expect
-      .poll(async () => (await readPlace(page, projectId)).place?.stage)
-      .toBe('typesetting');
+    await expect.poll(async () => (await readPlace(page, bookId)).place?.stage).toBe('typesetting');
     await page.goto(bookPath);
     await expect(page.getByTestId('stage-screen')).toBeVisible();
     await expect(page).not.toHaveURL(/\/stages\/typesetting/);
 
     await page.getByTestId('stage-geometry').click();
     await expect(page).toHaveURL(GEOMETRY_ADDRESS);
-    await expect.poll(async () => (await readPlace(page, projectId)).place?.stage).toBe('geometry');
+    await expect.poll(async () => (await readPlace(page, bookId)).place?.stage).toBe('geometry');
     await page.goto(bookPath);
     await expect(page).toHaveURL(GEOMETRY_ADDRESS);
   });

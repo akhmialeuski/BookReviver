@@ -14,13 +14,13 @@ from bookreviver.ports.ordering import OrderKeys
 from tests.helpers.builders import (
     EPOCH,
     make_page,
-    make_project,
+    make_record,
     make_scan,
     make_source,
     new_account_id,
 )
 from tests.helpers.page_services import make_page_service
-from tests.helpers.seeding import ensure_account, store_project
+from tests.helpers.seeding import ensure_account, store_book
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -28,8 +28,8 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.storage import LocalAssetStore
-    from bookreviver.domain.entities import Actor, Page, Project, Source
-    from bookreviver.domain.ids import PageId, ProjectId
+    from bookreviver.domain.entities import Actor, BookRecord, Page, Source
+    from bookreviver.domain.ids import BookId, PageId
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.clock import FixedClock
@@ -49,13 +49,13 @@ CASE_ARG: str = 'case'
 class Book(NamedTuple):
     """A book of two sources whose pages stand one after the other in the order of their upload.
 
-    :ivar project: The project of the book.
+    :ivar book_record: The project of the book.
     :ivar first: The source of the first three pages.
     :ivar second: The source of the last two pages.
     :ivar pages: The five pages in book order.
     """
 
-    project: Project
+    book_record: BookRecord
     first: Source
     second: Source
     pages: list[Page]
@@ -140,7 +140,7 @@ async def _commit_book(uow: UnitOfWork, owner: Actor) -> Book:
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project()
+    book_record = make_record()
     first, second = (
         make_source(name='part1.pdf'),
         make_source(name='part2.pdf'),
@@ -151,23 +151,23 @@ async def _commit_book(uow: UnitOfWork, owner: Actor) -> Book:
     ]
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(scans))
     pages = [make_page(order_key=key, scan=scan) for key, scan in zip(keys, scans, strict=True)]
-    await store_project(uow, project, *pages, owner=owner.account_id, sources=[first, second], scans=scans)
-    return Book(project=project, first=first, second=second, pages=pages)
+    await store_book(uow, book_record, *pages, owner=owner.account_id, sources=[first, second], scans=scans)
+    return Book(book_record=book_record, first=first, second=second, pages=pages)
 
 
-async def _book_order(service: PageService, actor: Actor, project_id: ProjectId) -> list[PageId]:
+async def _book_order(service: PageService, actor: Actor, book_id: BookId) -> list[PageId]:
     """Read the identifiers of a book's pages in book order.
 
     :param service: Page service to read through.
     :type service: PageService
     :param actor: Account owning the project.
     :type actor: Actor
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :returns: The identifiers of every page, first page first.
     :rtype: list[PageId]
     """
-    manifest = await service.manifest(actor, project_id, SliceRequest(limit=100))
+    manifest = await service.manifest(actor, book_id, SliceRequest(limit=100))
     return [overview.page.id for overview in manifest.items]
 
 
@@ -208,11 +208,12 @@ class TestMove:
         fx_page_writes.start()
 
         moved = await fx_service().move(
-            fx_actor, book.project.id, book.pages[4].id, PageAnchor(page_id=book.pages[0].id, side=side)
+            fx_actor, book.book_record.id, book.pages[4].id, PageAnchor(page_id=book.pages[0].id, side=side)
         )
 
         expect(
-            await _book_order(fx_service(), fx_actor, book.project.id) == [book.pages[index].id for index in expected]
+            await _book_order(fx_service(), fx_actor, book.book_record.id)
+            == [book.pages[index].id for index in expected]
         )
         expect(fx_page_writes.page_ids == {book.pages[4].id})
         expect(moved.position == expected.index(4))
@@ -240,10 +241,10 @@ class TestMove:
         fx_clock.moment = LATER
 
         await fx_service().move(
-            fx_actor, book.project.id, book.pages[2].id, PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)
+            fx_actor, book.book_record.id, book.pages[2].id, PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)
         )
 
-        stored = await fx_uow().read_book(book.project.id, lambda repos: repos.pages.get(book.pages[2].id))
+        stored = await fx_uow().read_book(book.book_record.id, lambda repos: repos.pages.get(book.pages[2].id))
         expect(stored.updated_at == LATER)
         expect(evolve(stored, order_key=book.pages[2].order_key, updated_at=EPOCH) == book.pages[2])
         expect(stored.order_key < book.pages[0].order_key)
@@ -271,7 +272,7 @@ class TestMove:
 
         fx_book_changes.published.clear()
         await fx_service().move(
-            fx_actor, book.project.id, book.pages[3].id, PageAnchor(page_id=book.pages[0].id, side=Side.AFTER)
+            fx_actor, book.book_record.id, book.pages[3].id, PageAnchor(page_id=book.pages[0].id, side=Side.AFTER)
         )
 
         assert [BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True]
@@ -303,7 +304,7 @@ class TestMove:
         fx_book_changes.published.clear()
         with pytest.raises(AnchorInsideMovedPagesError):
             await fx_service().move(
-                fx_actor, book.project.id, book.pages[1].id, PageAnchor(page_id=book.pages[1].id, side=Side.AFTER)
+                fx_actor, book.book_record.id, book.pages[1].id, PageAnchor(page_id=book.pages[1].id, side=Side.AFTER)
             )
 
         expect(fx_page_writes.page_ids == set())
@@ -333,12 +334,12 @@ class TestMove:
 
         with pytest.raises(ConflictError):
             await service.move(
-                fx_actor, book.project.id, book.pages[4].id, PageAnchor(page_id=book.pages[0].id, side=Side.AFTER)
+                fx_actor, book.book_record.id, book.pages[4].id, PageAnchor(page_id=book.pages[0].id, side=Side.AFTER)
             )
 
         assert fx_runtime[0].published == []
 
-    async def test_missing_page_anchor_and_foreign_project_are_not_found(
+    async def test_missing_page_anchor_and_foreign_book_are_not_found(
         self,
         fx_service: Callable[[], PageService],
         fx_database: SqlDatabase,
@@ -364,11 +365,11 @@ class TestMove:
         missing = PageAnchor(page_id=stranger.pages[0].id, side=Side.BEFORE)
 
         with pytest.raises(NotFoundError):
-            await fx_service().move(fx_actor, book.project.id, stranger.pages[1].id, known)
+            await fx_service().move(fx_actor, book.book_record.id, stranger.pages[1].id, known)
         with pytest.raises(NotFoundError):
-            await fx_service().move(fx_actor, book.project.id, book.pages[1].id, missing)
+            await fx_service().move(fx_actor, book.book_record.id, book.pages[1].id, missing)
         with pytest.raises(NotFoundError):
-            await fx_service().move(fx_actor, stranger.project.id, stranger.pages[1].id, missing)
+            await fx_service().move(fx_actor, stranger.book_record.id, stranger.pages[1].id, missing)
 
 
 class TestMoveGroup:
@@ -412,13 +413,14 @@ class TestMoveGroup:
 
         await fx_service().move_group(
             fx_actor,
-            book.project.id,
+            book.book_record.id,
             [book.pages[index].id for index in chosen],
             PageAnchor(page_id=book.pages[anchor_index].id, side=side),
         )
 
         expect(
-            await _book_order(fx_service(), fx_actor, book.project.id) == [book.pages[index].id for index in expected]
+            await _book_order(fx_service(), fx_actor, book.book_record.id)
+            == [book.pages[index].id for index in expected]
         )
         expect(fx_page_writes.page_ids == {book.pages[index].id for index in chosen})
         assert_expectations()
@@ -446,7 +448,7 @@ class TestMoveGroup:
         fx_book_changes.published.clear()
         await fx_service().move_group(
             fx_actor,
-            book.project.id,
+            book.book_record.id,
             [book.pages[3].id, book.pages[1].id],
             PageAnchor(page_id=book.pages[4].id, side=Side.AFTER),
         )
@@ -481,7 +483,7 @@ class TestMoveGroup:
         with pytest.raises(AnchorInsideMovedPagesError):
             await fx_service().move_group(
                 fx_actor,
-                book.project.id,
+                book.book_record.id,
                 [book.pages[1].id, book.pages[2].id],
                 PageAnchor(page_id=book.pages[2].id, side=Side.BEFORE),
             )
@@ -490,7 +492,7 @@ class TestMoveGroup:
         expect(fx_book_changes.published == [])
         assert_expectations()
 
-    async def test_page_of_another_project_is_not_found(
+    async def test_page_of_another_book_is_not_found(
         self,
         fx_service: Callable[[], PageService],
         fx_uow: UnitOfWorkFactory,
@@ -515,7 +517,7 @@ class TestMoveGroup:
         with pytest.raises(NotFoundError):
             await fx_service().move_group(
                 fx_actor,
-                book.project.id,
+                book.book_record.id,
                 [book.pages[1].id, other.pages[0].id],
                 PageAnchor(page_id=book.pages[4].id, side=Side.AFTER),
             )
@@ -552,11 +554,13 @@ class TestMoveSource:
 
         fx_book_changes.published.clear()
         await fx_service().move_source(
-            fx_actor, book.project.id, book.first.id, PageAnchor(page_id=book.pages[4].id, side=Side.AFTER)
+            fx_actor, book.book_record.id, book.first.id, PageAnchor(page_id=book.pages[4].id, side=Side.AFTER)
         )
 
         group = [book.pages[index].id for index in range(FIRST_SOURCE_PAGES)]
-        expect(await _book_order(fx_service(), fx_actor, book.project.id) == [*(p.id for p in book.pages[3:]), *group])
+        expect(
+            await _book_order(fx_service(), fx_actor, book.book_record.id) == [*(p.id for p in book.pages[3:]), *group]
+        )
         expect(fx_page_writes.page_ids == set(group))
         expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True])
         assert_expectations()
@@ -581,11 +585,11 @@ class TestMoveSource:
         """
         book = await _commit_book(fx_uow(), fx_actor)
         bare = make_source(name='bare.pdf')
-        await fx_uow().change_book(book.project.id, lambda repos, _project: repos.sources.add(bare))
+        await fx_uow().change_book(book.book_record.id, lambda repos, _book_record: repos.sources.add(bare))
 
         fx_book_changes.published.clear()
         await fx_service().move_source(
-            fx_actor, book.project.id, bare.id, PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)
+            fx_actor, book.book_record.id, bare.id, PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)
         )
 
         assert fx_book_changes.published == []
@@ -606,10 +610,10 @@ class TestMoveSource:
 
         with pytest.raises(AnchorInsideMovedPagesError):
             await fx_service().move_source(
-                fx_actor, book.project.id, book.first.id, PageAnchor(page_id=book.pages[1].id, side=Side.AFTER)
+                fx_actor, book.book_record.id, book.first.id, PageAnchor(page_id=book.pages[1].id, side=Side.AFTER)
             )
 
-    async def test_source_of_another_project_is_not_found(
+    async def test_source_of_another_book_is_not_found(
         self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify a source is found only through the project that holds it.
@@ -626,5 +630,5 @@ class TestMoveSource:
 
         with pytest.raises(NotFoundError):
             await fx_service().move_source(
-                fx_actor, book.project.id, other.first.id, PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)
+                fx_actor, book.book_record.id, other.first.id, PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)
             )

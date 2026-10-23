@@ -10,8 +10,8 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import ConflictError, InvalidArchiveError, NotFoundError
-from bookreviver.domain.ids import JobId, PageId, ProjectId, SourceId
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.ids import BookId, JobId, PageId, SourceId
+from bookreviver.domain.keys import BookKeys
 from tests.helpers.builders import make_page_version
 from tests.helpers.storage import SOURCE_NAME, upload
 
@@ -66,7 +66,7 @@ REFUSED: dict[str, RefusedArchive] = {
 }
 
 
-async def _book(sources: SourceStore, assets: AssetStore) -> tuple[ProjectId, SourceId, PageVersion]:
+async def _book(sources: SourceStore, assets: AssetStore) -> tuple[BookId, SourceId, PageVersion]:
     """Store a book with one source, one derived file of a page, and an upload still being received.
 
     :param sources: The source store of the backend.
@@ -74,32 +74,32 @@ async def _book(sources: SourceStore, assets: AssetStore) -> tuple[ProjectId, So
     :param assets: The asset store of the backend.
     :type assets: AssetStore
     :returns: The book, its source and the version of its page.
-    :rtype: tuple[ProjectId, SourceId, PageVersion]
+    :rtype: tuple[BookId, SourceId, PageVersion]
     """
-    project_id, source_id, version = ProjectId(uuid4()), SourceId(uuid4()), make_page_version(page_id=PageId(uuid4()))
+    book_id, source_id, version = BookId(uuid4()), SourceId(uuid4()), make_page_version(page_id=PageId(uuid4()))
     job_id = JobId(uuid4())
     staged = await sources.stage(
-        project_id, job_id, [upload(SOURCE_NAME, content=SOURCE_CONTENT)], max_bytes=UNLIMITED_BYTES
+        book_id, job_id, [upload(SOURCE_NAME, content=SOURCE_CONTENT)], max_bytes=UNLIMITED_BYTES
     )
-    await sources.promote(project_id, job_id, source_id, names=[file.name for file in staged])
-    await sources.stage(project_id, JobId(uuid4()), [upload(UPLOAD_NAME)], max_bytes=UNLIMITED_BYTES)
-    key = ProjectKeys(project_id).version_rendition(version, Rendition.FULL_JPEG)
+    await sources.promote(book_id, job_id, source_id, names=[file.name for file in staged])
+    await sources.stage(book_id, JobId(uuid4()), [upload(UPLOAD_NAME)], max_bytes=UNLIMITED_BYTES)
+    key = BookKeys(book_id).version_rendition(version, Rendition.FULL_JPEG)
     async with assets.writable(key) as path:
         path.write_bytes(IMAGE_CONTENT)
-    return project_id, source_id, version
+    return book_id, source_id, version
 
 
-async def _exported(archive: BookArchive, project_id: ProjectId) -> bytes:
+async def _exported(archive: BookArchive, book_id: BookId) -> bytes:
     """Read the whole archive of a book.
 
     :param archive: The book archive of the backend.
     :type archive: BookArchive
-    :param project_id: The book.
-    :type project_id: ProjectId
+    :param book_id: The book.
+    :type book_id: BookId
     :returns: The archive.
     :rtype: bytes
     """
-    return b''.join([piece async for piece in archive.export(project_id, DATABASE)])
+    return b''.join([piece async for piece in archive.export(book_id, DATABASE)])
 
 
 class TestExportAndUnpack:
@@ -117,9 +117,9 @@ class TestExportAndUnpack:
         :param fx_asset_store: The asset store of the backend.
         :type fx_asset_store: AssetStore
         """
-        project_id, source_id, version = await _book(fx_source_store, fx_asset_store)
-        exported = await _exported(fx_book_archive, project_id)
-        copy_id = ProjectId(uuid4())
+        book_id, source_id, version = await _book(fx_source_store, fx_asset_store)
+        exported = await _exported(fx_book_archive, book_id)
+        copy_id = BookId(uuid4())
 
         await fx_book_archive.unpack(copy_id, io.BytesIO(exported))
 
@@ -129,7 +129,7 @@ class TestExportAndUnpack:
         expect(not any(UPLOAD_NAME in name for name in names))
         async with fx_source_store.source_files(copy_id, source_id) as paths:
             expect({path.name: path.read_bytes() for path in paths} == {SOURCE_NAME: SOURCE_CONTENT})
-        key = ProjectKeys(copy_id).version_rendition(version, Rendition.FULL_JPEG)
+        key = BookKeys(copy_id).version_rendition(version, Rendition.FULL_JPEG)
         async with fx_asset_store.readable(key) as path:
             expect(path.read_bytes() == IMAGE_CONTENT)
         assert_expectations()
@@ -146,9 +146,9 @@ class TestExportAndUnpack:
         :param fx_asset_store: The asset store of the backend.
         :type fx_asset_store: AssetStore
         """
-        project_id, _, _ = await _book(fx_source_store, fx_asset_store)
-        exported = await _exported(fx_book_archive, project_id)
-        copy_id = ProjectId(uuid4())
+        book_id, _, _ = await _book(fx_source_store, fx_asset_store)
+        exported = await _exported(fx_book_archive, book_id)
+        copy_id = BookId(uuid4())
         await fx_book_archive.unpack(copy_id, io.BytesIO(exported))
 
         with pytest.raises(ConflictError):
@@ -171,7 +171,7 @@ class TestRefusedArchive:
         :param case: The archive and the expected message.
         :type case: RefusedArchive
         """
-        copy_id = ProjectId(uuid4())
+        copy_id = BookId(uuid4())
 
         with pytest.raises(InvalidArchiveError, match=case.match):
             await fx_book_archive.unpack(copy_id, io.BytesIO(case.content))

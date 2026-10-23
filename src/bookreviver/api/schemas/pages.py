@@ -30,7 +30,7 @@ from bookreviver.domain.enums import (
     Side,
 )
 from bookreviver.domain.ids import PageId, PaginationSectionId, ScanId, SourceId
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import NewPage, PageAnchor, PageNumbering, PageSize
 from bookreviver.services.pages import PageService
 
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from bookreviver.domain.entities import PageOverview
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
 
 EXACTLY_ONE_ANCHOR: str = 'Give exactly one of before_page_id and after_page_id.'
 AT_MOST_ONE_ANCHOR: str = 'Give at most one of before_page_id and after_page_id.'
@@ -392,22 +392,22 @@ class PageSchema(ResponseModel):
     updated_at: datetime
 
     @classmethod
-    def from_overview(cls, overview: PageOverview, request: Request, *, project_id: ProjectId) -> Self:
+    def from_overview(cls, overview: PageOverview, request: Request, *, book_id: BookId) -> Self:
         """Build the schema of a page with the paths of its images.
 
         :param overview: The page with its position and base version.
         :type overview: PageOverview
         :param request: The request, whose application knows the route that serves the images.
         :type request: Request
-        :param project_id: Identifier of the project of the page, whose files hold its images.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project of the page, whose files hold its images.
+        :type book_id: BookId
         :returns: The page resource, with images once its base version has them cut.
         :rtype: Self
         """
         page, version = overview.page, overview.image_version
         images = None
         if version is not None and version.renditions is not None and version.renditions.ready:
-            keys = ProjectKeys(project_id)
+            keys = BookKeys(book_id)
             images = ImagePathsSchema.of(
                 request, lambda rendition: keys.version_rendition(version, rendition), full=version.renditions.full
             )

@@ -27,10 +27,10 @@ export function MeasureBook({
   processing: Processing;
   step: StepDraft;
 }): React.JSX.Element {
-  const { projectId, dirty } = processing;
-  const measure = useMeasureBook(projectId);
-  const activeJobs = useActiveJobs(projectId);
-  const runInFlight = useRunInFlight(projectId);
+  const { bookId, dirty } = processing;
+  const measure = useMeasureBook(bookId);
+  const activeJobs = useActiveJobs(bookId);
+  const runInFlight = useRunInFlight(bookId);
   const busy = measure.isPending || runInFlight || (activeJobs.data?.length ?? 0) > 0;
 
   return (
@@ -42,7 +42,7 @@ export function MeasureBook({
         disabled={dirty || busy}
         title={dirty ? labels.saveFirst : labels.hint}
         data-testid="measure-book-button"
-        onClick={() => measure.mutate({ path: { project_id: projectId } })}
+        onClick={() => measure.mutate({ path: { book_id: bookId } })}
       >
         <RulerIcon />
         {busy ? labels.working : labels.button}

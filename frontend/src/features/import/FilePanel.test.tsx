@@ -10,7 +10,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageSchema, ScanSchema } from '@/api';
-import { projectWith } from '@/features/about/fixtures';
+import { bookWith } from '@/features/about/fixtures';
 import { FilePanel } from '@/features/import/FilePanel';
 import { scan, source } from '@/features/import/fixtures';
 import type { ImportedSource } from '@/features/import/queries';
@@ -62,7 +62,7 @@ describe('FilePanel', () => {
       component: () => (
         <QueryClientProvider client={new QueryClient()}>
           <FilePanel
-            project={projectWith({ title: description })}
+            book={bookWith({ title: description })}
             source={file}
             scans={scans}
             pages={pages}
@@ -72,7 +72,7 @@ describe('FilePanel', () => {
     });
     const stageRoute = createRoute({
       getParentRoute: () => rootRoute,
-      path: '/projects/$projectId/stages/$stage',
+      path: '/books/$bookId/stages/$stage',
     });
     const router = createRouter({
       routeTree: rootRoute.addChildren([stageRoute]),
@@ -132,7 +132,7 @@ describe('FilePanel', () => {
       'Put its pages somewhere else…',
     ]);
     for (const link of links) {
-      expect(link.href).toContain('/projects/project-1/stages/page-order');
+      expect(link.href).toContain('/books/book-1/stages/page-order');
       expect(link.href).toContain('source=f-1');
     }
   });

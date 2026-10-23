@@ -79,10 +79,10 @@ function JobRow({ job }: { job: JobSchema }): React.JSX.Element {
   );
 }
 
-export function ActivityChip({ projectId }: { projectId: string }): React.JSX.Element {
+export function ActivityChip({ bookId }: { bookId: string }): React.JSX.Element {
   const [open, setOpen] = useState(false);
-  const active = useActiveJobs(projectId);
-  const recent = useRecentJobs(projectId, open);
+  const active = useActiveJobs(bookId);
+  const recent = useRecentJobs(bookId, open);
   const labels = MESSAGES.activity;
   const current = latestActiveJob(active.data ?? []);
 

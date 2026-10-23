@@ -4,8 +4,8 @@ import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   uploadFolder,
   waitForIdleJobs,
@@ -61,11 +61,11 @@ interface Size {
  *
  * A page the stage has not made a result for yet has no size, and is given as null.
  */
-async function sizesOf(page: Page, projectId: string): Promise<(Size | null)[]> {
+async function sizesOf(page: Page, bookId: string): Promise<(Size | null)[]> {
   const sizes: (Size | null)[] = [];
   for (const id of await pageIds(page)) {
     const stages = (await (
-      await page.request.get(`/api/v1/projects/${projectId}/pages/${id}/stages`)
+      await page.request.get(`/api/v1/books/${bookId}/pages/${id}/stages`)
     ).json()) as { items: { stage: string; head_version_id: string }[] };
     const head = stages.items.find((item) => item.stage === 'geometry')?.head_version_id;
     if (head === undefined) {
@@ -73,7 +73,7 @@ async function sizesOf(page: Page, projectId: string): Promise<(Size | null)[]> 
       continue;
     }
     const version = (await (
-      await page.request.get(`/api/v1/projects/${projectId}/pages/${id}/versions/${head}`)
+      await page.request.get(`/api/v1/books/${bookId}/pages/${id}/versions/${head}`)
     ).json()) as { data?: { width_px?: number; height_px?: number } };
     const { width_px: width, height_px: height } = version.data ?? {};
     sizes.push(width === undefined || height === undefined ? null : { width, height });
@@ -97,7 +97,7 @@ test('the content box and the border of a page are found on opening, edited with
   const layer = page.getByTestId('editor-layer');
   const canvas = page.getByTestId('viewer-canvas');
   const settingSaves: string[] = [];
-  let projectId = '';
+  let bookId = '';
   let found: number[] = [];
   let boxByHand: number[] = [];
 
@@ -113,7 +113,7 @@ test('the content box and the border of a page are found on opening, edited with
   // An edit or a setting starts a run of the stage on the page, and the next change waits until that run is over
   const settled = async (): Promise<void> => {
     await expect(page.getByTestId('editor-busy')).toHaveCount(0, { timeout: RUN_TIMEOUT_MS });
-    await waitForIdleJobs(page, projectId);
+    await waitForIdleJobs(page, bookId);
   };
 
   // The page is read again after a run, which the busy mark does not wait for, and the canvas is fitted again to hold the
@@ -137,8 +137,8 @@ test('the content box and the border of a page are found on opening, edited with
     await openLibrary(page);
     await createBook(page, 'A book of margins');
     await uploadFolder(page, folder, PAGES);
-    projectId = openProjectId(page);
-    await waitForIdleJobs(page, projectId);
+    bookId = openBookId(page);
+    await waitForIdleJobs(page, bookId);
     await markPagesAsText(page);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
@@ -230,14 +230,14 @@ test('the content box and the border of a page are found on opening, edited with
 
   await test.step('a run on all pages gives every page one size without measuring the book, and keeps the work on the page', async () => {
     await runAll(page);
-    await waitForIdleJobs(page, projectId);
+    await waitForIdleJobs(page, bookId);
     // The summary of the stage may say every page is up to date before the run has made a result for each page
     await expect
-      .poll(async () => (await sizesOf(page, projectId)).every((size) => size !== null), {
+      .poll(async () => (await sizesOf(page, bookId)).every((size) => size !== null), {
         timeout: RUN_TIMEOUT_MS,
       })
       .toBe(true);
-    const sizes = await sizesOf(page, projectId);
+    const sizes = await sizesOf(page, bookId);
     expect(sizes).toHaveLength(PAGES);
     expect(new Set(sizes.map((size) => `${size?.width}x${size?.height}`)).size).toBe(1);
     const [first = ''] = await pageIds(page);

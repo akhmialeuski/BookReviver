@@ -32,26 +32,26 @@ from bookreviver.api.schemas.pages import (
     ScanAttach,
 )
 from bookreviver.domain.entities import PageOverview
-from bookreviver.domain.ids import PageId, ProjectId
+from bookreviver.domain.ids import BookId, PageId
 from bookreviver.services.pages import PageService
 from bookreviver.services.pagination import PaginationService
 
-PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
+BOOK_ID_DESCRIPTION: str = 'Identifier of the book'
 PAGE_ID_DESCRIPTION: str = 'Identifier of the page'
 LOCATION_HEADER: str = 'Location'
 
-router = APIRouter(prefix='/projects', tags=['pages'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
+router = APIRouter(prefix='/books', tags=['pages'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 
 @dataclass(frozen=True)
 class PagePath:
     """The two identifiers in the address of one page, read together so a route keeps to a few parameters.
 
-    :ivar project_id: Identifier of the project.
+    :ivar book_id: Identifier of the project.
     :ivar page_id: Identifier of the page.
     """
 
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)]
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     page_id: Annotated[PageId, Path(description=PAGE_ID_DESCRIPTION)]
 
 
@@ -69,24 +69,24 @@ class PageLinks:
         self._request = request
         self._response = response
 
-    def created(self, project_id: ProjectId, overview: PageOverview) -> PageSchema:
+    def created(self, book_id: BookId, overview: PageOverview) -> PageSchema:
         """Point to a page just created in the ``Location`` header, and return its schema.
 
-        :param project_id: Identifier of the project the page was added to.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project the page was added to.
+        :type book_id: BookId
         :param overview: The new page with its position.
         :type overview: PageOverview
         :returns: The page resource.
         :rtype: PageSchema
         """
-        address = self._request.url_for(RouteName.PAGE, project_id=project_id, page_id=overview.page.id)
+        address = self._request.url_for(RouteName.PAGE, book_id=book_id, page_id=overview.page.id)
         self._response.headers[LOCATION_HEADER] = str(address)
-        return PageSchema.from_overview(overview, self._request, project_id=project_id)
+        return PageSchema.from_overview(overview, self._request, book_id=book_id)
 
 
-@router.get('/{project_id}/pages')
+@router.get('/{book_id}/pages')
 async def list_pages(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     actor: ActorDep,
     request: Request,
     params: Annotated[PageQuery, Depends()],
@@ -95,8 +95,8 @@ async def list_pages(
     """List the pages of a project in book order, up to a thousand at once, with the paths of their images.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
     :param request: The request, whose application knows the route that serves the images.
@@ -108,14 +108,14 @@ async def list_pages(
     :returns: One page of the manifest, whose items carry their position in the whole book.
     :rtype: ManifestPage[PageSchema]
     """
-    schema_of = partial(PageSchema.from_overview, request=request, project_id=project_id)
+    schema_of = partial(PageSchema.from_overview, request=request, book_id=book_id)
     pager = Pager[PageOverview, PageSchema](params, schema_of)
-    return pager.page(await pages.manifest(actor, project_id, pager.request, included_only=params.included))
+    return pager.page(await pages.manifest(actor, book_id, pager.request, included_only=params.included))
 
 
-@router.get('/{project_id}/pages/{page_id}', name=RouteName.PAGE)
+@router.get('/{book_id}/pages/{page_id}', name=RouteName.PAGE)
 async def get_page(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     page_id: Annotated[PageId, Path(description=PAGE_ID_DESCRIPTION)],
     actor: ActorDep,
     request: Request,
@@ -124,8 +124,8 @@ async def get_page(
     """Return one page of a project.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param page_id: Identifier of the page.
     :type page_id: PageId
     :param actor: The signed-in account.
@@ -137,10 +137,10 @@ async def get_page(
     :returns: The page with its position in the book.
     :rtype: PageSchema
     """
-    return PageSchema.from_overview(await pages.get(actor, project_id, page_id), request, project_id=project_id)
+    return PageSchema.from_overview(await pages.get(actor, book_id, page_id), request, book_id=book_id)
 
 
-@router.post('/{project_id}/pages/{page_id}/move')
+@router.post('/{book_id}/pages/{page_id}/move')
 async def move_page(
     address: Annotated[PagePath, Depends()],
     body: PageMove,
@@ -166,13 +166,13 @@ async def move_page(
     :returns: The page at its new place.
     :rtype: PageSchema
     """
-    moved = await pages.move(actor, address.project_id, address.page_id, body.anchor)
-    return PageSchema.from_overview(moved, request, project_id=address.project_id)
+    moved = await pages.move(actor, address.book_id, address.page_id, body.anchor)
+    return PageSchema.from_overview(moved, request, book_id=address.book_id)
 
 
-@router.post('/{project_id}/pages/move', status_code=status.HTTP_204_NO_CONTENT)
+@router.post('/{book_id}/pages/move', status_code=status.HTTP_204_NO_CONTENT)
 async def move_pages(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: PagesMove,
     actor: ActorDep,
     pages: FromDishka[PageService],
@@ -183,8 +183,8 @@ async def move_pages(
     event, so the answer has no body.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param body: The pages to move, the page to put them next to, and the side.
     :type body: PagesMove
     :param actor: The signed-in account.
@@ -192,12 +192,12 @@ async def move_pages(
     :param pages: Page service of the request.
     :type pages: PageService
     """
-    await pages.move_group(actor, project_id, body.page_ids, body.anchor)
+    await pages.move_group(actor, book_id, body.page_ids, body.anchor)
 
 
-@router.post('/{project_id}/pages/blank-fill', status_code=status.HTTP_204_NO_CONTENT)
+@router.post('/{book_id}/pages/blank-fill', status_code=status.HTTP_204_NO_CONTENT)
 async def fill_blank_pages(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: BlankFillChange,
     actor: ActorDep,
     pages: FromDishka[PageService],
@@ -212,8 +212,8 @@ async def fill_blank_pages(
     browser as a ``book-changed`` event, so the answer has no body.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param body: The pages to change and the choice.
     :type body: BlankFillChange
     :param actor: The signed-in account.
@@ -221,12 +221,12 @@ async def fill_blank_pages(
     :param pages: Page service of the request.
     :type pages: PageService
     """
-    await pages.set_blank_fill(actor, project_id, body.page_ids, body.blank_fill)
+    await pages.set_blank_fill(actor, book_id, body.page_ids, body.blank_fill)
 
 
-@router.post('/{project_id}/pages/content-types/detect', status_code=status.HTTP_202_ACCEPTED)
+@router.post('/{book_id}/pages/content-types/detect', status_code=status.HTTP_202_ACCEPTED)
 async def detect_content_types(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: ContentDetectionRequest,
     actor: ActorDep,
     pages: FromDishka[PageService],
@@ -242,8 +242,8 @@ async def detect_content_types(
     browser as a ``book-changed`` event.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param body: The pages to detect, or none for those that are not detected yet.
     :type body: ContentDetectionRequest
     :param actor: The signed-in account.
@@ -253,10 +253,10 @@ async def detect_content_types(
     :returns: The queued job.
     :rtype: JobSchema
     """
-    return JobSchema.model_validate(await pages.start_detection(actor, project_id, body.page_ids))
+    return JobSchema.model_validate(await pages.start_detection(actor, book_id, body.page_ids))
 
 
-@router.patch('/{project_id}/pages/{page_id}')
+@router.patch('/{book_id}/pages/{page_id}')
 async def update_page(
     address: Annotated[PagePath, Depends()],
     body: Annotated[PageUpdate, Body()],
@@ -285,13 +285,13 @@ async def update_page(
     :returns: The changed page.
     :rtype: PageSchema
     """
-    changed = await pages.update(actor, address.project_id, address.page_id, body.to_changes())
-    return PageSchema.from_overview(changed, request, project_id=address.project_id)
+    changed = await pages.update(actor, address.book_id, address.page_id, body.to_changes())
+    return PageSchema.from_overview(changed, request, book_id=address.book_id)
 
 
-@router.post('/{project_id}/pages/labels', status_code=status.HTTP_204_NO_CONTENT)
+@router.post('/{book_id}/pages/labels', status_code=status.HTTP_204_NO_CONTENT)
 async def number_pages(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: LabelRange,
     actor: ActorDep,
     pagination: FromDishka[PaginationService],
@@ -305,8 +305,8 @@ async def number_pages(
     reach the browser as a ``book-changed`` event.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param body: The range of pages, the style of the numbers, the first number and the kinds to skip.
     :type body: LabelRange
     :param actor: The signed-in account.
@@ -314,12 +314,12 @@ async def number_pages(
     :param pagination: Pagination service of the request.
     :type pagination: PaginationService
     """
-    await pagination.number(actor, project_id, body.to_numbering())
+    await pagination.number(actor, book_id, body.to_numbering())
 
 
-@router.post('/{project_id}/pages/labels/preview')
+@router.post('/{book_id}/pages/labels/preview')
 async def preview_page_numbers(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: LabelRange,
     actor: ActorDep,
     pagination: FromDishka[PaginationService],
@@ -330,8 +330,8 @@ async def preview_page_numbers(
     answer is 409 when the range runs backwards.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param body: The range of pages, the style of the numbers, the first number and the kinds to skip.
     :type body: LabelRange
     :param actor: The signed-in account.
@@ -341,13 +341,13 @@ async def preview_page_numbers(
     :returns: Every page the numbering counts, in book order, with the label it would get.
     :rtype: list[NumberedPageSchema]
     """
-    numbered = await pagination.preview_numbers(actor, project_id, body.to_numbering())
+    numbered = await pagination.preview_numbers(actor, book_id, body.to_numbering())
     return [NumberedPageSchema.model_validate(page) for page in numbered]
 
 
-@router.post('/{project_id}/pages', status_code=status.HTTP_201_CREATED)
+@router.post('/{book_id}/pages', status_code=status.HTTP_201_CREATED)
 async def create_page(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: Annotated[PageCreate, Body()],
     actor: ActorDep,
     links: Annotated[PageLinks, Depends()],
@@ -360,8 +360,8 @@ async def create_page(
     leaf without a size when no page of the book has an image to take the median of.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param body: The kind and origin of the page, its place, and the size of a blank leaf.
     :type body: PageCreate
     :param actor: The signed-in account.
@@ -373,12 +373,12 @@ async def create_page(
     :returns: The new page.
     :rtype: PageSchema
     """
-    return links.created(project_id, await pages.add(actor, project_id, body.to_new_page()))
+    return links.created(book_id, await pages.add(actor, book_id, body.to_new_page()))
 
 
-@router.post('/{project_id}/pages/batch', status_code=status.HTTP_201_CREATED)
+@router.post('/{book_id}/pages/batch', status_code=status.HTTP_201_CREATED)
 async def create_pages(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: Annotated[PageCreateList, Body()],
     actor: ActorDep,
     request: Request,
@@ -393,8 +393,8 @@ async def create_pages(
     median of, with its index in the detail.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param body: The pages to add, in the order they stand in where they share a place.
     :type body: PageCreateList
     :param actor: The signed-in account.
@@ -406,11 +406,11 @@ async def create_pages(
     :returns: The new pages, in the order of the request.
     :rtype: list[PageSchema]
     """
-    added = await pages.add_many(actor, project_id, [page.to_new_page() for page in body])
-    return [PageSchema.from_overview(overview, request, project_id=project_id) for overview in added]
+    added = await pages.add_many(actor, book_id, [page.to_new_page() for page in body])
+    return [PageSchema.from_overview(overview, request, book_id=book_id) for overview in added]
 
 
-@router.delete('/{project_id}/pages/{page_id}', status_code=status.HTTP_204_NO_CONTENT)
+@router.delete('/{book_id}/pages/{page_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_page(address: Annotated[PagePath, Depends()], actor: ActorDep, pages: FromDishka[PageService]) -> None:
     """Delete a page with its versions and files, leaving its scan and the source of the scan.
 
@@ -422,10 +422,10 @@ async def delete_page(address: Annotated[PagePath, Depends()], actor: ActorDep, 
     :param pages: Page service of the request.
     :type pages: PageService
     """
-    await pages.delete(actor, address.project_id, address.page_id)
+    await pages.delete(actor, address.book_id, address.page_id)
 
 
-@router.put('/{project_id}/pages/{page_id}/scan')
+@router.put('/{book_id}/pages/{page_id}/scan')
 async def attach_scan(
     address: Annotated[PagePath, Depends()],
     body: ScanAttach,
@@ -452,5 +452,5 @@ async def attach_scan(
     :returns: The page, which has no images until the job is done.
     :rtype: PageSchema
     """
-    bound = await pages.attach_scan(actor, address.project_id, address.page_id, body.scan_id, take_over=body.take_over)
-    return PageSchema.from_overview(bound, request, project_id=address.project_id)
+    bound = await pages.attach_scan(actor, address.book_id, address.page_id, body.scan_id, take_over=body.take_over)
+    return PageSchema.from_overview(bound, request, book_id=address.book_id)

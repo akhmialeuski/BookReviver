@@ -27,8 +27,8 @@ from bookreviver.domain.enums import StageState
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import PageStage, PageVersion, Project
-    from bookreviver.domain.ids import PageVersionId, ProjectId
+    from bookreviver.domain.entities import BookRecord, PageStage, PageVersion
+    from bookreviver.domain.ids import BookId, PageVersionId
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
@@ -115,13 +115,13 @@ class OutdatedResults:
             ]
 
         stale: list[PageStage] = []
-        for project_id in await self._uow.stored_books():
-            if outdated := await self._uow.read_book(project_id, find):
-                stale.extend(await self._mark_book(project_id, outdated))
+        for book_id in await self._uow.stored_books():
+            if outdated := await self._uow.read_book(book_id, find):
+                stale.extend(await self._mark_book(book_id, outdated))
         logger.info('Marked %d stage records stale because a processor of their result has a new version.', len(stale))
         return stale
 
-    async def _mark_book(self, project_id: ProjectId, outdated: Sequence[PageStage]) -> list[PageStage]:
+    async def _mark_book(self, book_id: BookId, outdated: Sequence[PageStage]) -> list[PageStage]:
         """Mark the outdated records of one book stale, in a ``change_book`` of its own.
 
         The records of the pages are read again in one query of the transaction, since a request may have marked them,
@@ -129,8 +129,8 @@ class OutdatedResults:
         on another version, is left as it is, and the others are written by one statement. The method opens its
         transaction, so it is called only outside one.
 
-        :param project_id: Project owning the records.
-        :type project_id: ProjectId
+        :param book_id: Project owning the records.
+        :type book_id: BookId
         :param outdated: The records found outdated, which belong to the pages of the project.
         :type outdated: Sequence[PageStage]
         :returns: The records that became stale.
@@ -138,13 +138,13 @@ class OutdatedResults:
         """
         moment = self._clock.now()
 
-        def work(repos: BookRepositories, _project: Project) -> list[PageStage]:
+        def work(repos: BookRepositories, _book_record: BookRecord) -> list[PageStage]:
             """Mark the records that are still fresh on the same version.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it, which the marking does not read.
-            :type _project: Project
+            :param _book_record: The project as the change finds it, which the marking does not read.
+            :type _book_record: BookRecord
             :returns: The records that became stale.
             :rtype: list[PageStage]
             """
@@ -159,4 +159,4 @@ class OutdatedResults:
             ]
             return list(repos.page_stages.save_many(stale))
 
-        return await self._uow.change_book(project_id, work)
+        return await self._uow.change_book(book_id, work)

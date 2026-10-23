@@ -1,35 +1,35 @@
 import { type QueryClient, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  createPagesApiV1ProjectsProjectIdPagesBatchPost,
-  deletePageApiV1ProjectsProjectIdPagesPageIdDelete,
+  createPagesApiV1BooksBookIdPagesBatchPost,
+  deletePageApiV1BooksBookIdPagesPageIdDelete,
   type PageCreate,
   type PageSchema,
   type PageUpdate,
-  updatePageApiV1ProjectsProjectIdPagesPageIdPatch,
+  updatePageApiV1BooksBookIdPagesPageIdPatch,
 } from '@/api';
 import {
-  attachScanApiV1ProjectsProjectIdPagesPageIdScanPutMutation,
-  createPaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostMutation,
-  deletePageApiV1ProjectsProjectIdPagesPageIdDeleteMutation,
-  deletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteMutation,
-  deleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteMutation,
-  fillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostMutation,
-  movePagesApiV1ProjectsProjectIdPagesMovePostMutation,
-  moveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostMutation,
-  numberPagesApiV1ProjectsProjectIdPagesLabelsPostMutation,
-  putPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutMutation,
-  updatePageApiV1ProjectsProjectIdPagesPageIdPatchMutation,
+  attachScanApiV1BooksBookIdPagesPageIdScanPutMutation,
+  createPaginationSectionApiV1BooksBookIdPaginationSectionsPostMutation,
+  deletePageApiV1BooksBookIdPagesPageIdDeleteMutation,
+  deletePaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdDeleteMutation,
+  deleteSourceApiV1BooksBookIdSourcesSourceIdDeleteMutation,
+  fillBlankPagesApiV1BooksBookIdPagesBlankFillPostMutation,
+  movePagesApiV1BooksBookIdPagesMovePostMutation,
+  moveSourcePagesApiV1BooksBookIdSourcesSourceIdPagesMovePostMutation,
+  numberPagesApiV1BooksBookIdPagesLabelsPostMutation,
+  putPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutMutation,
+  updatePageApiV1BooksBookIdPagesPageIdPatchMutation,
 } from '@/api/@tanstack/react-query.gen';
-import { applyChanges } from '@/features/pages/edits';
-import { manifestOptions } from '@/features/pages/manifest';
-import { anchorOf, movePages, pageIdsOfSource } from '@/features/pages/order';
 import {
   invalidatePages,
   invalidateSections,
   invalidateSources,
   pageChangesInFlight,
   pagesScope,
-} from '@/features/projects/queries';
+} from '@/features/books/queries';
+import { applyChanges } from '@/features/pages/edits';
+import { manifestOptions } from '@/features/pages/manifest';
+import { anchorOf, movePages, pageIdsOfSource } from '@/features/pages/order';
 
 /**
  * Every change a reader can make to the pages of a book, as TanStack Query mutations over the generated client.
@@ -56,18 +56,14 @@ interface Snapshot {
  * @param settling How many of the changes in flight are the one that calls this, which is one for a change that runs in
  * the scope of the pages and none for one that does not.
  */
-async function refreshPages(
-  queryClient: QueryClient,
-  projectId: string,
-  settling = 0,
-): Promise<void> {
-  if (pageChangesInFlight(queryClient, projectId) > settling) {
+async function refreshPages(queryClient: QueryClient, bookId: string, settling = 0): Promise<void> {
+  if (pageChangesInFlight(queryClient, bookId) > settling) {
     return;
   }
   await Promise.all([
-    invalidatePages(queryClient, projectId, settling),
+    invalidatePages(queryClient, bookId, settling),
     // A page that leaves hands its section on, so a section can change with the pages
-    invalidateSections(queryClient, projectId),
+    invalidateSections(queryClient, bookId),
   ]);
 }
 
@@ -79,10 +75,10 @@ async function refreshPages(
  */
 async function applyOptimistically(
   queryClient: QueryClient,
-  projectId: string,
+  bookId: string,
   newOrder: (pages: PageSchema[]) => PageSchema[] | null,
 ): Promise<Snapshot> {
-  const { queryKey } = manifestOptions(projectId);
+  const { queryKey } = manifestOptions(bookId);
   // A read that is still in flight would write the old state over this one when it lands. It is cancelled with the
   // default revert, which puts the query back to a success with the data it had. Cancelling without the revert leaves
   // the query in the error state, and a screen that shows an error in place of the pages loses its grid until the
@@ -103,61 +99,57 @@ async function applyOptimistically(
 const rewriteScope = pagesScope;
 
 /** What a change that runs in the scope of the pages does when it ends: read the pages once the rest have ended. */
-function readWhenLast(queryClient: QueryClient, projectId: string): () => Promise<void> {
-  return () => refreshPages(queryClient, projectId, 1);
+function readWhenLast(queryClient: QueryClient, bookId: string): () => Promise<void> {
+  return () => refreshPages(queryClient, bookId, 1);
 }
 
-function restore(
-  queryClient: QueryClient,
-  projectId: string,
-  snapshot: Snapshot | undefined,
-): void {
+function restore(queryClient: QueryClient, bookId: string, snapshot: Snapshot | undefined): void {
   if (snapshot?.previous !== undefined) {
-    queryClient.setQueryData(manifestOptions(projectId).queryKey, snapshot.previous);
+    queryClient.setQueryData(manifestOptions(bookId).queryKey, snapshot.previous);
   }
 }
 
 /** Move a page or a group of pages before or after another page. */
-export function useMovePages(projectId: string) {
+export function useMovePages(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...movePagesApiV1ProjectsProjectIdPagesMovePostMutation(),
-    scope: rewriteScope(projectId),
+    ...movePagesApiV1BooksBookIdPagesMovePostMutation(),
+    scope: rewriteScope(bookId),
     onMutate: ({ body }) =>
-      applyOptimistically(queryClient, projectId, (pages) => {
+      applyOptimistically(queryClient, bookId, (pages) => {
         const anchor = anchorOf(body);
         return anchor === null ? null : movePages(pages, body.page_ids, anchor);
       }),
-    onError: (_error, _variables, snapshot) => restore(queryClient, projectId, snapshot),
-    onSettled: readWhenLast(queryClient, projectId),
+    onError: (_error, _variables, snapshot) => restore(queryClient, bookId, snapshot),
+    onSettled: readWhenLast(queryClient, bookId),
   });
 }
 
 /** Move every page of a source before or after another page. */
-export function useMoveSourcePages(projectId: string) {
+export function useMoveSourcePages(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...moveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostMutation(),
-    scope: rewriteScope(projectId),
+    ...moveSourcePagesApiV1BooksBookIdSourcesSourceIdPagesMovePostMutation(),
+    scope: rewriteScope(bookId),
     onMutate: ({ body, path }) =>
-      applyOptimistically(queryClient, projectId, (pages) => {
+      applyOptimistically(queryClient, bookId, (pages) => {
         const anchor = anchorOf(body);
         return anchor === null
           ? null
           : movePages(pages, pageIdsOfSource(pages, path.source_id), anchor);
       }),
-    onError: (_error, _variables, snapshot) => restore(queryClient, projectId, snapshot),
-    onSettled: readWhenLast(queryClient, projectId),
+    onError: (_error, _variables, snapshot) => restore(queryClient, bookId, snapshot),
+    onSettled: readWhenLast(queryClient, bookId),
   });
 }
 
 /** Change the label, kind, inclusion or notes of a page. */
-export function useUpdatePage(projectId: string) {
+export function useUpdatePage(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...updatePageApiV1ProjectsProjectIdPagesPageIdPatchMutation(),
-    scope: rewriteScope(projectId),
-    onSettled: readWhenLast(queryClient, projectId),
+    ...updatePageApiV1BooksBookIdPagesPageIdPatchMutation(),
+    scope: rewriteScope(bookId),
+    onSettled: readWhenLast(queryClient, bookId),
   });
 }
 
@@ -168,16 +160,16 @@ export function useUpdatePage(projectId: string) {
  * manifest is read once when all have answered. When one fails the others have still been made, and the read
  * afterwards shows which pages changed.
  */
-export function useUpdatePages(projectId: string) {
+export function useUpdatePages(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    scope: rewriteScope(projectId),
+    scope: rewriteScope(bookId),
     onMutate: ({ pageIds, changes }) =>
-      applyOptimistically(queryClient, projectId, (pages) => {
+      applyOptimistically(queryClient, bookId, (pages) => {
         const targets = new Set(pageIds);
         return pages.map((page) => (targets.has(page.id) ? applyChanges(page, changes) : page));
       }),
-    onError: (_error, _variables, snapshot) => restore(queryClient, projectId, snapshot),
+    onError: (_error, _variables, snapshot) => restore(queryClient, bookId, snapshot),
     mutationFn: async ({
       pageIds,
       changes,
@@ -187,15 +179,15 @@ export function useUpdatePages(projectId: string) {
     }): Promise<void> => {
       await Promise.all(
         pageIds.map((pageId) =>
-          updatePageApiV1ProjectsProjectIdPagesPageIdPatch({
-            path: { project_id: projectId, page_id: pageId },
+          updatePageApiV1BooksBookIdPagesPageIdPatch({
+            path: { book_id: bookId, page_id: pageId },
             body: changes,
             throwOnError: true,
           }),
         ),
       );
     },
-    onSettled: readWhenLast(queryClient, projectId),
+    onSettled: readWhenLast(queryClient, bookId),
   });
 }
 
@@ -206,20 +198,20 @@ export function useUpdatePages(projectId: string) {
  * itself is drawn by a job, or found again at once when it was made before, and either way the rows of the stages,
  * whose picture the leaf replaces, are read again by the `book-changed` event of the write.
  */
-export function useFillBlankPages(projectId: string) {
+export function useFillBlankPages(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...fillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostMutation(),
-    scope: rewriteScope(projectId),
+    ...fillBlankPagesApiV1BooksBookIdPagesBlankFillPostMutation(),
+    scope: rewriteScope(bookId),
     onMutate: ({ body }) =>
-      applyOptimistically(queryClient, projectId, (pages) => {
+      applyOptimistically(queryClient, bookId, (pages) => {
         const targets = new Set(body.page_ids);
         return pages.map((page) =>
           targets.has(page.id) ? { ...page, blank_fill: body.blank_fill } : page,
         );
       }),
-    onError: (_error, _variables, snapshot) => restore(queryClient, projectId, snapshot),
-    onSettled: readWhenLast(queryClient, projectId),
+    onError: (_error, _variables, snapshot) => restore(queryClient, bookId, snapshot),
+    onSettled: readWhenLast(queryClient, bookId),
   });
 }
 
@@ -232,46 +224,46 @@ export function useFillBlankPages(projectId: string) {
  * the scope, the read that an earlier change makes when it ends could start before the new pages are stored, and the
  * request would then find that change still running and leave the reading to it.
  */
-export function useCreatePages(projectId: string) {
+export function useCreatePages(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    scope: rewriteScope(projectId),
+    scope: rewriteScope(bookId),
     mutationFn: async (bodies: readonly PageCreate[]): Promise<void> => {
-      await createPagesApiV1ProjectsProjectIdPagesBatchPost({
-        path: { project_id: projectId },
+      await createPagesApiV1BooksBookIdPagesBatchPost({
+        path: { book_id: bookId },
         body: [...bodies],
         throwOnError: true,
       });
     },
-    onSettled: readWhenLast(queryClient, projectId),
+    onSettled: readWhenLast(queryClient, bookId),
   });
 }
 
 /** Delete several pages with their versions, leaving their scans and sources. */
-export function useDeletePages(projectId: string) {
+export function useDeletePages(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (pageIds: readonly string[]): Promise<void> => {
       await Promise.all(
         pageIds.map((pageId) =>
-          deletePageApiV1ProjectsProjectIdPagesPageIdDelete({
-            path: { project_id: projectId, page_id: pageId },
+          deletePageApiV1BooksBookIdPagesPageIdDelete({
+            path: { book_id: bookId, page_id: pageId },
             throwOnError: true,
           }),
         ),
       );
     },
-    onSettled: () => refreshPages(queryClient, projectId),
+    onSettled: () => refreshPages(queryClient, bookId),
   });
 }
 
 /** Write printed numbers into a range of pages. */
-export function useNumberPages(projectId: string) {
+export function useNumberPages(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...numberPagesApiV1ProjectsProjectIdPagesLabelsPostMutation(),
-    scope: rewriteScope(projectId),
-    onSettled: readWhenLast(queryClient, projectId),
+    ...numberPagesApiV1BooksBookIdPagesLabelsPostMutation(),
+    scope: rewriteScope(bookId),
+    onSettled: readWhenLast(queryClient, bookId),
   });
 }
 
@@ -282,62 +274,59 @@ export function useNumberPages(projectId: string) {
  * change runs in the scope of the pages, like every change that rewrites them, and the manifest and the sections are
  * read again when the last of them ends.
  */
-export function useCreateSection(projectId: string) {
+export function useCreateSection(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...createPaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostMutation(),
-    scope: rewriteScope(projectId),
-    onSettled: readWhenLast(queryClient, projectId),
+    ...createPaginationSectionApiV1BooksBookIdPaginationSectionsPostMutation(),
+    scope: rewriteScope(bookId),
+    onSettled: readWhenLast(queryClient, bookId),
   });
 }
 
 /** Replace the first page and the rule of a pagination section, which renumbers the pages it takes. */
-export function usePutSection(projectId: string) {
+export function usePutSection(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...putPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutMutation(),
-    scope: rewriteScope(projectId),
-    onSettled: readWhenLast(queryClient, projectId),
+    ...putPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutMutation(),
+    scope: rewriteScope(bookId),
+    onSettled: readWhenLast(queryClient, bookId),
   });
 }
 
 /** Remove a pagination section, which hands its pages to the section before it and renumbers them. */
-export function useDeleteSection(projectId: string) {
+export function useDeleteSection(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...deletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteMutation(),
-    scope: rewriteScope(projectId),
-    onSettled: readWhenLast(queryClient, projectId),
+    ...deletePaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdDeleteMutation(),
+    scope: rewriteScope(bookId),
+    onSettled: readWhenLast(queryClient, bookId),
   });
 }
 
 /** Bind a scan to a placeholder. */
-export function useAttachScan(projectId: string) {
+export function useAttachScan(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...attachScanApiV1ProjectsProjectIdPagesPageIdScanPutMutation(),
-    onSettled: () => refreshPages(queryClient, projectId),
+    ...attachScanApiV1BooksBookIdPagesPageIdScanPutMutation(),
+    onSettled: () => refreshPages(queryClient, bookId),
   });
 }
 
 /** Delete a page with its versions, leaving its scan and source. */
-export function useDeletePage(projectId: string) {
+export function useDeletePage(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...deletePageApiV1ProjectsProjectIdPagesPageIdDeleteMutation(),
-    onSettled: () => refreshPages(queryClient, projectId),
+    ...deletePageApiV1BooksBookIdPagesPageIdDeleteMutation(),
+    onSettled: () => refreshPages(queryClient, bookId),
   });
 }
 
 /** Delete a source with its scans; the pages cut from it stay in the book. */
-export function useDeleteSource(projectId: string) {
+export function useDeleteSource(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...deleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteMutation(),
+    ...deleteSourceApiV1BooksBookIdSourcesSourceIdDeleteMutation(),
     onSettled: () =>
-      Promise.all([
-        refreshPages(queryClient, projectId),
-        invalidateSources(queryClient, projectId),
-      ]),
+      Promise.all([refreshPages(queryClient, bookId), invalidateSources(queryClient, bookId)]),
   });
 }

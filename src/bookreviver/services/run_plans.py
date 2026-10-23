@@ -16,15 +16,15 @@ from typing import TYPE_CHECKING
 from bookreviver.domain.enums import ChangeSource, PageOrigin, RunMode, StageState, VersionState
 from bookreviver.domain.values import RunImpact
 from bookreviver.services.book_measure import leaves_to_the_book
+from bookreviver.services.books import book_pages
 from bookreviver.services.page_batches import PageBatch
-from bookreviver.services.projects import book_pages
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bookreviver.domain.entities import Actor, Page, PageHistoryEntry, PageStage, PageStepState, Project, Recipe
+    from bookreviver.domain.entities import Actor, BookRecord, Page, PageHistoryEntry, PageStage, PageStepState, Recipe
     from bookreviver.domain.enums import Stage
-    from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, StepId
+    from bookreviver.domain.ids import BookId, PageId, PageVersionId, StepId
     from bookreviver.domain.values import StageRun
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
@@ -35,9 +35,7 @@ if TYPE_CHECKING:
 class RunPlan:
     """The pages of one run, the recipe of each, and what the mode of the run does to the work of the pages."""
 
-    def __init__(
-        self, *, uow: UnitOfWork, recipes: RecipeBook, clock: Clock, project_id: ProjectId, run: StageRun
-    ) -> None:
+    def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, clock: Clock, book_id: BookId, run: StageRun) -> None:
         """Plan one run over the ports of a request or a job.
 
         :param uow: Unit of work the pages and the states are read through and the work of the mode is written by.
@@ -46,15 +44,15 @@ class RunPlan:
         :type recipes: RecipeBook
         :param clock: Clock stamping the changes a mode writes.
         :type clock: Clock
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
+        :param book_id: Project owning the pages.
+        :type book_id: BookId
         :param run: What the run was asked to do.
         :type run: StageRun
         """
         self._uow = uow
         self._recipes = recipes
         self._clock = clock
-        self._project_id = project_id
+        self._book_id = book_id
         self._run = run
         self._named_pages: Sequence[Page] | None = None
         self._pages: Sequence[Page] | None = None
@@ -126,13 +124,13 @@ class RunPlan:
             return ()
         picked = await self._picked()
 
-        def work(repos: BookRepositories, _project: Project) -> Sequence[PageHistoryEntry]:
+        def work(repos: BookRepositories, _book_record: BookRecord) -> Sequence[PageHistoryEntry]:
             """Remove the settings and the manual edits of the steps of the run, as one batch.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it, which the removal does not read.
-            :type _project: Project
+            :param _book_record: The project as the change finds it, which the removal does not read.
+            :type _book_record: BookRecord
             :returns: The changes written, one for each layer removed.
             :rtype: Sequence[PageHistoryEntry]
             """
@@ -141,7 +139,7 @@ class RunPlan:
                 batch.clear_work(state)
             return batch.flush()
 
-        return await self._uow.change_book(self._project_id, work)
+        return await self._uow.change_book(self._book_id, work)
 
     async def _named(self) -> Sequence[Page]:
         """Choose the pages the run names, or every page of the book that has an image, before any is left out.
@@ -165,7 +163,7 @@ class RunPlan:
                     return book_pages(repos.pages)
                 return list(repos.pages.list_by_ids(self._run.page_ids))
 
-            found = await self._uow.read_book(self._project_id, work)
+            found = await self._uow.read_book(self._book_id, work)
             self._named_pages = [page for page in found if page.origin is not PageOrigin.PLACEHOLDER]
         return self._named_pages
 
@@ -204,7 +202,7 @@ class RunPlan:
             }
             return records, ready
 
-        records, ready = await self._uow.read_book(self._project_id, read)
+        records, ready = await self._uow.read_book(self._book_id, read)
         by_page: dict[PageId, dict[Stage, PageStage]] = {}
         for record in records:
             by_page.setdefault(record.page_id, {})[record.stage] = record
@@ -259,7 +257,7 @@ class RunPlan:
         :raises NotFoundError: If the stage has no recipe.
         """
         if self._by_page is None:
-            self._by_page = await self._recipes.for_pages(self._project_id, self._run.stage, await self._named())
+            self._by_page = await self._recipes.for_pages(self._book_id, self._run.stage, await self._named())
         return self._by_page
 
     @staticmethod
@@ -282,7 +280,7 @@ class RunPlan:
         :rtype: list[PageStepState]
         """
         picked = await self._picked()
-        return await self._uow.read_book(self._project_id, lambda repos: self._states_in(repos, picked))
+        return await self._uow.read_book(self._book_id, lambda repos: self._states_in(repos, picked))
 
     def _states_in(self, repos: BookRepositories, picked: Mapping[PageId, Recipe]) -> list[PageStepState]:
         """Read the states of the steps the run goes over in the transaction of the caller.
@@ -324,13 +322,13 @@ class RunImpactService:
         self._recipes = recipes
         self._clock = clock
 
-    async def impact(self, actor: Actor, project_id: ProjectId, run: StageRun) -> RunImpact:
+    async def impact(self, actor: Actor, book_id: BookId, run: StageRun) -> RunImpact:
         """Count the pages a run would take work from, which is what a run asks the user to confirm.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param run: The run, with its mode.
         :type run: StageRun
         :returns: How many pages the run goes over, how many of them have settings and edits on its steps, and how many
@@ -338,6 +336,6 @@ class RunImpactService:
         :rtype: RunImpact
         :raises NotFoundError: If the actor has no such project or page, or the stage has no recipe.
         """
-        await self._library.open(actor, project_id)
-        plan = RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, project_id=project_id, run=run)
+        await self._library.open(actor, book_id)
+        plan = RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, book_id=book_id, run=run)
         return await plan.impact()

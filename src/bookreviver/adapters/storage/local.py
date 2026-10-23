@@ -30,7 +30,7 @@ import anyio
 
 from bookreviver.domain.enums import UploadProblem
 from bookreviver.domain.errors import ConflictError, InvalidArchiveError, NotFoundError, UploadRejectedError
-from bookreviver.domain.keys import KeySegment, ProjectKeys
+from bookreviver.domain.keys import BookKeys, KeySegment
 from bookreviver.domain.values import SourceFile, UploadPath
 from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
 
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
     from typing import BinaryIO
 
-    from bookreviver.domain.ids import JobId, ProjectId, SourceId, StorageKey
+    from bookreviver.domain.ids import BookId, JobId, SourceId, StorageKey
     from bookreviver.ports.storage import IncomingFile
 
 # Read size of an upload stream, large enough to keep the per-chunk overhead negligible
@@ -75,7 +75,7 @@ class _LocalTree:
         :returns: Path of the key under the root.
         :rtype: anyio.Path
         """
-        return self._root.joinpath(*key.split(ProjectKeys.SEPARATOR))
+        return self._root.joinpath(*key.split(BookKeys.SEPARATOR))
 
     async def _remove_area(self, area: StorageKey) -> None:
         """Remove one area of a project, then the project's directory once no other area is left in it.
@@ -83,10 +83,10 @@ class _LocalTree:
         :param area: Key of the area, such as ``projects/<id>/assets``.
         :type area: StorageKey
         """
-        await self._remove_inside_project(self._path(area))
+        await self._remove_inside_book(self._path(area))
 
     @staticmethod
-    async def _remove_inside_project(path: anyio.Path) -> None:
+    async def _remove_inside_book(path: anyio.Path) -> None:
         """Remove one directory of a project, then the project's directory once nothing is left in it.
 
         :param path: Directory under the directory of a project, such as ``projects/<id>/assets``.
@@ -109,12 +109,12 @@ class LocalSourceStore(_LocalTree, SourceStore):
 
     @override
     async def stage(
-        self, project_id: ProjectId, job_id: JobId, files: Sequence[IncomingFile], *, max_bytes: int
+        self, book_id: BookId, job_id: JobId, files: Sequence[IncomingFile], *, max_bytes: int
     ) -> Sequence[SourceFile]:
         """Stream an upload into the job's ``incoming/<job_id>/`` directory, replacing an interrupted upload of it.
 
-        :param project_id: Project receiving the upload.
-        :type project_id: ProjectId
+        :param book_id: Project receiving the upload.
+        :type book_id: BookId
         :param job_id: Import job owning the upload.
         :type job_id: JobId
         :param files: Uploaded files, read in chunks of ``CHUNK_BYTES``.
@@ -126,7 +126,7 @@ class LocalSourceStore(_LocalTree, SourceStore):
         :raises UploadRejectedError: If a file has no usable name or path, two paths differ only in letter case, or the
                                      upload grows past ``max_bytes``; the job's directory is removed then.
         """
-        incoming = self._path(ProjectKeys(project_id).incoming(job_id))
+        incoming = self._path(BookKeys(book_id).incoming(job_id))
         # An interrupted upload of the same job may have left files behind
         await _remove(incoming)
         await incoming.mkdir(parents=True)
@@ -138,13 +138,13 @@ class LocalSourceStore(_LocalTree, SourceStore):
             raise
 
     @override
-    async def promote(self, project_id: ProjectId, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
+    async def promote(self, book_id: BookId, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
         """Move the named files from ``incoming/<job_id>/`` into a hidden directory, then rename it to the source's.
 
         A refused promotion moves the files back, so they stay staged and nothing of the upload is lost.
 
-        :param project_id: Project owning the upload and the source.
-        :type project_id: ProjectId
+        :param book_id: Project owning the upload and the source.
+        :type book_id: BookId
         :param job_id: Import job whose upload holds the files.
         :type job_id: JobId
         :param source_id: Source the files become.
@@ -159,7 +159,7 @@ class LocalSourceStore(_LocalTree, SourceStore):
         if not names:
             err_msg = f'Source {source_id} needs at least one file.'
             raise ValueError(err_msg)
-        keys = ProjectKeys(project_id)
+        keys = BookKeys(book_id)
         # Only a name the store itself staged is accepted, so no name can climb out of the job's directory
         staged = await _staged_paths(await self._existing(keys.incoming(job_id)))
         if missing := sorted(set(names) - staged.keys()):
@@ -190,75 +190,75 @@ class LocalSourceStore(_LocalTree, SourceStore):
             raise
 
     @override
-    async def discard(self, project_id: ProjectId, job_id: JobId) -> None:
+    async def discard(self, book_id: BookId, job_id: JobId) -> None:
         """Remove the job's ``incoming/<job_id>/`` directory, if there is one.
 
-        :param project_id: Project owning the upload.
-        :type project_id: ProjectId
+        :param book_id: Project owning the upload.
+        :type book_id: BookId
         :param job_id: Import job whose upload is removed.
         :type job_id: JobId
         """
-        await _remove(self._path(ProjectKeys(project_id).incoming(job_id)))
+        await _remove(self._path(BookKeys(book_id).incoming(job_id)))
 
     @override
     async def discard_all_staged(self) -> None:
         """Remove the ``incoming/`` directory of every project, and the directory of a project that it leaves empty."""
-        projects = self._root / KeySegment.PROJECTS
-        if not await projects.is_dir():
+        books = self._root / KeySegment.BOOKS
+        if not await books.is_dir():
             return
-        async for project in projects.iterdir():
-            await self._remove_inside_project(project / KeySegment.INCOMING)
+        async for book_record in books.iterdir():
+            await self._remove_inside_book(book_record / KeySegment.INCOMING)
 
     @override
     @asynccontextmanager
-    async def staged_files(self, project_id: ProjectId, job_id: JobId) -> AsyncIterator[Mapping[str, Path]]:
+    async def staged_files(self, book_id: BookId, job_id: JobId) -> AsyncIterator[Mapping[str, Path]]:
         """Give the paths of the files left in the job's ``incoming/<job_id>/`` directory and its folders.
 
-        :param project_id: Project owning the upload.
-        :type project_id: ProjectId
+        :param book_id: Project owning the upload.
+        :type book_id: BookId
         :param job_id: Import job whose upload is read.
         :type job_id: JobId
         :returns: Iterator yielding the path of every file by its relative name, in the order of the names, once.
         :rtype: AsyncIterator[Mapping[str, Path]]
         :raises NotFoundError: If the job has no staged upload, when the context opens.
         """
-        yield await _staged_paths(await self._existing(ProjectKeys(project_id).incoming(job_id)))
+        yield await _staged_paths(await self._existing(BookKeys(book_id).incoming(job_id)))
 
     @override
-    def source_files(self, project_id: ProjectId, source_id: SourceId) -> AbstractAsyncContextManager[Sequence[Path]]:
+    def source_files(self, book_id: BookId, source_id: SourceId) -> AbstractAsyncContextManager[Sequence[Path]]:
         """Give the paths of the files in the source's ``sources/<source_id>/`` directory.
 
-        :param project_id: Project owning the source.
-        :type project_id: ProjectId
+        :param book_id: Project owning the source.
+        :type book_id: BookId
         :param source_id: Source whose files are read.
         :type source_id: SourceId
         :returns: Context manager yielding the paths in name order.
         :rtype: AbstractAsyncContextManager[Sequence[Path]]
         :raises NotFoundError: If the source has no files, when the context opens.
         """
-        return self._files(ProjectKeys(project_id).source(source_id))
+        return self._files(BookKeys(book_id).source(source_id))
 
     @override
-    async def delete_source(self, project_id: ProjectId, source_id: SourceId) -> None:
+    async def delete_source(self, book_id: BookId, source_id: SourceId) -> None:
         """Remove the source's ``sources/<source_id>/`` directory, if there is one.
 
-        :param project_id: Project owning the source.
-        :type project_id: ProjectId
+        :param book_id: Project owning the source.
+        :type book_id: BookId
         :param source_id: Source whose files are removed.
         :type source_id: SourceId
         """
-        await _remove(self._path(ProjectKeys(project_id).source(source_id)))
+        await _remove(self._path(BookKeys(book_id).source(source_id)))
 
     @override
-    async def delete_project(self, project_id: ProjectId) -> None:
+    async def delete_book(self, book_id: BookId) -> None:
         """Remove the project's ``incoming/`` and ``sources/`` directories, then the project's directory if empty.
 
         The project's directory stays while ``assets/`` is in it, since only the asset store removes that.
 
-        :param project_id: Project whose uploads and sources are removed.
-        :type project_id: ProjectId
+        :param book_id: Project whose uploads and sources are removed.
+        :type book_id: BookId
         """
-        keys = ProjectKeys(project_id)
+        keys = BookKeys(book_id)
         for area in (keys.incoming_area, keys.sources_area):
             await self._remove_area(area)
 
@@ -381,16 +381,16 @@ class LocalAssetStore(_LocalTree, AssetStore):
         return await anyio.to_thread.run_sync(_tree_size, Path(self._asset_path(prefix)))
 
     @override
-    async def delete_project(self, project_id: ProjectId) -> None:
+    async def delete_book(self, book_id: BookId) -> None:
         """Remove the project's ``assets/`` directory, then the project's directory if empty.
 
         The project's directory stays while ``incoming/`` or ``sources/`` is in it, since only the source store
         removes those.
 
-        :param project_id: Project whose derived files are removed.
-        :type project_id: ProjectId
+        :param book_id: Project whose derived files are removed.
+        :type book_id: BookId
         """
-        await self._remove_area(ProjectKeys(project_id).assets_area)
+        await self._remove_area(BookKeys(book_id).assets_area)
 
     def _asset_path(self, key: StorageKey) -> anyio.Path:
         """Return the path of a key, which must name something strictly inside the ``assets/`` of a project.
@@ -402,8 +402,8 @@ class LocalAssetStore(_LocalTree, AssetStore):
         :raises ValueError: If the key is not a well-formed key of a project, or does not lie under its ``assets/``,
                             such as the key of an upload, of a source, or of ``assets/`` itself.
         """
-        keys = ProjectKeys.owning(key)
-        if keys is None or not key.startswith(f'{keys.assets_area}{ProjectKeys.SEPARATOR}'):
+        keys = BookKeys.owning(key)
+        if keys is None or not key.startswith(f'{keys.assets_area}{BookKeys.SEPARATOR}'):
             err_msg = f'Storage key {key!r} does not lie under the assets directory of a project'
             raise ValueError(err_msg)
         return self._path(key)
@@ -503,17 +503,17 @@ class LocalBookArchive(_LocalTree, BookArchive):
     """
 
     @override
-    async def export(self, project_id: ProjectId, database: bytes) -> AsyncIterator[bytes]:
+    async def export(self, book_id: BookId, database: bytes) -> AsyncIterator[bytes]:
         """Stream the archive of a book: its database first, then every file of its sources and derived files.
 
-        :param project_id: The book.
-        :type project_id: ProjectId
+        :param book_id: The book.
+        :type book_id: BookId
         :param database: The copy of the database of the book.
         :type database: bytes
         :returns: The pieces of the archive, in order.
         :rtype: AsyncIterator[bytes]
         """
-        keys = ProjectKeys(project_id)
+        keys = BookKeys(book_id)
         pieces = _Pieces()
         # The archive and its entries write to memory alone, so a stream given up half way leaves nothing open
         archive = zipfile.ZipFile(pieces, mode='w', compression=ARCHIVE_COMPRESSION)
@@ -533,24 +533,24 @@ class LocalBookArchive(_LocalTree, BookArchive):
         yield pieces.take()
 
     @override
-    async def unpack(self, project_id: ProjectId, archive: BinaryIO) -> None:
+    async def unpack(self, book_id: BookId, archive: BinaryIO) -> None:
         """Place the content of an archive as the directory of a new book, its database first.
 
-        :param project_id: The new book, which has no directory yet.
-        :type project_id: ProjectId
+        :param book_id: The new book, which has no directory yet.
+        :type book_id: BookId
         :param archive: The archive, a file that can be read from any position.
         :type archive: BinaryIO
         :raises InvalidArchiveError: If the file is not a ZIP archive, holds no database, or holds a file outside what
                                      the archive of a book carries.
         :raises ConflictError: If the new book has a directory already.
         """
-        await anyio.to_thread.run_sync(self._unpack, ProjectKeys(project_id), archive)
+        await anyio.to_thread.run_sync(self._unpack, BookKeys(book_id), archive)
 
-    def _files_of(self, keys: ProjectKeys) -> list[tuple[Path, str]]:
+    def _files_of(self, keys: BookKeys) -> list[tuple[Path, str]]:
         """List the files of the sources and the derived files of a book, by their names in the archive.
 
         :param keys: The keys of the book.
-        :type keys: ProjectKeys
+        :type keys: BookKeys
         :returns: Each file and its name relative to the directory of the book, in the order of the names.
         :rtype: list[tuple[Path, str]]
         """
@@ -563,11 +563,11 @@ class LocalBookArchive(_LocalTree, BookArchive):
         ]
         return sorted(files, key=itemgetter(1))
 
-    def _unpack(self, keys: ProjectKeys, archive: BinaryIO) -> None:
+    def _unpack(self, keys: BookKeys, archive: BinaryIO) -> None:
         """Check every name of the archive, then write its files into the new directory of the book, database first.
 
         :param keys: The keys of the new book.
-        :type keys: ProjectKeys
+        :type keys: BookKeys
         :param archive: The archive, a file that can be read from any position.
         :type archive: BinaryIO
         :raises InvalidArchiveError: If the archive is refused.
@@ -590,7 +590,7 @@ class LocalBookArchive(_LocalTree, BookArchive):
             try:
                 Path(self._path(keys.prefix)).mkdir(parents=True)
             except FileExistsError as error:
-                raise ConflictError(keys.project_id) from error
+                raise ConflictError(keys.book_id) from error
             for member in sorted(files, key=lambda member: member.filename != database):
                 target = Path(self._path(placed[member.filename]))
                 target.parent.mkdir(parents=True, exist_ok=True)

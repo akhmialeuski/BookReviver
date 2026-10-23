@@ -14,8 +14,8 @@ const sdk = vi.hoisted(() => ({ report: vi.fn(), collect: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  collectableVersionsApiV1ProjectsProjectIdVersionsCollectableGet: sdk.report,
-  collectVersionsApiV1ProjectsProjectIdVersionsCollectPost: sdk.collect,
+  collectableVersionsApiV1BooksBookIdVersionsCollectableGet: sdk.report,
+  collectVersionsApiV1BooksBookIdVersionsCollectPost: sdk.collect,
 }));
 
 const FREED_BYTES = 1_572_864;
@@ -55,7 +55,7 @@ describe('ClearOldResults', () => {
     act(() =>
       root.render(
         <QueryClientProvider client={client}>
-          <ClearOldResults projectId="project">
+          <ClearOldResults bookId="book">
             <button type="button" data-testid="clear-old-results">
               Clear old results
             </button>
@@ -77,7 +77,7 @@ describe('ClearOldResults', () => {
 
     await open();
 
-    expect(sdk.report.mock.calls[0]?.[0]).toMatchObject({ path: { project_id: 'project' } });
+    expect(sdk.report.mock.calls[0]?.[0]).toMatchObject({ path: { book_id: 'book' } });
     expect(dialog()).toContain('3 old results');
     expect(dialog()).toContain('frees 1.5 MB');
     expect(sdk.collect).not.toHaveBeenCalled();
@@ -91,7 +91,7 @@ describe('ClearOldResults', () => {
     await settle();
 
     expect(sdk.collect).toHaveBeenCalledTimes(1);
-    expect(sdk.collect.mock.calls[0]?.[0]).toMatchObject({ path: { project_id: 'project' } });
+    expect(sdk.collect.mock.calls[0]?.[0]).toMatchObject({ path: { book_id: 'book' } });
     expect(byId('clear-old-results-submit')).toBeNull();
   });
 

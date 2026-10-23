@@ -51,7 +51,7 @@ from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.geometry import SplitChoice
 from bookreviver.domain.ids import PageId
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import PageStageKey, PageStepKey
 from bookreviver.services.page_labels import PageLabels
 from bookreviver.services.step_params import PageLayers
@@ -60,7 +60,7 @@ from bookreviver.services.steps import StepRun
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import PageEdit, PageStepState, Project, Recipe
+    from bookreviver.domain.entities import BookRecord, PageEdit, PageStepState, Recipe
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.processing import Processor, StepOutput
@@ -140,11 +140,13 @@ class Unsplit:
 class SpreadSplit:
     """Applies a step that splits a scan to the page of the scan, and undoes the split."""
 
-    def __init__(self, *, project: Project, uow: UnitOfWork, runtime: StageRuntime, records: StageRecords) -> None:
+    def __init__(
+        self, *, book_record: BookRecord, uow: UnitOfWork, runtime: StageRuntime, records: StageRecords
+    ) -> None:
         """Work over the ports of one job.
 
-        :param project: Project owning the pages, whose image policy chooses the format of a version's ``full``.
-        :type project: Project
+        :param book_record: Project owning the pages, whose image policy chooses the format of a version's ``full``.
+        :type book_record: BookRecord
         :param uow: Unit of work, whose ``change_book`` stores a split once it is complete.
         :type uow: UnitOfWork
         :param runtime: The runner, the catalogue, the publisher, the clock and the order keys.
@@ -152,7 +154,7 @@ class SpreadSplit:
         :param records: Writer of the stage records.
         :type records: StageRecords
         """
-        self._project = project
+        self._book_record = book_record
         self._uow = uow
         self._runner = runtime.runner
         self._catalogue = runtime.catalogue
@@ -161,7 +163,7 @@ class SpreadSplit:
         self._order_keys = runtime.order_keys
         self._records = records
         self._labels = PageLabels(clock=runtime.clock)
-        self._keys = ProjectKeys(project.id)
+        self._keys = BookKeys(book_record.id)
 
     def splits(self, recipe: Recipe) -> bool:
         """Tell whether a recipe splits scans: it is a recipe of the page split whose step makes a part for each half.
@@ -239,7 +241,7 @@ class SpreadSplit:
                 state=state,
             )
 
-        basis = await self._uow.read_book(self._project.id, read)
+        basis = await self._uow.read_book(self._book_record.id, read)
         run = StepRun(
             processor_key=step.processor_key,
             params=basis.params,
@@ -253,7 +255,7 @@ class SpreadSplit:
                 made = await self._make(basis.templates, run)
             undoing = (
                 await self._uow.read_book(
-                    self._project.id, lambda repos: self.undoing(repos, page, recipe, confirmed=confirmed)
+                    self._book_record.id, lambda repos: self.undoing(repos, page, recipe, confirmed=confirmed)
                 )
                 if len(made) == 1
                 else None
@@ -425,7 +427,9 @@ class SpreadSplit:
             if not 0 < len(outputs) <= len(templates):
                 raise ConflictError(WRONG_HALVES.format(key=run.processor_key, count=len(outputs)))
             return [
-                await self._runner.store(self._keys, template, output, policy=self._project.image_policy, tiles=True)
+                await self._runner.store(
+                    self._keys, template, output, policy=self._book_record.image_policy, tiles=True
+                )
                 for template, output in zip(templates, outputs, strict=False)
             ]
 
@@ -441,13 +445,13 @@ class SpreadSplit:
         :type reason: str
         """
 
-        def work(repos: BookRepositories, _project: Project) -> None:
+        def work(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Store the failed version, unless the page is gone.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it, which the work does not need.
-            :type _project: Project
+            :param _book_record: The project as the change finds it, which the work does not need.
+            :type _book_record: BookRecord
             :raises NotFoundError: If the page was deleted.
             """
             repos.pages.get(template.page_id)
@@ -462,7 +466,7 @@ class SpreadSplit:
 
         # A page that was deleted meanwhile has no version to tell the reason on, and the run reports it as skipped
         with suppress(NotFoundError):
-            await self._uow.change_book(self._project.id, work)
+            await self._uow.change_book(self._book_record.id, work)
 
     async def _tiled(self, version: PageVersion) -> PageVersion:
         """Cut the tile pyramid of a half that an earlier run made, if it was never cut.
@@ -496,13 +500,13 @@ class SpreadSplit:
         :rtype: bool
         """
 
-        def work(repos: BookRepositories, _project: Project) -> bool:
+        def work(repos: BookRepositories, _book_record: BookRecord) -> bool:
             """Store the split, unless the page is gone or what the split went by changed.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it, which the work does not need.
-            :type _project: Project
+            :param _book_record: The project as the change finds it, which the work does not need.
+            :type _book_record: BookRecord
             :returns: Whether the split was stored.
             :rtype: bool
             """
@@ -527,7 +531,7 @@ class SpreadSplit:
             for version, earlier in zip(made, basis.stored, strict=False):
                 if earlier is None or earlier.state is not VersionState.READY:
                     cleanup.push_async_callback(self._runner.discard, self._keys.version_directory(version))
-            stored = await self._uow.change_book(self._project.id, work)
+            stored = await self._uow.change_book(self._book_record.id, work)
             if stored:
                 cleanup.pop_all()
         return stored
@@ -591,4 +595,4 @@ class SpreadSplit:
         """
         for version, earlier in zip(made, basis.stored, strict=False):
             if earlier is None or earlier.state is not VersionState.READY:
-                await self._publisher.publish(PageVersionReady(project_id=self._project.id, version=version))
+                await self._publisher.publish(PageVersionReady(book_id=self._book_record.id, version=version))

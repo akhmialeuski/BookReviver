@@ -1,5 +1,5 @@
 import type { JobSchema } from '@/api';
-import { isActiveJob } from '@/features/projects/events';
+import { isActiveJob } from '@/features/books/events';
 
 /**
  * Which import jobs of a book the Import stage shows: those that run, as rows of the list of files, and the latest

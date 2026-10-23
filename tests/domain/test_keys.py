@@ -7,14 +7,14 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import Rendition
-from bookreviver.domain.ids import JobId, PageId, ProjectId, SourceId, StepId, StorageKey
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.ids import BookId, JobId, PageId, SourceId, StepId, StorageKey
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import ProcessorRef, Renditions
 from tests.helpers.builders import make_page_version, make_scan, make_source
 
-PROJECT_ID: ProjectId = ProjectId(uuid4())
-OTHER_PROJECT_ID: ProjectId = ProjectId(uuid4())
-KEYS: ProjectKeys = ProjectKeys(PROJECT_ID)
+BOOK_ID: BookId = BookId(uuid4())
+OTHER_BOOK_ID: BookId = BookId(uuid4())
+KEYS: BookKeys = BookKeys(BOOK_ID)
 PREFIX: StorageKey = KEYS.prefix
 PAGE_ID: PageId = PageId(uuid4())
 STEP_ID: StepId = StepId(uuid4())
@@ -44,7 +44,7 @@ class TestPrefix:
         ]
         assert [key for key in keys if not key.startswith(PREFIX)] == []
 
-    def test_prefix_does_not_cover_a_project_whose_id_extends_it(self) -> None:
+    def test_prefix_does_not_cover_a_book_whose_id_extends_it(self) -> None:
         """Verify the prefix ends with the separator, so it never matches a longer sibling name."""
         assert not StorageKey(f'{PREFIX[:-1]}x/assets').startswith(PREFIX)
 
@@ -148,23 +148,23 @@ class TestOwning:
     """Tests for ProjectKeys.owning()."""
 
     @pytest.mark.parametrize(RENDITION_ARG, list(Rendition))
-    def test_built_key_belongs_to_its_project(self, rendition: Rendition) -> None:
+    def test_built_key_belongs_to_its_book(self, rendition: Rendition) -> None:
         """Verify the key of every rendition of a scan is recognised as the project's.
 
         :param rendition: Derived file of the scan.
         :type rendition: Rendition
         """
         scan = make_scan(source=make_source(), number=0)
-        assert ProjectKeys.owning(KEYS.scan_rendition(scan, rendition)) == KEYS
+        assert BookKeys.owning(KEYS.scan_rendition(scan, rendition)) == KEYS
 
     @pytest.mark.parametrize(
         'key',
         [
-            f'sources/{PROJECT_ID}/book.pdf',
+            f'sources/{BOOK_ID}/book.pdf',
             'projects/not-an-id/assets/book',
             PREFIX[:-1],
             PREFIX,
-            f'{PREFIX}../{OTHER_PROJECT_ID}/assets/book',
+            f'{PREFIX}../{OTHER_BOOK_ID}/assets/book',
             f'{PREFIX}./assets/book',
             f'{PREFIX}/assets',
             f'{PREFIX}assets',
@@ -188,7 +188,7 @@ class TestOwning:
             'empty',
         ],
     )
-    def test_malformed_key_belongs_to_no_project(self, key: str) -> None:
+    def test_malformed_key_belongs_to_no_book(self, key: str) -> None:
         """Verify a key that is not safely inside a project's derived files is not attributed to any project.
 
         A source file and a staged upload lie inside the project but belong to the source store, so they are refused
@@ -197,4 +197,4 @@ class TestOwning:
         :param key: Key that is not a well-formed key of a derived file.
         :type key: str
         """
-        assert ProjectKeys.owning(StorageKey(key)) is None
+        assert BookKeys.owning(StorageKey(key)) is None

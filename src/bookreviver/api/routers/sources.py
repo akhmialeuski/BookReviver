@@ -22,25 +22,25 @@ from bookreviver.api.schemas.pages import PageAnchorBody
 from bookreviver.api.schemas.sources import ScanQuery, ScanSchema, SourceSchema
 from bookreviver.domain.entities import Scan, Source
 from bookreviver.domain.enums import SourceStatus
-from bookreviver.domain.ids import ProjectId, SourceId
+from bookreviver.domain.ids import BookId, SourceId
 from bookreviver.services.pages import PageService
 from bookreviver.services.sources import SourceService
 
-PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
+BOOK_ID_DESCRIPTION: str = 'Identifier of the book'
 SOURCE_ID_DESCRIPTION: str = 'Identifier of the source'
 STATUS_DESCRIPTION: str = 'List the files in these statuses; the imported sources by default'
 # The statuses the list shows when it is asked for none, which are the sources of the book and not the import report
 IMPORTED_ONLY: frozenset[SourceStatus] = frozenset({SourceStatus.IMPORTED})
 
-router = APIRouter(prefix='/projects', tags=['sources'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
+router = APIRouter(prefix='/books', tags=['sources'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 
 # The statuses are a parameter of their own beside the page parameters, not a field of a query model: a list field of a
 # model taken with ``Depends()`` is read as a body, and a model taken with ``Query()`` beside the page parameters is
 # published as one opaque object
-@router.get('/{project_id}/sources')
+@router.get('/{book_id}/sources')
 async def list_sources(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     actor: ActorDep,
     params: Annotated[Params, Depends()],
     sources: FromDishka[SourceService],
@@ -52,8 +52,8 @@ async def list_sources(
     the files a cancelled import never reached.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
     :param params: Page number and size.
@@ -66,12 +66,12 @@ async def list_sources(
     :rtype: Page[SourceSchema]
     """
     pager = Pager[Source, SourceSchema](params, SourceSchema.model_validate)
-    return pager.page(await sources.list(actor, project_id, pager.request, statuses=status))
+    return pager.page(await sources.list(actor, book_id, pager.request, statuses=status))
 
 
-@router.delete('/{project_id}/sources/unimported', status_code=status.HTTP_204_NO_CONTENT)
+@router.delete('/{book_id}/sources/unimported', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_unimported_sources(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     actor: ActorDep,
     sources: FromDishka[SourceService],
 ) -> None:
@@ -80,19 +80,19 @@ async def delete_unimported_sources(
     The imported sources stay. The project answers 409 while it imports.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
     :param sources: Source service of the request.
     :type sources: SourceService
     """
-    await sources.delete_unimported(actor, project_id)
+    await sources.delete_unimported(actor, book_id)
 
 
-@router.get('/{project_id}/sources/{source_id}')
+@router.get('/{book_id}/sources/{source_id}')
 async def get_source(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     source_id: Annotated[SourceId, Path(description=SOURCE_ID_DESCRIPTION)],
     actor: ActorDep,
     sources: FromDishka[SourceService],
@@ -100,8 +100,8 @@ async def get_source(
     """Return one source of a project.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param source_id: Identifier of the source.
     :type source_id: SourceId
     :param actor: The signed-in account.
@@ -111,12 +111,12 @@ async def get_source(
     :returns: The source.
     :rtype: SourceSchema
     """
-    return SourceSchema.model_validate(await sources.get(actor, project_id, source_id))
+    return SourceSchema.model_validate(await sources.get(actor, book_id, source_id))
 
 
-@router.delete('/{project_id}/sources/{source_id}', status_code=status.HTTP_204_NO_CONTENT)
+@router.delete('/{book_id}/sources/{source_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_source(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     source_id: Annotated[SourceId, Path(description=SOURCE_ID_DESCRIPTION)],
     actor: ActorDep,
     sources: FromDishka[SourceService],
@@ -126,8 +126,8 @@ async def delete_source(
     The pages made from the source lose only the reference to their scan. The project answers 409 while it imports.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param source_id: Identifier of the source.
     :type source_id: SourceId
     :param actor: The signed-in account.
@@ -135,12 +135,12 @@ async def delete_source(
     :param sources: Source service of the request.
     :type sources: SourceService
     """
-    await sources.delete(actor, project_id, source_id)
+    await sources.delete(actor, book_id, source_id)
 
 
-@router.get('/{project_id}/scans')
+@router.get('/{book_id}/scans')
 async def list_scans(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     actor: ActorDep,
     request: Request,
     query: Annotated[ScanQuery, Depends()],
@@ -149,8 +149,8 @@ async def list_scans(
     """List the scans of a project source by source, or of one source, with the paths of their images once cut.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
     :param request: The request, whose application knows the route that serves the images.
@@ -162,13 +162,13 @@ async def list_scans(
     :returns: One page of scans.
     :rtype: Page[ScanSchema]
     """
-    pager = Pager[Scan, ScanSchema](query, partial(ScanSchema.from_scan, request=request, project_id=project_id))
-    return pager.page(await sources.scans(actor, project_id, pager.request, source_id=query.source_id))
+    pager = Pager[Scan, ScanSchema](query, partial(ScanSchema.from_scan, request=request, book_id=book_id))
+    return pager.page(await sources.scans(actor, book_id, pager.request, source_id=query.source_id))
 
 
-@router.post('/{project_id}/sources/{source_id}/pages/move', status_code=status.HTTP_204_NO_CONTENT)
+@router.post('/{book_id}/sources/{source_id}/pages/move', status_code=status.HTTP_204_NO_CONTENT)
 async def move_source_pages(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     source_id: Annotated[SourceId, Path(description=SOURCE_ID_DESCRIPTION)],
     body: PageAnchorBody,
     actor: ActorDep,
@@ -180,8 +180,8 @@ async def move_source_pages(
     event, so the answer has no body.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param source_id: Identifier of the source whose pages are moved.
     :type source_id: SourceId
     :param body: The page to put them next to, and the side.
@@ -191,4 +191,4 @@ async def move_source_pages(
     :param pages: Page service of the request.
     :type pages: PageService
     """
-    await pages.move_source(actor, project_id, source_id, body.anchor)
+    await pages.move_source(actor, book_id, source_id, body.anchor)

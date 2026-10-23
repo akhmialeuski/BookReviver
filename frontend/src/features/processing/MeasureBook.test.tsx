@@ -19,8 +19,8 @@ const sdk = vi.hoisted(() => ({ measure: vi.fn(), jobs: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  measureBookApiV1ProjectsProjectIdStagesGeometryMeasurePost: sdk.measure,
-  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
+  measureBookApiV1BooksBookIdStagesGeometryMeasurePost: sdk.measure,
+  listBookJobsApiV1BooksBookIdJobsGet: sdk.jobs,
 }));
 
 const BUTTON = '[data-testid="measure-book-button"]';
@@ -79,7 +79,7 @@ describe('MeasureBook', () => {
     });
 
     expect(sdk.measure).toHaveBeenCalledTimes(1);
-    expect(sdk.measure.mock.calls[0]?.[0]).toMatchObject({ path: { project_id: 'project' } });
+    expect(sdk.measure.mock.calls[0]?.[0]).toMatchObject({ path: { book_id: 'book' } });
   });
 
   it('waits for the recipe to be saved, since the job writes the saved recipe', () => {

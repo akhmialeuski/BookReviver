@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import PageEdit, PageVersion
     from bookreviver.domain.enums import ImagePolicy, PageSide
     from bookreviver.domain.ids import StorageKey
-    from bookreviver.domain.keys import ProjectKeys
+    from bookreviver.domain.keys import BookKeys
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.imaging import RenditionWriter, Tiler
     from bookreviver.ports.processing import StepExecutor
@@ -174,7 +174,7 @@ class StepRunner:
         )
 
     async def store(
-        self, keys: ProjectKeys, version: PageVersion, output: StepOutput, *, policy: ImagePolicy, tiles: bool
+        self, keys: BookKeys, version: PageVersion, output: StepOutput, *, policy: ImagePolicy, tiles: bool
     ) -> PageVersion:
         """Store the files of a version from one output of its step, and return the version as ready.
 
@@ -182,7 +182,7 @@ class StepRunner:
         never replaced, and a version that is stored again is one that never became ready.
 
         :param keys: Keys of the project owning the page.
-        :type keys: ProjectKeys
+        :type keys: BookKeys
         :param version: The version being made, whose identifier names its directory.
         :type version: PageVersion
         :param output: What the processor made.
@@ -237,11 +237,11 @@ class StepRunner:
         """
         await self._assets.delete_prefix(prefix)
 
-    async def cut_tiles(self, keys: ProjectKeys, version: PageVersion) -> PageVersion:
+    async def cut_tiles(self, keys: BookKeys, version: PageVersion) -> PageVersion:
         """Cut the IIIF tile pyramid of a ready version from its ``full`` image.
 
         :param keys: Keys of the project owning the page.
-        :type keys: ProjectKeys
+        :type keys: BookKeys
         :param version: A ready version of a full run that has an image.
         :type version: PageVersion
         :returns: The version with its pyramid marked as cut.

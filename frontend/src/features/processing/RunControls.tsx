@@ -94,12 +94,12 @@ export function RunControls({
   /** The step that is open in the bar of the steps, or undefined for a stage that has none. */
   openStep?: BarStep;
 }): React.JSX.Element {
-  const { projectId, stage, recipe, catalogue } = processing;
-  const summaries = useStageSummaries(projectId);
+  const { bookId, stage, recipe, catalogue } = processing;
+  const summaries = useStageSummaries(bookId);
   const trouble = troubleOf(items);
   const stopped = summaries.data?.find((entry) => entry.stage === stage)?.stopped ?? [];
   // A run of this stage that is still going says so, since its pages read up to date before it has placed them all
-  const running = useActiveJobs(projectId).data?.find(
+  const running = useActiveJobs(bookId).data?.find(
     (job) => job.kind === 'run-stage' && job.stage === stage,
   );
   const [menuOpen, setMenuOpen] = useState(false);
@@ -132,11 +132,8 @@ export function RunControls({
 
   // The pages that have work of their own are counted by the server, over the pages and the steps of this choice
   const request = { scope: chosen?.scope ?? RunScope.Attention, group: chosen?.group, throughStep };
-  const own = useOwnWork(
-    projectId,
-    stage,
-    menuOpen || ownMode !== 'keep' ? run.bodyOf(request) : null,
-  ).data?.own_pages;
+  const own = useOwnWork(bookId, stage, menuOpen || ownMode !== 'keep' ? run.bodyOf(request) : null)
+    .data?.own_pages;
   const mode: RunMode = own === 0 ? 'keep' : ownMode;
   const runs = (chosen?.items.length ?? 0) - (mode === 'skip-own-work' ? (own ?? 0) : 0);
 

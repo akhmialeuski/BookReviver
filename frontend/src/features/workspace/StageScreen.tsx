@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useRef, useState } from 'react';
 import type { PageSchema, RecipeKind, ScanSchema, Stage, StagePageSchema, StepFlag } from '@/api';
-import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
+import { bookApiV1BooksBookIdGetOptions } from '@/api/@tanstack/react-query.gen';
 import { EDITOR_ROOM_SHARE } from '@/features/editors/scene';
 import { useEditorSession } from '@/features/editors/useEditorSession';
 import { useManifest } from '@/features/pages/manifest';
@@ -85,14 +85,14 @@ function captionOf(shown: readonly StripItem[], count: number): string {
 }
 
 export function StageScreen({
-  projectId,
+  bookId,
   stage,
   search,
   stepId,
   onSearchChange,
   onStepChange,
 }: {
-  projectId: string;
+  bookId: string;
   stage: Stage;
   search: StageSearch;
   /** The identifier of the step the address names, or undefined when it names none. */
@@ -102,16 +102,14 @@ export function StageScreen({
   /** Open a step of the stage, which is a move to its address; `replace` puts it in place of the address that is open. */
   onStepChange: (stepId: string, replace?: boolean) => void;
 }): React.JSX.Element {
-  const project = useQuery(
-    projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: projectId } }),
-  );
-  const manifest = useManifest(projectId);
-  const rows = useStageRows(projectId, stage);
+  const book = useQuery(bookApiV1BooksBookIdGetOptions({ path: { book_id: bookId } }));
+  const manifest = useManifest(bookId);
+  const rows = useStageRows(bookId, stage);
   const barStage = hasStepBar(stage);
   // The rows at the open step carry the picture of the step and the marks of its results, so on a stage with a bar they are
   // the rows of the strip, the canvas and the counts; the workspace of the step reads the same query
-  const stepRows = useStepRows(projectId, stage, barStage ? stepId : undefined);
-  const summaries = useStageSummaries(projectId);
+  const stepRows = useStepRows(bookId, stage, barStage ? stepId : undefined);
+  const summaries = useStageSummaries(bookId);
   const [picked, setPicked] = useState({ stage, state: NOTHING_SELECTED });
   const canvas = useRef<PageCanvasHandle>(null);
 
@@ -123,7 +121,7 @@ export function StageScreen({
     [stored, pages],
   );
   // Only the Split stage looks at how wide a scan is
-  const scans = useAllScans(projectId, stage === 'page-split');
+  const scans = useAllScans(bookId, stage === 'page-split');
   const items = useMemo(
     () =>
       joinRows(
@@ -167,7 +165,7 @@ export function StageScreen({
   const compareChoice = search.compare ?? CompareMode.Off;
   const currentItem = items[currentIndex];
   const processing = useProcessing(
-    projectId,
+    bookId,
     stage,
     barStage ? stepId : undefined,
     currentItem?.row?.kind,
@@ -293,7 +291,7 @@ export function StageScreen({
   // The grid over the page of every step of Geometry and of the result of the stage, one choice for the book that is off
   // until the reader makes it; it is not the grid of pages, which is a way to lay out the strip
   const hasLevelGrid = stage === 'geometry';
-  const [levelGridOn, toggleLevelGrid] = useGrid(projectId);
+  const [levelGridOn, toggleLevelGrid] = useGrid(bookId);
   useGridKey(toggleLevelGrid, hasLevelGrid && !grid);
 
   const select = (pageId: string, modifiers: ClickModifiers): void =>
@@ -310,8 +308,8 @@ export function StageScreen({
   if (manifest.isError) {
     return <ErrorAlert message={describeError(manifest.error)} />;
   }
-  if (project.isError) {
-    return <ErrorAlert message={describeError(project.error)} />;
+  if (book.isError) {
+    return <ErrorAlert message={describeError(book.error)} />;
   }
   if (manifest.data === undefined) {
     return <p className="p-4 text-sm text-muted-foreground">{MESSAGES.viewer.loading}</p>;
@@ -423,7 +421,7 @@ export function StageScreen({
               contentType={
                 processed && stage !== 'page-split' ? (
                   <ContentTypeMenu
-                    projectId={projectId}
+                    bookId={bookId}
                     items={items}
                     currentId={currentItem?.page.id}
                     selected={selection.selected}

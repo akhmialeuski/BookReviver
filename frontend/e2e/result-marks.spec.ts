@@ -3,8 +3,8 @@ import path from 'node:path';
 import { expect } from '@playwright/test';
 import {
   createBook,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   uploadFolder,
   waitForIdleJobs,
@@ -27,19 +27,19 @@ test('a result is marked and commented, and the notes can be changed later', asy
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
   const entry = page.locator(RESULT_ROWS).first();
-  let projectId = '';
+  let bookId = '';
   let bookPath = '';
 
   await test.step('a page is run and has one result', async () => {
     await openLibrary(page);
     await createBook(page, 'A book with notes on its results');
     await uploadFolder(page, folder, PAGES);
-    projectId = openProjectId(page);
+    bookId = openBookId(page);
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
     // The import leaves jobs behind it, and a run asked for while they last is refused
-    await waitForIdleJobs(page, projectId);
+    await waitForIdleJobs(page, bookId);
     await runPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,

@@ -33,31 +33,31 @@ from bookreviver.api.schemas.processing import (
 )
 from bookreviver.domain.entities import PageStage, PageVersion, Recipe
 from bookreviver.domain.enums import Stage
-from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
+from bookreviver.domain.ids import BookId, PageId, PageVersionId, RecipeId
 from bookreviver.domain.values import RecipeKey
 from bookreviver.services.processing import ProcessingService
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import RecipeProfiles
 from bookreviver.services.run_plans import RunImpactService
 
-PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
+BOOK_ID_DESCRIPTION: str = 'Identifier of the book'
 PAGE_ID_DESCRIPTION: str = 'Identifier of the page'
 STAGE_DESCRIPTION: str = 'Stage of the pipeline'
 RECIPE_ID_DESCRIPTION: str = 'Identifier of the recipe'
 VERSION_ID_DESCRIPTION: str = 'Identifier of the page version'
 
-router = APIRouter(prefix='/projects', tags=['processing'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
+router = APIRouter(prefix='/books', tags=['processing'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 
 @dataclass(frozen=True)
 class StagePath:
     """The identifiers in the address of one stage of a project, read together so a route keeps to a few parameters.
 
-    :ivar project_id: Identifier of the project.
+    :ivar book_id: Identifier of the project.
     :ivar stage: The stage.
     """
 
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)]
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     stage: Annotated[Stage, Path(description=STAGE_DESCRIPTION)]
 
 
@@ -65,12 +65,12 @@ class StagePath:
 class RecipePath:
     """The identifiers in the address of one recipe of a stage of a project.
 
-    :ivar project_id: Identifier of the project.
+    :ivar book_id: Identifier of the project.
     :ivar stage: The stage.
     :ivar recipe_id: Identifier of the recipe.
     """
 
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)]
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     stage: Annotated[Stage, Path(description=STAGE_DESCRIPTION)]
     recipe_id: Annotated[RecipeId, Path(description=RECIPE_ID_DESCRIPTION)]
 
@@ -79,12 +79,12 @@ class RecipePath:
 class PageStagePath:
     """The identifiers in the address of one stage of one page of a project.
 
-    :ivar project_id: Identifier of the project.
+    :ivar book_id: Identifier of the project.
     :ivar page_id: Identifier of the page.
     :ivar stage: The stage.
     """
 
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)]
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     page_id: Annotated[PageId, Path(description=PAGE_ID_DESCRIPTION)]
     stage: Annotated[Stage, Path(description=STAGE_DESCRIPTION)]
 
@@ -93,17 +93,17 @@ class PageStagePath:
 class VersionPath:
     """The identifiers in the address of one version of a page of a project.
 
-    :ivar project_id: Identifier of the project.
+    :ivar book_id: Identifier of the project.
     :ivar page_id: Identifier of the page.
     :ivar version_id: Identifier of the version.
     """
 
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)]
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     page_id: Annotated[PageId, Path(description=PAGE_ID_DESCRIPTION)]
     version_id: Annotated[PageVersionId, Path(description=VERSION_ID_DESCRIPTION, pattern=r'^[0-9a-f]{16}$')]
 
 
-@router.get('/{project_id}/stages/{stage}/recipes')
+@router.get('/{book_id}/stages/{stage}/recipes')
 async def list_recipes(
     address: Annotated[StagePath, Depends()],
     params: Annotated[Params, Depends()],
@@ -128,10 +128,10 @@ async def list_recipes(
     :rtype: Page[RecipeSchema]
     """
     pager = Pager[Recipe, RecipeSchema](params, lambda recipe: RecipeSchema.of(recipe, order.issues(recipe.steps)))
-    return pager.page(await processing.recipes(actor, address.project_id, address.stage, pager.request))
+    return pager.page(await processing.recipes(actor, address.book_id, address.stage, pager.request))
 
 
-@router.put('/{project_id}/stages/{stage}/recipes/{recipe_id}')
+@router.put('/{book_id}/stages/{stage}/recipes/{recipe_id}')
 async def put_recipe(
     address: Annotated[RecipePath, Depends()],
     body: RecipeBody,
@@ -162,12 +162,12 @@ async def put_recipe(
     :rtype: RecipeSchema
     """
     saved = await processing.save_recipe(
-        actor, address.project_id, RecipeKey(address.stage, address.recipe_id), body.to_draft()
+        actor, address.book_id, RecipeKey(address.stage, address.recipe_id), body.to_draft()
     )
     return RecipeSchema.of(saved, order.issues(saved.steps))
 
 
-@router.post('/{project_id}/stages/{stage}/recipes/{recipe_id}/reset')
+@router.post('/{book_id}/stages/{stage}/recipes/{recipe_id}/reset')
 async def reset_recipe(
     address: Annotated[RecipePath, Depends()],
     actor: ActorDep,
@@ -192,11 +192,11 @@ async def reset_recipe(
     :returns: The recipe as stored, with the steps that are out of their place.
     :rtype: RecipeSchema
     """
-    reset = await profiles.reset(actor, address.project_id, RecipeKey(address.stage, address.recipe_id))
+    reset = await profiles.reset(actor, address.book_id, RecipeKey(address.stage, address.recipe_id))
     return RecipeSchema.of(reset, order.issues(reset.steps))
 
 
-@router.post('/{project_id}/stages/{stage}/run', status_code=status.HTTP_202_ACCEPTED)
+@router.post('/{book_id}/stages/{stage}/run', status_code=status.HTTP_202_ACCEPTED)
 async def run_stage(
     address: Annotated[StagePath, Depends()],
     body: StageRunBody,
@@ -222,11 +222,11 @@ async def run_stage(
     :returns: The queued job.
     :rtype: JobSchema
     """
-    job = await processing.start_run(actor, address.project_id, address.stage, body.to_run(address.stage))
+    job = await processing.start_run(actor, address.book_id, address.stage, body.to_run(address.stage))
     return JobSchema.model_validate(job)
 
 
-@router.post('/{project_id}/stages/{stage}/run-impact')
+@router.post('/{book_id}/stages/{stage}/run-impact')
 async def run_impact(
     address: Annotated[StagePath, Depends()],
     body: StageRunBody,
@@ -251,11 +251,11 @@ async def run_impact(
     :returns: The pages the run goes over and the pages that lose work to its mode.
     :rtype: RunImpactSchema
     """
-    counted = await impact.impact(actor, address.project_id, body.to_run(address.stage))
+    counted = await impact.impact(actor, address.book_id, body.to_run(address.stage))
     return RunImpactSchema.model_validate(counted)
 
 
-@router.post('/{project_id}/stages/{stage}/preview', status_code=status.HTTP_202_ACCEPTED)
+@router.post('/{book_id}/stages/{stage}/preview', status_code=status.HTTP_202_ACCEPTED)
 async def preview_step(
     address: Annotated[StagePath, Depends()],
     body: StepPreviewBody,
@@ -279,13 +279,13 @@ async def preview_step(
     :returns: The queued job.
     :rtype: JobSchema
     """
-    job = await processing.start_preview(actor, address.project_id, body.to_preview(address.stage))
+    job = await processing.start_preview(actor, address.book_id, body.to_preview(address.stage))
     return JobSchema.model_validate(job)
 
 
-@router.post('/{project_id}/stages/geometry/measure', status_code=status.HTTP_202_ACCEPTED)
+@router.post('/{book_id}/stages/geometry/measure', status_code=status.HTTP_202_ACCEPTED)
 async def measure_book(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     actor: ActorDep,
     processing: FromDishka[ProcessingService],
 ) -> JobSchema:
@@ -297,8 +297,8 @@ async def measure_book(
     project is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
     :param processing: Processing service of the request.
@@ -306,10 +306,10 @@ async def measure_book(
     :returns: The queued job.
     :rtype: JobSchema
     """
-    return JobSchema.model_validate(await processing.start_measure(actor, project_id))
+    return JobSchema.model_validate(await processing.start_measure(actor, book_id))
 
 
-@router.get('/{project_id}/pages/{page_id}/stages')
+@router.get('/{book_id}/pages/{page_id}/stages')
 async def list_page_stages(
     address: Annotated[PagePath, Depends()],
     params: Annotated[Params, Depends()],
@@ -331,10 +331,10 @@ async def list_page_stages(
     :rtype: Page[PageStageSchema]
     """
     pager = Pager[PageStage, PageStageSchema](params, PageStageSchema.of)
-    return pager.page(await processing.page_stages(actor, address.project_id, address.page_id, pager.request))
+    return pager.page(await processing.page_stages(actor, address.book_id, address.page_id, pager.request))
 
 
-@router.put('/{project_id}/pages/{page_id}/stages/{stage}')
+@router.put('/{book_id}/pages/{page_id}/stages/{stage}')
 async def choose_version(
     address: Annotated[PageStagePath, Depends()],
     body: HeadChoice,
@@ -357,11 +357,11 @@ async def choose_version(
     :returns: The record of the stage in its new state.
     :rtype: PageStageSchema
     """
-    chosen = await processing.choose_version(actor, address.project_id, address.page_id, address.stage, body.version_id)
+    chosen = await processing.choose_version(actor, address.book_id, address.page_id, address.stage, body.version_id)
     return PageStageSchema.of(chosen)
 
 
-@router.get('/{project_id}/pages/{page_id}/versions')
+@router.get('/{book_id}/pages/{page_id}/versions')
 async def list_versions(
     address: Annotated[PagePath, Depends()],
     query: Annotated[VersionQuery, Depends()],
@@ -397,14 +397,14 @@ async def list_versions(
         :returns: The schema.
         :rtype: PageVersionSchema
         """
-        return PageVersionSchema.of(version, address.project_id, request)
+        return PageVersionSchema.of(version, address.book_id, request)
 
     pager = Pager[PageVersion, PageVersionSchema](query, to_schema)
-    found = await processing.versions(actor, address.project_id, address.page_id, query.to_filter(), pager.request)
+    found = await processing.versions(actor, address.book_id, address.page_id, query.to_filter(), pager.request)
     return pager.page(found)
 
 
-@router.get('/{project_id}/pages/{page_id}/versions/{version_id}')
+@router.get('/{book_id}/pages/{page_id}/versions/{version_id}')
 async def get_version(
     address: Annotated[VersionPath, Depends()],
     actor: ActorDep,
@@ -425,11 +425,11 @@ async def get_version(
     :returns: The version.
     :rtype: PageVersionSchema
     """
-    version = await processing.version(actor, address.project_id, address.page_id, address.version_id)
-    return PageVersionSchema.of(version, address.project_id, request)
+    version = await processing.version(actor, address.book_id, address.page_id, address.version_id)
+    return PageVersionSchema.of(version, address.book_id, request)
 
 
-@router.post('/{project_id}/pages/{page_id}/versions/{version_id}/tiles', status_code=status.HTTP_202_ACCEPTED)
+@router.post('/{book_id}/pages/{page_id}/versions/{version_id}/tiles', status_code=status.HTTP_202_ACCEPTED)
 async def cut_version_tiles(
     address: Annotated[VersionPath, Depends()], actor: ActorDep, processing: FromDishka[ProcessingService]
 ) -> JobSchema:
@@ -445,13 +445,13 @@ async def cut_version_tiles(
     :returns: The queued job; its end is announced as ``page-version-ready``.
     :rtype: JobSchema
     """
-    job = await processing.start_tiles(actor, address.project_id, address.page_id, address.version_id)
+    job = await processing.start_tiles(actor, address.book_id, address.page_id, address.version_id)
     return JobSchema.model_validate(job)
 
 
-@router.get('/{project_id}/versions/collectable')
+@router.get('/{book_id}/versions/collectable')
 async def collectable_versions(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     actor: ActorDep,
     processing: FromDishka[ProcessingService],
 ) -> CollectionReportSchema:
@@ -460,8 +460,8 @@ async def collectable_versions(
     The versions are the ones ``POST /projects/{project_id}/versions/collect`` deletes, chosen by the same rule.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
     :param processing: Processing service of the request.
@@ -469,12 +469,12 @@ async def collectable_versions(
     :returns: The number of versions and the bytes their files take.
     :rtype: CollectionReportSchema
     """
-    return CollectionReportSchema.model_validate(await processing.collection_report(actor, project_id))
+    return CollectionReportSchema.model_validate(await processing.collection_report(actor, book_id))
 
 
-@router.post('/{project_id}/versions/collect', status_code=status.HTTP_202_ACCEPTED)
+@router.post('/{book_id}/versions/collect', status_code=status.HTTP_202_ACCEPTED)
 async def collect_versions(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     actor: ActorDep,
     processing: FromDishka[ProcessingService],
 ) -> JobSchema:
@@ -485,8 +485,8 @@ async def collect_versions(
     its row. A collection that is queued or running already is the answer. A run queues one by itself when it ends.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
     :param processing: Processing service of the request.
@@ -494,4 +494,4 @@ async def collect_versions(
     :returns: The queued job.
     :rtype: JobSchema
     """
-    return JobSchema.model_validate(await processing.start_collection(actor, project_id))
+    return JobSchema.model_validate(await processing.start_collection(actor, book_id))

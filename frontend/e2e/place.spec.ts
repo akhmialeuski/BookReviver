@@ -5,7 +5,7 @@ import {
   addPlaceholderPages,
   createBook,
   deleteAsReader,
-  openProjectId,
+  openBookId,
   readPlace,
   registerAndSignIn,
   signIn,
@@ -33,7 +33,7 @@ const MOST_ZOOM_OUT = 0.9;
 async function openFromLibrary(page: Page): Promise<void> {
   await page.getByRole('link', { name: 'Library', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Your books' })).toBeVisible();
-  await page.getByTestId('project-card').first().click();
+  await page.getByTestId('book-card').first().click();
 }
 
 /** Read the zoom the canvas reports once it has stopped moving. */
@@ -50,7 +50,7 @@ test('a reader returns to the stage, the page, the layout and the zoom of a book
   const canvas = page.getByTestId('viewer-canvas');
   const caption = page.getByTestId('canvas-caption');
   let book = '';
-  let projectId = '';
+  let bookId = '';
   let address = '';
   let zoom = 0;
   let email = '';
@@ -59,8 +59,8 @@ test('a reader returns to the stage, the page, the layout and the zoom of a book
     email = await registerAndSignIn(page);
     await createBook(page, 'A book to resume');
     await uploadFolder(page, folder, PAGES);
-    projectId = openProjectId(page);
-    book = `/projects/${projectId}`;
+    bookId = openBookId(page);
+    book = `/books/${bookId}`;
 
     // The spread draws pages on the plain canvas, which the zoom is kept for
     await page.goto(`${book}/stages/geometry`);
@@ -85,7 +85,7 @@ test('a reader returns to the stage, the page, the layout and the zoom of a book
 
   await test.step('the server holds the place a second after the last move', async () => {
     await expect
-      .poll(async () => (await readPlace(page, projectId)).place)
+      .poll(async () => (await readPlace(page, bookId)).place)
       .toMatchObject({
         mode: 'workspace',
         stage: 'geometry',
@@ -120,7 +120,7 @@ test('a reader returns to the stage, the page, the layout and the zoom of a book
     const stranger = await browser.newContext();
     const strangerPage = await stranger.newPage();
     await registerAndSignIn(strangerPage);
-    expect((await readPlace(strangerPage, projectId)).status).toBe(NOT_FOUND);
+    expect((await readPlace(strangerPage, bookId)).status).toBe(NOT_FOUND);
     await stranger.close();
   });
 
@@ -132,18 +132,16 @@ test('a reader returns to the stage, the page, the layout and the zoom of a book
     expect(turned).not.toBe(NO_ID);
     // Leaving at once is before the pause is over, so only the write on hiding the page can save it
     await page.goto('about:blank');
-    await expect.poll(async () => (await readPlace(page, projectId)).place?.page_id).toBe(turned);
+    await expect.poll(async () => (await readPlace(page, bookId)).place?.page_id).toBe(turned);
   });
 
   await test.step('a page that was deleted opens the same stage on its first page', async () => {
     await page.goto(book);
     await expect(canvas).toHaveAttribute('data-state', 'ready');
     const open = (await canvas.getAttribute('data-page-ids'))?.split(',')[0] ?? NO_ID;
-    await expect.poll(async () => (await readPlace(page, projectId)).place?.page_id).toBe(open);
+    await expect.poll(async () => (await readPlace(page, bookId)).place?.page_id).toBe(open);
 
-    expect(await deleteAsReader(page, `/api/v1/projects/${projectId}/pages/${open}`)).toBe(
-      NO_CONTENT,
-    );
+    expect(await deleteAsReader(page, `/api/v1/books/${bookId}/pages/${open}`)).toBe(NO_CONTENT);
     await page.goto(book);
     await expect(page).toHaveURL(/\/stages\/geometry/);
     await expect(page).not.toHaveURL(new RegExp(`page=${open}`));
@@ -161,14 +159,14 @@ test('a book that was closed in the reading mode opens in it on the same page', 
   const folder = await writePagesFolder(PAGES);
   const canvas = page.getByTestId('viewer-canvas');
   const caption = page.getByTestId('viewer-caption');
-  let projectId = '';
+  let bookId = '';
 
   await test.step('a book is read to its fourth page after work on a stage', async () => {
     await registerAndSignIn(page);
     await createBook(page, 'A book to read again');
     await uploadFolder(page, folder, PAGES);
-    projectId = openProjectId(page);
-    await page.goto(`/projects/${projectId}/stages/geometry`);
+    bookId = openBookId(page);
+    await page.goto(`/books/${bookId}/stages/geometry`);
     await expect(page.getByTestId('stage-screen')).toHaveAttribute('data-stage', 'geometry');
     await page.getByRole('link', { name: 'Read the book' }).click();
     // The stage screen has a canvas of the same name, so the caption only the reading mode has says it has come up
@@ -179,7 +177,7 @@ test('a book that was closed in the reading mode opens in it on the same page', 
       await expect(caption).toContainText(`${position} of 6`);
     }
     await expect
-      .poll(async () => (await readPlace(page, projectId)).place)
+      .poll(async () => (await readPlace(page, bookId)).place)
       .toMatchObject({ mode: 'reading', stage: 'geometry' });
   });
 
@@ -192,7 +190,7 @@ test('a book that was closed in the reading mode opens in it on the same page', 
     await expect(caption).toContainText('6 of 6');
     await expect(canvas).toHaveAttribute('data-state', 'ready');
     const last = (await canvas.getAttribute('data-page-ids')) ?? NO_ID;
-    await expect.poll(async () => (await readPlace(page, projectId)).place?.page_id).toBe(last);
+    await expect.poll(async () => (await readPlace(page, bookId)).place?.page_id).toBe(last);
     await openFromLibrary(page);
     await expect(page).toHaveURL(new RegExp(`/viewer\\?page=${last}$`));
     await expect(caption).toContainText('6 of 6');
@@ -210,13 +208,13 @@ test('a book that was closed in the reading mode opens in it on the same page', 
 test('the strip of a long book returns to the page that was first in sight', async ({ page }) => {
   test.setTimeout(LONG_BOOK_TIMEOUT_MS);
   const scroller = page.getByTestId('strip-scroll');
-  let projectId = '';
+  let bookId = '';
   let first = '';
 
   await test.step('a long book is scrolled down its strip', async () => {
     await registerAndSignIn(page);
     await createBook(page, 'A long book to resume');
-    projectId = openProjectId(page);
+    bookId = openBookId(page);
     await addPlaceholderPages(page, LONG_BOOK_PAGES, 'geometry');
     await expect(page.getByTestId('strip-page').first()).toBeVisible();
     const top =
@@ -225,9 +223,9 @@ test('the strip of a long book returns to the page that was first in sight', asy
       element.scrollTop = (element.scrollHeight - element.clientHeight) * 0.6;
     });
     await expect
-      .poll(async () => (await readPlace(page, projectId)).place?.strip_page_id ?? top)
+      .poll(async () => (await readPlace(page, bookId)).place?.strip_page_id ?? top)
       .not.toBe(top);
-    first = (await readPlace(page, projectId)).place?.strip_page_id ?? NO_ID;
+    first = (await readPlace(page, bookId)).place?.strip_page_id ?? NO_ID;
     expect(first).not.toBe(NO_ID);
   });
 
@@ -253,15 +251,15 @@ test('the strip of a long book returns to the page that was first in sight', asy
 test('the zoom of the canvas of a processing stage comes back with the book', async ({ page }) => {
   const folder = await writePagesFolder(PAGES);
   const canvas = page.getByTestId('viewer-canvas');
-  let projectId = '';
+  let bookId = '';
   let zoom = 0;
 
   await test.step('a page of the Geometry stage is zoomed out', async () => {
     await registerAndSignIn(page);
     await createBook(page, 'A book with a zoom');
     await uploadFolder(page, folder, PAGES);
-    projectId = openProjectId(page);
-    await page.goto(`/projects/${projectId}/stages/geometry`);
+    bookId = openBookId(page);
+    await page.goto(`/books/${bookId}/stages/geometry`);
     await expect(canvas).toHaveAttribute('data-state', 'ready');
     await expect.poll(() => zoomOf(page)).toBeGreaterThan(0);
     const fitted = await zoomOf(page);
@@ -269,7 +267,7 @@ test('the zoom of the canvas of a processing stage comes back with the book', as
     await expect.poll(() => zoomOf(page)).toBeLessThan(fitted * MOST_ZOOM_OUT);
     zoom = await zoomOf(page);
     await expect
-      .poll(async () => (await readPlace(page, projectId)).place?.canvas?.zoom ?? fitted)
+      .poll(async () => (await readPlace(page, bookId)).place?.canvas?.zoom ?? fitted)
       .toBeCloseTo(zoom, 1);
   });
 

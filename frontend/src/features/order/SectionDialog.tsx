@@ -34,13 +34,13 @@ import { TextField } from '@/shared/ui/text-field';
 const DISPLAYS = Object.keys(MESSAGES.order.sections.displays) as NumberDisplay[];
 
 export function SectionDialog({
-  projectId,
+  bookId,
   pages,
   section,
   initial,
   onClose,
 }: {
-  projectId: string;
+  bookId: string;
   pages: readonly PageSchema[];
   /** The section to change, or undefined to make a new one. */
   section: PaginationSectionSchema | undefined;
@@ -51,9 +51,9 @@ export function SectionDialog({
   const text = MESSAGES.order.sections;
   const form = text.form;
   const [draft, setDraft] = useState<SectionDraft>(initial);
-  const create = useCreateSection(projectId);
-  const put = usePutSection(projectId);
-  const remove = useDeleteSection(projectId);
+  const create = useCreateSection(bookId);
+  const put = usePutSection(bookId);
+  const remove = useDeleteSection(bookId);
   const busy = create.isPending || put.isPending || remove.isPending;
   const error = [create, put, remove].find((mutation) => mutation.isError)?.error;
   const noNumbers = draft.style === 'none' || draft.display === 'not-counted';
@@ -67,10 +67,10 @@ export function SectionDialog({
   const save = (): void => {
     const body = sectionBody(draft);
     if (section === undefined) {
-      create.mutate({ path: { project_id: projectId }, body }, { onSuccess: onClose });
+      create.mutate({ path: { book_id: bookId }, body }, { onSuccess: onClose });
     } else {
       put.mutate(
-        { path: { project_id: projectId, section_id: section.id }, body },
+        { path: { book_id: bookId, section_id: section.id }, body },
         { onSuccess: onClose },
       );
     }
@@ -190,7 +190,7 @@ export function SectionDialog({
                   disabled={busy}
                   onClick={() =>
                     remove.mutate(
-                      { path: { project_id: projectId, section_id: section.id } },
+                      { path: { book_id: bookId, section_id: section.id } },
                       { onSuccess: onClose },
                     )
                   }

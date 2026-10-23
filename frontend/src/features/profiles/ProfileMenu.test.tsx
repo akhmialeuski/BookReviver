@@ -29,11 +29,11 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   createProfileApiV1RecipeProfilesPost: sdk.create,
   listProfilesApiV1RecipeProfilesGet: sdk.list,
   putProfileApiV1RecipeProfilesProfileIdPut: sdk.replace,
-  putRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePut: sdk.link,
-  listRecipesApiV1ProjectsProjectIdStagesStageRecipesGet: sdk.recipes,
-  putRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPut: sdk.saveRecipe,
-  applyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPost: sdk.apply,
-  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
+  putRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePut: sdk.link,
+  listRecipesApiV1BooksBookIdStagesStageRecipesGet: sdk.recipes,
+  putRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPut: sdk.saveRecipe,
+  applyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPost: sdk.apply,
+  listBookJobsApiV1BooksBookIdJobsGet: sdk.jobs,
 }));
 
 const STEPS = [
@@ -200,7 +200,7 @@ describe('ProfileMenu', () => {
 
     expect(sdk.saveRecipe).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: { project_id: 'project', stage: 'geometry', recipe_id: 'r1' },
+        path: { book_id: 'book', stage: 'geometry', recipe_id: 'r1' },
         body: { steps: bodyOf(off), order: 'free' },
       }),
     );
@@ -326,7 +326,7 @@ describe('ProfileMenu', () => {
     );
     expect(sdk.link).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: { project_id: 'project', stage: 'geometry', recipe_id: 'r1' },
+        path: { book_id: 'book', stage: 'geometry', recipe_id: 'r1' },
         body: { profile_id: 'made' },
       }),
     );
@@ -387,7 +387,7 @@ describe('ProfileMenu', () => {
 
       expect(sdk.apply).toHaveBeenCalledWith(
         expect.objectContaining({
-          path: { project_id: 'project', profile_id: 'p2' },
+          path: { book_id: 'book', profile_id: 'p2' },
           body: { kind: 'text' },
         }),
       );

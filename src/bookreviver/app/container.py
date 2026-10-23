@@ -5,13 +5,13 @@ from typing import TYPE_CHECKING
 from dishka import Provider, make_async_container
 
 from bookreviver.app.providers.accounts import AccountsProvider
+from bookreviver.app.providers.books import BooksProvider
 from bookreviver.app.providers.core import CoreProvider
 from bookreviver.app.providers.database import DatabaseProvider
 from bookreviver.app.providers.imaging import ImagingProvider
 from bookreviver.app.providers.imports import ImportsProvider
 from bookreviver.app.providers.persistence import ChangeWaitProvider
 from bookreviver.app.providers.processing import ProcessingProvider
-from bookreviver.app.providers.projects import ProjectsProvider
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.providers.tracing import TracingProvider
 from bookreviver.app.settings import Settings
@@ -41,7 +41,7 @@ def build_container(settings: Settings, extra_providers: Sequence[Provider] = ()
         ImagingProvider(),
         AccountsProvider(),
         ImportsProvider(),
-        ProjectsProvider(),
+        BooksProvider(),
         ProcessingProvider(),
         *extra_providers,
         context={Settings: settings},

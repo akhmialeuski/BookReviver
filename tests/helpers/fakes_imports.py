@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Job, Page, PaginationSection, Scan, Source
     from bookreviver.domain.enums import Rendition, SourceKind
-    from bookreviver.domain.ids import JobId, ProjectId, SourceId
+    from bookreviver.domain.ids import BookId, JobId, SourceId
     from bookreviver.domain.values import JobEnd, SourceAnalysis, UploadedSource
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.processing import Processor
@@ -99,13 +99,13 @@ class StoredBook(NamedTuple):
         return [labels[page.id] for page in self.pages]
 
 
-async def stored_book(uow: UnitOfWork, project_id: ProjectId) -> StoredBook:
+async def stored_book(uow: UnitOfWork, book_id: BookId) -> StoredBook:
     """Read the sources, scans, pages and pagination sections of a project as committed.
 
     :param uow: Unit of work to read through.
     :type uow: UnitOfWork
-    :param project_id: Project owning the rows.
-    :type project_id: ProjectId
+    :param book_id: Project owning the rows.
+    :type book_id: BookId
     :returns: The rows, read in one transaction.
     :rtype: StoredBook
     """
@@ -125,7 +125,7 @@ async def stored_book(uow: UnitOfWork, project_id: ProjectId) -> StoredBook:
             sections=list(repos.pagination_sections.list_all()),
         )
 
-    return await uow.read_book(project_id, work)
+    return await uow.read_book(book_id, work)
 
 
 def pdf_upload(
@@ -382,11 +382,11 @@ class CrashingSourceStore(LocalSourceStore):
     fail_on_promote: Exception | None = None
 
     @override
-    async def promote(self, project_id: ProjectId, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
+    async def promote(self, book_id: BookId, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
         """Promote the files, unless the test made this promotion crash.
 
-        :param project_id: Project owning the upload and the source.
-        :type project_id: ProjectId
+        :param book_id: Project owning the upload and the source.
+        :type book_id: BookId
         :param job_id: Import job whose upload holds the files.
         :type job_id: JobId
         :param source_id: Source the files become.
@@ -402,7 +402,7 @@ class CrashingSourceStore(LocalSourceStore):
         if (failure := self.fail_on_promote) is not None:
             self.fail_on_promote = None
             raise failure
-        await super().promote(project_id, job_id, source_id, names=names)
+        await super().promote(book_id, job_id, source_id, names=names)
 
 
 @frozen(kw_only=True)

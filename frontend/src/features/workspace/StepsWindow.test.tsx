@@ -23,7 +23,7 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  listStagesApiV1ProjectsProjectIdStagesGet: sdk.stages,
+  listStagesApiV1BooksBookIdStagesGet: sdk.stages,
   listProfilesApiV1RecipeProfilesGet: sdk.profiles,
 }));
 vi.mock('@/features/profiles/ProfileLibraryPanel', () => ({ ProfileLibraryPanel: () => null }));

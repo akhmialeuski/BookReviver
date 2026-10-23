@@ -4,8 +4,8 @@ import { expect } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   uploadFolder,
   waitForIdleJobs,
@@ -63,14 +63,14 @@ test('the shape of a step is on the page in its three states, and they survive a
   /** Wait until the saved edit of the open step is on the screen as set by hand, which a run on the page follows. */
   async function settled(): Promise<void> {
     await expect(layer).toHaveAttribute('data-figure', 'by-hand', { timeout: RUN_TIMEOUT_MS });
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
   }
 
   await test.step('a book of three pages opens on Geometry with a step bar', async () => {
     await openLibrary(page);
     await createBook(page, 'A book of shapes');
     await uploadFolder(page, folder, PAGES);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
@@ -153,7 +153,7 @@ test('the shape of a step is on the page in its three states, and they survive a
     await page.getByTestId('canvas-auto').click();
     await expect(layer).toHaveAttribute('data-figure', 'found', { timeout: RUN_TIMEOUT_MS });
     await expect(state).toContainText('Found by the step');
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
   });
 
   await test.step('a shape set by hand stays as the open step changes and comes back, and a reload does not lose it', async () => {
@@ -195,7 +195,7 @@ test('on a sheet of old paper the shape set by hand stays a dark green line besi
     await openLibrary(page);
     await createBook(page, 'A book of old paper');
     await uploadFolder(page, folder, 1);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     await markPagesAsText(page);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
@@ -209,7 +209,7 @@ test('on a sheet of old paper the shape set by hand stays a dark green line besi
   await test.step('a corner dragged by hand turns the shape into the thicker dark green one', async () => {
     await dragFrom(page, layer, await pairOf(layer, 'data-handle-top-left'), CORNER_DRAG);
     await expect(layer).toHaveAttribute('data-figure', 'by-hand', { timeout: RUN_TIMEOUT_MS });
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     await snap(page, 'paper-set-by-hand');
   });
 

@@ -4,8 +4,8 @@ import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   uploadFolder,
   waitForIdleJobs,
@@ -51,7 +51,7 @@ test('Geometry and Cleanup lay out their panels in one order, with the facts of 
     await openLibrary(page);
     await createBook(page, 'A book with one panel');
     await uploadFolder(page, folder, PAGES);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     await markPagesAsText(page);
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     for (const [stage] of STAGE_STEPS) {

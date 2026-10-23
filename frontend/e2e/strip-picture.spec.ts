@@ -4,8 +4,8 @@ import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   uploadFolder,
   waitForIdleJobs,
@@ -46,13 +46,13 @@ type Versioned = { images: { thumbnail: string } | null } | null;
 /** The versions of the only page of the book that the rows of a stage give, with and without a step. */
 async function rowOf(
   page: Page,
-  projectId: string,
+  bookId: string,
   stage: string,
   stepId?: string,
 ): Promise<{ head: string | null; picture: string | null }> {
   const query = stepId === undefined ? '' : `&step=${stepId}`;
   const listed = await page.request.get(
-    `/api/v1/projects/${projectId}/stages/${stage}/pages?size=10${query}`,
+    `/api/v1/books/${bookId}/stages/${stage}/pages?size=10${query}`,
   );
   const [item] = ((await listed.json()) as { items: { version: Versioned; picture: Versioned }[] })
     .items;
@@ -73,7 +73,7 @@ test('the strip and the canvas show the same picture of the page at every step o
   const thumbnail = page.getByTestId('strip-page').locator('img');
   const canvas = page.getByTestId('viewer-canvas');
   const barSteps = page.getByTestId('bar-step');
-  let projectId = '';
+  let bookId = '';
   let bookPath = '';
 
   // Open the step at a place of the bar, unless it is open already, and give its identifier from the address
@@ -92,8 +92,8 @@ test('the strip and the canvas show the same picture of the page at every step o
     await openLibrary(page);
     await createBook(page, 'A book of strip pictures');
     await uploadFolder(page, folder, 1);
-    projectId = openProjectId(page);
-    await waitForIdleJobs(page, projectId);
+    bookId = openBookId(page);
+    await waitForIdleJobs(page, bookId);
     // A sheet of the fixture is taken for a picture, which the recipe for pictures processes rather than the recipe for text
     await markPagesAsText(page);
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
@@ -121,10 +121,10 @@ test('the strip and the canvas show the same picture of the page at every step o
     // A reload empties the cache of the rows, so the step that is opened next is read from the server
     await page.reload();
     await expect(page.getByTestId('strip-page')).toHaveCount(1);
-    const { head } = await rowOf(page, projectId, 'geometry');
+    const { head } = await rowOf(page, bookId, 'geometry');
     expect(head).not.toBeNull();
     const first = await openStepAt(0);
-    const { picture } = await rowOf(page, projectId, 'geometry', first);
+    const { picture } = await rowOf(page, bookId, 'geometry', first);
     // The control: without it the check below could pass with a result of the stage equal to the picture of the step
     expect(picture).not.toBe(head);
     await openStepAt(1);
@@ -155,7 +155,7 @@ test('the strip and the canvas show the same picture of the page at every step o
     release();
     const { picture: third } = await rowOf(
       page,
-      projectId,
+      bookId,
       'geometry',
       (await barSteps.nth(2).getAttribute('data-step-id')) ?? '',
     );
@@ -175,13 +175,13 @@ test('the strip and the canvas show the same picture of the page at every step o
       const count = await barSteps.count();
       expect(count).toBeGreaterThan(1);
       // The version the stage as a whole ended with, which is what the strip shows when it falls back to the stage
-      const { head } = await rowOf(page, projectId, stage);
+      const { head } = await rowOf(page, bookId, stage);
       for (let index = 0; index < count; index += 1) {
         const stepId = await openStepAt(index);
         const title = (await barSteps.nth(index).textContent()) ?? '';
         await expect(canvas).toHaveAttribute('data-state', 'ready', { timeout: RUN_TIMEOUT_MS });
         // The row of the step says which version is the picture, so the strip is read against the server and the canvas
-        const { picture: expected } = await rowOf(page, projectId, stage, stepId);
+        const { picture: expected } = await rowOf(page, bookId, stage, stepId);
         expect(expected).not.toBeNull();
         await expect(async () => {
           const shown = versionIdOf(await thumbnail.getAttribute('src'));

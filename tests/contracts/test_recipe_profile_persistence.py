@@ -14,8 +14,8 @@ from attrs import evolve
 from bookreviver.domain.enums import OrderMode, Stage
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.values import Step
-from tests.helpers.builders import make_project, make_recipe, make_recipe_profile
-from tests.helpers.seeding import store_project
+from tests.helpers.builders import make_recipe, make_recipe_profile, make_record
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import RecipeProfile
@@ -292,7 +292,7 @@ class TestRecipeProfileRepository:
         """
         owner_id = await fx_new_owner()
         profile = make_recipe_profile(account_id=owner_id)
-        project = make_project()
+        book_record = make_record()
         linked = evolve(make_recipe(), profile_id=profile.id)
         unlinked = make_recipe(stage=Stage.CLEANUP)
 
@@ -307,6 +307,6 @@ class TestRecipeProfileRepository:
             return [repos.recipes.get(recipe.id).profile_id for recipe in (linked, unlinked)]
 
         uow = await _store(fx_uow, profile)
-        await store_project(uow, project, owner=owner_id)
-        await uow.change_book(project.id, lambda repos, _project: repos.recipes.add_many([linked, unlinked]))
-        assert await fx_uow().read_book(project.id, profile_ids) == [profile.id, None]
+        await store_book(uow, book_record, owner=owner_id)
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.recipes.add_many([linked, unlinked]))
+        assert await fx_uow().read_book(book_record.id, profile_ids) == [profile.id, None]

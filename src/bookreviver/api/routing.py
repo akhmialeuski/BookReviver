@@ -2,6 +2,7 @@
 
 from bookreviver.api.routers import (
     accounts,
+    books,
     catalogue,
     edits,
     iiif,
@@ -14,7 +15,6 @@ from bookreviver.api.routers import (
     places,
     processing,
     profiles,
-    projects,
     result_marks,
     sources,
     stages,
@@ -22,7 +22,7 @@ from bookreviver.api.routers import (
 
 ROUTERS = (
     accounts.router,
-    projects.router,
+    books.router,
     sources.router,
     pages.router,
     pagination.router,

@@ -19,7 +19,7 @@ export type ValueTarget = Omit<ValueForm, 'value'>;
 
 /** The open page and everything the values of parts of the pages are told from it. */
 export interface PageValues {
-  projectId: string;
+  bookId: string;
   stage: Stage;
   /** The open page. */
   page: { id: string; name: string };

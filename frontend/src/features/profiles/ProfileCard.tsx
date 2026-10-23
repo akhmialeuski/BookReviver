@@ -65,7 +65,7 @@ function BookActions({
   onApplied: (notice: CardNotice) => void;
 }): React.JSX.Element {
   const { processing } = book;
-  const apply = useApplyProfile(processing.projectId);
+  const apply = useApplyProfile(processing.bookId);
   const dirty = processing.dirty && processing.stage === profile.stage;
 
   return (
@@ -79,7 +79,7 @@ function BookActions({
         onClick={() =>
           apply.mutate(
             {
-              path: { project_id: processing.projectId, profile_id: profile.id },
+              path: { book_id: processing.bookId, profile_id: profile.id },
               body: { kind },
             },
             {
