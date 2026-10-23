@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Job, Page, PageStage, PageVersion, Project, Recipe
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.storage import AssetStore
     from bookreviver.services.book_measure import BlockMeasure
@@ -248,7 +248,7 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         run = StageRun.from_map(job.params)
-        project = await self._uow.read(lambda repos: repos.projects.get(job.project_id))
+        project = await self._uow.read_book(job.project_id, lambda repos: repos.projects.get(job.project_id))
         plan = RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, project_id=project.id, run=run)
         pages = await plan.pages()
         executor = RecipeRun(project=project, uow=self._uow, runtime=self._runtime, control=control, parts=self._parts)
@@ -321,11 +321,11 @@ class ProcessingJobs:
             except Exception:
                 logger.exception('The stage %s failed on page %s', recipe.stage, page.id)
 
-                def fail(repos: Repositories, _project: Project) -> PageStage | None:
+                def fail(repos: BookRepositories, _project: Project) -> PageStage | None:
                     """Record that the stage failed on the page, unless the page was deleted meanwhile.
 
                     :param repos: Repositories of the transaction.
-                    :type repos: Repositories
+                    :type repos: BookRepositories
                     :param _project: The project as the change finds it, which the record does not read.
                     :type _project: Project
                     :returns: The record of the failed stage, or None when the page is gone.
@@ -356,8 +356,8 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         preview = StepPreview.from_map(job.params)
-        project, page = await self._uow.read(
-            lambda repos: (repos.projects.get(job.project_id), repos.pages.get(preview.page_id))
+        project, page = await self._uow.read_book(
+            job.project_id, lambda repos: (repos.projects.get(job.project_id), repos.pages.get(preview.page_id))
         )
         executor = PreviewRun(project=project, uow=self._uow, runtime=self._runtime, control=control)
         await executor.run(page, preview.stage, preview.steps, preview.step_index)
@@ -374,7 +374,7 @@ class ProcessingJobs:
         :param version_id: The version, which is passed by when it is gone, not ready, cut already or without an image.
         :type version_id: PageVersionId
         """
-        version = await self._uow.read(lambda repos: repos.page_versions.find(version_id))
+        version = await self._uow.read_book(project_id, lambda repos: repos.page_versions.find(version_id))
         if (
             version is None
             or version.state is not VersionState.READY
@@ -385,11 +385,11 @@ class ProcessingJobs:
         keys = ProjectKeys(project_id)
         cut_version = await self._runtime.runner.cut_tiles(keys, version)
 
-        def mark(repos: Repositories, _project: Project) -> tuple[bool, PageVersion | None]:
+        def mark(repos: BookRepositories, _project: Project) -> tuple[bool, PageVersion | None]:
             """Store the version with its pyramid cut, when it is still as it was read.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the marking does not read.
             :type _project: Project
             :returns: Whether the version was stored, and the version as the transaction found it, which is None when
@@ -425,8 +425,9 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         collection = VersionCollection.from_map(job.params)
-        old = await self._uow.read(
-            lambda repos: repos.page_versions.collectable(job.project_id, collection.previews_older_than)
+        old = await self._uow.read_book(
+            job.project_id,
+            lambda repos: repos.page_versions.collectable(job.project_id, collection.previews_older_than),
         )
         groups = [list(batched(group, self.COLLECTION_BATCH_SIZE, strict=False)) for group in readers_first(old)]
         control.plan(sum(len(batches) for batches in groups))

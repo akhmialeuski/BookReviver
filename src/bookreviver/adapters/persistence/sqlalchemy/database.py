@@ -1,7 +1,11 @@
-"""The SQLite engines, their threads and the migrations shared by every SQLAlchemy table of the application.
+"""The SQLite engines of one database file, their threads and its migrations.
 
-The database is SQLite, a file that only the API process writes. Every transaction runs whole in a worker thread, from
-its first statement to its commit, on the synchronous engine of the standard ``sqlite3`` driver. A transaction that the
+Every database of the application is SQLite, a file that only the API process writes: the catalogue, one for the
+application, and the file of each book. :class:`Schema` names which of the two a file holds, which picks the metadata of
+its tables and the directory of its revisions, and an instance of :class:`SqlDatabase` serves one file.
+
+Every transaction runs whole in a worker thread, from its first statement to its commit, on the synchronous engine of
+the standard ``sqlite3`` driver. A transaction that the
 event loop drove statement by statement would go to a thread and back through the loop for every round trip of every
 statement, and a write holding the only writer all that time makes the other writes wait for the loop. Here the loop
 hands a function to a thread and gets its result when the transaction has ended, so the writer is held for the work and
@@ -26,7 +30,7 @@ no option passed down to the transaction.
 Both engines connect to SQLite with ``isolation_level = None``, which makes the driver begin nothing by itself, the
 recipe of the SQLAlchemy documentation for SQLite transactions. The ``begin`` listener of each engine emits the
 ``BEGIN`` of its kind, and the driver still ends a transaction with ``COMMIT`` or ``ROLLBACK`` when the session asks.
-On connect each connection turns on foreign keys, so the ``ON DELETE CASCADE`` of pages and jobs works, puts the
+On connect each connection turns on foreign keys, so the ``ON DELETE CASCADE`` of the rows of a book works, puts the
 database in the write-ahead log mode with ``synchronous=NORMAL``, and gets a busy timeout, the longest wait limit of a
 unit of work, through the ``timeout`` argument of the driver. The busy timeout matters only to a lock held by another
 process, such as a migration run by hand, because within the process the write queue is the only contention. The
@@ -36,7 +40,8 @@ the first connection switches it and the others find it set. It needs every proc
 memory, which holds for one machine and not for a network file system. ``migrations/env.py`` turns the foreign keys
 off for the length of a migration.
 
-The write queue is the ``anyio.Semaphore`` of one that :meth:`SqlDatabase.write` takes before it starts the thread.
+The write queue is the ``anyio.Semaphore`` of one that :meth:`SqlDatabase.write` takes before it starts the thread, one
+for each file, so a write of one book never waits for a write of another book or of the catalogue.
 anyio wakes the waiters of a semaphore in the order they asked, which :func:`hold_in_turn` explains, so a write that
 came early is never overtaken by one that came later, and the busy timeout of SQLite, whose waiting connection sleeps
 and tries again, is never the queue. The wait
@@ -61,11 +66,14 @@ commit, because a route maps them to a response after the unit of work committed
 would overwrite it with the wall clock. The options of autogenerate, such as comparing column types, are set in
 ``migrations/env.py``, because advanced-alchemy 1.11.0 does not hand those of ``AlembicSyncConfig`` to Alembic.
 
-The schema is created and changed only by the revisions in ``migrations/``, applied by hand. The application reads
-:meth:`SqlDatabase.schema_revisions` at start and refuses to run against a schema it was not written for, which costs
-one read of the version table.
+The schema of each kind of file is created and changed only by the revisions in its directory under ``migrations/``.
+Those of the catalogue are applied by hand, and the application reads :meth:`SqlDatabase.schema_revisions` at start
+and refuses to run against a catalogue it was not written for, which costs one read of the version table. A book is
+brought to the head revision of its schema when it is opened, by
+:class:`~bookreviver.adapters.persistence.sqlalchemy.books.BookDatabases`.
 """
 
+import enum
 from contextlib import AsyncExitStack, asynccontextmanager
 from functools import partial
 from pathlib import Path
@@ -84,6 +92,8 @@ from sqlalchemy import event
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 
+from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow
+from bookreviver.adapters.persistence.sqlalchemy.tables import BookTable
 from bookreviver.domain.enums import BlockOutcome, SpanAttribute, SpanName
 from bookreviver.domain.errors import BookBusyError
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS, NoChangeOpenError
@@ -92,6 +102,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
     from sqlite3 import Connection as DriverConnection
 
+    from sqlalchemy import MetaData
     from sqlalchemy.engine import Connection, Engine
     from sqlalchemy.orm import ORMExecuteState, Session
     from sqlalchemy.pool import ConnectionPoolEntry
@@ -111,8 +122,30 @@ BEGIN_READ: str = 'BEGIN'
 # How many reads of one database run at once, which is the size of the pool of its readers
 DEFAULT_READERS: int = 4
 MILLISECONDS_PER_SECOND: int = 1_000
-# The revisions of the schema, shipped inside the package next to the tables they change
+# The revisions of the schemas, shipped inside the package next to the tables they change, a directory for each schema
 MIGRATIONS_DIR: Path = Path(__file__).with_name('migrations')
+
+
+class Schema(enum.StrEnum):
+    """The kind of database a file holds, which decides the tables in it and the revisions that build them."""
+
+    CATALOGUE = 'catalogue'
+    BOOK = 'book'
+
+    @property
+    def bind_key(self) -> str | None:
+        """The bind key under which advanced-alchemy keeps the metadata of the tables, None for its default metadata."""
+        return BookTable.__bind_key__ if self is Schema.BOOK else None
+
+    @property
+    def metadata(self) -> MetaData:
+        """The metadata of the tables of the schema, which the revisions build and autogenerate compares with."""
+        return (BookTable if self is Schema.BOOK else LibraryRow).metadata
+
+    @property
+    def migrations(self) -> Path:
+        """The directory of the revisions of the schema, whose ``env.py`` Alembic runs."""
+        return MIGRATIONS_DIR / self.value
 
 
 @frozen
@@ -180,11 +213,13 @@ class WriteBlock:
         self.span.end()
 
 
-def _sqlite_config(url: str, *, connections: int, busy_seconds: float) -> SQLAlchemySyncConfig:
+def _sqlite_config(url: str, *, schema: Schema, connections: int, busy_seconds: float) -> SQLAlchemySyncConfig:
     """Configure one engine of the database with a pool of the given size.
 
     :param url: URL of the database with the driver of the synchronous engine.
     :type url: str
+    :param schema: The kind of database the file holds, whose metadata and revisions the configuration carries.
+    :type schema: Schema
     :param connections: The size of the pool, which is also the most connections the engine ever opens.
     :type connections: int
     :param busy_seconds: How long a statement waits for a lock that another process holds, which sqlite3 takes as its
@@ -201,7 +236,8 @@ def _sqlite_config(url: str, *, connections: int, busy_seconds: float) -> SQLAlc
         ),
         session_config=SyncSessionConfig(expire_on_commit=False),
         enable_touch_updated_timestamp_listener=False,
-        alembic_config=AlembicSyncConfig(script_location=str(MIGRATIONS_DIR)),
+        bind_key=schema.bind_key,
+        alembic_config=AlembicSyncConfig(script_location=str(schema.migrations)),
     )
 
 
@@ -279,13 +315,15 @@ class SqlDatabase:
                   are built.
     :ivar engine: Engine of the writer, whose pool holds one connection.
     :ivar read_engine: Engine of the readers.
-    :ivar migrations: Alembic commands over the engine of the writer and the revisions in ``migrations/``.
+    :ivar schema: The kind of database the file holds.
+    :ivar migrations: Alembic commands over the engine of the writer and the revisions of the schema.
     """
 
     def __init__(
         self,
         url: str,
         *,
+        schema: Schema,
         tracer: Tracer,
         wait_seconds: float = DEFAULT_CHANGE_WAIT_SECONDS,
         readers: int = DEFAULT_READERS,
@@ -296,6 +334,8 @@ class SqlDatabase:
                     names another SQLite driver, such as ``sqlite+aiosqlite``, is given the driver of the synchronous
                     engine.
         :type url: str
+        :param schema: The kind of database the file holds.
+        :type schema: Schema
         :param tracer: Tracer the write blocks are timed with.
         :type tracer: Tracer
         :param wait_seconds: The busy timeout every connection gets when it opens, which is the longest limit a unit of
@@ -310,15 +350,16 @@ class SqlDatabase:
             err_msg = f'BookReviver stores its data in SQLite, and the database URL names {backend}.'
             raise ValueError(err_msg)
         sync_url = sqlite_url.set(drivername=SQLITE_DRIVER).render_as_string(hide_password=False)
+        self.schema = schema
         self._tracer = tracer
         self._write_queue = anyio.Semaphore(1)
         # A thread limiter of its own, so a write never waits behind other to_thread calls in anyio's shared default
         # limiter; the queue admits one write at a time, so this limiter itself never makes a write wait
         self._write_threads = anyio.CapacityLimiter(1)
         self._read_threads = anyio.CapacityLimiter(readers)
-        self.config = _sqlite_config(sync_url, connections=1, busy_seconds=wait_seconds)
+        self.config = _sqlite_config(sync_url, schema=schema, connections=1, busy_seconds=wait_seconds)
         self.engine: Engine = self.config.get_engine()
-        read_config = _sqlite_config(sync_url, connections=readers, busy_seconds=wait_seconds)
+        read_config = _sqlite_config(sync_url, schema=schema, connections=readers, busy_seconds=wait_seconds)
         self.read_engine: Engine = read_config.get_engine()
         for engine in (self.engine, self.read_engine):
             event.listen(engine, 'connect', _configure_connection)
@@ -448,11 +489,18 @@ class SqlDatabase:
         shipped = frozenset(
             await to_thread.run_sync(lambda: [revision.revision for revision in script.walk_revisions()])
         )
+        return SchemaRevisions(database=await self.current_revisions(), code=tuple(script.get_heads()), shipped=shipped)
+
+    async def current_revisions(self) -> tuple[str, ...]:
+        """Read the revisions the version table of the file records, in one read and with no migration environment.
+
+        :returns: The revisions of the file, none for a file no revision has touched.
+        :rtype: tuple[str, ...]
+        """
         options = {'version_table': self.config.alembic_config.version_table_name}
-        database = await self.read(
+        return await self.read(
             lambda session: MigrationContext.configure(session.connection(), opts=options).get_current_heads()
         )
-        return SchemaRevisions(database=database, code=tuple(script.get_heads()), shipped=shipped)
 
     async def dispose(self) -> None:
         """Close every pooled connection of both engines."""

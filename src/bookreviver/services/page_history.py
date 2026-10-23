@@ -29,8 +29,9 @@ from bookreviver.domain.ids import ChangeBatchId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.step_values import StepValues, StepValuesKey
 from bookreviver.domain.version_chains import StepVersions, step_places
+from bookreviver.services.library import Library
 from bookreviver.services.processing_parts import PROJECT_BUSY
-from bookreviver.services.projects import book_pages, owned_page
+from bookreviver.services.projects import book_page, book_pages
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, PageStage, Project, Recipe
     from bookreviver.domain.ids import PageId, PageStepChangeId, PageVersionId, ProjectId
     from bookreviver.domain.values import PageStepKey
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore
     from bookreviver.services.processing_parts import JobStarter
@@ -70,6 +71,7 @@ class PageHistoryService:
         :type clock: Clock
         """
         self._uow = uow
+        self._library = Library(uow=uow)
         self._records = records
         self._starter = starter
         self._assets = assets
@@ -88,7 +90,8 @@ class PageHistoryService:
         :rtype: StepHistory
         :raises NotFoundError: If the actor has no such project, or the project has no such page.
         """
-        return await self._uow.read(lambda repos: self._history(repos, actor, project_id, key))
+        await self._library.open(actor, project_id)
+        return await self._uow.read_book(project_id, lambda repos: self._history(repos, project_id, key))
 
     async def undo(
         self, actor: Actor, project_id: ProjectId, key: PageStepKey, change_id: PageStepChangeId | None
@@ -113,21 +116,22 @@ class PageHistoryService:
         :raises ConflictError: If a layer changed after the change that is taken back, which a later change of the
                                same page or of a page of the batch did.
         """
+        await self._library.open(actor, project_id)
 
-        def work(repos: Repositories, _project: Project) -> tuple[Sequence[PageStepChange], list[PageStage]]:
+        def work(repos: BookRepositories, _project: Project) -> tuple[Sequence[PageStepChange], list[PageStage]]:
             """Write the undos, put the layers and the values back, and mark the stages of the pages stale.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             :returns: The undos that were written, and the stage records that became stale.
             :rtype: tuple[Sequence[PageStepChange], list[PageStage]]
-            :raises NotFoundError: If the actor has no such project, the project has no such page, or the step has no
+            :raises NotFoundError: If the project has no such page, or the step has no
                                    standing change with this identifier.
             :raises ConflictError: If a layer changed after the change that is taken back.
             """
-            history = self._history(repos, actor, project_id, key)
+            history = self._history(repos, project_id, key)
             chosen = history.standing[-1:] if change_id is None else history.back_to(change_id)
             targets = self._with_batches(repos, project_id, chosen)
             if not targets:
@@ -212,24 +216,27 @@ class PageHistoryService:
         :raises ConflictError: If a run, a measure of the book, a tile cutting or a collection of the project is queued
                                or running, which may be reading or deleting the versions the clear deletes.
         """
+        await self._library.open(actor, project_id)
         # The step is checked before the previews are cancelled, so a request the change would refuse cancels nothing
-        await self._uow.read(lambda repos: self._recipes_with_step(repos, actor, project_id, key))
+        await self._uow.read_book(project_id, lambda repos: self._recipes_with_step(repos, project_id, key))
         if await self._starter.free_of_previews(project_id):
             raise ConflictError(PROJECT_BUSY)
 
-        def work(repos: Repositories, _project: Project) -> tuple[ClearedStep, list[PageStage], list[PageVersionId]]:
+        def work(
+            repos: BookRepositories, _project: Project
+        ) -> tuple[ClearedStep, list[PageStage], list[PageVersionId]]:
             """Delete the history, the state and the results of the step on the page, and mark the stages stale.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             :returns: What was deleted, the stage records that became stale, and the versions whose pyramid is not cut.
             :rtype: tuple[ClearedStep, list[PageStage], list[PageVersionId]]
-            :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the
+            :raises NotFoundError: If the project has no such page, or no recipe of the
                                    stage has the step.
             """
-            recipes = self._recipes_with_step(repos, actor, project_id, key)
+            recipes = self._recipes_with_step(repos, project_id, key)
             stored = repos.page_step_states.find(key)
             if stored is not None:
                 repos.page_step_states.delete(key)
@@ -277,48 +284,41 @@ class PageHistoryService:
         return cleared
 
     @staticmethod
-    def _history(repos: Repositories, actor: Actor, project_id: ProjectId, key: PageStepKey) -> StepHistory:
-        """Read the history of one step on one page of the actor's project.
+    def _history(repos: BookRepositories, project_id: ProjectId, key: PageStepKey) -> StepHistory:
+        """Read the history of one step on one page of a book.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
-        :param actor: Account acting in the current request.
-        :type actor: Actor
+        :type repos: BookRepositories
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param key: The page, the stage and the step.
         :type key: PageStepKey
         :returns: The changes of the step, oldest first, with which of them stand.
         :rtype: StepHistory
-        :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        :raises NotFoundError: If the project has no such page.
         """
-        owned_page(repos, actor, project_id, key.page_id)
+        book_page(repos, project_id, key.page_id)
         changes = repos.page_step_changes.list_for_page(key.page_id, key.stage)
         return StepHistory(tuple(change for change in changes if change.step_id == key.step_id))
 
     @staticmethod
-    def _recipes_with_step(
-        repos: Repositories, actor: Actor, project_id: ProjectId, key: PageStepKey
-    ) -> Sequence[Recipe]:
-        """Read the recipes of the stage of a page of the actor's project, which must include the step.
+    def _recipes_with_step(repos: BookRepositories, project_id: ProjectId, key: PageStepKey) -> Sequence[Recipe]:
+        """Read the recipes of the stage of a page of a book, which must include the step.
 
         It only reads, so it is called in a ``read``, to refuse a request before anything is cancelled, and in the work
         of the ``change_book``, to decide on what the transaction holds.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
-        :param actor: Account acting in the current request.
-        :type actor: Actor
+        :type repos: BookRepositories
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param key: The page, the stage and the step.
         :type key: PageStepKey
         :returns: The recipes of the stage.
         :rtype: Sequence[Recipe]
-        :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the stage
-                               has the step.
+        :raises NotFoundError: If the project has no such page, or no recipe of the stage has the step.
         """
-        owned_page(repos, actor, project_id, key.page_id)
+        book_page(repos, project_id, key.page_id)
         recipes = repos.recipes.list_for_stage(project_id, key.stage)
         if not any(step.step_id == key.step_id for recipe in recipes for step in recipe.steps):
             raise NotFoundError(key.step_id)
@@ -326,7 +326,7 @@ class PageHistoryService:
 
     def _take_parts_back(
         self,
-        repos: Repositories,
+        repos: BookRepositories,
         project_id: ProjectId,
         targets: Sequence[PageStepChange],
         moment: datetime,
@@ -345,7 +345,7 @@ class PageHistoryService:
         its version in the cache.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param targets: The changes taken back, of any scope, of which those of pages are left to the caller.
@@ -407,12 +407,12 @@ class PageHistoryService:
 
     @staticmethod
     def _with_batches(
-        repos: Repositories, project_id: ProjectId, chosen: Sequence[PageStepChange]
+        repos: BookRepositories, project_id: ProjectId, chosen: Sequence[PageStepChange]
     ) -> Sequence[PageStepChange]:
         """Add the rest of the batch of each chosen change, and keep the changes that still stand.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param project_id: Identifier of the project, whose pages the batches must all be on.
         :type project_id: ProjectId
         :param chosen: The standing changes of the step that are taken back.

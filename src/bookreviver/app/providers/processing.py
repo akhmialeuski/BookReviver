@@ -28,6 +28,7 @@ from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
 from bookreviver.ports.storage import AssetStore
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.edits import EditService
+from bookreviver.services.library import Library
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.page_carry import CarryOverService
 from bookreviver.services.page_history import PageHistoryService
@@ -199,12 +200,14 @@ class ProcessingProvider(Provider):
 
     @provide(scope=Scope.REQUEST)
     def processing_service(
-        self, uow: UnitOfWork, assets: AssetStore, catalogue: ProcessorCatalog, parts: ProcessingParts
+        self, uow: UnitOfWork, library: Library, assets: AssetStore, catalogue: ProcessorCatalog, parts: ProcessingParts
     ) -> ProcessingService:
         """Build the processing service of a request.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
+        :param library: Library of the current request.
+        :type library: Library
         :param assets: Asset store of the application.
         :type assets: AssetStore
         :param catalogue: The processors the application can run.
@@ -214,16 +217,18 @@ class ProcessingProvider(Provider):
         :returns: The processing service.
         :rtype: ProcessingService
         """
-        return ProcessingService(uow=uow, assets=assets, catalogue=catalogue, parts=parts)
+        return ProcessingService(uow=uow, library=library, assets=assets, catalogue=catalogue, parts=parts)
 
     @provide(scope=Scope.REQUEST)
     def recipe_profiles(
-        self, uow: UnitOfWork, parts: ProcessingParts, processing: ProcessingService, clock: Clock
+        self, uow: UnitOfWork, library: Library, parts: ProcessingParts, processing: ProcessingService, clock: Clock
     ) -> RecipeProfiles:
         """Build the service of the recipe profiles of a request.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
+        :param library: Library of the current request.
+        :type library: Library
         :param parts: The parts the processing use cases share, of which the recipes are used.
         :type parts: ProcessingParts
         :param processing: The processing service of the request, which puts the steps of a profile into a recipe.
@@ -233,7 +238,7 @@ class ProcessingProvider(Provider):
         :returns: The profiles service.
         :rtype: RecipeProfiles
         """
-        return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing, clock=clock)
+        return RecipeProfiles(uow=uow, library=library, recipes=parts.recipes, processing=processing, clock=clock)
 
     @provide(scope=Scope.APP)
     def stage_runtime(
@@ -313,12 +318,14 @@ class ProcessingProvider(Provider):
 
     @provide(scope=Scope.REQUEST)
     def page_settings_service(
-        self, uow: UnitOfWork, catalogue: ProcessorCatalog, parts: ProcessingParts, clock: Clock
+        self, uow: UnitOfWork, library: Library, catalogue: ProcessorCatalog, parts: ProcessingParts, clock: Clock
     ) -> PageSettingsService:
         """Build the page settings service of a request.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
+        :param library: Library of the current request.
+        :type library: Library
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
         :param parts: The parts the processing use cases share, of which the stage records are used.
@@ -328,27 +335,33 @@ class ProcessingProvider(Provider):
         :returns: The page settings service.
         :rtype: PageSettingsService
         """
-        return PageSettingsService(uow=uow, catalogue=catalogue, records=parts.records, clock=clock)
+        return PageSettingsService(uow=uow, library=library, catalogue=catalogue, records=parts.records, clock=clock)
 
     @provide(scope=Scope.REQUEST)
-    def run_impact_service(self, uow: UnitOfWork, parts: ProcessingParts) -> RunImpactService:
+    def run_impact_service(self, uow: UnitOfWork, library: Library, parts: ProcessingParts) -> RunImpactService:
         """Build the run impact service of a request.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
+        :param library: Library of the current request.
+        :type library: Library
         :param parts: The parts the processing use cases share, of which the recipes and the clock are used.
         :type parts: ProcessingParts
         :returns: The run impact service.
         :rtype: RunImpactService
         """
-        return RunImpactService(uow=uow, recipes=parts.recipes, clock=parts.clock)
+        return RunImpactService(uow=uow, library=library, recipes=parts.recipes, clock=parts.clock)
 
     @provide(scope=Scope.REQUEST)
-    def carry_over_service(self, uow: UnitOfWork, parts: ProcessingParts, clock: Clock) -> CarryOverService:
+    def carry_over_service(
+        self, uow: UnitOfWork, library: Library, parts: ProcessingParts, clock: Clock
+    ) -> CarryOverService:
         """Build the carry-over service of a request.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
+        :param library: Library of the current request.
+        :type library: Library
         :param parts: The parts the processing use cases share, of which the stage records are used.
         :type parts: ProcessingParts
         :param clock: Clock of the application.
@@ -356,7 +369,7 @@ class ProcessingProvider(Provider):
         :returns: The carry-over service.
         :rtype: CarryOverService
         """
-        return CarryOverService(uow=uow, records=parts.records, clock=clock)
+        return CarryOverService(uow=uow, library=library, records=parts.records, clock=clock)
 
     @provide(scope=Scope.REQUEST)
     def page_history_service(
@@ -378,17 +391,19 @@ class ProcessingProvider(Provider):
         return PageHistoryService(uow=uow, records=parts.records, starter=parts.starter, assets=assets, clock=clock)
 
     @provide(scope=Scope.REQUEST)
-    def result_marks_service(self, uow: UnitOfWork, clock: Clock) -> ResultMarksService:
+    def result_marks_service(self, uow: UnitOfWork, library: Library, clock: Clock) -> ResultMarksService:
         """Build the result marks service of a request.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
+        :param library: Library of the current request.
+        :type library: Library
         :param clock: Clock of the application.
         :type clock: Clock
         :returns: The result marks service.
         :rtype: ResultMarksService
         """
-        return ResultMarksService(uow=uow, clock=clock)
+        return ResultMarksService(uow=uow, library=library, clock=clock)
 
     @provide(scope=Scope.REQUEST)
     def outdated_results(self, uow: UnitOfWork, catalogue: ProcessorCatalog, clock: Clock) -> OutdatedResults:

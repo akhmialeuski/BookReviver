@@ -5,10 +5,10 @@ of a stage changes, the later stages of the same page were computed from the old
 stale and their versions stay, which lets the interface show the old result with a mark until the user computes it
 again. A record that already failed stays failed, since a stale mark would hide the failure.
 
-Every method that writes or reads records takes the ``Repositories`` of the transaction it runs in, so it is called from
-the work of ``UnitOfWork.change_book`` or ``UnitOfWork.change`` and opens no transaction of its own. It is synchronous,
-like the work that calls it. Only ``announce`` is asynchronous: the caller awaits it after the transaction has ended, so
-a browser reads the stages it shows again.
+Every method that writes or reads records takes the ``BookRepositories`` of the transaction it runs in, so it is called
+from the work of ``UnitOfWork.change_book`` or ``UnitOfWork.read_book`` and opens no transaction of its own. It is
+synchronous, like the work that calls it. Only ``announce`` is asynchronous: the caller awaits it after the transaction
+has ended, so a browser reads the stages it shows again.
 
 A value for the odd pages or the even pages is taken by place, so a page that a change of the places of the pages turns
 over to the other side runs with other parameters, and its stages are marked stale by ``watching_sides``.
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import Clock, EventPublisher
 
 
@@ -50,7 +50,7 @@ class StageRecords:
 
     def set_head(
         self,
-        repos: Repositories,
+        repos: BookRepositories,
         key: PageStageKey,
         *,
         head_version_id: PageVersionId,
@@ -60,7 +60,7 @@ class StageRecords:
         """Make a version the current one of a stage, and mark the later stages of the page stale if it changed.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param key: Page and stage whose record changes.
         :type key: PageStageKey
         :param head_version_id: Version that becomes the current one.
@@ -89,14 +89,14 @@ class StageRecords:
             changed.extend(self._mark_later_stale(repos, key.page_id, key.stage))
         return changed
 
-    def clear(self, repos: Repositories, key: PageStageKey) -> list[PageStage]:
+    def clear(self, repos: BookRepositories, key: PageStageKey) -> list[PageStage]:
         """Remove the record of a stage of a page that has no current version of its own any longer.
 
         The later stages of the page were computed from the version the record named, so they are marked stale, and the
         record of a stage the page never had is nothing to remove.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param key: Page and stage whose record is removed.
         :type key: PageStageKey
         :returns: The later stages that became stale.
@@ -107,11 +107,11 @@ class StageRecords:
         repos.page_stages.delete(key)
         return self._mark_later_stale(repos, key.page_id, key.stage)
 
-    def mark_stale(self, repos: Repositories, page_id: PageId, stage: Stage) -> list[PageStage]:
+    def mark_stale(self, repos: BookRepositories, page_id: PageId, stage: Stage) -> list[PageStage]:
         """Mark one stage of a page stale, because its recipe or a manual edit it reads changed.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param page_id: Page whose stage is marked.
         :type page_id: PageId
         :param stage: The stage.
@@ -123,12 +123,12 @@ class StageRecords:
         return self._stale(repos, [] if record is None else [record])
 
     def mark_pages_stale(
-        self, repos: Repositories, page_ids: Collection[PageId], stages: Collection[Stage]
+        self, repos: BookRepositories, page_ids: Collection[PageId], stages: Collection[Stage]
     ) -> list[PageStage]:
         """Mark some stages of some pages stale, which is one read for all of them.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param page_ids: Pages whose stages are marked.
         :type page_ids: Collection[PageId]
         :param stages: The stages to mark.
@@ -143,7 +143,7 @@ class StageRecords:
         )
 
     def mark_group_stale(
-        self, repos: Repositories, project_id: ProjectId, page_id: PageId, labels: Collection[str]
+        self, repos: BookRepositories, project_id: ProjectId, page_id: PageId, labels: Collection[str]
     ) -> list[PageStage]:
         """Mark the stages of a page stale in which a group it joined or left has values for a step.
 
@@ -151,7 +151,7 @@ class StageRecords:
         parameters wherever one of the two groups has a value, and in no other stage.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param project_id: Project owning the page and the values.
         :type project_id: ProjectId
         :param page_id: Page whose group changed.
@@ -169,7 +169,7 @@ class StageRecords:
         return self.mark_pages_stale(repos, [page_id], stages)
 
     def mark_sides_stale(
-        self, repos: Repositories, project_id: ProjectId, page_ids: Collection[PageId]
+        self, repos: BookRepositories, project_id: ProjectId, page_ids: Collection[PageId]
     ) -> list[PageStage]:
         """Mark the stages of pages stale in which the odd pages or the even pages have values for a step.
 
@@ -177,7 +177,7 @@ class StageRecords:
         by an odd number runs with other parameters wherever one of the two sides has a value, and in no other stage.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param project_id: Project owning the pages and the values.
         :type project_id: ProjectId
         :param page_ids: Pages that stand on the other side of the book than they did.
@@ -187,11 +187,11 @@ class StageRecords:
         """
         return self.mark_pages_stale(repos, page_ids, self.side_stages(repos, project_id))
 
-    def watching_sides(self, repos: Repositories, project_id: ProjectId) -> SideWatch:
+    def watching_sides(self, repos: BookRepositories, project_id: ProjectId) -> SideWatch:
         """Watch the pages of a project for the ones that a block of code turns over to the other side of the book.
 
         :param repos: Repositories of the transaction the block runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param project_id: Project whose pages the block moves, adds or deletes.
         :type project_id: ProjectId
         :returns: The watch, which is entered with ``with`` around the block, inside the work of the caller.
@@ -200,11 +200,11 @@ class StageRecords:
         return SideWatch(records=self, repos=repos, project_id=project_id)
 
     @staticmethod
-    def side_stages(repos: Repositories, project_id: ProjectId) -> set[Stage]:
+    def side_stages(repos: BookRepositories, project_id: ProjectId) -> set[Stage]:
         """Find the stages in which the odd pages or the even pages of a project have values for a step.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param project_id: Project owning the values.
         :type project_id: ProjectId
         :returns: The stages, none when no side has a value.
@@ -214,14 +214,14 @@ class StageRecords:
             values.stage for values in repos.step_values.list_for_project(project_id) if values.scope in SIDE_SCOPES
         }
 
-    def mark_content_stale(self, repos: Repositories, page_id: PageId) -> list[PageStage]:
+    def mark_content_stale(self, repos: BookRepositories, page_id: PageId) -> list[PageStage]:
         """Mark every stage of a page after the page order stale, because what the page shows changed.
 
         A page is processed by the recipe of its kind, so a page whose kind changed is processed by other steps than the
         ones that made its current versions.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param page_id: Page whose kind changed.
         :type page_id: PageId
         :returns: The records that became stale, none for a page that has not been through such a stage or whose stages
@@ -237,11 +237,11 @@ class StageRecords:
             ),
         )
 
-    def mark_recipe_stale(self, repos: Repositories, recipe_id: RecipeId) -> list[PageStage]:
+    def mark_recipe_stale(self, repos: BookRepositories, recipe_id: RecipeId) -> list[PageStage]:
         """Mark the stage of every page a recipe processed stale, because the recipe changed.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param recipe_id: Recipe that changed.
         :type recipe_id: RecipeId
         :returns: The records that became stale.
@@ -250,12 +250,12 @@ class StageRecords:
         return self._stale(repos, repos.page_stages.list_for_recipe(recipe_id))
 
     def mark_failed(
-        self, repos: Repositories, page_id: PageId, stage: Stage, *, recipe_id: RecipeId | None
+        self, repos: BookRepositories, page_id: PageId, stage: Stage, *, recipe_id: RecipeId | None
     ) -> PageStage:
         """Record that a stage failed on a page, keeping the version that was current before.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param page_id: Page whose stage failed.
         :type page_id: PageId
         :param stage: The stage.
@@ -289,11 +289,11 @@ class StageRecords:
         for record in records:
             await self._publisher.publish(PageStageChanged(project_id=project_id, stage=record))
 
-    def _mark_later_stale(self, repos: Repositories, page_id: PageId, stage: Stage) -> list[PageStage]:
+    def _mark_later_stale(self, repos: BookRepositories, page_id: PageId, stage: Stage) -> list[PageStage]:
         """Mark every up-to-date stage after ``stage`` stale.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param page_id: Page whose later stages are marked.
         :type page_id: PageId
         :param stage: The stage that changed.
@@ -306,11 +306,11 @@ class StageRecords:
             (later for later in repos.page_stages.list_for_page(page_id) if later.stage.position > stage.position),
         )
 
-    def _stale(self, repos: Repositories, records: Iterable[PageStage]) -> list[PageStage]:
+    def _stale(self, repos: BookRepositories, records: Iterable[PageStage]) -> list[PageStage]:
         """Write the up-to-date ones of some records as stale in one statement, and leave the others as they are.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param records: Records read in the transaction of the caller.
         :type records: Iterable[PageStage]
         :returns: The records that became stale.
@@ -336,13 +336,13 @@ class SideWatch:
     :ivar turned: The records that became stale, which are none until a block ends without an error.
     """
 
-    def __init__(self, *, records: StageRecords, repos: Repositories, project_id: ProjectId) -> None:
+    def __init__(self, *, records: StageRecords, repos: BookRepositories, project_id: ProjectId) -> None:
         """Watch the pages of a project through the repositories of the caller's transaction.
 
         :param records: Writer of the stage records.
         :type records: StageRecords
         :param repos: Repositories of the transaction the watched block runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param project_id: Project owning the pages.
         :type project_id: ProjectId
         """

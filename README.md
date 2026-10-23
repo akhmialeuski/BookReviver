@@ -54,7 +54,8 @@ Run these once on a new machine, in this order, from the root of the repository.
    Paste the printed text as the value of `BOOKREVIVER_AUTH__SECRET` in `.env`. Every other setting has a default, and
    the file lists them all.
 
-4. **Database.** The application never changes the schema itself, so create it by hand.
+4. **Database.** The application never changes the schema of its catalogue itself, so create it by hand. Every book
+   gets a database file of its own in its directory, which the application makes and migrates itself.
 
    ```bash
    uv run bookreviver-migrate upgrade head
@@ -81,9 +82,13 @@ Run these once on a new machine, in this order, from the root of the repository.
 
 ## After you pull new code
 
-- A new file in `src/bookreviver/adapters/persistence/sqlalchemy/migrations/versions/` needs
+- A new file in `src/bookreviver/adapters/persistence/sqlalchemy/migrations/catalogue/versions/` needs
   `uv run bookreviver-migrate upgrade head`, after copying `data/` if it holds anything worth keeping. Until then the
-  server refuses to start and names this command.
+  server refuses to start and names this command. A new revision of a book needs nothing: each book is migrated when it
+  is opened.
+- A `data/` of the releases that kept everything in one `data/bookreviver.db` needs
+  `uv run bookreviver-migrate split-shared-database` once, after `upgrade head` with the last of those releases. The
+  command fills the catalogue and gives every book its own database, and leaves `bookreviver.db` as it was.
 - A change of `pyproject.toml` or `uv.lock` needs `uv sync --extra cv`. Plain `uv sync` removes OpenCV, and the server
   then starts without the steps that split a spread and straighten a page. With the pre-commit hooks installed, the
   `uv-sync` hook does this by itself after every checkout, merge and rebase, with every optional group.

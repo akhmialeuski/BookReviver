@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import PageVersion, Project
     from bookreviver.domain.ids import PageVersionId, ProjectId
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.storage import AssetStore
 
 BEING_COLLECTED: str = 'The version is being deleted.'
@@ -66,14 +66,14 @@ class VersionClearing:
         going = [version for version in batch if version.id not in self._held]
         self._hold(version for version in batch if version.id in self._held)
 
-        def mark(repos: Repositories, _project: Project) -> None:
+        def mark(repos: BookRepositories, _project: Project) -> None:
             """Mark the versions that are ready as failed, so none of them is taken for a result while its files go.
 
             The versions are read again, so a version deleted meanwhile is left out and a mark or a comment a user put
             on one since the collection chose it is kept.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the marking does not read.
             :type _project: Project
             """

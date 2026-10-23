@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import StepId
     from bookreviver.domain.step_values import StepValues
     from bookreviver.domain.values import MetadataMap
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
 
 
 class PageLayers:
@@ -39,11 +39,11 @@ class PageLayers:
         self._parts: list[StepValues] | None = None
         self._position: int | None = None
 
-    def position(self, repos: Repositories) -> int:
+    def position(self, repos: BookRepositories) -> int:
         """Count the place of the page in the book, from 1, on the first call.
 
         :param repos: Repositories of the transaction the caller runs in, which are only read.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :returns: The place of the page, whose parity tells the odd pages from the even.
         :rtype: int
         """
@@ -51,11 +51,13 @@ class PageLayers:
             self._position = repos.pages.count_before(self.page) + 1
         return self._position
 
-    def lay(self, repos: Repositories, step_id: StepId, params: MetadataMap, own: MetadataMap | None) -> dict[str, Any]:
+    def lay(
+        self, repos: BookRepositories, step_id: StepId, params: MetadataMap, own: MetadataMap | None
+    ) -> dict[str, Any]:
         """Work out the parameters a step runs with on the page: the recipe, then the side, the group and the page.
 
         :param repos: Repositories of the transaction the caller runs in, which are only read.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param step_id: The step of a recipe.
         :type step_id: StepId
         :param params: Parameters of the step as the recipe, or the form of a preview, gives them.

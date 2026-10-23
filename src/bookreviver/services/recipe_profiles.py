@@ -1,9 +1,11 @@
 """The recipe profiles of an account: saving, copying and exchanging the steps of a recipe, applying them to a book.
 
-A profile belongs to the account. A recipe made from a profile remembers it (``Recipe.profile_id``), so the book can
-tell how its steps differ from the profile, but it is a recipe like any other: deleting the profile only clears the
-link and changes no book. Another account's profile is reported exactly like a missing one, as another account's
-project is, so the identifiers of profiles cannot be probed.
+A profile belongs to the account and lives in the catalogue, while a recipe made from it lives in a book, which knows
+nothing of accounts. The recipe remembers the profile (``Recipe.profile_id``), so the book can tell how its steps differ
+from the profile, but it is a recipe like any other: deleting the profile only clears the link in the recipes of the
+account's books and changes no step. The number of books that use a profile is counted from the recipes of the books
+of the account. Another account's profile is reported exactly like a missing one, as another account's project is, so
+the identifiers of profiles cannot be probed.
 
 Applying a profile to a book puts its steps into the recipe of one kind of page of the stage and links the recipe to the
 profile, through the use cases of ``ProcessingService``, which also mark the pages the recipe processed stale. A
@@ -16,6 +18,8 @@ An import refuses a file whose processors are not all installed, since a profile
 be a profile the account holds without knowing it.
 """
 
+from collections import Counter
+from functools import partial
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -26,15 +30,15 @@ from bookreviver.domain.enums import OrderMode
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import RecipeProfileId
 from bookreviver.domain.values import RecipeDraft, RecipeKey, Slice
-from bookreviver.services.projects import owned_project, require_owner
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Project, Recipe
     from bookreviver.domain.enums import RecipeKind, Stage
     from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.values import ProfileDraft, SliceRequest
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
+    from bookreviver.services.library import Library
     from bookreviver.services.processing import ProcessingService
     from bookreviver.services.recipes import RecipeBook
 
@@ -73,12 +77,16 @@ class AppliedProfile:
 class RecipeProfiles:
     """Lists, saves, copies, exchanges, renames, deletes and applies the recipe profiles of the acting account."""
 
-    def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, processing: ProcessingService, clock: Clock) -> None:
+    def __init__(
+        self, *, uow: UnitOfWork, library: Library, recipes: RecipeBook, processing: ProcessingService, clock: Clock
+    ) -> None:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request. A use case that changes the profiles of the account runs in one
                     ``change``, and ``link`` runs in the ``change_book`` of the book it changes.
         :type uow: UnitOfWork
+        :param library: Library that opens the books of the acting account.
+        :type library: Library
         :param recipes: The recipes of the project, which check the steps of a profile.
         :type recipes: RecipeBook
         :param processing: The use cases that put the steps of a profile into a recipe of a book.
@@ -87,6 +95,7 @@ class RecipeProfiles:
         :type clock: Clock
         """
         self._uow = uow
+        self._library = library
         self._recipes = recipes
         self._processing = processing
         self._clock = clock
@@ -106,12 +115,12 @@ class RecipeProfiles:
         return await self._uow.read(lambda repos: self._window(repos, actor, stage, request))
 
     def _window(
-        self, repos: Repositories, actor: Actor, stage: Stage | None, request: SliceRequest
+        self, repos: CatalogueRepositories, actor: Actor, stage: Stage | None, request: SliceRequest
     ) -> Slice[RecipeProfile]:
         """Read the profiles of the account and cut the window the request asks for.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: CatalogueRepositories
         :param actor: Account acting in the current request.
         :type actor: Actor
         :param stage: The stage whose profiles are wanted, or None for every stage.
@@ -136,23 +145,12 @@ class RecipeProfiles:
         :returns: The profiles of the window with their books, and the number of all the profiles that match.
         :rtype: Slice[ListedProfile]
         """
-
-        def work(repos: Repositories) -> Slice[ListedProfile]:
-            """Read the window of profiles and the number of books of each, in one snapshot.
-
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :returns: The profiles of the window with their books, and the number of all the profiles that match.
-            :rtype: Slice[ListedProfile]
-            """
-            window = self._window(repos, actor, stage, request)
-            books = repos.recipe_profiles.count_books([profile.id for profile in window.items])
-            return Slice(
-                items=[ListedProfile(profile=profile, books=books.get(profile.id, 0)) for profile in window.items],
-                total=window.total,
-            )
-
-        return await self._uow.read(work)
+        window = await self._uow.read(lambda repos: self._window(repos, actor, stage, request))
+        books = await self._books_by_profile(actor)
+        return Slice(
+            items=[ListedProfile(profile=profile, books=books[profile.id]) for profile in window.items],
+            total=window.total,
+        )
 
     async def get(self, actor: Actor, profile_id: RecipeProfileId) -> RecipeProfile:
         """Return a profile of the account, which is what its file is written from.
@@ -181,11 +179,11 @@ class RecipeProfiles:
         :raises NotFoundError: If the account has no such profile.
         """
 
-        def work(repos: Repositories) -> RecipeProfile:
+        def work(repos: CatalogueRepositories) -> RecipeProfile:
             """Read the profile and store its copy.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: CatalogueRepositories
             :returns: The copy as stored.
             :rtype: RecipeProfile
             :raises NotFoundError: If the account has no such profile.
@@ -271,11 +269,11 @@ class RecipeProfiles:
                                         usual order.
         """
 
-        def work(repos: Repositories) -> RecipeProfile:
+        def work(repos: CatalogueRepositories) -> RecipeProfile:
             """Read the profile, check the new steps against its stage and store the changed profile.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: CatalogueRepositories
             :returns: The profile as stored.
             :rtype: RecipeProfile
             :raises NotFoundError: If the account has no such profile.
@@ -317,28 +315,28 @@ class RecipeProfiles:
                                account has no such profile.
         :raises InvalidParametersError: If the profile is for another stage than the recipe.
         """
+        await self._library.open(actor, project_id)
+        profile = (
+            None if profile_id is None else await self._uow.read(lambda repos: self._owned(repos, actor, profile_id))
+        )
 
-        def work(repos: Repositories, project: Project) -> Recipe:
-            """Check the owner, the recipe and the profile, and store the recipe with its new link.
+        def work(repos: BookRepositories, _project: Project) -> Recipe:
+            """Check the recipe and the stage of the profile, and store the recipe with its new link.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :param project: The project as the change finds it.
-            :type project: Project
+            :type repos: BookRepositories
+            :param _project: The project as the change finds it, which the work does not need.
+            :type _project: Project
             :returns: The recipe as stored.
             :rtype: Recipe
-            :raises NotFoundError: If the actor has no such project, the project has no such recipe of the stage, or
-                                   the account has no such profile.
+            :raises NotFoundError: If the project has no such recipe of the stage.
             :raises InvalidParametersError: If the profile is for another stage than the recipe.
             """
-            require_owner(project, actor)
             recipe = self._recipes.get(repos, project_id, key.recipe_id, stage=key.stage)
-            if profile_id is not None:
-                profile = self._owned(repos, actor, profile_id)
-                if profile.stage is not recipe.stage:
-                    raise InvalidParametersError(
-                        OTHER_STAGE.format(name=profile.name, actual=profile.stage.label, expected=recipe.stage.label)
-                    )
+            if profile is not None and profile.stage is not recipe.stage:
+                raise InvalidParametersError(
+                    OTHER_STAGE.format(name=profile.name, actual=profile.stage.label, expected=recipe.stage.label)
+                )
             return repos.recipes.update(evolve(recipe, profile_id=profile_id))
 
         return await self._uow.change_book(project_id, work)
@@ -357,11 +355,11 @@ class RecipeProfiles:
         :raises NotFoundError: If the account has no such profile.
         """
 
-        def work(repos: Repositories) -> RecipeProfile:
+        def work(repos: CatalogueRepositories) -> RecipeProfile:
             """Read the profile and store it under the new name.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: CatalogueRepositories
             :returns: The profile as stored.
             :rtype: RecipeProfile
             :raises NotFoundError: If the account has no such profile.
@@ -388,11 +386,11 @@ class RecipeProfiles:
         :raises NotFoundError: If the account has no such profile.
         """
 
-        def work(repos: Repositories) -> RecipeProfile:
+        def work(repos: CatalogueRepositories) -> RecipeProfile:
             """Demote the default of the stage when a new one is chosen, and store the profile with its mark.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: CatalogueRepositories
             :returns: The profile as stored.
             :rtype: RecipeProfile
             :raises NotFoundError: If the account has no such profile.
@@ -408,7 +406,10 @@ class RecipeProfiles:
         return await self._uow.change(work)
 
     async def remove(self, actor: Actor, profile_id: RecipeProfileId) -> None:
-        """Delete a profile, which changes no recipe of any book.
+        """Delete a profile, and clear the link to it in the recipes of the account's books, which changes no step.
+
+        The profile is checked first, then the books are cleared one at a time, each in a ``change_book`` of its own,
+        and the profile goes last, so a failure keeps the profile and calling this again finishes the job.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -416,18 +417,23 @@ class RecipeProfiles:
         :type profile_id: RecipeProfileId
         :raises NotFoundError: If the account has no such profile.
         """
+        await self._uow.read(lambda repos: self._owned(repos, actor, profile_id))
 
-        def work(repos: Repositories) -> None:
-            """Check that the profile is the account's and delete it.
+        def unlink(repos: BookRepositories, project: Project) -> None:
+            """Clear the link of every recipe of the book that was made from the profile.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :raises NotFoundError: If the account has no such profile.
+            :type repos: BookRepositories
+            :param project: The project as the change finds it.
+            :type project: Project
             """
-            self._owned(repos, actor, profile_id)
-            repos.recipe_profiles.delete(profile_id)
+            for recipe in repos.recipes.list_for_project(project.id):
+                if recipe.profile_id == profile_id:
+                    repos.recipes.update(evolve(recipe, profile_id=None))
 
-        await self._uow.change(work)
+        for project_id in await self._owned_books(actor):
+            await self._uow.change_book(project_id, unlink)
+        await self._uow.change(lambda repos: repos.recipe_profiles.delete(profile_id))
 
     async def apply(
         self, actor: Actor, project_id: ProjectId, profile_id: RecipeProfileId, *, kind: RecipeKind
@@ -451,20 +457,8 @@ class RecipeProfiles:
         :raises NotFoundError: If the account has no such profile or project, or the stage has no recipe.
         :raises InvalidParametersError: If no step of the profile can run here, or a step no longer fits its processor.
         """
-
-        def read(repos: Repositories) -> RecipeProfile:
-            """Check that the project and the profile are the actor's, and read the profile.
-
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :returns: The profile.
-            :rtype: RecipeProfile
-            :raises NotFoundError: If the account has no such profile or project.
-            """
-            owned_project(repos.projects, actor, project_id)
-            return self._owned(repos, actor, profile_id)
-
-        profile = await self._uow.read(read)
+        await self._library.open(actor, project_id)
+        profile = await self._uow.read(lambda repos: self._owned(repos, actor, profile_id))
         steps, missing = self._recipes.installed(profile.steps)
         if missing and not any(step.enabled for step in steps):
             raise InvalidParametersError(NOTHING_TO_APPLY.format(keys=KEY_SEPARATOR.join(missing)))
@@ -495,22 +489,12 @@ class RecipeProfiles:
         :raises NotFoundError: If the actor has no such project, the project has no such recipe of the stage, or the
                                stage has no steps by default.
         """
-
-        def read(repos: Repositories) -> RecipeDraft:
-            """Check the owner and the recipe, and read the steps the recipe starts with.
-
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :returns: The draft of the starting steps of the recipe's kind.
-            :rtype: RecipeDraft
-            :raises NotFoundError: If the actor has no such project, the project has no such recipe of the stage, or
-                                   the stage has no steps by default.
-            """
-            project = owned_project(repos.projects, actor, project_id)
-            recipe = self._recipes.get(repos, project_id, key.recipe_id, stage=key.stage)
-            return self._recipes.default_draft(repos, project, key.stage, recipe.kind)
-
-        return await self._put(actor, project_id, key, await self._uow.read(read))
+        await self._library.open(actor, project_id)
+        recipe = await self._uow.read_book(
+            project_id, lambda repos: self._recipes.get(repos, project_id, key.recipe_id, stage=key.stage)
+        )
+        default = await self._recipes.default_profile(project_id, key.stage)
+        return await self._put(actor, project_id, key, self._recipes.default_draft(key.stage, recipe.kind, default))
 
     async def _put(self, actor: Actor, project_id: ProjectId, key: RecipeKey, draft: RecipeDraft) -> Recipe:
         """Put the steps of a draft into a recipe, and link the recipe to the profile the draft names, or to none.
@@ -538,11 +522,11 @@ class RecipeProfiles:
         return await self.link(actor, project_id, key, draft.profile_id)
 
     @staticmethod
-    def _owned(repos: Repositories, actor: Actor, profile_id: RecipeProfileId) -> RecipeProfile:
+    def _owned(repos: CatalogueRepositories, actor: Actor, profile_id: RecipeProfileId) -> RecipeProfile:
         """Return the actor's profile, which is called from the work of a transaction.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: CatalogueRepositories
         :param actor: Account acting in the current request.
         :type actor: Actor
         :param profile_id: Identifier of the profile.
@@ -555,3 +539,41 @@ class RecipeProfiles:
         if profile.account_id != actor.account_id:
             raise NotFoundError(profile_id)
         return profile
+
+    async def _owned_books(self, actor: Actor) -> list[ProjectId]:
+        """List every book of the account.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :returns: The identifiers of the account's books, the latest added first.
+        :rtype: list[ProjectId]
+        """
+        entries = await self._uow.read(lambda repos: repos.library.list_all())
+        return [entry.project_id for entry in entries if entry.owner_id == actor.account_id]
+
+    async def _books_by_profile(self, actor: Actor) -> Counter[RecipeProfileId]:
+        """Count the books of the account that have a recipe made from each profile.
+
+        :param actor: Account acting in the current request.
+        :type actor: Actor
+        :returns: The number of books by profile, which is zero for a profile no recipe was made from.
+        :rtype: Counter[RecipeProfileId]
+        """
+
+        def profiles_of(repos: BookRepositories, project_id: ProjectId) -> set[RecipeProfileId]:
+            """Read the profiles the recipes of one book were made from.
+
+            :param repos: Repositories of the transaction of the book.
+            :type repos: BookRepositories
+            :param project_id: The book.
+            :type project_id: ProjectId
+            :returns: The profiles, each once however many recipes name it.
+            :rtype: set[RecipeProfileId]
+            """
+            recipes = repos.recipes.list_for_project(project_id)
+            return {recipe.profile_id for recipe in recipes if recipe.profile_id is not None}
+
+        books: Counter[RecipeProfileId] = Counter()
+        for project_id in await self._owned_books(actor):
+            books.update(await self._uow.read_book(project_id, partial(profiles_of, project_id=project_id)))
+        return books

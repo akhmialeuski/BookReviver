@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Page, PaginationSection
     from bookreviver.domain.ids import PageId, ProjectId
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import Clock, EventPublisher
 
 
@@ -48,7 +48,7 @@ class PageLabels:
 
     def recompute(
         self,
-        repos: Repositories,
+        repos: BookRepositories,
         project_id: ProjectId,
         *,
         leaving: Collection[PageId] = (),
@@ -62,7 +62,7 @@ class PageLabels:
         after reading the sections, unless ``force`` says a section was just removed.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param leaving: Pages the caller is about to delete. They take no part in the count, and the sections that
@@ -115,7 +115,7 @@ class PageLabels:
 
     def _hand_over(
         self,
-        repos: Repositories,
+        repos: BookRepositories,
         sections: Sequence[PaginationSection],
         pages: Sequence[Page],
         leaving: Collection[PageId],
@@ -126,7 +126,7 @@ class PageLabels:
         section of its flow is the one in force there.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param sections: Every section of the project.
         :type sections: Sequence[PaginationSection]
         :param pages: Every page of the project in book order.

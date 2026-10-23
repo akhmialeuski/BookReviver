@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, PageStage, PageVersion, Recipe
     from bookreviver.domain.enums import Stage, StepMeasure
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StepId
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
 
 
@@ -43,7 +43,7 @@ class StepRows:
 
     def of(
         self,
-        repos: Repositories,
+        repos: BookRepositories,
         pages: Sequence[Page],
         records: Mapping[PageId, PageStage],
         heads: Mapping[PageVersionId, PageVersion],
@@ -51,7 +51,7 @@ class StepRows:
         """Place the step on each page of a window.
 
         :param repos: Repositories of the transaction the caller runs in, which are only read.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param pages: The pages of the window.
         :type pages: Sequence[Page]
         :param records: The records of the stage of those of the pages that have one, by page.
@@ -95,7 +95,7 @@ class StepRows:
 
     def _place(
         self,
-        repos: Repositories,
+        repos: BookRepositories,
         page_ids: Sequence[PageId],
         recipes: Mapping[RecipeId, Recipe],
         records: Mapping[PageId, PageStage],
@@ -104,7 +104,7 @@ class StepRows:
         """Place the step on pages, with the mark of those that have settings or an edit of their own for it.
 
         :param repos: Repositories of the transaction the caller runs in, which are only read.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param page_ids: The pages.
         :type page_ids: Sequence[PageId]
         :param recipes: The recipes of the stage, by identifier.
@@ -156,14 +156,14 @@ class StepRows:
 
     @staticmethod
     def _chains(
-        repos: Repositories, heads: Collection[PageVersion]
+        repos: BookRepositories, heads: Collection[PageVersion]
     ) -> tuple[dict[PageVersionId, list[PageVersion]], dict[PageVersionId, PageVersion]]:
         """Find the versions that made each current version of a stage, and the version the first of them read.
 
         The versions are walked back a level at a time for all the pages together, as the marks of the review are.
 
         :param repos: Repositories of the transaction the caller runs in, which are only read.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param heads: The current versions of the stage over a window of pages.
         :type heads: Collection[PageVersion]
         :returns: For each current version, by its identifier, the versions of the stage that made it with the first

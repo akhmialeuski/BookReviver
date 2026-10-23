@@ -10,10 +10,11 @@ from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
 from bookreviver.ports.storage import AssetStore, SourceStore
 from bookreviver.services.base_versions import BaseVersions
+from bookreviver.services.library import Library
 from bookreviver.services.pages import PageImaging, PageRuntime, PageService
 from bookreviver.services.pagination import PaginationService
 from bookreviver.services.places import PlaceService
-from bookreviver.services.projects import ProjectService
+from bookreviver.services.projects import ProjectFiles, ProjectService
 from bookreviver.services.sources import SourceService
 from bookreviver.services.stage_summaries import StageSummaries
 from bookreviver.services.steps import StepRunner
@@ -38,25 +39,49 @@ class ProjectsProvider(Provider):
         return StageSummaries(catalogue=catalogue, board=board)
 
     @provide
+    def library(self, uow: UnitOfWork) -> Library:
+        """Build the library over the request's unit of work, which opens the books of the acting account.
+
+        :param uow: Unit of work of the current request or job.
+        :type uow: UnitOfWork
+        :returns: The library of the request.
+        :rtype: Library
+        """
+        return Library(uow=uow)
+
+    @provide(scope=Scope.APP)
+    def project_files(self, sources: SourceStore, assets: AssetStore) -> ProjectFiles:
+        """Gather the stores whose files go when a book is deleted.
+
+        :param sources: Source store of the application.
+        :type sources: SourceStore
+        :param assets: Asset store of the application.
+        :type assets: AssetStore
+        :returns: The stores of the files of a book.
+        :rtype: ProjectFiles
+        """
+        return ProjectFiles(sources=sources, assets=assets)
+
+    @provide
     def projects(
-        self, uow: UnitOfWork, clock: Clock, sources: SourceStore, assets: AssetStore, stages: StageSummaries
+        self, uow: UnitOfWork, library: Library, clock: Clock, files: ProjectFiles, stages: StageSummaries
     ) -> ProjectService:
         """Build the project service over the request's unit of work.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
+        :param library: Library of the current request.
+        :type library: Library
         :param clock: Clock of the application.
         :type clock: Clock
-        :param sources: Source store of the application.
-        :type sources: SourceStore
-        :param assets: Asset store of the application.
-        :type assets: AssetStore
+        :param files: Source store and asset store of the application.
+        :type files: ProjectFiles
         :param stages: Sums of the stages of books of the request.
         :type stages: StageSummaries
         :returns: The project service of the request.
         :rtype: ProjectService
         """
-        return ProjectService(uow=uow, clock=clock, sources=sources, assets=assets, stages=stages)
+        return ProjectService(uow=uow, library=library, clock=clock, files=files, stages=stages)
 
     @provide(scope=Scope.APP)
     def page_runtime(
@@ -94,11 +119,15 @@ class ProjectsProvider(Provider):
         return PageImaging(base_versions=base_versions, runner=runner)
 
     @provide
-    def pages(self, uow: UnitOfWork, assets: AssetStore, runtime: PageRuntime, imaging: PageImaging) -> PageService:
+    def pages(
+        self, uow: UnitOfWork, library: Library, assets: AssetStore, runtime: PageRuntime, imaging: PageImaging
+    ) -> PageService:
         """Build the page service over the request's or job's unit of work.
 
         :param uow: Unit of work of the current request or job.
         :type uow: UnitOfWork
+        :param library: Library of the current request or job.
+        :type library: Library
         :param assets: Asset store of the application.
         :type assets: AssetStore
         :param runtime: The publisher, clock, order keys and job board of the application.
@@ -108,14 +137,18 @@ class ProjectsProvider(Provider):
         :returns: The page service of the request or job.
         :rtype: PageService
         """
-        return PageService(uow=uow, assets=assets, runtime=runtime, imaging=imaging)
+        return PageService(uow=uow, library=library, assets=assets, runtime=runtime, imaging=imaging)
 
     @provide
-    def pagination(self, uow: UnitOfWork, publisher: EventPublisher, clock: Clock) -> PaginationService:
+    def pagination(
+        self, uow: UnitOfWork, library: Library, publisher: EventPublisher, clock: Clock
+    ) -> PaginationService:
         """Build the pagination service over the request's unit of work.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
+        :param library: Library of the current request.
+        :type library: Library
         :param publisher: Publisher of the application's event bus.
         :type publisher: EventPublisher
         :param clock: Clock of the application.
@@ -123,27 +156,33 @@ class ProjectsProvider(Provider):
         :returns: The pagination service of the request.
         :rtype: PaginationService
         """
-        return PaginationService(uow=uow, publisher=publisher, clock=clock)
+        return PaginationService(uow=uow, library=library, publisher=publisher, clock=clock)
 
     @provide
-    def places(self, uow: UnitOfWork, clock: Clock) -> PlaceService:
+    def places(self, uow: UnitOfWork, library: Library, clock: Clock) -> PlaceService:
         """Build the place service over the request's unit of work.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
+        :param library: Library of the current request.
+        :type library: Library
         :param clock: Clock of the application.
         :type clock: Clock
         :returns: The place service of the request.
         :rtype: PlaceService
         """
-        return PlaceService(uow=uow, clock=clock)
+        return PlaceService(uow=uow, library=library, clock=clock)
 
     @provide
-    def sources(self, uow: UnitOfWork, board: JobBoard, sources: SourceStore, assets: AssetStore) -> SourceService:
+    def sources(
+        self, uow: UnitOfWork, library: Library, board: JobBoard, sources: SourceStore, assets: AssetStore
+    ) -> SourceService:
         """Build the source service over the request's unit of work.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
+        :param library: Library of the current request.
+        :type library: Library
         :param board: Board holding the jobs of every book.
         :type board: JobBoard
         :param sources: Source store of the application.
@@ -153,4 +192,4 @@ class ProjectsProvider(Provider):
         :returns: The source service of the request.
         :rtype: SourceService
         """
-        return SourceService(uow=uow, board=board, sources=sources, assets=assets)
+        return SourceService(uow=uow, library=library, board=board, sources=sources, assets=assets)

@@ -190,6 +190,7 @@ useless-overload-body = "error"
 # assignable to Mapped but not a subtype of it; mypy and pyrefly accept the idiom
 include = [
     "src/bookreviver/adapters/persistence/sqlalchemy/accounts.py",
+    "src/bookreviver/adapters/persistence/sqlalchemy/catalogue.py",
     "src/bookreviver/adapters/persistence/sqlalchemy/tables.py",
 ]
 

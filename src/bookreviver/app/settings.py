@@ -218,10 +218,12 @@ class Settings(BaseSettings):
     """All runtime configuration of the API server and the workers.
 
     :ivar public_url: Address the application is reached at from outside.
-    :ivar data_dir: Directory holding the SQLite database and the storage root.
+    :ivar data_dir: Directory holding the catalogue and the storage root, under which every book has its directory.
     :ivar frontend_dir: Directory of the built frontend, served at ``/`` when it exists; ``npm --prefix frontend run
                         build`` writes it.
-    :ivar database_url: SQLAlchemy URL of an SQLite database, or empty for an SQLite file in ``data_dir``.
+    :ivar catalogue_url: SQLAlchemy URL of the SQLite database of the catalogue, or empty for ``catalogue.db`` in
+                         ``data_dir``.
+    :ivar book_idle_seconds: How long the database of a book stays open after its last use, ten minutes by default.
     :ivar storage: Storage backend the container builds for sources and derived files.
     :ivar max_upload_bytes: Largest total size of one upload, 4 GiB by default.
     :ivar max_upload_files: Largest number of files in one upload, 10000 by default.
@@ -246,7 +248,8 @@ class Settings(BaseSettings):
     public_url: str = 'http://127.0.0.1:8000'
     data_dir: Path = Path('data')
     frontend_dir: Path = Path('frontend/dist')
-    database_url: str = ''
+    catalogue_url: str = ''
+    book_idle_seconds: PositiveFloat = 600.0
     storage: StorageBackend = StorageBackend.LOCAL
     max_upload_bytes: PositiveInt = 4 * 1024**3
     max_upload_files: PositiveInt = 10_000
@@ -260,11 +263,11 @@ class Settings(BaseSettings):
     tracing: TracingSettings = TracingSettings()
 
     @cached_property
-    def resolved_database_url(self) -> str:
-        """The configured database URL, or an SQLite file inside the data directory."""
-        return self.database_url or f'sqlite:///{self.data_dir.resolve() / "bookreviver.db"}'
+    def resolved_catalogue_url(self) -> str:
+        """The configured URL of the catalogue, or an SQLite file inside the data directory."""
+        return self.catalogue_url or f'sqlite:///{self.data_dir.resolve() / "catalogue.db"}'
 
     @cached_property
     def storage_root(self) -> Path:
-        """The directory holding sources and derived files."""
+        """The directory holding the directory of every book, with its database, its sources and its derived files."""
         return self.data_dir.resolve() / 'storage'
