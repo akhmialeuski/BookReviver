@@ -3,8 +3,8 @@ import path from 'node:path';
 import { expect } from '@playwright/test';
 import {
   createBook,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   uploadFolder,
   waitForIdleJobs,
@@ -54,7 +54,7 @@ test('a reader runs and checks the Geometry stage', async ({ page }) => {
     // server answers before it takes another ask
     await expect(page).toHaveURL(/\/stages\/geometry\/steps\/[0-9a-f-]{36}(\?|$)/);
     await expect.poll(() => previews.length).toBe(1);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
   });
 
   await test.step('the recipe is drawn from the processor and its schema', async () => {
@@ -198,7 +198,7 @@ test('a reader runs and checks the Geometry stage', async ({ page }) => {
   });
 
   await test.step('the earlier result is chosen from the history and becomes the current one', async () => {
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     const entries = page.locator(RESULT_ROWS);
     await expect(entries.nth(1)).toHaveAttribute('data-current', 'false');
     await entries.nth(1).getByTestId('page-history-use').click();

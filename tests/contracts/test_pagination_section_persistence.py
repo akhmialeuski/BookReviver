@@ -12,12 +12,12 @@ from attrs import evolve
 from bookreviver.domain.enums import LabelStyle, NumberDisplay, PageKind
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import PageId
-from tests.helpers.builders import make_page, make_project, make_section, new_account_id
-from tests.helpers.seeding import store_project
+from tests.helpers.builders import make_page, make_record, make_section, new_account_id
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Page, Project
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.entities import BookRecord, Page
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from tests.contracts.conftest import OwnerFactory
     from tests.helpers.database import UnitOfWorkFactory
@@ -33,9 +33,7 @@ THREE_PAGES: int = 3
 SECOND_PAGE: int = 1
 
 
-async def _store_book(
-    uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory
-) -> tuple[UnitOfWork, ProjectId, list[Page]]:
+async def _store_book(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory) -> tuple[UnitOfWork, BookId, list[Page]]:
     """Store a project of three pages in the changes that own them.
 
     :param uow_factory: Function opening a new unit of work over the database of the test.
@@ -43,12 +41,12 @@ async def _store_book(
     :param new_owner: Function creating an account the database accepts as an owner.
     :type new_owner: OwnerFactory
     :returns: A new unit of work, the project and its pages in book order.
-    :rtype: tuple[UnitOfWork, ProjectId, list[Page]]
+    :rtype: tuple[UnitOfWork, BookId, list[Page]]
     """
-    project = make_project()
+    book_record = make_record()
     pages = [make_page(order_key=f'a{index}') for index in range(THREE_PAGES)]
-    await store_project(uow_factory(), project, *pages, owner=await new_owner())
-    return uow_factory(), project.id, pages
+    await store_book(uow_factory(), book_record, *pages, owner=await new_owner())
+    return uow_factory(), book_record.id, pages
 
 
 class TestPaginationSectionRepository:
@@ -64,17 +62,17 @@ class TestPaginationSectionRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        uow, project_id, pages = await _store_book(fx_uow, fx_new_owner)
+        uow, book_id, pages = await _store_book(fx_uow, fx_new_owner)
         later = make_section(page=pages[SECOND_PAGE], minutes=THIRD_MINUTE)
         earlier = make_section(page=pages[0], minutes=FIRST_MINUTE)
         middle = make_section(page=pages[2], minutes=SECOND_MINUTE)
         await uow.change_book(
-            project_id, lambda repos, _project: repos.pagination_sections.add_many([later, earlier, middle])
+            book_id, lambda repos, _book_record: repos.pagination_sections.add_many([later, earlier, middle])
         )
-        listed = await fx_uow().read_book(project_id, lambda repos: repos.pagination_sections.list_all())
+        listed = await fx_uow().read_book(book_id, lambda repos: repos.pagination_sections.list_all())
         assert listed == [earlier, middle, later]
 
-    async def test_sections_of_another_project_are_left_out(
+    async def test_sections_of_another_book_are_left_out(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify a listing never holds the sections of another project.
@@ -84,16 +82,16 @@ class TestPaginationSectionRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        uow, project_id, pages = await _store_book(fx_uow, fx_new_owner)
-        other = make_project()
+        uow, book_id, pages = await _store_book(fx_uow, fx_new_owner)
+        other = make_record()
         foreign_page = make_page()
-        await store_project(uow, other, foreign_page, owner=await fx_new_owner())
+        await store_book(uow, other, foreign_page, owner=await fx_new_owner())
         own = make_section(page=pages[0])
-        await uow.change_book(project_id, lambda repos, _project: repos.pagination_sections.add(own))
+        await uow.change_book(book_id, lambda repos, _book_record: repos.pagination_sections.add(own))
         await uow.change_book(
-            other.id, lambda repos, _project: repos.pagination_sections.add(make_section(page=foreign_page))
+            other.id, lambda repos, _book_record: repos.pagination_sections.add(make_section(page=foreign_page))
         )
-        listed = await fx_uow().read_book(project_id, lambda repos: repos.pagination_sections.list_all())
+        listed = await fx_uow().read_book(book_id, lambda repos: repos.pagination_sections.list_all())
         assert listed == [own]
 
     async def test_every_field_of_a_section_survives_the_store(
@@ -106,7 +104,7 @@ class TestPaginationSectionRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        uow, project_id, pages = await _store_book(fx_uow, fx_new_owner)
+        uow, book_id, pages = await _store_book(fx_uow, fx_new_owner)
         section = evolve(
             make_section(
                 page=pages[SECOND_PAGE],
@@ -118,8 +116,8 @@ class TestPaginationSectionRepository:
             start=THREE_PAGES,
             prefix=PLATE_PREFIX,
         )
-        await uow.change_book(project_id, lambda repos, _project: repos.pagination_sections.add(section))
-        assert await fx_uow().read_book(project_id, lambda repos: repos.pagination_sections.get(section.id)) == section
+        await uow.change_book(book_id, lambda repos, _book_record: repos.pagination_sections.add(section))
+        assert await fx_uow().read_book(book_id, lambda repos: repos.pagination_sections.get(section.id)) == section
 
     async def test_a_section_is_replaced_whole(self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
         """Verify an update changes the page, the rule and the kinds of a section, and keeps its identifier.
@@ -129,7 +127,7 @@ class TestPaginationSectionRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        uow, project_id, pages = await _store_book(fx_uow, fx_new_owner)
+        uow, book_id, pages = await _store_book(fx_uow, fx_new_owner)
         section = make_section(page=pages[0])
         changed = evolve(
             section,
@@ -139,19 +137,19 @@ class TestPaginationSectionRepository:
             kinds=frozenset({PageKind.BLANK}),
         )
 
-        def add_and_update(repos: BookRepositories, _project: Project) -> None:
+        def add_and_update(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Add the section and replace it with the changed one.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: Project of the book, which the work does not need.
-            :type _project: Project
+            :param _book_record: Project of the book, which the work does not need.
+            :type _book_record: BookRecord
             """
             repos.pagination_sections.add(section)
             repos.pagination_sections.update(changed)
 
-        await uow.change_book(project_id, add_and_update)
-        listed = await fx_uow().read_book(project_id, lambda repos: repos.pagination_sections.list_all())
+        await uow.change_book(book_id, add_and_update)
+        listed = await fx_uow().read_book(book_id, lambda repos: repos.pagination_sections.list_all())
         assert listed == [changed]
 
     async def test_a_section_needs_its_first_page(self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
@@ -162,11 +160,11 @@ class TestPaginationSectionRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        uow, project_id, pages = await _store_book(fx_uow, fx_new_owner)
+        uow, book_id, pages = await _store_book(fx_uow, fx_new_owner)
         section = make_section(page=pages[0])
         orphan = evolve(section, first_page_id=PageId(new_account_id()))
         with pytest.raises(NotFoundError):
-            await uow.change_book(project_id, lambda repos, _project: repos.pagination_sections.add(orphan))
+            await uow.change_book(book_id, lambda repos, _book_record: repos.pagination_sections.add(orphan))
 
     async def test_deleting_the_first_page_deletes_the_section(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -178,14 +176,14 @@ class TestPaginationSectionRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        uow, project_id, pages = await _store_book(fx_uow, fx_new_owner)
+        uow, book_id, pages = await _store_book(fx_uow, fx_new_owner)
         doomed, kept = make_section(page=pages[0]), make_section(page=pages[SECOND_PAGE], minutes=FIRST_MINUTE)
-        await uow.change_book(project_id, lambda repos, _project: repos.pagination_sections.add_many([doomed, kept]))
-        await fx_uow().change_book(project_id, lambda repos, _project: repos.pages.delete(pages[0].id))
-        listed = await fx_uow().read_book(project_id, lambda repos: repos.pagination_sections.list_all())
+        await uow.change_book(book_id, lambda repos, _book_record: repos.pagination_sections.add_many([doomed, kept]))
+        await fx_uow().change_book(book_id, lambda repos, _book_record: repos.pages.delete(pages[0].id))
+        listed = await fx_uow().read_book(book_id, lambda repos: repos.pagination_sections.list_all())
         assert listed == [kept]
 
-    async def test_deleting_the_project_deletes_its_sections(
+    async def test_deleting_the_book_deletes_its_sections(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify the sections go with their project.
@@ -195,12 +193,12 @@ class TestPaginationSectionRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        uow, project_id, pages = await _store_book(fx_uow, fx_new_owner)
+        uow, book_id, pages = await _store_book(fx_uow, fx_new_owner)
         section = make_section(page=pages[0])
-        await uow.change_book(project_id, lambda repos, _project: repos.pagination_sections.add(section))
-        await fx_uow().delete_book(project_id)
+        await uow.change_book(book_id, lambda repos, _book_record: repos.pagination_sections.add(section))
+        await fx_uow().delete_book(book_id)
         with pytest.raises(NotFoundError):
-            await fx_uow().read_book(project_id, lambda repos: repos.pagination_sections.get(section.id))
+            await fx_uow().read_book(book_id, lambda repos: repos.pagination_sections.get(section.id))
 
     async def test_a_section_is_removed_by_its_identifier(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -212,11 +210,11 @@ class TestPaginationSectionRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        uow, project_id, pages = await _store_book(fx_uow, fx_new_owner)
+        uow, book_id, pages = await _store_book(fx_uow, fx_new_owner)
         section = make_section(page=pages[0])
-        await uow.change_book(project_id, lambda repos, _project: repos.pagination_sections.add(section))
+        await uow.change_book(book_id, lambda repos, _book_record: repos.pagination_sections.add(section))
         uow = fx_uow()
-        await uow.change_book(project_id, lambda repos, _project: repos.pagination_sections.delete(section.id))
-        assert await uow.read_book(project_id, lambda repos: repos.pagination_sections.list_all()) == []
+        await uow.change_book(book_id, lambda repos, _book_record: repos.pagination_sections.delete(section.id))
+        assert await uow.read_book(book_id, lambda repos: repos.pagination_sections.list_all()) == []
         with pytest.raises(NotFoundError):
-            await uow.change_book(project_id, lambda repos, _project: repos.pagination_sections.delete(section.id))
+            await uow.change_book(book_id, lambda repos, _book_record: repos.pagination_sections.delete(section.id))

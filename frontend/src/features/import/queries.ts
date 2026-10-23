@@ -1,14 +1,14 @@
 import { queryOptions, type UseQueryResult, useMutation, useQuery } from '@tanstack/react-query';
 import {
   type JobSchema,
-  listSourcesApiV1ProjectsProjectIdSourcesGet,
+  listSourcesApiV1BooksBookIdSourcesGet,
   type SourceSchema,
   type SourceStatus,
 } from '@/api';
 import {
-  deleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteMutation,
-  listScansApiV1ProjectsProjectIdScansGetOptions,
-  listSourcesApiV1ProjectsProjectIdSourcesGetQueryKey,
+  deleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteMutation,
+  listScansApiV1BooksBookIdScansGetOptions,
+  listSourcesApiV1BooksBookIdSourcesGetQueryKey,
 } from '@/api/@tanstack/react-query.gen';
 import { jobsOptions } from '@/features/workspace/queries';
 
@@ -45,10 +45,10 @@ const SCANS_PAGE_SIZE = 60;
  * The key extends the generated key of the list, so the invalidation of the sources reaches it, and the extra part
  * keeps it apart from the one-page list the description reads under the generated key itself.
  */
-function sourcesOptions(projectId: string) {
+function sourcesOptions(bookId: string) {
   return queryOptions({
     queryKey: [
-      ...listSourcesApiV1ProjectsProjectIdSourcesGetQueryKey({ path: { project_id: projectId } }),
+      ...listSourcesApiV1BooksBookIdSourcesGetQueryKey({ path: { book_id: bookId } }),
       'all',
     ],
     queryFn: async ({ signal }): Promise<ImportedSource[]> => {
@@ -56,8 +56,8 @@ function sourcesOptions(projectId: string) {
       let page = 1;
       let total = 1;
       while (page <= total) {
-        const { data } = await listSourcesApiV1ProjectsProjectIdSourcesGet({
-          path: { project_id: projectId },
+        const { data } = await listSourcesApiV1BooksBookIdSourcesGet({
+          path: { book_id: bookId },
           query: { page, size: SOURCES_PAGE_SIZE },
           signal,
           throwOnError: true,
@@ -72,8 +72,8 @@ function sourcesOptions(projectId: string) {
 }
 
 /** Read every file of the book in the order of the book. */
-export function useSources(projectId: string): UseQueryResult<ImportedSource[]> {
-  return useQuery(sourcesOptions(projectId));
+export function useSources(bookId: string): UseQueryResult<ImportedSource[]> {
+  return useQuery(sourcesOptions(bookId));
 }
 
 /**
@@ -82,10 +82,10 @@ export function useSources(projectId: string): UseQueryResult<ImportedSource[]> 
  * The key extends the generated key of the list, as that of the files does, so the invalidation of the sources reaches
  * it too: a source that was imported, an import that ended and the closing of the report all read it again.
  */
-function reportOptions(projectId: string) {
+function reportOptions(bookId: string) {
   return queryOptions({
     queryKey: [
-      ...listSourcesApiV1ProjectsProjectIdSourcesGetQueryKey({ path: { project_id: projectId } }),
+      ...listSourcesApiV1BooksBookIdSourcesGetQueryKey({ path: { book_id: bookId } }),
       'report',
     ],
     queryFn: async ({ signal }): Promise<SourceSchema[]> => {
@@ -93,8 +93,8 @@ function reportOptions(projectId: string) {
       let page = 1;
       let total = 1;
       while (page <= total) {
-        const { data } = await listSourcesApiV1ProjectsProjectIdSourcesGet({
-          path: { project_id: projectId },
+        const { data } = await listSourcesApiV1BooksBookIdSourcesGet({
+          path: { book_id: bookId },
           query: { page, size: SOURCES_PAGE_SIZE, status: REPORTED_STATUSES },
           signal,
           throwOnError: true,
@@ -109,15 +109,13 @@ function reportOptions(projectId: string) {
 }
 
 /** Read the files the imports of the book rejected or skipped, in the order they were recorded. */
-export function useImportReport(projectId: string): UseQueryResult<SourceSchema[]> {
-  return useQuery(reportOptions(projectId));
+export function useImportReport(bookId: string): UseQueryResult<SourceSchema[]> {
+  return useQuery(reportOptions(bookId));
 }
 
 /** Close the report of the imports, which deletes the rejected and skipped files on the server. */
 export function useCloseImportReport() {
-  return useMutation(
-    deleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteMutation(),
-  );
+  return useMutation(deleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteMutation());
 }
 
 /**
@@ -127,10 +125,10 @@ export function useCloseImportReport() {
  * @param sourceId The file, or undefined for none, which reads nothing.
  * @param page The page of the list, from 1.
  */
-export function useScans(projectId: string, sourceId: string | undefined, page: number) {
+export function useScans(bookId: string, sourceId: string | undefined, page: number) {
   return useQuery({
-    ...listScansApiV1ProjectsProjectIdScansGetOptions({
-      path: { project_id: projectId },
+    ...listScansApiV1BooksBookIdScansGetOptions({
+      path: { book_id: bookId },
       query: { page, size: SCANS_PAGE_SIZE, source_id: sourceId },
     }),
     enabled: sourceId !== undefined,
@@ -138,6 +136,6 @@ export function useScans(projectId: string, sourceId: string | undefined, page: 
 }
 
 /** Read the latest jobs of the book, which the events of the jobs keep current. */
-export function useJobs(projectId: string): UseQueryResult<JobSchema[]> {
-  return useQuery(jobsOptions(projectId, false));
+export function useJobs(bookId: string): UseQueryResult<JobSchema[]> {
+  return useQuery(jobsOptions(bookId, false));
 }

@@ -8,14 +8,14 @@ from attrs import evolve
 
 from bookreviver.domain.enums import Stage, StageState
 from bookreviver.services.stage_records import StageRecords
-from tests.helpers.builders import EPOCH, make_page, make_page_stage, make_project, make_recipe, new_account_id
-from tests.helpers.seeding import commit_project
+from tests.helpers.builders import EPOCH, make_page, make_page_stage, make_recipe, make_record, new_account_id
+from tests.helpers.seeding import commit_record
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import PageStage, Project, Recipe
+    from bookreviver.domain.entities import BookRecord, PageStage, Recipe
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from tests.helpers.clock import FixedClock
     from tests.helpers.database import UnitOfWorkFactory
@@ -29,31 +29,31 @@ CHANGED_AT = EPOCH + timedelta(hours=1)
 PAGE_ORDER_KEYS: tuple[str, ...] = ('a0', 'a1', 'a2')
 
 
-async def store_records(uow: UnitOfWork, project: Project, recipe: Recipe, records: Sequence[PageStage]) -> None:
+async def store_records(uow: UnitOfWork, book_record: BookRecord, recipe: Recipe, records: Sequence[PageStage]) -> None:
     """Store a recipe and the stage records of the pages of a project that exists already.
 
     :param uow: Unit of work that commits the recipe and the records.
     :type uow: UnitOfWork
-    :param project: Project owning the pages the records belong to.
-    :type project: Project
+    :param book_record: Project owning the pages the records belong to.
+    :type book_record: BookRecord
     :param recipe: Recipe of the project, which the records may name.
     :type recipe: Recipe
     :param records: Records to store in one batch.
     :type records: Sequence[PageStage]
     """
 
-    def seed(repos: BookRepositories, _project: Project) -> None:
+    def seed(repos: BookRepositories, _book_record: BookRecord) -> None:
         """Store the recipe and the records.
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _project: Project of the book, which the work does not need.
-        :type _project: Project
+        :param _book_record: Project of the book, which the work does not need.
+        :type _book_record: BookRecord
         """
         repos.recipes.add(recipe)
         repos.page_stages.save_many(records)
 
-    await uow.change_book(project.id, seed)
+    await uow.change_book(book_record.id, seed)
 
 
 class TestMarkRecipeStale:
@@ -71,9 +71,9 @@ class TestMarkRecipeStale:
         :param fx_clock: Clock stopped at the epoch.
         :type fx_clock: FixedClock
         """
-        project = make_project()
+        book_record = make_record()
         first, second, third = (make_page(order_key=key) for key in PAGE_ORDER_KEYS)
-        await commit_project(fx_database, fx_uow(), project, first, second, third, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), book_record, first, second, third, owner=new_account_id())
         recipe = make_recipe()
         fresh_first = make_page_stage(page_id=first.id, recipe_id=recipe.id)
         fresh_second = make_page_stage(page_id=second.id, recipe_id=recipe.id)
@@ -81,13 +81,13 @@ class TestMarkRecipeStale:
         without_recipe = make_page_stage(page_id=first.id, stage=Stage.CLEANUP)
         uow = fx_uow()
         records = StageRecords(clock=fx_clock)
-        await store_records(uow, project, recipe, [fresh_first, fresh_second, failed, without_recipe])
+        await store_records(uow, book_record, recipe, [fresh_first, fresh_second, failed, without_recipe])
         fx_clock.moment = CHANGED_AT
 
-        await uow.change_book(project.id, lambda repos, _project: records.mark_recipe_stale(repos, recipe.id))
+        await uow.change_book(book_record.id, lambda repos, _book_record: records.mark_recipe_stale(repos, recipe.id))
 
         stored = await uow.read_book(
-            project.id, lambda repos: repos.page_stages.list_for_pages([first.id, second.id, third.id])
+            book_record.id, lambda repos: repos.page_stages.list_for_pages([first.id, second.id, third.id])
         )
         stale = [
             evolve(record, state=StageState.STALE, updated_at=CHANGED_AT) for record in (fresh_first, fresh_second)
@@ -117,18 +117,18 @@ class TestMarkRecipeStale:
         :param fx_page_stage_writes: Record of the writes of the page stage repository, not yet started.
         :type fx_page_stage_writes: PageStageWrites
         """
-        project = make_project()
+        book_record = make_record()
         pages = [make_page(order_key=key) for key in PAGE_ORDER_KEYS]
-        await commit_project(fx_database, fx_uow(), project, *pages, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), book_record, *pages, owner=new_account_id())
         recipe = make_recipe()
         fresh = [make_page_stage(page_id=page.id, recipe_id=recipe.id) for page in pages]
         uow = fx_uow()
         records = StageRecords(clock=fx_clock)
-        await store_records(uow, project, recipe, fresh)
+        await store_records(uow, book_record, recipe, fresh)
         fx_clock.moment = CHANGED_AT
         fx_page_stage_writes.start()
 
-        await uow.change_book(project.id, lambda repos, _project: records.mark_recipe_stale(repos, recipe.id))
+        await uow.change_book(book_record.id, lambda repos, _book_record: records.mark_recipe_stale(repos, recipe.id))
 
         [batch] = fx_page_stage_writes.batches
         assert ({record.key for record in batch}, fx_page_stage_writes.saves) == ({record.key for record in fresh}, [])

@@ -36,13 +36,13 @@ export function StageBanners({
   processing: Processing;
   items: readonly StripItem[];
 }): React.JSX.Element | null {
-  const { projectId, stage, recipe } = processing;
-  const run = useRunStage(projectId);
-  const activeJobs = useActiveJobs(projectId);
-  const scans = useAllScans(projectId, stage === 'page-split');
+  const { bookId, stage, recipe } = processing;
+  const run = useRunStage(bookId);
+  const activeJobs = useActiveJobs(bookId);
+  const scans = useAllScans(bookId, stage === 'page-split');
   const [dismissed, setDismissed] = useState(false);
   const before = stageBefore(stage);
-  const runInFlight = useRunInFlight(projectId);
+  const runInFlight = useRunInFlight(bookId);
   const idle = (activeJobs.data?.length ?? 0) === 0 && !runInFlight && !processing.dirty;
 
   const anyStale = items.some(
@@ -77,7 +77,7 @@ export function StageBanners({
             data-testid="split-banner-cut"
             onClick={() =>
               run.mutate({
-                path: { project_id: projectId, stage },
+                path: { book_id: bookId, stage },
                 body: { page_ids: offer.pageIds },
               })
             }

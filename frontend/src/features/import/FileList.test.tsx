@@ -19,7 +19,7 @@ function render(
   return renderToStaticMarkup(
     <QueryClientProvider client={new QueryClient()}>
       <FileList
-        projectId="p-1"
+        bookId="p-1"
         sources={sources}
         imports={imports}
         selectedId={selectedId}

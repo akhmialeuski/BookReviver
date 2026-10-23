@@ -16,7 +16,7 @@ from fastapi_pagination import Page
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
-from bookreviver.api.routers.processing import PROJECT_ID_DESCRIPTION, RecipePath
+from bookreviver.api.routers.processing import BOOK_ID_DESCRIPTION, RecipePath
 from bookreviver.api.schemas.processing import RecipeSchema
 from bookreviver.api.schemas.profiles import (
     AppliedProfileSchema,
@@ -31,7 +31,7 @@ from bookreviver.api.schemas.profiles import (
     RecipeProfileName,
     RecipeProfileSchema,
 )
-from bookreviver.domain.ids import ProjectId, RecipeProfileId
+from bookreviver.domain.ids import BookId, RecipeProfileId
 from bookreviver.domain.values import RecipeKey
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import ListedProfile, RecipeProfiles
@@ -43,8 +43,8 @@ DEFAULT_PATH: str = PROFILE_PATH + '/default'
 DUPLICATE_PATH: str = PROFILE_PATH + '/duplicate'
 EXPORT_PATH: str = PROFILE_PATH + '/export'
 IMPORT_PATH: str = PROFILES_PATH + '/import'
-APPLY_PATH: str = '/projects/{project_id}' + PROFILES_PATH + '/{profile_id}/apply'
-LINK_PATH: str = '/projects/{project_id}/stages/{stage}/recipes/{recipe_id}/profile'
+APPLY_PATH: str = '/books/{book_id}' + PROFILES_PATH + '/{profile_id}/apply'
+LINK_PATH: str = '/books/{book_id}/stages/{stage}/recipes/{recipe_id}/profile'
 
 router = APIRouter(tags=['profiles'], route_class=DishkaRoute)
 
@@ -55,11 +55,11 @@ ProfilePath = Annotated[RecipeProfileId, Path(description=PROFILE_ID_DESCRIPTION
 class AppliedPath:
     """The identifiers in the address of a profile applied to a project.
 
-    :ivar project_id: Identifier of the project.
+    :ivar book_id: Identifier of the project.
     :ivar profile_id: Identifier of the profile.
     """
 
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)]
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     profile_id: ProfilePath
 
 
@@ -302,7 +302,7 @@ async def apply_profile(
     :returns: The recipe, with the steps that are out of their place, and the processors whose steps were left out.
     :rtype: AppliedProfileSchema
     """
-    applied = await profiles.apply(actor, address.project_id, address.profile_id, kind=body.kind)
+    applied = await profiles.apply(actor, address.book_id, address.profile_id, kind=body.kind)
     return AppliedProfileSchema(
         recipe=RecipeSchema.of(applied.recipe, order.issues(applied.recipe.steps)),
         missing_processors=list(applied.missing_processors),
@@ -336,7 +336,5 @@ async def put_recipe_profile(
     :returns: The recipe, with the steps that are out of their place.
     :rtype: RecipeSchema
     """
-    linked = await profiles.link(
-        actor, address.project_id, RecipeKey(address.stage, address.recipe_id), body.profile_id
-    )
+    linked = await profiles.link(actor, address.book_id, RecipeKey(address.stage, address.recipe_id), body.profile_id)
     return RecipeSchema.of(linked, order.issues(linked.steps))

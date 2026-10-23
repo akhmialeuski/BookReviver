@@ -3,8 +3,8 @@ import path from 'node:path';
 import { expect } from '@playwright/test';
 import {
   createBook,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   stepIdsOf,
   uploadFolder,
@@ -46,7 +46,7 @@ test('a step is added from the catalogue twice, removed in the window of the gea
     await openLibrary(page);
     await createBook(page, 'A book of added steps');
     await uploadFolder(page, folder, PAGES);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
@@ -136,7 +136,7 @@ test('a step is added from the catalogue twice, removed in the window of the gea
     await angle.fill(ANGLE);
     await angle.press('Enter');
     await expect(layer).toHaveAttribute('data-figure', 'by-hand', { timeout: RUN_TIMEOUT_MS });
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
 
     await page.getByTestId('carry-menu').click();
     await page.getByTestId('carry-following').click();

@@ -27,7 +27,7 @@ from bookreviver.api.schemas.page_settings import (
     ValueTargetModel,
 )
 from bookreviver.domain.enums import Stage
-from bookreviver.domain.ids import PageId, ProjectId, StepId
+from bookreviver.domain.ids import BookId, PageId, StepId
 from bookreviver.domain.step_values import PageStepSettings, ValueField
 from bookreviver.domain.values import Slice
 from bookreviver.services.page_settings import PageSettingsService
@@ -35,21 +35,19 @@ from bookreviver.services.page_settings import PageSettingsService
 if TYPE_CHECKING:
     from bookreviver.domain.step_values import ValueTarget
 
-router = APIRouter(
-    prefix='/projects', tags=['page-settings'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)]
-)
+router = APIRouter(prefix='/books', tags=['page-settings'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 
 @dataclass(frozen=True)
 class SettingsPath:
     """The identifiers in the address of the settings of one stage of one page.
 
-    :ivar project_id: Identifier of the project.
+    :ivar book_id: Identifier of the project.
     :ivar page_id: Identifier of the page.
     :ivar stage: The stage.
     """
 
-    project_id: Annotated[ProjectId, Path(description='Identifier of the project')]
+    book_id: Annotated[BookId, Path(description='Identifier of the book')]
     page_id: Annotated[PageId, Path(description='Identifier of the page')]
     stage: Annotated[Stage, Path(description='Stage of the steps the settings are for')]
 
@@ -76,7 +74,7 @@ class FieldPath(StagePath):
         return ValueField(stage=self.stage, step_id=self.step_id, name=self.name, target=target)
 
 
-@router.get('/{project_id}/pages/{page_id}/settings/{stage}')
+@router.get('/{book_id}/pages/{page_id}/settings/{stage}')
 async def list_settings(
     address: Annotated[SettingsPath, Depends()],
     params: Annotated[Params, Depends()],
@@ -112,12 +110,12 @@ async def list_settings(
         return PageStepSettingsSchema.model_validate(entry)
 
     pager = Pager[PageStepSettings, PageStepSettingsSchema](params, to_schema)
-    found = await settings.list(actor, address.project_id, address.page_id, address.stage)
+    found = await settings.list(actor, address.book_id, address.page_id, address.stage)
     window = found[pager.request.offset : pager.request.offset + pager.request.limit]
     return pager.page(Slice(items=window, total=len(found)))
 
 
-@router.put('/{project_id}/stages/{stage}/steps/{step_id}/values/{name}')
+@router.put('/{book_id}/stages/{stage}/steps/{step_id}/values/{name}')
 async def put_value(
     address: Annotated[FieldPath, Depends()],
     form: ValueForm,
@@ -144,13 +142,13 @@ async def put_value(
     :returns: The batch and the changes written, one on each page whose parameters change.
     :rtype: ValueChangesSchema
     """
-    done = await settings.change(actor, address.project_id, address.of(form.to_target()), form.value)
+    done = await settings.change(actor, address.book_id, address.of(form.to_target()), form.value)
     return ValueChangesSchema(
         batch_id=done.batch_id, changes=[PageHistoryEntrySchema.model_validate(change) for change in done.changes]
     )
 
 
-@router.delete('/{project_id}/stages/{stage}/steps/{step_id}/values/{name}')
+@router.delete('/{book_id}/stages/{stage}/steps/{step_id}/values/{name}')
 async def delete_value(
     address: Annotated[FieldPath, Depends()],
     target: Annotated[ValueTargetModel, Query()],
@@ -173,7 +171,7 @@ async def delete_value(
     :returns: The batch and the changes written, one on each page whose parameters change.
     :rtype: ValueChangesSchema
     """
-    done = await settings.reset(actor, address.project_id, address.of(target.to_target()))
+    done = await settings.reset(actor, address.book_id, address.of(target.to_target()))
     return ValueChangesSchema(
         batch_id=done.batch_id, changes=[PageHistoryEntrySchema.model_validate(change) for change in done.changes]
     )

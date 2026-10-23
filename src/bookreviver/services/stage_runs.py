@@ -53,7 +53,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError, DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import PageSize, PageStageKey, PageStepKey
 from bookreviver.services.book_measure import NORMALIZE_KEY, BlockMeasure, BookBlocks, wants_the_book
 from bookreviver.services.spread_splits import SpreadSplit
@@ -65,7 +65,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import datetime
 
-    from bookreviver.domain.entities import PageEdit, PageStage, PageStepState, Project, Recipe
+    from bookreviver.domain.entities import BookRecord, PageEdit, PageStage, PageStepState, Recipe
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, StorageKey
     from bookreviver.domain.values import MetadataMap, Step
     from bookreviver.ports.ordering import OrderKeys
@@ -151,11 +151,11 @@ class StageRuntime:
 class StageWork:
     """What a run of a recipe and a preview have in common: reading the input of a stage and making one version."""
 
-    def __init__(self, *, project: Project, uow: UnitOfWork, runtime: StageRuntime, control: JobControl) -> None:
+    def __init__(self, *, book_record: BookRecord, uow: UnitOfWork, runtime: StageRuntime, control: JobControl) -> None:
         """Work over the ports of one job.
 
-        :param project: Project owning the pages, whose image policy chooses the format of a version's ``full``.
-        :type project: Project
+        :param book_record: Project owning the pages, whose image policy chooses the format of a version's ``full``.
+        :type book_record: BookRecord
         :param uow: Unit of work, whose transactions are opened for each version and never held while a step runs.
         :type uow: UnitOfWork
         :param runtime: The runner, the catalogue, the publisher, the clock and the size of a preview.
@@ -163,7 +163,7 @@ class StageWork:
         :param control: What the job reports through: every step of a page is a task, and the job stops between two.
         :type control: JobControl
         """
-        self._project = project
+        self._book_record = book_record
         self._uow = uow
         self._control = control
         self._runner = runtime.runner
@@ -172,7 +172,7 @@ class StageWork:
         self._clock = runtime.clock
         self._preview_long_side_px = runtime.preview_long_side_px
         self._tracer = runtime.tracer
-        self._keys = ProjectKeys(project.id)
+        self._keys = BookKeys(book_record.id)
 
     def task_count(self, steps: Sequence[Step]) -> int:
         """Count the tasks of the steps a run or a preview goes over on one page.
@@ -233,9 +233,9 @@ class StageWork:
             # Stages further back are not brought up to date once a nearer one has a result to read
             if readable:
                 break
-        read = (await self._uow.read_book(self._project.id, lambda repos: StageInputs.of(repos, [page.id], stage))).get(
-            page.id
-        )
+        read = (
+            await self._uow.read_book(self._book_record.id, lambda repos: StageInputs.of(repos, [page.id], stage))
+        ).get(page.id)
         return None if read is None else self._version_source(read, scale)
 
     async def _earlier(self, page_id: PageId, stage: Stage) -> tuple[PageStage | None, bool]:
@@ -267,7 +267,7 @@ class StageWork:
             )
             return record, readable
 
-        return await self._uow.read_book(self._project.id, work)
+        return await self._uow.read_book(self._book_record.id, work)
 
     async def _scan_source(self, page: Page, scale: VersionScale) -> StepSource | None:
         """Find the scan a page was cut from, whose image the page split reads.
@@ -282,7 +282,7 @@ class StageWork:
         if page.origin is not PageOrigin.SCAN or page.scan_id is None:
             return None
         scan_id = page.scan_id
-        scan = await self._uow.read_book(self._project.id, lambda repos: repos.scans.get(scan_id))
+        scan = await self._uow.read_book(self._book_record.id, lambda repos: repos.scans.get(scan_id))
         if not scan.renditions.ready:
             return None
         facts = scan.facts
@@ -445,7 +445,7 @@ class StageWork:
         if measure is not None:
             fresh[page.id] = measure
         return await self._uow.read_book(
-            self._project.id, lambda repos: BookBlocks(repos).by_the_book(stage, params, fresh)
+            self._book_record.id, lambda repos: BookBlocks(repos).by_the_book(stage, params, fresh)
         )
 
     async def _execute(self, version: PageVersion, run: StepRun) -> PageVersion:
@@ -464,7 +464,7 @@ class StageWork:
             if len(result.outputs) != 1:
                 raise ConflictError(WRONG_OUTPUTS.format(key=run.processor_key, count=len(result.outputs)))
             return await self._runner.store(
-                self._keys, version, result.outputs[0], policy=self._project.image_policy, tiles=False
+                self._keys, version, result.outputs[0], policy=self._book_record.image_policy, tiles=False
             )
 
     async def _attempt(self, version: PageVersion, run: StepRun) -> PageVersion:
@@ -590,12 +590,12 @@ class StageWork:
                 )
                 return inputs, edit, repos.page_versions.find(inputs.identify())
 
-            inputs, edit, existing = await self._uow.read_book(self._project.id, look)
+            inputs, edit, existing = await self._uow.read_book(self._book_record.id, look)
             if existing is not None and existing.state is VersionState.READY:
                 span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.CACHED)
                 return existing
 
-            def begin(repos: BookRepositories, _project: Project) -> tuple[PageVersion, bool]:
+            def begin(repos: BookRepositories, _book_record: BookRecord) -> tuple[PageVersion, bool]:
                 """Mark the version as running, unless another change made it ready meanwhile.
 
                 The earlier steps took time, so the page may be gone and the version may have been made by another
@@ -603,8 +603,8 @@ class StageWork:
 
                 :param repos: Repositories of the transaction.
                 :type repos: BookRepositories
-                :param _project: The project as the change finds it, which the marking does not read.
-                :type _project: Project
+                :param _book_record: The project as the change finds it, which the marking does not read.
+                :type _book_record: BookRecord
                 :returns: The version, and whether it was found ready, in which case it is stored as it was.
                 :rtype: tuple[PageVersion, bool]
                 :raises NotFoundError: If the page was deleted.
@@ -634,7 +634,7 @@ class StageWork:
                     repos.page_versions.update(running)
                 return running, False
 
-            version, cached = await self._uow.change_book(self._project.id, begin)
+            version, cached = await self._uow.change_book(self._book_record.id, begin)
             if cached:
                 span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.CACHED)
                 return version
@@ -651,13 +651,13 @@ class StageWork:
             )
             made = await self._attempt(version, run)
 
-            def store(repos: BookRepositories, _project: Project) -> None:
+            def store(repos: BookRepositories, _book_record: BookRecord) -> None:
                 """Store the result of the step on the version, which keeps the mark and the comment it has now.
 
                 :param repos: Repositories of the transaction.
                 :type repos: BookRepositories
-                :param _project: The project as the change finds it, which the storing does not read.
-                :type _project: Project
+                :param _book_record: The project as the change finds it, which the storing does not read.
+                :type _book_record: BookRecord
                 :raises NotFoundError: If the page or the version was deleted.
                 """
                 repos.pages.get(layers.page.id)
@@ -666,14 +666,14 @@ class StageWork:
                 repos.page_versions.update(evolve(made, mark=stored.mark, comment=stored.comment))
 
             try:
-                await self._uow.change_book(self._project.id, store)
+                await self._uow.change_book(self._book_record.id, store)
             except Exception:
                 # The files of the version belong to no stored result when its change failed
                 await self._runner.discard(self._keys.version_directory(version))
                 raise
             if made.state is VersionState.READY:
                 span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.RAN)
-                await self._publisher.publish(PageVersionReady(project_id=self._project.id, version=made))
+                await self._publisher.publish(PageVersionReady(book_id=self._book_record.id, version=made))
             return made
 
 
@@ -681,12 +681,18 @@ class RecipeRun(StageWork):
     """Runs a recipe on one page and makes its last version the current one of the stage."""
 
     def __init__(
-        self, *, project: Project, uow: UnitOfWork, runtime: StageRuntime, control: JobControl, parts: ProcessingParts
+        self,
+        *,
+        book_record: BookRecord,
+        uow: UnitOfWork,
+        runtime: StageRuntime,
+        control: JobControl,
+        parts: ProcessingParts,
     ) -> None:
         """Work over the ports of one job.
 
-        :param project: Project owning the pages.
-        :type project: Project
+        :param book_record: Project owning the pages.
+        :type book_record: BookRecord
         :param uow: Unit of work, whose transactions are opened for each version and never held while a step runs.
         :type uow: UnitOfWork
         :param runtime: The runner, the catalogue, the publisher, the clock and the size of a preview.
@@ -697,10 +703,10 @@ class RecipeRun(StageWork):
                       of the stage records.
         :type parts: ProcessingParts
         """
-        super().__init__(project=project, uow=uow, runtime=runtime, control=control)
+        super().__init__(book_record=book_record, uow=uow, runtime=runtime, control=control)
         self._recipes = parts.recipes
         self._records = parts.records
-        self._splits = SpreadSplit(project=project, uow=uow, runtime=runtime, records=parts.records)
+        self._splits = SpreadSplit(book_record=book_record, uow=uow, runtime=runtime, records=parts.records)
         self._books: dict[RecipeId, MetadataMap] = {}
 
     async def run(
@@ -814,7 +820,7 @@ class RecipeRun(StageWork):
                 undoing=self._splits.undoing(repos, page, recipe, confirmed=confirmed),
             )
 
-        basis = await self._uow.read_book(self._project.id, read)
+        basis = await self._uow.read_book(self._book_record.id, read)
         source = evolve(source, book=await self._book_for(page, recipe, steps, source))
         if (version := await self._run_steps(page, recipe.stage, steps, source)) is None:
             return RunOutcome.FAILED
@@ -884,13 +890,13 @@ class RecipeRun(StageWork):
         :raises NotFoundError: If the page or the version was deleted meanwhile.
         """
 
-        def apply(repos: BookRepositories, _project: Project) -> tuple[bool, Unsplit | None]:
+        def apply(repos: BookRepositories, _book_record: BookRecord) -> tuple[bool, Unsplit | None]:
             """Make the version current, when what the run went by is as it was read.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it, which the run does not read.
-            :type _project: Project
+            :param _book_record: The project as the change finds it, which the run does not read.
+            :type _book_record: BookRecord
             :returns: Whether the version was made current, which it is not when what the run went by changed and
                       nothing was written, and what the undoing deleted, or None.
             :rtype: tuple[bool, Unsplit | None]
@@ -922,7 +928,7 @@ class RecipeRun(StageWork):
                 self._splits.unsplit(repos, undoing)
             return True, undoing
 
-        stored, undoing = await self._uow.change_book(self._project.id, apply)
+        stored, undoing = await self._uow.change_book(self._book_record.id, apply)
         if not stored:
             return RunOutcome.SKIPPED
         if undoing is not None:
@@ -988,7 +994,7 @@ class RecipeRun(StageWork):
         params = self._book_fields([step for _, step in recipe.indexed_steps_through(through_step)])
         if params is not None:
             self._books[recipe.id] = await self._uow.read_book(
-                self._project.id,
+                self._book_record.id,
                 lambda repos: BookBlocks(repos).by_the_book(recipe.stage, params, fresh),
             )
 
@@ -1005,7 +1011,7 @@ class RecipeRun(StageWork):
         :type stage: Stage
         """
         try:
-            recipe = (await self._recipes.for_pages(self._project.id, stage, [page]))[page.id]
+            recipe = (await self._recipes.for_pages(self._book_record.id, stage, [page]))[page.id]
         except NotFoundError:
             # A stage without a recipe, such as the page order, has nothing to run again
             return
@@ -1025,20 +1031,20 @@ class RecipeRun(StageWork):
         :rtype: RunOutcome
         """
 
-        def fail(repos: BookRepositories, _project: Project) -> None:
+        def fail(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Record that the stage failed on the page.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it, which the record does not read.
-            :type _project: Project
+            :param _book_record: The project as the change finds it, which the record does not read.
+            :type _book_record: BookRecord
             :raises NotFoundError: If the page was deleted.
             """
             repos.pages.get(page.id)
             self._records.mark_failed(repos, page.id, recipe.stage, recipe_id=recipe.id)
 
         try:
-            await self._uow.change_book(self._project.id, fail)
+            await self._uow.change_book(self._book_record.id, fail)
         except NotFoundError:
             await self._runner.discard(self._keys.page(page.id))
             return RunOutcome.SKIPPED

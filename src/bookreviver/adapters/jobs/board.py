@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from bookreviver.domain.entities import Job
-    from bookreviver.domain.ids import JobId, ProjectId
+    from bookreviver.domain.ids import BookId, JobId
     from bookreviver.ports.runtime import Clock, EventPublisher
 
 # What the application supplies to run a job: it does the tasks of the job, reports through the control after each,
@@ -77,7 +77,7 @@ class JobLedger:
         """
         self._clock = clock
         self._kept_ended = kept_ended
-        self._books: dict[ProjectId, BookJobs] = {}
+        self._books: dict[BookId, BookJobs] = {}
         self._lock = threading.Lock()
 
     def add(self, job: Job) -> bool:
@@ -89,7 +89,7 @@ class JobLedger:
         :rtype: bool
         """
         with self._lock:
-            book = self._books.setdefault(job.project_id, BookJobs())
+            book = self._books.setdefault(job.book_id, BookJobs())
             book.jobs[job.id] = job
             book.changes += 1
             book.queue.append(job.id)
@@ -97,16 +97,16 @@ class JobLedger:
             book.serving = True
             return starts
 
-    def start_next(self, project_id: ProjectId) -> Job | None:
+    def start_next(self, book_id: BookId) -> Job | None:
         """Take the first queued job of a book and mark it as running.
 
-        :param project_id: Book whose queue is served.
-        :type project_id: ProjectId
+        :param book_id: Book whose queue is served.
+        :type book_id: BookId
         :returns: The running job, or None when the queue is empty, which also ends the service of the book.
         :rtype: Job | None
         """
         with self._lock:
-            book = self._books[project_id]
+            book = self._books[book_id]
             if not book.queue:
                 book.serving = False
                 return None
@@ -127,11 +127,11 @@ class JobLedger:
         with self._lock:
             return self._locate(job_id)[1]
 
-    def listing(self, project_ids: Collection[ProjectId], *, active: bool) -> list[Job]:
+    def listing(self, book_ids: Collection[BookId], *, active: bool) -> list[Job]:
         """Return the jobs of some books, the newest first.
 
-        :param project_ids: Books whose jobs are listed.
-        :type project_ids: Collection[ProjectId]
+        :param book_ids: Books whose jobs are listed.
+        :type book_ids: Collection[BookId]
         :param active: Whether to list only the jobs that are queued or running.
         :type active: bool
         :returns: The jobs, with the ones put later first among those queued at the same moment.
@@ -140,8 +140,8 @@ class JobLedger:
         with self._lock:
             held = [
                 job
-                for project_id in project_ids
-                if (book := self._books.get(project_id)) is not None
+                for book_id in book_ids
+                if (book := self._books.get(book_id)) is not None
                 for job in reversed(book.jobs.values())
             ]
         return sorted(
@@ -219,16 +219,16 @@ class JobLedger:
             self._forget_oldest_ended(book)
             return final, True
 
-    def changes(self, project_id: ProjectId) -> int:
+    def changes(self, book_id: BookId) -> int:
         """Return how many times a job of a book changed in this process.
 
-        :param project_id: The book.
-        :type project_id: ProjectId
+        :param book_id: The book.
+        :type book_id: BookId
         :returns: The number of changes, none for a book without a job.
         :rtype: int
         """
         with self._lock:
-            book = self._books.get(project_id)
+            book = self._books.get(book_id)
             return 0 if book is None else book.changes
 
     def _locate(self, job_id: JobId) -> tuple[BookJobs, Job]:
@@ -325,7 +325,7 @@ class BoardControl(JobControl):
         """
         if (job := self._ledger.update_progress(self._job_id, change)) is None:
             raise JobCancelledError
-        await self._publisher.publish(JobChanged(project_id=job.project_id, job=job))
+        await self._publisher.publish(JobChanged(book_id=job.book_id, job=job))
 
 
 class InMemoryJobBoard(JobBoard):
@@ -391,7 +391,7 @@ class InMemoryJobBoard(JobBoard):
         starts = self._ledger.add(job)
         self._announce_later(job.id)
         if starts:
-            self._spawn(self._serve(job.project_id))
+            self._spawn(self._serve(job.book_id))
         return job
 
     @override
@@ -407,41 +407,41 @@ class InMemoryJobBoard(JobBoard):
         return self._ledger.get(job_id)
 
     @override
-    def jobs(self, project_id: ProjectId, *, active: bool) -> Sequence[Job]:
+    def jobs(self, book_id: BookId, *, active: bool) -> Sequence[Job]:
         """Return the jobs of a book, the newest first.
 
-        :param project_id: Project whose jobs are listed.
-        :type project_id: ProjectId
+        :param book_id: Project whose jobs are listed.
+        :type book_id: BookId
         :param active: Whether to list only the jobs that are queued or running.
         :type active: bool
         :returns: The jobs of the book.
         :rtype: Sequence[Job]
         """
-        return self._ledger.listing([project_id], active=active)
+        return self._ledger.listing([book_id], active=active)
 
     @override
-    def jobs_of(self, project_ids: Collection[ProjectId], *, active: bool) -> Sequence[Job]:
+    def jobs_of(self, book_ids: Collection[BookId], *, active: bool) -> Sequence[Job]:
         """Return the jobs of several books, the newest first.
 
-        :param project_ids: Projects whose jobs are listed.
-        :type project_ids: Collection[ProjectId]
+        :param book_ids: Projects whose jobs are listed.
+        :type book_ids: Collection[BookId]
         :param active: Whether to list only the jobs that are queued or running.
         :type active: bool
         :returns: The jobs of the books.
         :rtype: Sequence[Job]
         """
-        return self._ledger.listing(project_ids, active=active)
+        return self._ledger.listing(book_ids, active=active)
 
     @override
-    def revision(self, project_id: ProjectId) -> str:
+    def revision(self, book_id: BookId) -> str:
         """Return the identifier of this process and the number of changes of the jobs of the book in it.
 
-        :param project_id: The book.
-        :type project_id: ProjectId
+        :param book_id: The book.
+        :type book_id: BookId
         :returns: The mark of the jobs of the book.
         :rtype: str
         """
-        return f'{self._process}.{self._ledger.changes(project_id)}'
+        return f'{self._process}.{self._ledger.changes(book_id)}'
 
     @override
     async def cancel(self, job_id: JobId) -> Job:
@@ -455,7 +455,7 @@ class InMemoryJobBoard(JobBoard):
         :raises JobFinishedError: If the job has ended already.
         """
         cancelled = self._ledger.cancel(job_id)
-        await self._publisher.publish(JobChanged(project_id=cancelled.project_id, job=cancelled))
+        await self._publisher.publish(JobChanged(book_id=cancelled.book_id, job=cancelled))
         return cancelled
 
     def _spawn(self, work: Coroutine[Any, Any, None]) -> None:
@@ -487,16 +487,16 @@ class InMemoryJobBoard(JobBoard):
         """
         with suppress(NotFoundError):
             job = self._ledger.get(job_id)
-            await self._publisher.publish(JobChanged(project_id=job.project_id, job=job))
+            await self._publisher.publish(JobChanged(book_id=job.book_id, job=job))
 
-    async def _serve(self, project_id: ProjectId) -> None:
+    async def _serve(self, book_id: BookId) -> None:
         """Run the queue of a book, one job after another, until it is empty.
 
-        :param project_id: Book whose queue is served.
-        :type project_id: ProjectId
+        :param book_id: Book whose queue is served.
+        :type book_id: BookId
         """
-        while (job := self._ledger.start_next(project_id)) is not None:
-            await self._publisher.publish(JobChanged(project_id=project_id, job=job))
+        while (job := self._ledger.start_next(book_id)) is not None:
+            await self._publisher.publish(JobChanged(book_id=book_id, job=job))
             control = BoardControl(
                 job_id=job.id, ledger=self._ledger, publisher=self._publisher, announce_later=self._announce_later
             )
@@ -510,4 +510,4 @@ class InMemoryJobBoard(JobBoard):
                 end = JobEnd.unexpected()
             final, changed = self._ledger.end(job.id, end)
             if changed:
-                await self._publisher.publish(JobChanged(project_id=project_id, job=final))
+                await self._publisher.publish(JobChanged(book_id=book_id, job=final))

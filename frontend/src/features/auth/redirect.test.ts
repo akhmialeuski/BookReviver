@@ -6,15 +6,15 @@ import { DEFAULT_LANDING, safeRedirect } from './redirect';
  */
 
 describe('safeRedirect', () => {
-  it.each(['/projects', '/projects/5?page=2', '/'])('keeps the local path %s', (path) => {
+  it.each(['/books', '/books/5?page=2', '/'])('keeps the local path %s', (path) => {
     expect(safeRedirect(path)).toBe(path);
   });
 
   it.each([
-    'https://evil.example/projects',
+    'https://evil.example/books',
     '//evil.example',
     '/\\evil.example',
-    'projects',
+    'books',
     '',
     undefined,
     42,

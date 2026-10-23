@@ -17,14 +17,14 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import Renditions
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import StepOutput
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.steps import StepRun, StepRunner
 from tests.helpers.books import IMAGE
-from tests.helpers.builders import EPOCH, make_page, make_project, make_scan, make_source
+from tests.helpers.builders import EPOCH, make_page, make_record, make_scan, make_source
 from tests.helpers.fake_processing import PREVIEW_TOKEN, FakeCatalogue, FakeRenditionWriter
 from tests.helpers.in_process_executor import InProcessStepExecutor
 from tests.helpers.page_services import INFO_NAME, FakeTiler
@@ -83,7 +83,7 @@ class Rig:
             tiler=self.tiler,
         )
         self.scan = _scan()
-        self.keys = ProjectKeys(make_project().id)
+        self.keys = BookKeys(make_record().id)
         page = make_page(scan=self.scan)
         self.version = BaseVersions.split_none(page=page, scan=self.scan, state=VersionState.PENDING, moment=EPOCH)
 

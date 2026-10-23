@@ -20,10 +20,10 @@ const sdk = vi.hoisted(() => ({ run: vi.fn(), impact: vi.fn(), jobs: vi.fn(), st
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  runStageApiV1ProjectsProjectIdStagesStageRunPost: sdk.run,
-  runImpactApiV1ProjectsProjectIdStagesStageRunImpactPost: sdk.impact,
-  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
-  listStagesApiV1ProjectsProjectIdStagesGet: sdk.stages,
+  runStageApiV1BooksBookIdStagesStageRunPost: sdk.run,
+  runImpactApiV1BooksBookIdStagesStageRunImpactPost: sdk.impact,
+  listBookJobsApiV1BooksBookIdJobsGet: sdk.jobs,
+  listStagesApiV1BooksBookIdStagesGet: sdk.stages,
 }));
 
 const ITEMS = joinRows(
@@ -262,7 +262,7 @@ describe('RunControls', () => {
       await start();
 
       expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
-        path: { project_id: 'project', stage: 'geometry' },
+        path: { book_id: 'book', stage: 'geometry' },
         body: { page_ids: ['b', 'c'] },
       });
     });

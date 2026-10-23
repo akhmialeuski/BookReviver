@@ -36,9 +36,9 @@ from sqlalchemy.engine import make_url
 from bookreviver.adapters.persistence.sqlalchemy.accounts import USER_TABLE
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LIBRARY_TABLE
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema
-from bookreviver.adapters.persistence.sqlalchemy.tables import PROJECTS_TABLE
+from bookreviver.adapters.persistence.sqlalchemy.tables import BOOK_RECORDS_TABLE
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.ids import ProjectId
+from bookreviver.domain.ids import BookId
 
 if TYPE_CHECKING:
     from sqlalchemy import Table
@@ -112,20 +112,20 @@ class SharedDatabaseSplit:
         await to_thread.run_sync(self._catalogue.migrations.upgrade)
         catalogue = self._catalogue_path()
         accounts = await to_thread.run_sync(self._fill_catalogue, catalogue)
-        project_ids = await to_thread.run_sync(self._project_ids)
-        for project_id in project_ids:
+        book_ids = await to_thread.run_sync(self._book_ids)
+        for book_id in book_ids:
             try:
-                await self._books.create(project_id)
+                await self._books.create(book_id)
             except ConflictError as error:
-                err_msg = f'The book {project_id} has a database already, so the split would overwrite it.'
+                err_msg = f'The book {book_id} has a database already, so the split would overwrite it.'
                 raise SplitRefusedError(err_msg) from error
-            async with self._books.use(project_id) as database:
+            async with self._books.use(book_id) as database:
                 await to_thread.run_sync(database.migrations.downgrade, BOOK_BASELINE)
                 await database.dispose()
                 versions = database.config.alembic_config.version_table_name
-                await to_thread.run_sync(self._fill_book, self._books.path(project_id), project_id, versions)
+                await to_thread.run_sync(self._fill_book, self._books.path(book_id), book_id, versions)
                 await to_thread.run_sync(database.migrations.upgrade)
-        return SplitReport(accounts=accounts, books=len(project_ids))
+        return SplitReport(accounts=accounts, books=len(book_ids))
 
     def _require_shared(self) -> None:
         """Refuse a shared database that is missing or at a revision other than the last of its chain.
@@ -157,15 +157,15 @@ class SharedDatabaseSplit:
             raise SplitRefusedError(err_msg)
         return Path(database).resolve()
 
-    def _project_ids(self) -> list[ProjectId]:
+    def _book_ids(self) -> list[BookId]:
         """Read the identifiers of the books of the shared database.
 
         :returns: The identifiers, in order.
-        :rtype: list[ProjectId]
+        :rtype: list[BookId]
         """
         with closing(sqlite3.connect(f'{self._shared.as_uri()}{READ_ONLY}', uri=True)) as connection:
-            rows = connection.execute(f'SELECT id FROM {_table(MAIN, PROJECTS_TABLE)} ORDER BY id').fetchall()
-        return [ProjectId(UUID(bytes=row[0])) for row in rows]
+            rows = connection.execute(f'SELECT id FROM {_table(MAIN, BOOK_RECORDS_TABLE)} ORDER BY id').fetchall()
+        return [BookId(UUID(bytes=row[0])) for row in rows]
 
     def _fill_catalogue(self, catalogue: Path) -> int:
         """Copy the accounts and the recipe profiles into the catalogue, and give every book its library entry.
@@ -191,18 +191,18 @@ class SharedDatabaseSplit:
                 connection,
                 LIBRARY_TABLE,
                 'project_id, owner_id, added_at',
-                _select('id, owner_id, created_at', PROJECTS_TABLE, condition=None),
+                _select('id, owner_id, created_at', BOOK_RECORDS_TABLE, condition=None),
             )
             _commit_checked(connection)
             return _count(connection, USER_TABLE)
 
-    def _fill_book(self, target: Path, project_id: ProjectId, versions: str) -> None:
+    def _fill_book(self, target: Path, book_id: BookId, versions: str) -> None:
         """Copy the rows of one book into its new file, at the baseline revision of the schema of a book.
 
         :param target: The new file of the book, empty and at the baseline.
         :type target: Path
-        :param project_id: The book.
-        :type project_id: ProjectId
+        :param book_id: The book.
+        :type book_id: BookId
         :param versions: Name of the version table of the file, which the copy leaves alone.
         :type versions: str
         """
@@ -211,7 +211,7 @@ class SharedDatabaseSplit:
         with closing(self._attached(target)) as connection:
             connection.execute(BEGIN_COPY)
             for table in metadata.sorted_tables:
-                _copy(connection, table, condition=conditions[table.name], book=project_id)
+                _copy(connection, table, condition=conditions[table.name], book=book_id)
             _commit_checked(connection)
 
     def _attached(self, target: Path) -> sqlite3.Connection:
@@ -237,7 +237,7 @@ def book_conditions(metadata: MetaData) -> dict[str, str]:
     :rtype: dict[str, str]
     :raises RuntimeError: If a table neither names its book nor has a key to a table that does.
     """
-    conditions = {PROJECTS_TABLE: f'id = :{BOOK_PARAMETER}'}
+    conditions = {BOOK_RECORDS_TABLE: f'id = :{BOOK_PARAMETER}'}
     for table in metadata.sorted_tables:
         if table.name in conditions:
             continue
@@ -273,9 +273,7 @@ def _tables_of(path: Path, *, leaving_out: str) -> MetaData:
     return metadata
 
 
-def _copy(
-    connection: sqlite3.Connection, table: Table, *, condition: str | None, book: ProjectId | None = None
-) -> None:
+def _copy(connection: sqlite3.Connection, table: Table, *, condition: str | None, book: BookId | None = None) -> None:
     """Copy the rows of one table from the shared file, with the columns both tables have.
 
     :param connection: Connection of the new file with the shared file attached.
@@ -285,7 +283,7 @@ def _copy(
     :param condition: Which rows of the shared table to copy, or None for every row.
     :type condition: str | None
     :param book: The book the condition names, or None.
-    :type book: ProjectId | None
+    :type book: BookId | None
     """
     shared_columns = {row[1] for row in connection.execute(f'PRAGMA {SHARED}.table_info("{table.name}")')}
     columns = LIST_SEPARATOR.join(f'"{column.name}"' for column in table.columns if column.name in shared_columns)

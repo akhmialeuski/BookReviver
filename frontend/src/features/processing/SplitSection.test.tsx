@@ -24,11 +24,11 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  runStageApiV1ProjectsProjectIdStagesStageRunPost: sdk.run,
-  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
-  listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGet: sdk.edits,
-  putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPut: sdk.put,
-  deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDelete: sdk.remove,
+  runStageApiV1BooksBookIdStagesStageRunPost: sdk.run,
+  listBookJobsApiV1BooksBookIdJobsGet: sdk.jobs,
+  listEditsApiV1BooksBookIdPagesPageIdEditsStageGet: sdk.edits,
+  putEditApiV1BooksBookIdPagesPageIdEditsStageStepIdPut: sdk.put,
+  deleteEditApiV1BooksBookIdPagesPageIdEditsStageStepIdDelete: sdk.remove,
 }));
 
 const AUTO = recipe('auto', { stage: 'page-split', steps: [step('split.auto')] });
@@ -56,14 +56,14 @@ describe('SplitSection', () => {
 
   /** A control elsewhere on the screen that sends the same request to run the stage as the banners and the footer do. */
   function OtherRun(): React.JSX.Element {
-    const run = useRunStage('project');
+    const run = useRunStage('book');
     return (
       <button
         type="button"
         data-testid="other-run"
         onClick={() =>
           run.mutate({
-            path: { project_id: 'project', stage: 'page-split' },
+            path: { book_id: 'book', stage: 'page-split' },
             body: {},
           })
         }

@@ -1,9 +1,9 @@
 import { queryOptions, type UseQueryResult, useQuery } from '@tanstack/react-query';
 import {
-  listPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGet,
+  listPaginationSectionsApiV1BooksBookIdPaginationSectionsGet,
   type PaginationSectionSchema,
 } from '@/api';
-import { listPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetQueryKey } from '@/api/@tanstack/react-query.gen';
+import { listPaginationSectionsApiV1BooksBookIdPaginationSectionsGetQueryKey } from '@/api/@tanstack/react-query.gen';
 
 /**
  * The pagination sections of a book as one query, in book order.
@@ -17,10 +17,10 @@ import { listPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetQueryK
 export const SECTIONS_PAGE_SIZE = 100;
 
 /** Query options of every section of a book. */
-export function sectionsOptions(projectId: string) {
+export function sectionsOptions(bookId: string) {
   return queryOptions({
-    queryKey: listPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetQueryKey({
-      path: { project_id: projectId },
+    queryKey: listPaginationSectionsApiV1BooksBookIdPaginationSectionsGetQueryKey({
+      path: { book_id: bookId },
       query: { size: SECTIONS_PAGE_SIZE },
     }),
     queryFn: async ({ signal }): Promise<PaginationSectionSchema[]> => {
@@ -28,8 +28,8 @@ export function sectionsOptions(projectId: string) {
       let page = 1;
       let total = 1;
       while (page <= total) {
-        const { data } = await listPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGet({
-          path: { project_id: projectId },
+        const { data } = await listPaginationSectionsApiV1BooksBookIdPaginationSectionsGet({
+          path: { book_id: bookId },
           query: { page, size: SECTIONS_PAGE_SIZE },
           signal,
           throwOnError: true,
@@ -44,6 +44,6 @@ export function sectionsOptions(projectId: string) {
 }
 
 /** Read the pagination sections of a book in book order. */
-export function useSections(projectId: string): UseQueryResult<PaginationSectionSchema[]> {
-  return useQuery(sectionsOptions(projectId));
+export function useSections(bookId: string): UseQueryResult<PaginationSectionSchema[]> {
+  return useQuery(sectionsOptions(bookId));
 }

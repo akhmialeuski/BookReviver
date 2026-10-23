@@ -15,9 +15,9 @@ const sdk = vi.hoisted(() => ({ update: vi.fn(), jobs: vi.fn(), detect: vi.fn() 
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  updatePageApiV1ProjectsProjectIdPagesPageIdPatch: sdk.update,
-  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
-  detectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPost: sdk.detect,
+  updatePageApiV1BooksBookIdPagesPageIdPatch: sdk.update,
+  listBookJobsApiV1BooksBookIdJobsGet: sdk.jobs,
+  detectContentTypesApiV1BooksBookIdPagesContentTypesDetectPost: sdk.detect,
 }));
 
 class SizeObserverStandIn {
@@ -40,7 +40,7 @@ describe('ContentTypeMenu', () => {
     act(() =>
       root.render(
         <QueryClientProvider client={client}>
-          <ContentTypeMenu projectId="book" items={items} currentId="a" selected={selected} />
+          <ContentTypeMenu bookId="book" items={items} currentId="a" selected={selected} />
         </QueryClientProvider>,
       ),
     );
@@ -190,7 +190,7 @@ describe('ContentTypeMenu', () => {
 
     expect(sdk.detect).toHaveBeenCalledTimes(1);
     expect(sdk.detect.mock.calls[0]?.[0]).toMatchObject({
-      path: { project_id: 'book' },
+      path: { book_id: 'book' },
       body: { page_ids: ['a'] },
     });
     expect(document.body.querySelector('[role="menu"]')).not.toBeNull();

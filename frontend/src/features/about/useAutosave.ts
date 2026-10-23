@@ -1,9 +1,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { type ProjectSchema, updateProjectApiV1ProjectsProjectIdPatch } from '@/api';
+import { type BookSchema, updateBookApiV1BooksBookIdPatch } from '@/api';
 import {
-  projectApiV1ProjectsProjectIdGetQueryKey,
-  updateProjectApiV1ProjectsProjectIdPatchMutation,
+  bookApiV1BooksBookIdGetQueryKey,
+  updateBookApiV1BooksBookIdPatchMutation,
 } from '@/api/@tanstack/react-query.gen';
 import { type SaveState, saveState } from '@/features/about/autosave';
 import {
@@ -13,7 +13,7 @@ import {
   planSave,
   toFields,
 } from '@/features/about/fields';
-import { invalidateProject } from '@/features/projects/queries';
+import { invalidateBook } from '@/features/books/queries';
 import { useDebouncedCallback } from '@/shared/hooks/useDebouncedCallback';
 import { describeError } from '@/shared/http/problem';
 
@@ -58,9 +58,9 @@ export interface Autosave {
  * @param project The book as the server holds it.
  * @returns The fields to show, the state of the saving and the calls that change them.
  */
-export function useAutosave(project: ProjectSchema): Autosave {
+export function useAutosave(book: BookSchema): Autosave {
   const queryClient = useQueryClient();
-  const saved = useMemo(() => toFields(project), [project]);
+  const saved = useMemo(() => toFields(book), [book]);
   const [edits, setEdits] = useState<Partial<EditableFields>>({});
   const [immediate, setImmediate] = useState(false);
   // The patches are told apart by their text, so a patch the server has taken is not sent again when the value it
@@ -70,13 +70,13 @@ export function useAutosave(project: ProjectSchema): Autosave {
   const [savedAt, setSavedAt] = useState<Date | null>(null);
 
   const { mutate, isPending, error } = useMutation({
-    ...updateProjectApiV1ProjectsProjectIdPatchMutation(),
+    ...updateBookApiV1BooksBookIdPatchMutation(),
     onSuccess: (updated, variables) => {
       setSettledKey(JSON.stringify(variables.body));
       setFailedKey('');
       setSavedAt(new Date());
       queryClient.setQueryData(
-        projectApiV1ProjectsProjectIdGetQueryKey({ path: { project_id: updated.id } }),
+        bookApiV1BooksBookIdGetQueryKey({ path: { book_id: updated.id } }),
         updated,
       );
     },
@@ -86,11 +86,11 @@ export function useAutosave(project: ProjectSchema): Autosave {
   const plan = useMemo(() => planSave(saved, edits), [saved, edits]);
   const dirty = hasChanges(plan) && plan.key !== settledKey;
   const failed = dirty && plan.key === failedKey;
-  const projectId = project.id;
+  const bookId = book.id;
 
   // The send of the tab is dropped at the unmount, because the effect below sends the last changes directly then
   const send = useDebouncedCallback(
-    (patch: typeof plan.patch) => mutate({ path: { project_id: projectId }, body: patch }),
+    (patch: typeof plan.patch) => mutate({ path: { book_id: bookId }, body: patch }),
     DEBOUNCE_MS,
     { flushOnUnmount: false },
   );
@@ -113,13 +113,13 @@ export function useAutosave(project: ProjectSchema): Autosave {
   useEffect(
     () => () => {
       if (pending.current.send) {
-        void updateProjectApiV1ProjectsProjectIdPatch({
-          path: { project_id: projectId },
+        void updateBookApiV1BooksBookIdPatch({
+          path: { book_id: bookId },
           body: pending.current.patch,
-        }).then(() => invalidateProject(queryClient, projectId));
+        }).then(() => invalidateBook(queryClient, bookId));
       }
     },
-    [queryClient, projectId],
+    [queryClient, bookId],
   );
 
   const edit = useCallback((changes: Partial<EditableFields>, options?: EditOptions) => {

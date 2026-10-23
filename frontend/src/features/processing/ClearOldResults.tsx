@@ -16,17 +16,17 @@ import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
  */
 
 export function ClearOldResults({
-  projectId,
+  bookId,
   children,
 }: {
-  projectId: string;
+  bookId: string;
   /** The button that opens the dialog. */
   children: React.ReactNode;
 }): React.JSX.Element {
   const labels = MESSAGES.about.clearResults;
   const [open, setOpen] = useState(false);
-  const report = useCollectionReport(projectId, open);
-  const collect = useCollectVersions(projectId);
+  const report = useCollectionReport(bookId, open);
+  const collect = useCollectVersions(bookId);
   // A count that is being read again is the one of an earlier opening, so it is not shown
   const counted = report.isFetching ? undefined : report.data;
   const description = report.isFetching
@@ -53,7 +53,7 @@ export function ClearOldResults({
       submitDisabled={counted === undefined || counted.versions === 0 || collect.isPending}
       submitTestId="clear-old-results-submit"
       onConfirm={() =>
-        collect.mutate({ path: { project_id: projectId } }, { onSuccess: () => setOpen(false) })
+        collect.mutate({ path: { book_id: bookId } }, { onSuccess: () => setOpen(false) })
       }
     />
   );

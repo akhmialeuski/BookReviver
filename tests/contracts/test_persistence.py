@@ -32,7 +32,7 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.ids import PageVersionId, ProjectId, SourceId
+from bookreviver.domain.ids import BookId, PageVersionId, SourceId
 from bookreviver.domain.values import (
     BookDetails,
     MetadataSuggestion,
@@ -46,15 +46,15 @@ from tests.helpers.builders import (
     FULL_DETAILS,
     make_page,
     make_page_version,
-    make_project,
+    make_record,
     make_scan,
     make_source,
     new_account_id,
 )
-from tests.helpers.seeding import store_project
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Page, Project, Source
+    from bookreviver.domain.entities import BookRecord, Page, Source
     from bookreviver.domain.ids import AccountId, PageId
     from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories, UnitOfWork
     from tests.contracts.conftest import OwnerFactory
@@ -97,15 +97,15 @@ WIDTH_PX: str = 'width_px'
 BLANK_PROCESSOR_KEY: str = 'pages.blank'
 
 
-async def _add_book(uow: UnitOfWork, project: Project) -> list[Page]:
+async def _add_book(uow: UnitOfWork, book_record: BookRecord) -> list[Page]:
     """Add a source of ``PAGE_COUNT`` scans and one page per scan, the last kept out of the book, in one change.
 
     The change is ``change_book`` of the project, so the project must be stored already.
 
     :param uow: Unit of work to add with, in which the project is stored.
     :type uow: UnitOfWork
-    :param project: Project of the book.
-    :type project: Project
+    :param book_record: Project of the book.
+    :type book_record: BookRecord
     :returns: The pages in book order.
     :rtype: list[Page]
     """
@@ -114,19 +114,19 @@ async def _add_book(uow: UnitOfWork, project: Project) -> list[Page]:
     pages = [make_page(order_key=f'a{scan.number}', scan=scan) for scan in scans]
     pages[-1] = evolve(pages[-1], included=False)
 
-    def add_rows(repos: BookRepositories, _project: Project) -> None:
+    def add_rows(repos: BookRepositories, _book_record: BookRecord) -> None:
         """Add the source, its scans and their pages.
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _project: Project of the book, which the work does not need.
-        :type _project: Project
+        :param _book_record: Project of the book, which the work does not need.
+        :type _book_record: BookRecord
         """
         repos.sources.add(source)
         repos.scans.add_many(scans)
         repos.pages.add_many(pages)
 
-    await uow.change_book(project.id, add_rows)
+    await uow.change_book(book_record.id, add_rows)
     return pages
 
 
@@ -166,13 +166,13 @@ def _entry(owner_id: AccountId, *, minutes: int = 0) -> LibraryEntry:
     :returns: An entry of a book with a fresh identifier.
     :rtype: LibraryEntry
     """
-    return LibraryEntry(project_id=ProjectId(uuid4()), owner_id=owner_id, added_at=EPOCH + timedelta(minutes=minutes))
+    return LibraryEntry(book_id=BookId(uuid4()), owner_id=owner_id, added_at=EPOCH + timedelta(minutes=minutes))
 
 
-class TestProjectRepository:
+class TestBookRecordRepository:
     """Contract of ProjectRepository, the one project row of a book."""
 
-    async def test_created_project_reads_back_after_commit(
+    async def test_created_book_reads_back_after_commit(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify the project a book is created with is visible to a later unit of work, unchanged.
@@ -182,9 +182,11 @@ class TestProjectRepository:
         :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
-        await store_project(fx_uow(), project, owner=await fx_new_owner())
-        assert await fx_uow().read_book(project.id, lambda repos: repos.projects.get(project.id)) == project
+        book_record = make_record()
+        await store_book(fx_uow(), book_record, owner=await fx_new_owner())
+        assert (
+            await fx_uow().read_book(book_record.id, lambda repos: repos.book_record.get(book_record.id)) == book_record
+        )
 
     async def test_update_replaces_details(self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
         """Verify an update stores the new description, whose contributors and identifiers come back in their order.
@@ -194,11 +196,11 @@ class TestProjectRepository:
         :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
-        described = evolve(project, details=FULL_DETAILS)
-        await store_project(fx_uow(), project, owner=await fx_new_owner())
-        await fx_uow().change_book(project.id, lambda repos, _project: repos.projects.update(described))
-        stored = await fx_uow().read_book(project.id, lambda repos: repos.projects.get(project.id))
+        book_record = make_record()
+        described = evolve(book_record, details=FULL_DETAILS)
+        await store_book(fx_uow(), book_record, owner=await fx_new_owner())
+        await fx_uow().change_book(book_record.id, lambda repos, _book_record: repos.book_record.update(described))
+        stored = await fx_uow().read_book(book_record.id, lambda repos: repos.book_record.get(book_record.id))
         assert stored.details == FULL_DETAILS
 
     async def test_update_clears_lists_and_height(self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
@@ -209,14 +211,14 @@ class TestProjectRepository:
         :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = evolve(make_project(), details=FULL_DETAILS)
-        cleared = evolve(project, details=BookDetails(title=FULL_DETAILS.title))
-        await store_project(fx_uow(), project, owner=await fx_new_owner())
-        await fx_uow().change_book(project.id, lambda repos, _project: repos.projects.update(cleared))
-        stored = await fx_uow().read_book(project.id, lambda repos: repos.projects.get(project.id))
+        book_record = evolve(make_record(), details=FULL_DETAILS)
+        cleared = evolve(book_record, details=BookDetails(title=FULL_DETAILS.title))
+        await store_book(fx_uow(), book_record, owner=await fx_new_owner())
+        await fx_uow().change_book(book_record.id, lambda repos, _book_record: repos.book_record.update(cleared))
+        stored = await fx_uow().read_book(book_record.id, lambda repos: repos.book_record.get(book_record.id))
         assert stored.details == BookDetails(title=FULL_DETAILS.title)
 
-    async def test_overview_counts_the_book_of_one_project(
+    async def test_overview_counts_the_book_of_one_book(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify the overview counts the included pages, the sources and the scans of the book.
@@ -226,12 +228,15 @@ class TestProjectRepository:
         :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         uow = fx_uow()
-        await store_project(uow, project, owner=await fx_new_owner())
-        await _add_book(uow, project)
-        overview = await fx_uow().read_book(project.id, lambda repos: repos.projects.overview(project))
-        assert (overview.project, overview.page_count, overview.source_count, overview.scan_count) == (project, *BOOK)
+        await store_book(uow, book_record, owner=await fx_new_owner())
+        await _add_book(uow, book_record)
+        overview = await fx_uow().read_book(book_record.id, lambda repos: repos.book_record.overview(book_record))
+        assert (overview.book_record, overview.page_count, overview.source_count, overview.scan_count) == (
+            book_record,
+            *BOOK,
+        )
 
     async def test_overview_counts_the_pages_with_an_image_kept_out_of_the_book_but_not_placeholders(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -243,13 +248,13 @@ class TestProjectRepository:
         :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         uow = fx_uow()
-        await store_project(uow, project, owner=await fx_new_owner())
-        await _add_book(uow, project)
+        await store_book(uow, book_record, owner=await fx_new_owner())
+        await _add_book(uow, book_record)
         placeholder = make_page(order_key=KEY_B0)
-        await uow.change_book(project.id, lambda repos, _project: repos.pages.add(placeholder))
-        overview = await fx_uow().read_book(project.id, lambda repos: repos.projects.overview(project))
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.pages.add(placeholder))
+        overview = await fx_uow().read_book(book_record.id, lambda repos: repos.book_record.overview(book_record))
         assert (overview.page_count, overview.image_page_count) == (BOOK[0] + 1, PAGE_COUNT)
 
     async def test_the_cover_is_the_first_page_of_the_kind_cover(
@@ -262,13 +267,13 @@ class TestProjectRepository:
         :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         text, cover, back = (
             make_page(order_key=key, kind=kind)
             for key, kind in (('a0', PageKind.TEXT), ('a1', PageKind.COVER), ('a2', PageKind.COVER))
         )
-        await store_project(fx_uow(), project, back, text, cover, owner=await fx_new_owner())
-        overview = await fx_uow().read_book(project.id, lambda repos: repos.projects.overview(project))
+        await store_book(fx_uow(), book_record, back, text, cover, owner=await fx_new_owner())
+        overview = await fx_uow().read_book(book_record.id, lambda repos: repos.book_record.overview(book_record))
         assert overview.cover_page_id == cover.id
 
     async def test_a_book_without_a_cover_page_shows_its_first_page_and_an_empty_book_none(
@@ -282,22 +287,22 @@ class TestProjectRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        empty, project = make_project(), make_project()
+        empty, book_record = make_record(), make_record()
         first, second = (make_page(order_key=key) for key in ('a0', 'a1'))
-        await store_project(fx_uow(), empty, owner=owner_id)
-        await store_project(fx_uow(), project, second, first, owner=owner_id)
+        await store_book(fx_uow(), empty, owner=owner_id)
+        await store_book(fx_uow(), book_record, second, first, owner=owner_id)
 
-        async def cover_of(book: Project) -> PageId | None:
+        async def cover_of(book: BookRecord) -> PageId | None:
             """Read the cover the overview of a book names.
 
             :param book: The project of the book.
-            :type book: Project
+            :type book: BookRecord
             :returns: The cover page, or None.
             :rtype: PageId | None
             """
-            return (await fx_uow().read_book(book.id, lambda repos: repos.projects.overview(book))).cover_page_id
+            return (await fx_uow().read_book(book.id, lambda repos: repos.book_record.overview(book))).cover_page_id
 
-        assert [await cover_of(book) for book in (empty, project)] == [None, first.id]
+        assert [await cover_of(book) for book in (empty, book_record)] == [None, first.id]
 
 
 class TestLibraryRepository:
@@ -315,7 +320,7 @@ class TestLibraryRepository:
         """
         entry = _entry(await fx_new_owner())
         await fx_uow().change(lambda repos: repos.library.add(entry))
-        assert await fx_uow().read(lambda repos: repos.library.get(entry.project_id)) == entry
+        assert await fx_uow().read(lambda repos: repos.library.get(entry.book_id)) == entry
 
     async def test_adding_a_listed_book_raises_conflict(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -330,7 +335,7 @@ class TestLibraryRepository:
         entry = _entry(await fx_new_owner())
         await fx_uow().change(lambda repos: repos.library.add(entry))
         stolen = evolve(entry, owner_id=await fx_new_owner())
-        with pytest.raises(ConflictError, match=str(entry.project_id)):
+        with pytest.raises(ConflictError, match=str(entry.book_id)):
             await fx_uow().change(lambda repos: repos.library.add(stolen))
 
     async def test_entry_of_an_account_that_is_not_stored_raises_not_found(self, fx_uow: UnitOfWorkFactory) -> None:
@@ -355,11 +360,11 @@ class TestLibraryRepository:
         """
         entry = _entry(await fx_new_owner())
         await fx_uow().change(lambda repos: repos.library.add(entry))
-        await fx_uow().change(lambda repos: repos.library.delete(entry.project_id))
-        with pytest.raises(NotFoundError, match=str(entry.project_id)):
-            await fx_uow().read(lambda repos: repos.library.get(entry.project_id))
-        with pytest.raises(NotFoundError, match=str(entry.project_id)):
-            await fx_uow().change(lambda repos: repos.library.delete(entry.project_id))
+        await fx_uow().change(lambda repos: repos.library.delete(entry.book_id))
+        with pytest.raises(NotFoundError, match=str(entry.book_id)):
+            await fx_uow().read(lambda repos: repos.library.get(entry.book_id))
+        with pytest.raises(NotFoundError, match=str(entry.book_id)):
+            await fx_uow().change(lambda repos: repos.library.delete(entry.book_id))
 
     async def test_list_for_owner_orders_slices_and_counts(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -399,29 +404,29 @@ class TestLibraryRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        tied = sorted((_entry(owner_id, minutes=1) for _ in range(PAGE_COUNT)), key=attrgetter('project_id'))
+        tied = sorted((_entry(owner_id, minutes=1) for _ in range(PAGE_COUNT)), key=attrgetter('book_id'))
         # Insert against the expected order, so neither insertion nor storage order can pass for it
         await fx_uow().change(lambda repos: [repos.library.add(entry) for entry in reversed(tied)])
 
-        def list_whole_and_by_page(repos: CatalogueRepositories) -> tuple[list[ProjectId], list[ProjectId]]:
+        def list_whole_and_by_page(repos: CatalogueRepositories) -> tuple[list[BookId], list[BookId]]:
             """List the owner's books in one window and then one book at a time.
 
             :param repos: Repositories of the transaction.
             :type repos: CatalogueRepositories
             :returns: The identifiers of the whole listing, and of the pages of one book each, joined.
-            :rtype: tuple[list[ProjectId], list[ProjectId]]
+            :rtype: tuple[list[BookId], list[BookId]]
             """
-            whole = [item.project_id for item in repos.library.list_for_owner(owner_id, SliceRequest()).items]
+            whole = [item.book_id for item in repos.library.list_for_owner(owner_id, SliceRequest()).items]
             paged = [
-                item.project_id
+                item.book_id
                 for offset in range(PAGE_COUNT)
                 for item in repos.library.list_for_owner(owner_id, SliceRequest(offset=offset, limit=1)).items
             ]
             return whole, paged
 
         whole, paged = await fx_uow().read(list_whole_and_by_page)
-        expect(whole == [entry.project_id for entry in tied])
-        expect(paged == [entry.project_id for entry in tied])
+        expect(whole == [entry.book_id for entry in tied])
+        expect(paged == [entry.book_id for entry in tied])
         assert_expectations()
 
     async def test_list_all_returns_the_entries_of_every_account_by_identifier(
@@ -437,7 +442,7 @@ class TestLibraryRepository:
         entries = [_entry(await fx_new_owner(), minutes=minute) for minute in range(PAGE_COUNT)]
         await fx_uow().change(lambda repos: [repos.library.add(entry) for entry in entries])
         listed = await fx_uow().read(lambda repos: repos.library.list_all())
-        assert list(listed) == sorted(entries, key=attrgetter('project_id'))
+        assert list(listed) == sorted(entries, key=attrgetter('book_id'))
 
 
 class TestSourceRepository:
@@ -454,7 +459,7 @@ class TestSourceRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        project, other = make_project(), make_project()
+        book_record, other = make_record(), make_record()
         later = make_source(name=SECOND_PART_PDF, minutes=2)
         earlier = evolve(
             make_source(name=FIRST_PART_PDF, minutes=1),
@@ -463,13 +468,13 @@ class TestSourceRepository:
         )
         foreign = make_source()
         uow = fx_uow()
-        await store_project(uow, project, owner=owner_id)
-        await store_project(uow, other, owner=owner_id)
-        await uow.change_book(project.id, lambda repos, _project: repos.sources.add_many([later, earlier]))
-        await uow.change_book(other.id, lambda repos, _project: repos.sources.add(foreign))
+        await store_book(uow, book_record, owner=owner_id)
+        await store_book(uow, other, owner=owner_id)
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.sources.add_many([later, earlier]))
+        await uow.change_book(other.id, lambda repos, _book_record: repos.sources.add(foreign))
         reader = fx_uow()
-        expect(await reader.read_book(project.id, lambda repos: repos.sources.get(earlier.id)) == earlier)
-        expect(await reader.read_book(project.id, lambda repos: repos.sources.list_all()) == [earlier, later])
+        expect(await reader.read_book(book_record.id, lambda repos: repos.sources.get(earlier.id)) == earlier)
+        expect(await reader.read_book(book_record.id, lambda repos: repos.sources.list_all()) == [earlier, later])
         assert_expectations()
 
     async def test_find_by_sha256_looks_only_inside_the_book(
@@ -483,17 +488,19 @@ class TestSourceRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        project, other = make_project(), make_project()
+        book_record, other = make_record(), make_record()
         source = make_source()
         uow = fx_uow()
-        await store_project(uow, project, owner=owner_id, sources=[source])
-        await store_project(uow, other, owner=owner_id)
+        await store_book(uow, book_record, owner=owner_id, sources=[source])
+        await store_book(uow, other, owner=owner_id)
         reader = fx_uow()
-        expect(await reader.read_book(project.id, lambda repos: repos.sources.find_by_sha256(source.sha256)) == source)
+        expect(
+            await reader.read_book(book_record.id, lambda repos: repos.sources.find_by_sha256(source.sha256)) == source
+        )
         expect(await reader.read_book(other.id, lambda repos: repos.sources.find_by_sha256(source.sha256)) is None)
         assert_expectations()
 
-    async def test_same_file_twice_in_a_project_raises_conflict(
+    async def test_same_file_twice_in_a_book_raises_conflict(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify a second source with the digest of a stored one is a ConflictError naming the digest.
@@ -503,13 +510,13 @@ class TestSourceRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
-        await store_project(fx_uow(), project, owner=await fx_new_owner(), sources=[make_source()])
+        book_record = make_record()
+        await store_book(fx_uow(), book_record, owner=await fx_new_owner(), sources=[make_source()])
         duplicate = make_source()
         with pytest.raises(ConflictError, match=duplicate.sha256):
-            await fx_uow().change_book(project.id, lambda repos, _project: repos.sources.add(duplicate))
+            await fx_uow().change_book(book_record.id, lambda repos, _book_record: repos.sources.add(duplicate))
 
-    async def test_same_file_in_another_project_is_stored(
+    async def test_same_file_in_another_book_is_stored(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify the digest is unique only within a project, so two books may share a file such as a cover.
@@ -520,35 +527,35 @@ class TestSourceRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        first, second = make_project(), make_project()
+        first, second = make_record(), make_record()
         uow = fx_uow()
-        for project in (first, second):
-            await store_project(uow, project, owner=owner_id, sources=[make_source()])
+        for book_record in (first, second):
+            await store_book(uow, book_record, owner=owner_id, sources=[make_source()])
 
-        async def sources_of(project: Project) -> int:
+        async def sources_of(book_record: BookRecord) -> int:
             """Count the sources of one book.
 
-            :param project: The book.
-            :type project: Project
+            :param book_record: The book.
+            :type book_record: BookRecord
             :returns: How many sources it has.
             :rtype: int
             """
-            return await fx_uow().read_book(project.id, lambda repos: len(repos.sources.list_all()))
+            return await fx_uow().read_book(book_record.id, lambda repos: len(repos.sources.list_all()))
 
-        counts = [await sources_of(project) for project in (first, second)]
+        counts = [await sources_of(book_record) for book_record in (first, second)]
         assert counts == [1, 1]
 
-    async def test_source_of_a_missing_project_raises_not_found(self, fx_uow: UnitOfWorkFactory) -> None:
+    async def test_source_of_a_missing_book_raises_not_found(self, fx_uow: UnitOfWorkFactory) -> None:
         """Verify a source needs its project, reported by the missing identifier.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        project_id = make_project().id
+        book_id = make_record().id
         orphan = make_source()
         # The book is not stored, so the change is refused before the source is added
-        with pytest.raises(NotFoundError, match=str(project_id)):
-            await fx_uow().change_book(project_id, lambda repos, _project: repos.sources.add(orphan))
+        with pytest.raises(NotFoundError, match=str(book_id)):
+            await fx_uow().change_book(book_id, lambda repos, _book_record: repos.sources.add(orphan))
 
     async def test_delete_cascades_to_its_scans_only(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -560,22 +567,22 @@ class TestSourceRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         doomed, kept = (
             make_source(name=FIRST_PDF),
             make_source(name=SECOND_PDF),
         )
-        await store_project(
+        await store_book(
             fx_uow(),
-            project,
+            book_record,
             owner=await fx_new_owner(),
             sources=[doomed, kept],
             scans=[make_scan(source=source, number=0) for source in (doomed, kept)],
         )
-        await fx_uow().change_book(project.id, lambda repos, _project: repos.sources.delete(doomed.id))
+        await fx_uow().change_book(book_record.id, lambda repos, _book_record: repos.sources.delete(doomed.id))
         reader = fx_uow()
-        expect(await reader.read_book(project.id, lambda repos: repos.scans.list_for_source(doomed.id)) == [])
-        expect(len(await reader.read_book(project.id, lambda repos: repos.scans.list_for_source(kept.id))) == 1)
+        expect(await reader.read_book(book_record.id, lambda repos: repos.scans.list_for_source(doomed.id)) == [])
+        expect(len(await reader.read_book(book_record.id, lambda repos: repos.scans.list_for_source(kept.id))) == 1)
         assert_expectations()
 
     async def test_delete_leaves_the_pages_of_its_scans(
@@ -588,29 +595,29 @@ class TestSourceRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         uow = fx_uow()
-        await store_project(uow, project, owner=await fx_new_owner())
-        pages = await _add_book(uow, project)
+        await store_book(uow, book_record, owner=await fx_new_owner())
+        pages = await _add_book(uow, book_record)
         version = make_page_version(page_id=pages[0].id)
-        await uow.change_book(project.id, lambda repos, _project: repos.page_versions.add(version))
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(version))
 
-        def delete_the_source(repos: BookRepositories, _project: Project) -> None:
+        def delete_the_source(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Delete the only source of the project, which the work finds by listing.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: Project of the book, which the work does not need.
-            :type _project: Project
+            :param _book_record: Project of the book, which the work does not need.
+            :type _book_record: BookRecord
             """
             repos.sources.delete(repos.sources.list_all()[0].id)
 
-        await fx_uow().change_book(project.id, delete_the_source)
+        await fx_uow().change_book(book_record.id, delete_the_source)
         reader = fx_uow()
-        kept = await reader.read_book(project.id, lambda repos: repos.pages.list_window(SliceRequest()))
+        kept = await reader.read_book(book_record.id, lambda repos: repos.pages.list_window(SliceRequest()))
         expect(list(kept.items) == [evolve(page, scan_id=None) for page in pages])
         expect(
-            await reader.read_book(project.id, lambda repos: repos.page_versions.list_for_page(pages[0].id))
+            await reader.read_book(book_record.id, lambda repos: repos.page_versions.list_for_page(pages[0].id))
             == [version]
         )
         assert_expectations()
@@ -629,16 +636,16 @@ class TestScanRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         source = make_source()
         scans = [make_scan(source=source, number=number) for number in range(PAGE_COUNT)]
-        await store_project(fx_uow(), project, owner=await fx_new_owner(), sources=[source], scans=scans)
+        await store_book(fx_uow(), book_record, owner=await fx_new_owner(), sources=[source], scans=scans)
         unstored = make_scan(source=source, number=PAGE_COUNT)
         wanted = [scans[0].id, scans[2].id, scans[2].id, unstored.id]
         reader = fx_uow()
-        found = await reader.read_book(project.id, lambda repos: repos.scans.list_by_ids(wanted))
+        found = await reader.read_book(book_record.id, lambda repos: repos.scans.list_by_ids(wanted))
         expect(sorted(found, key=attrgetter('number')) == [scans[0], scans[2]])
-        expect(await reader.read_book(project.id, lambda repos: repos.scans.list_by_ids([])) == [])
+        expect(await reader.read_book(book_record.id, lambda repos: repos.scans.list_by_ids([])) == [])
         assert_expectations()
 
     async def test_scans_read_back_by_number_within_their_source(
@@ -651,22 +658,22 @@ class TestScanRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         source = make_source()
         scans = [
             evolve(make_scan(source=source, number=number), source_label=f'{number + 1}')
             for number in reversed(range(PAGE_COUNT))
         ]
-        await store_project(fx_uow(), project, owner=await fx_new_owner(), sources=[source], scans=scans)
+        await store_book(fx_uow(), book_record, owner=await fx_new_owner(), sources=[source], scans=scans)
         reader = fx_uow()
-        expect(await reader.read_book(project.id, lambda repos: repos.scans.get(scans[0].id)) == scans[0])
+        expect(await reader.read_book(book_record.id, lambda repos: repos.scans.get(scans[0].id)) == scans[0])
         expect(
-            await reader.read_book(project.id, lambda repos: repos.scans.list_for_source(source.id))
+            await reader.read_book(book_record.id, lambda repos: repos.scans.list_for_source(source.id))
             == list(reversed(scans))
         )
         assert_expectations()
 
-    async def test_list_for_project_follows_the_import_order_of_sources(
+    async def test_list_for_book_follows_the_import_order_of_sources(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify the scans of a project list source by source in import order, sliced, with the full total.
@@ -676,18 +683,18 @@ class TestScanRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         first = make_source(name=FIRST_PART_PDF, minutes=1)
         second = make_source(name=SECOND_PART_PDF, minutes=2)
         expected = [make_scan(source=source, number=number) for source in (first, second) for number in range(2)]
         # Insert against the expected order, so neither insertion nor storage order can pass for it
-        await store_project(
-            fx_uow(), project, owner=await fx_new_owner(), sources=[second, first], scans=list(reversed(expected))
+        await store_book(
+            fx_uow(), book_record, owner=await fx_new_owner(), sources=[second, first], scans=list(reversed(expected))
         )
         reader = fx_uow()
-        everything = await reader.read_book(project.id, lambda repos: repos.scans.list_window(SliceRequest()))
+        everything = await reader.read_book(book_record.id, lambda repos: repos.scans.list_window(SliceRequest()))
         window = await reader.read_book(
-            project.id, lambda repos: repos.scans.list_window(SliceRequest(offset=1, limit=2))
+            book_record.id, lambda repos: repos.scans.list_window(SliceRequest(offset=1, limit=2))
         )
         expect([scan.id for scan in everything.items] == [scan.id for scan in expected])
         expect([scan.id for scan in window.items] == [scan.id for scan in expected[1:3]])
@@ -704,25 +711,25 @@ class TestScanRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         source = make_source()
         scan = make_scan(source=source, number=0)
-        await store_project(fx_uow(), project, owner=await fx_new_owner(), sources=[source])
+        await store_book(fx_uow(), book_record, owner=await fx_new_owner(), sources=[source])
         ready = evolve(scan, renditions=Renditions(ready=True, version=2, full=Rendition.FULL_PNG))
 
-        def add_and_ready(repos: BookRepositories, _project: Project) -> None:
+        def add_and_ready(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Add the scan and replace it with its ready state in the same change.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: Project of the book, which the work does not need.
-            :type _project: Project
+            :param _book_record: Project of the book, which the work does not need.
+            :type _book_record: BookRecord
             """
             repos.scans.add(scan)
             repos.scans.update(ready)
 
-        await fx_uow().change_book(project.id, add_and_ready)
-        assert await fx_uow().read_book(project.id, lambda repos: repos.scans.get(scan.id)) == ready
+        await fx_uow().change_book(book_record.id, add_and_ready)
+        assert await fx_uow().read_book(book_record.id, lambda repos: repos.scans.get(scan.id)) == ready
 
     async def test_list_unready_returns_the_scans_without_ready_renditions_in_import_order(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -735,7 +742,7 @@ class TestScanRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        project, other = make_project(), make_project()
+        book_record, other = make_record(), make_record()
         first = make_source(name=FIRST_PDF, minutes=1)
         second = make_source(name=SECOND_PDF, minutes=2)
         foreign = make_source(name='c.pdf', minutes=0)
@@ -748,9 +755,9 @@ class TestScanRepository:
             make_scan(source=first, number=2),
         ]
         uow = fx_uow()
-        await store_project(uow, project, owner=owner_id, sources=[second, first], scans=scans)
-        await store_project(uow, other, owner=owner_id, sources=[foreign], scans=[make_scan(source=foreign, number=0)])
-        unready = await fx_uow().read_book(project.id, lambda repos: repos.scans.list_unready())
+        await store_book(uow, book_record, owner=owner_id, sources=[second, first], scans=scans)
+        await store_book(uow, other, owner=owner_id, sources=[foreign], scans=[make_scan(source=foreign, number=0)])
+        unready = await fx_uow().read_book(book_record.id, lambda repos: repos.scans.list_unready())
         assert [(scan.source_id, scan.number) for scan in unready] == [
             (first.id, 1),
             (first.id, 2),
@@ -758,7 +765,7 @@ class TestScanRepository:
             (second.id, 1),
         ]
 
-    async def test_list_unready_is_empty_for_a_project_with_every_scan_ready(
+    async def test_list_unready_is_empty_for_a_book_with_every_scan_ready(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify a project whose scans are all ready, or that has none, has nothing left to cut.
@@ -768,26 +775,26 @@ class TestScanRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         source = make_source()
         uow = fx_uow()
-        await store_project(uow, project, owner=await fx_new_owner())
-        expect(await uow.read_book(project.id, lambda repos: repos.scans.list_unready()) == [])
+        await store_book(uow, book_record, owner=await fx_new_owner())
+        expect(await uow.read_book(book_record.id, lambda repos: repos.scans.list_unready()) == [])
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
 
-        def add_ready_scan(repos: BookRepositories, _project: Project) -> None:
+        def add_ready_scan(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Add the source and its ready scan.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: Project of the book, which the work does not need.
-            :type _project: Project
+            :param _book_record: Project of the book, which the work does not need.
+            :type _book_record: BookRecord
             """
             repos.sources.add(source)
             repos.scans.add(scan)
 
-        await uow.change_book(project.id, add_ready_scan)
-        expect(await fx_uow().read_book(project.id, lambda repos: repos.scans.list_unready()) == [])
+        await uow.change_book(book_record.id, add_ready_scan)
+        expect(await fx_uow().read_book(book_record.id, lambda repos: repos.scans.list_unready()) == [])
         assert_expectations()
 
     async def test_same_number_twice_in_a_source_raises_conflict(
@@ -800,15 +807,15 @@ class TestScanRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         source = make_source()
         uow = fx_uow()
-        await store_project(
-            uow, project, owner=await fx_new_owner(), sources=[source], scans=[make_scan(source=source, number=0)]
+        await store_book(
+            uow, book_record, owner=await fx_new_owner(), sources=[source], scans=[make_scan(source=source, number=0)]
         )
         clashing = [make_scan(source=source, number=1), make_scan(source=source, number=0)]
         with pytest.raises(ConflictError, match=str(source.id)):
-            await uow.change_book(project.id, lambda repos, _project: repos.scans.add_many(clashing))
+            await uow.change_book(book_record.id, lambda repos, _book_record: repos.scans.add_many(clashing))
 
     async def test_scan_of_a_missing_source_raises_not_found(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -820,13 +827,13 @@ class TestScanRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         source = make_source()
         uow = fx_uow()
-        await store_project(uow, project, owner=await fx_new_owner())
+        await store_book(uow, book_record, owner=await fx_new_owner())
         orphan = make_scan(source=source, number=0)
         with pytest.raises(NotFoundError, match=str(source.id)):
-            await uow.change_book(project.id, lambda repos, _project: repos.scans.add(orphan))
+            await uow.change_book(book_record.id, lambda repos, _book_record: repos.scans.add(orphan))
 
 
 class TestPageRepository:
@@ -845,16 +852,16 @@ class TestPageRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         pages = [make_page(order_key=key) for key in UNORDERED_KEYS]
-        await store_project(fx_uow(), project, *pages, owner=await fx_new_owner())
+        await store_book(fx_uow(), book_record, *pages, owner=await fx_new_owner())
         reader = fx_uow()
-        everything = await reader.read_book(project.id, lambda repos: repos.pages.list_window(SliceRequest()))
+        everything = await reader.read_book(book_record.id, lambda repos: repos.pages.list_window(SliceRequest()))
         window = await reader.read_book(
-            project.id, lambda repos: repos.pages.list_window(SliceRequest(offset=1, limit=2))
+            book_record.id, lambda repos: repos.pages.list_window(SliceRequest(offset=1, limit=2))
         )
         beyond = await reader.read_book(
-            project.id,
+            book_record.id,
             lambda repos: repos.pages.list_window(SliceRequest(offset=len(UNORDERED_KEYS), limit=1)),
         )
         expect([page.order_key for page in everything.items] == [KEY_ZZ, KEY_A0, KEY_A0_UPPER, KEY_A0_LOWER, KEY_A1])
@@ -862,7 +869,7 @@ class TestPageRepository:
         expect((window.total, list(beyond.items), beyond.total) == (len(UNORDERED_KEYS), [], len(UNORDERED_KEYS)))
         assert_expectations()
 
-    async def test_last_order_key_is_the_greatest_of_the_project(
+    async def test_last_order_key_is_the_greatest_of_the_book(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify the last key is the greatest in byte order, None for an empty book, and blind to other projects.
@@ -873,13 +880,13 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        project, empty = make_project(), make_project()
+        book_record, empty = make_record(), make_record()
         uow = fx_uow()
         pages = [make_page(order_key=key) for key in UNORDERED_KEYS]
-        await store_project(uow, project, *pages, owner=owner_id)
-        await store_project(uow, empty, owner=owner_id)
+        await store_book(uow, book_record, *pages, owner=owner_id)
+        await store_book(uow, empty, owner=owner_id)
         reader = fx_uow()
-        expect(await reader.read_book(project.id, lambda repos: repos.pages.last_order_key()) == KEY_A1)
+        expect(await reader.read_book(book_record.id, lambda repos: repos.pages.last_order_key()) == KEY_A1)
         expect(await reader.read_book(empty.id, lambda repos: repos.pages.last_order_key()) is None)
         assert_expectations()
 
@@ -897,7 +904,7 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        project, other = make_project(), make_project()
+        book_record, other = make_record(), make_record()
         source = make_source()
         scans = [make_scan(source=source, number=number) for number in range(5)]
         text, plate, blank, found, by_hand = (
@@ -909,9 +916,9 @@ class TestPageRepository:
         found = evolve(found, content_type=ContentType.BW_PICTURE)
         by_hand = evolve(by_hand, content_type=ContentType.TEXT, content_by_hand=True)
         uow = fx_uow()
-        await store_project(
+        await store_book(
             uow,
-            project,
+            book_record,
             text,
             plate,
             blank,
@@ -922,8 +929,8 @@ class TestPageRepository:
             sources=[source],
             scans=scans,
         )
-        await store_project(uow, other, make_page(order_key=KEY_A0), owner=owner_id)
-        tally = await fx_uow().read_book(project.id, lambda repos: repos.pages.kind_tally())
+        await store_book(uow, other, make_page(order_key=KEY_A0), owner=owner_id)
+        tally = await fx_uow().read_book(book_record.id, lambda repos: repos.pages.kind_tally())
         assert dict(tally) == {
             RecipeKind.TEXT: 2,
             RecipeKind.COLOR_PICTURE: 1,
@@ -942,11 +949,11 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        project = make_project()
+        book_record = make_record()
         uow = fx_uow()
         book = [make_page(order_key=key) for key in UNORDERED_KEYS]
         book[0] = evolve(book[0], included=False)
-        await store_project(uow, project, *book, owner=owner_id)
+        await store_book(uow, book_record, *book, owner=owner_id)
 
         def count_before_each(repos: BookRepositories) -> list[int]:
             """Count the pages before each page of the book.
@@ -958,7 +965,7 @@ class TestPageRepository:
             """
             return [repos.pages.count_before(page) for page in book]
 
-        positions = await fx_uow().read_book(project.id, count_before_each)
+        positions = await fx_uow().read_book(book_record.id, count_before_each)
         # The keys are stored as a1, a0v, a0V, a0, Zz and sort as Zz, a0, a0V, a0v, a1
         expect(positions == [4, 3, 2, 1, 0])
         assert_expectations()
@@ -973,7 +980,7 @@ class TestPageRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         source = make_source()
         spread, other = make_scan(source=source, number=0), make_scan(source=source, number=1)
         right = evolve(make_page(order_key=KEY_A1, scan=spread), slot=2)
@@ -981,9 +988,9 @@ class TestPageRepository:
         elsewhere = make_page(order_key=KEY_A3, scan=other)
         placeholder = make_page(order_key='a4')
         uow = fx_uow()
-        await store_project(
+        await store_book(
             uow,
-            project,
+            book_record,
             right,
             left,
             elsewhere,
@@ -993,8 +1000,10 @@ class TestPageRepository:
             scans=[spread, other],
         )
         reader = fx_uow()
-        expect(await reader.read_book(project.id, lambda repos: repos.pages.list_for_scan(spread.id)) == [left, right])
-        expect(await reader.read_book(project.id, lambda repos: repos.pages.list_for_scan(other.id)) == [elsewhere])
+        expect(
+            await reader.read_book(book_record.id, lambda repos: repos.pages.list_for_scan(spread.id)) == [left, right]
+        )
+        expect(await reader.read_book(book_record.id, lambda repos: repos.pages.list_for_scan(other.id)) == [elsewhere])
         assert_expectations()
 
     async def test_included_only_lists_the_pages_of_the_book_and_counts_them(
@@ -1007,16 +1016,16 @@ class TestPageRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         book = [make_page(order_key=key) for key in (KEY_A0, KEY_A1, KEY_A2)]
         book[1] = evolve(book[1], included=False)
-        await store_project(fx_uow(), project, *book, owner=await fx_new_owner())
+        await store_book(fx_uow(), book_record, *book, owner=await fx_new_owner())
         reader = fx_uow()
         everything = await reader.read_book(
-            project.id, lambda repos: repos.pages.list_window(SliceRequest(), included_only=True)
+            book_record.id, lambda repos: repos.pages.list_window(SliceRequest(), included_only=True)
         )
         window = await reader.read_book(
-            project.id,
+            book_record.id,
             lambda repos: repos.pages.list_window(SliceRequest(offset=1, limit=1), included_only=True),
         )
         expect(list(everything.items) == [book[0], book[2]])
@@ -1033,15 +1042,15 @@ class TestPageRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         book = [make_page(order_key=key) for key in UNORDERED_KEYS]
-        await store_project(fx_uow(), project, *book, owner=await fx_new_owner())
+        await store_book(fx_uow(), book_record, *book, owner=await fx_new_owner())
         wanted = [book[0].id, book[2].id, book[4].id, book[2].id]
-        listed = await fx_uow().read_book(project.id, lambda repos: repos.pages.list_by_ids(wanted))
+        listed = await fx_uow().read_book(book_record.id, lambda repos: repos.pages.list_by_ids(wanted))
         # Stored as a1, a0v, a0V, a0, Zz, so these three are a1, a0V and Zz
         assert [page.order_key for page in listed] == [KEY_ZZ, KEY_A0_UPPER, KEY_A1]
 
-    async def test_list_by_ids_refuses_a_missing_page_and_a_page_of_another_project(
+    async def test_list_by_ids_refuses_a_missing_page_and_a_page_of_another_book(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify one identifier that names no page of the project fails the whole read, naming that identifier.
@@ -1052,17 +1061,17 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        project, other = make_project(), make_project()
+        book_record, other = make_record(), make_record()
         own, foreign = make_page(), make_page()
         uow = fx_uow()
-        await store_project(uow, project, own, owner=owner_id)
-        await store_project(uow, other, foreign, owner=owner_id)
+        await store_book(uow, book_record, own, owner=owner_id)
+        await store_book(uow, other, foreign, owner=owner_id)
         reader = fx_uow()
         missing = make_page()
         with pytest.raises(NotFoundError, match=str(foreign.id)):
-            await reader.read_book(project.id, lambda repos: repos.pages.list_by_ids([own.id, foreign.id]))
+            await reader.read_book(book_record.id, lambda repos: repos.pages.list_by_ids([own.id, foreign.id]))
         with pytest.raises(NotFoundError, match=str(missing.id)):
-            await reader.read_book(project.id, lambda repos: repos.pages.list_by_ids([own.id, missing.id]))
+            await reader.read_book(book_record.id, lambda repos: repos.pages.list_by_ids([own.id, missing.id]))
 
     async def test_list_for_source_returns_the_pages_of_its_scans_in_book_order(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1074,7 +1083,7 @@ class TestPageRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         first, second = (
             make_source(name=FIRST_PDF),
             make_source(name=SECOND_PDF),
@@ -1089,9 +1098,9 @@ class TestPageRepository:
         )
         placeholder = make_page(order_key=KEY_A3)
         uow = fx_uow()
-        await store_project(
+        await store_book(
             uow,
-            project,
+            book_record,
             late,
             elsewhere,
             early,
@@ -1101,9 +1110,15 @@ class TestPageRepository:
             scans=scans,
         )
         reader = fx_uow()
-        expect(await reader.read_book(project.id, lambda repos: repos.pages.list_for_source(first.id)) == [early, late])
-        expect(await reader.read_book(project.id, lambda repos: repos.pages.list_for_source(second.id)) == [elsewhere])
-        expect(await reader.read_book(project.id, lambda repos: repos.pages.list_for_source(SourceId(uuid4()))) == [])
+        expect(
+            await reader.read_book(book_record.id, lambda repos: repos.pages.list_for_source(first.id)) == [early, late]
+        )
+        expect(
+            await reader.read_book(book_record.id, lambda repos: repos.pages.list_for_source(second.id)) == [elsewhere]
+        )
+        expect(
+            await reader.read_book(book_record.id, lambda repos: repos.pages.list_for_source(SourceId(uuid4()))) == []
+        )
         assert_expectations()
 
     async def test_neighbour_key_is_the_nearest_key_on_a_side_without_the_excluded_pages(
@@ -1117,11 +1132,11 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        project, other = make_project(), make_project()
+        book_record, other = make_record(), make_record()
         book = [make_page(order_key=key) for key in UNORDERED_KEYS]
         uow = fx_uow()
-        await store_project(uow, project, *book, owner=owner_id)
-        await store_project(uow, other, make_page(order_key=KEY_A0_W), owner=owner_id)
+        await store_book(uow, book_record, *book, owner=owner_id)
+        await store_book(uow, other, make_page(order_key=KEY_A0_W), owner=owner_id)
         # The keys are stored as a1, a0v, a0V, a0, Zz and sort as Zz, a0, a0V, a0v, a1
         by_key = {page.order_key: page.id for page in book}
 
@@ -1143,7 +1158,7 @@ class TestPageRepository:
                 pages.neighbour_key(KEY_A1, Side.AFTER),
             ]
 
-        assert await fx_uow().read_book(project.id, look_around) == [KEY_A0, KEY_A0_LOWER, KEY_A1, None, None, None]
+        assert await fx_uow().read_book(book_record.id, look_around) == [KEY_A0, KEY_A0_LOWER, KEY_A1, None, None, None]
 
     async def test_update_many_writes_every_page_in_one_transaction(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1155,12 +1170,12 @@ class TestPageRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         book = [make_page(order_key=key) for key in (KEY_A0, KEY_A1, KEY_A2)]
-        await store_project(fx_uow(), project, *book, owner=await fx_new_owner())
+        await store_book(fx_uow(), book_record, *book, owner=await fx_new_owner())
         moved = [evolve(book[0], order_key='a1V'), evolve(book[1], order_key='a1G')]
-        await fx_uow().change_book(project.id, lambda repos, _project: repos.pages.update_many(moved))
-        everything = await fx_uow().read_book(project.id, lambda repos: repos.pages.list_window(SliceRequest()))
+        await fx_uow().change_book(book_record.id, lambda repos, _book_record: repos.pages.update_many(moved))
+        everything = await fx_uow().read_book(book_record.id, lambda repos: repos.pages.list_window(SliceRequest()))
         assert list(everything.items) == [moved[1], moved[0], book[2]]
 
     async def test_get_after_update_many_in_the_same_change_returns_the_new_state(
@@ -1173,25 +1188,25 @@ class TestPageRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         book = [make_page(order_key=key) for key in (KEY_A0, KEY_A1)]
-        await store_project(fx_uow(), project, *book, owner=await fx_new_owner())
+        await store_book(fx_uow(), book_record, *book, owner=await fx_new_owner())
         moved = [evolve(page, manual_label=PAGE_LABEL, included=False) for page in book]
 
-        def update_and_read(repos: BookRepositories, _project: Project) -> list[Page]:
+        def update_and_read(repos: BookRepositories, _book_record: BookRecord) -> list[Page]:
             """Update both pages, then read them back in the same transaction.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: Project of the book, which the work does not need.
-            :type _project: Project
+            :param _book_record: Project of the book, which the work does not need.
+            :type _book_record: BookRecord
             :returns: The pages as the transaction reads them after the update.
             :rtype: list[Page]
             """
             repos.pages.update_many(moved)
             return [repos.pages.get(page.id) for page in book]
 
-        assert await fx_uow().change_book(project.id, update_and_read) == moved
+        assert await fx_uow().change_book(book_record.id, update_and_read) == moved
 
     async def test_update_to_a_key_another_page_holds_raises_conflict(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1203,15 +1218,15 @@ class TestPageRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         first, second = (make_page(order_key=key) for key in (KEY_A0, KEY_A1))
-        await store_project(fx_uow(), project, first, second, owner=await fx_new_owner())
+        await store_book(fx_uow(), book_record, first, second, owner=await fx_new_owner())
         taking = evolve(first, order_key=KEY_A1)
         uow = fx_uow()
         with pytest.raises(ConflictError, match=KEY_A1):
-            await uow.change_book(project.id, lambda repos, _project: repos.pages.update(taking))
+            await uow.change_book(book_record.id, lambda repos, _book_record: repos.pages.update(taking))
         with pytest.raises(ConflictError, match=KEY_A1):
-            await uow.change_book(project.id, lambda repos, _project: repos.pages.update_many([taking]))
+            await uow.change_book(book_record.id, lambda repos, _book_record: repos.pages.update_many([taking]))
 
     async def test_update_many_with_a_missing_page_raises_not_found(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1223,12 +1238,12 @@ class TestPageRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         missing = make_page()
         uow = fx_uow()
-        await store_project(uow, project, owner=await fx_new_owner())
+        await store_book(uow, book_record, owner=await fx_new_owner())
         with pytest.raises(NotFoundError, match=str(missing.id)):
-            await uow.change_book(project.id, lambda repos, _project: repos.pages.update_many([missing]))
+            await uow.change_book(book_record.id, lambda repos, _book_record: repos.pages.update_many([missing]))
 
     async def test_updated_page_reads_back(self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
         """Verify a page moved, numbered, given a kind and kept out of the book reads back so.
@@ -1238,16 +1253,16 @@ class TestPageRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         page = make_page()
-        await store_project(fx_uow(), project, page, owner=await fx_new_owner())
+        await store_book(fx_uow(), book_record, page, owner=await fx_new_owner())
         changed = evolve(
             page, order_key=KEY_A0_UPPER, manual_label=PAGE_LABEL, kind=PageKind.TITLE, included=False, notes='Stamp'
         )
-        await fx_uow().change_book(project.id, lambda repos, _project: repos.pages.update(changed))
-        assert await fx_uow().read_book(project.id, lambda repos: repos.pages.get(page.id)) == changed
+        await fx_uow().change_book(book_record.id, lambda repos, _book_record: repos.pages.update(changed))
+        assert await fx_uow().read_book(book_record.id, lambda repos: repos.pages.get(page.id)) == changed
 
-    async def test_same_order_key_twice_in_a_project_raises_conflict(
+    async def test_same_order_key_twice_in_a_book_raises_conflict(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify two pages of one book cannot share a position, while another book may use the same key.
@@ -1258,13 +1273,13 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        project, other = make_project(), make_project()
+        book_record, other = make_record(), make_record()
         uow = fx_uow()
-        for owned in (project, other):
-            await store_project(uow, owned, make_page(order_key=KEY_A5), owner=owner_id)
+        for owned in (book_record, other):
+            await store_book(uow, owned, make_page(order_key=KEY_A5), owner=owner_id)
         clashing = make_page(order_key=KEY_A5)
         with pytest.raises(ConflictError, match=KEY_A5):
-            await uow.change_book(project.id, lambda repos, _project: repos.pages.add(clashing))
+            await uow.change_book(book_record.id, lambda repos, _book_record: repos.pages.add(clashing))
 
     async def test_same_part_of_a_scan_twice_raises_conflict(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1276,13 +1291,13 @@ class TestPageRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         source = make_source()
         scan = make_scan(source=source, number=0)
         uow = fx_uow()
-        await store_project(
+        await store_book(
             uow,
-            project,
+            book_record,
             *[make_page(order_key=key) for key in (KEY_A0, KEY_A1)],
             make_page(order_key=KEY_A2, scan=scan),
             owner=await fx_new_owner(),
@@ -1291,7 +1306,7 @@ class TestPageRepository:
         )
         second_page = make_page(order_key=KEY_A3, scan=scan)
         with pytest.raises(ConflictError, match=str(scan.id)):
-            await uow.change_book(project.id, lambda repos, _project: repos.pages.add(second_page))
+            await uow.change_book(book_record.id, lambda repos, _book_record: repos.pages.add(second_page))
 
     async def test_page_of_a_missing_parent_raises_not_found(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1303,17 +1318,17 @@ class TestPageRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         missing_scan = make_scan(source=make_source(), number=0)
         orphan = make_page()
         uow = fx_uow()
         # The book is not stored, so the change is refused before the page is added
-        with pytest.raises(NotFoundError, match=str(project.id)):
-            await uow.change_book(project.id, lambda repos, _project: repos.pages.add(orphan))
-        await store_project(uow, project, owner=await fx_new_owner())
+        with pytest.raises(NotFoundError, match=str(book_record.id)):
+            await uow.change_book(book_record.id, lambda repos, _book_record: repos.pages.add(orphan))
+        await store_book(uow, book_record, owner=await fx_new_owner())
         scanned = make_page(scan=missing_scan)
         with pytest.raises(NotFoundError, match=str(missing_scan.id)):
-            await uow.change_book(project.id, lambda repos, _project: repos.pages.add(scanned))
+            await uow.change_book(book_record.id, lambda repos, _book_record: repos.pages.add(scanned))
 
     async def test_delete_cascades_to_its_versions(self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
         """Verify deleting a page removes its versions and leaves the versions of other pages.
@@ -1323,20 +1338,22 @@ class TestPageRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         doomed, kept = (make_page(order_key=key) for key in (KEY_A0, KEY_A1))
-        await store_project(
+        await store_book(
             fx_uow(),
-            project,
+            book_record,
             doomed,
             kept,
             owner=await fx_new_owner(),
             versions=[make_page_version(page_id=page.id) for page in (doomed, kept)],
         )
-        await fx_uow().change_book(project.id, lambda repos, _project: repos.pages.delete(doomed.id))
+        await fx_uow().change_book(book_record.id, lambda repos, _book_record: repos.pages.delete(doomed.id))
         reader = fx_uow()
-        expect(await reader.read_book(project.id, lambda repos: repos.page_versions.list_for_page(doomed.id)) == [])
-        expect(len(await reader.read_book(project.id, lambda repos: repos.page_versions.list_for_page(kept.id))) == 1)
+        expect(await reader.read_book(book_record.id, lambda repos: repos.page_versions.list_for_page(doomed.id)) == [])
+        expect(
+            len(await reader.read_book(book_record.id, lambda repos: repos.page_versions.list_for_page(kept.id))) == 1
+        )
         assert_expectations()
 
     async def test_missing_page_raises_not_found(self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
@@ -1347,11 +1364,11 @@ class TestPageRepository:
         :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
-        await store_project(fx_uow(), project, owner=await fx_new_owner())
+        book_record = make_record()
+        await store_book(fx_uow(), book_record, owner=await fx_new_owner())
         page = make_page()
         with pytest.raises(NotFoundError, match=str(page.id)):
-            await fx_uow().read_book(project.id, lambda repos: repos.pages.get(page.id))
+            await fx_uow().read_book(book_record.id, lambda repos: repos.pages.get(page.id))
 
 
 class TestPageVersionRepository:
@@ -1371,7 +1388,7 @@ class TestPageVersionRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        project, other = make_project(), make_project()
+        book_record, other = make_record(), make_record()
         pages = [make_page(order_key=f'a{number}') for number in range(5)]
         elsewhere = make_page()
         pending = make_page_version(page_id=pages[0].id, minutes=3)
@@ -1389,17 +1406,17 @@ class TestPageVersionRepository:
             state=VersionState.FAILED,
         )
         uow = fx_uow()
-        await store_project(
-            uow, project, *pages, owner=owner_id, versions=[pending, failed, ready, running, spread_half]
+        await store_book(
+            uow, book_record, *pages, owner=owner_id, versions=[pending, failed, ready, running, spread_half]
         )
-        await store_project(uow, other, elsewhere, owner=owner_id, versions=[make_page_version(page_id=elsewhere.id)])
+        await store_book(uow, other, elsewhere, owner=owner_id, versions=[make_page_version(page_id=elsewhere.id)])
         reader = fx_uow()
         found = await reader.read_book(
-            project.id,
+            book_record.id,
             lambda repos: repos.page_versions.list_to_prepare({'split.none', BLANK_PROCESSOR_KEY}),
         )
         only_blank = await reader.read_book(
-            project.id, lambda repos: repos.page_versions.list_to_prepare({BLANK_PROCESSOR_KEY})
+            book_record.id, lambda repos: repos.page_versions.list_to_prepare({BLANK_PROCESSOR_KEY})
         )
         expect(list(found) == [failed, pending])
         expect(list(only_blank) == [failed])
@@ -1419,8 +1436,8 @@ class TestPageVersionRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        project, other = make_project(), make_project()
-        sources = [make_source() for owned in (project, other)]
+        book_record, other = make_record(), make_record()
+        sources = [make_source() for owned in (book_record, other)]
         scans = [make_scan(source=sources[0], number=number) for number in range(5)]
         foreign_scan = make_scan(source=sources[1], number=0)
         pages = [make_page(order_key=f'a{number}', scan=scan) for number, scan in enumerate(scans)]
@@ -1447,9 +1464,9 @@ class TestPageVersionRepository:
             ),
         ]
         uow = fx_uow()
-        await store_project(
+        await store_book(
             uow,
-            project,
+            book_record,
             *pages,
             leaf,
             owner=owner_id,
@@ -1457,7 +1474,7 @@ class TestPageVersionRepository:
             scans=scans,
             versions=[*versions[:-1], *derived_pair],
         )
-        await store_project(
+        await store_book(
             uow,
             other,
             foreign_page,
@@ -1466,7 +1483,7 @@ class TestPageVersionRepository:
             scans=[foreign_scan],
             versions=[versions[-1]],
         )
-        found = await fx_uow().read_book(project.id, lambda repos: repos.page_versions.base_sizes())
+        found = await fx_uow().read_book(book_record.id, lambda repos: repos.page_versions.base_sizes())
         assert sorted(found, key=attrgetter(WIDTH_PX)) == [
             PageSize(width_px=10, height_px=20, dpi=None),
             PageSize(width_px=2000, height_px=3000, dpi=300.0),
@@ -1482,19 +1499,19 @@ class TestPageVersionRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         source = make_source()
         scan = make_scan(source=source, number=0)
         page = make_page(scan=scan, kind=PageKind.BLANK)
-        await store_project(fx_uow(), project, page, owner=await fx_new_owner(), sources=[source], scans=[scan])
+        await store_book(fx_uow(), book_record, page, owner=await fx_new_owner(), sources=[source], scans=[scan])
 
-        def fill(repos: BookRepositories, _project: Project, *, blank_fill: BlankFill) -> Page:
+        def fill(repos: BookRepositories, _book_record: BookRecord, *, blank_fill: BlankFill) -> Page:
             """Read the page as stored and replace it with the given blank fill.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: Project of the book, which the work does not need.
-            :type _project: Project
+            :param _book_record: Project of the book, which the work does not need.
+            :type _book_record: BookRecord
             :param blank_fill: What the blank page is filled with.
             :type blank_fill: BlankFill
             :returns: The page as it was stored before the change.
@@ -1504,12 +1521,13 @@ class TestPageVersionRepository:
             repos.pages.update(evolve(stored, blank_fill=blank_fill))
             return stored
 
-        stored = await fx_uow().change_book(project.id, partial(fill, blank_fill=BlankFill.PAPER))
-        leaf = await fx_uow().change_book(project.id, partial(fill, blank_fill=BlankFill.SCAN))
+        stored = await fx_uow().change_book(book_record.id, partial(fill, blank_fill=BlankFill.PAPER))
+        leaf = await fx_uow().change_book(book_record.id, partial(fill, blank_fill=BlankFill.SCAN))
         expect(stored.blank_fill is BlankFill.SCAN)
         expect((leaf.blank_fill, leaf.scan_id) == (BlankFill.PAPER, scan.id))
         expect(
-            (await fx_uow().read_book(project.id, lambda repos: repos.pages.get(page.id))).blank_fill is BlankFill.SCAN
+            (await fx_uow().read_book(book_record.id, lambda repos: repos.pages.get(page.id))).blank_fill
+            is BlankFill.SCAN
         )
         assert_expectations()
 
@@ -1523,19 +1541,19 @@ class TestPageVersionRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         page = make_page()
-        await store_project(fx_uow(), project, page, owner=await fx_new_owner())
+        await store_book(fx_uow(), book_record, page, owner=await fx_new_owner())
 
         def set_content(
-            repos: BookRepositories, _project: Project, *, content_type: ContentType, by_hand: bool
+            repos: BookRepositories, _book_record: BookRecord, *, content_type: ContentType, by_hand: bool
         ) -> Page:
             """Read the page as stored and replace it with the given content type.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: Project of the book, which the work does not need.
-            :type _project: Project
+            :param _book_record: Project of the book, which the work does not need.
+            :type _book_record: BookRecord
             :param content_type: Content type the page gets.
             :type content_type: ContentType
             :param by_hand: Whether the user set the content type.
@@ -1549,9 +1567,9 @@ class TestPageVersionRepository:
 
         by_found = partial(set_content, content_type=ContentType.BW_PICTURE, by_hand=False)
         by_user = partial(set_content, content_type=ContentType.COLOR_PICTURE, by_hand=True)
-        added = await fx_uow().change_book(project.id, by_found)
-        found = await fx_uow().change_book(project.id, by_user)
-        by_hand = await fx_uow().read_book(project.id, lambda repos: repos.pages.get(page.id))
+        added = await fx_uow().change_book(book_record.id, by_found)
+        found = await fx_uow().change_book(book_record.id, by_user)
+        by_hand = await fx_uow().read_book(book_record.id, lambda repos: repos.pages.get(page.id))
         expect((added.content_type, added.content_by_hand) == (None, False))
         expect((found.content_type, found.content_by_hand) == (ContentType.BW_PICTURE, False))
         expect((by_hand.content_type, by_hand.content_by_hand) == (ContentType.COLOR_PICTURE, True))
@@ -1567,22 +1585,22 @@ class TestPageVersionRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         page, other = (make_page(order_key=key) for key in (KEY_A0, KEY_A1))
         base = make_page_version(page_id=page.id, minutes=1)
         later = evolve(make_page_version(page_id=page.id, minutes=2), input_id=base.id, renditions=None)
-        await store_project(
+        await store_book(
             fx_uow(),
-            project,
+            book_record,
             page,
             other,
             owner=await fx_new_owner(),
             versions=[base, later, make_page_version(page_id=other.id)],
         )
         reader = fx_uow()
-        expect(await reader.read_book(project.id, lambda repos: repos.page_versions.get(later.id)) == later)
+        expect(await reader.read_book(book_record.id, lambda repos: repos.page_versions.get(later.id)) == later)
         expect(
-            await reader.read_book(project.id, lambda repos: repos.page_versions.list_for_page(page.id))
+            await reader.read_book(book_record.id, lambda repos: repos.page_versions.list_for_page(page.id))
             == [base, later]
         )
         assert_expectations()
@@ -1597,14 +1615,14 @@ class TestPageVersionRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         first, second, unasked = (make_page(order_key=key) for key in (KEY_A0, KEY_A1, KEY_A2))
         first_base = make_page_version(page_id=first.id, minutes=2)
         second_base = make_page_version(page_id=second.id, minutes=1)
         derived = evolve(make_page_version(page_id=first.id, minutes=3), input_id=first_base.id)
-        await store_project(
+        await store_book(
             fx_uow(),
-            project,
+            book_record,
             first,
             second,
             unasked,
@@ -1613,10 +1631,10 @@ class TestPageVersionRepository:
         )
         reader = fx_uow()
         both = await reader.read_book(
-            project.id, lambda repos: repos.page_versions.list_base_versions([first.id, second.id])
+            book_record.id, lambda repos: repos.page_versions.list_base_versions([first.id, second.id])
         )
         expect(both == [second_base, first_base])
-        expect(await reader.read_book(project.id, lambda repos: repos.page_versions.list_base_versions([])) == [])
+        expect(await reader.read_book(book_record.id, lambda repos: repos.page_versions.list_base_versions([])) == [])
         assert_expectations()
 
     async def test_version_of_a_missing_parent_raises_not_found(
@@ -1629,18 +1647,18 @@ class TestPageVersionRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         page = make_page()
         missing_input = make_page_version(page_id=page.id)
         orphan = make_page_version(page_id=page.id)
         uow = fx_uow()
-        await store_project(uow, project, owner=await fx_new_owner())
+        await store_book(uow, book_record, owner=await fx_new_owner())
         with pytest.raises(NotFoundError, match=str(page.id)):
-            await uow.change_book(project.id, lambda repos, _project: repos.page_versions.add(orphan))
-        await uow.change_book(project.id, lambda repos, _project: repos.pages.add(page))
+            await uow.change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(orphan))
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.pages.add(page))
         fed = evolve(orphan, input_id=missing_input.id)
         with pytest.raises(NotFoundError, match=missing_input.id):
-            await uow.change_book(project.id, lambda repos, _project: repos.page_versions.add(fed))
+            await uow.change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(fed))
 
     async def test_deleted_input_leaves_the_versions_it_fed(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1652,13 +1670,13 @@ class TestPageVersionRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         page = make_page()
         base = make_page_version(page_id=page.id)
         later = evolve(make_page_version(page_id=page.id, minutes=1), input_id=base.id)
-        await store_project(fx_uow(), project, page, owner=await fx_new_owner(), versions=[base, later])
-        await fx_uow().change_book(project.id, lambda repos, _project: repos.page_versions.delete(base.id))
-        listed = await fx_uow().read_book(project.id, lambda repos: repos.page_versions.list_for_page(page.id))
+        await store_book(fx_uow(), book_record, page, owner=await fx_new_owner(), versions=[base, later])
+        await fx_uow().change_book(book_record.id, lambda repos, _book_record: repos.page_versions.delete(base.id))
+        listed = await fx_uow().read_book(book_record.id, lambda repos: repos.page_versions.list_for_page(page.id))
         assert listed == [evolve(later, input_id=None)]
 
     async def test_update_of_a_version_read_before_its_page_was_deleted_raises_not_found(
@@ -1674,20 +1692,21 @@ class TestPageVersionRepository:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         page = make_page()
         version = make_page_version(page_id=page.id)
-        await store_project(fx_uow(), project, page, owner=await fx_new_owner(), versions=[version])
+        await store_book(fx_uow(), book_record, page, owner=await fx_new_owner(), versions=[version])
         reading = fx_uow()
-        [read] = await reading.read_book(project.id, lambda repos: repos.page_versions.list_for_page(page.id))
-        await fx_uow().change_book(project.id, lambda repos, _project: repos.pages.delete(page.id))
+        [read] = await reading.read_book(book_record.id, lambda repos: repos.page_versions.list_for_page(page.id))
+        await fx_uow().change_book(book_record.id, lambda repos, _book_record: repos.pages.delete(page.id))
 
         with pytest.raises(NotFoundError, match=version.id):
             await reading.change_book(
-                project.id, lambda repos, _project: repos.page_versions.update(evolve(read, state=VersionState.READY))
+                book_record.id,
+                lambda repos, _book_record: repos.page_versions.update(evolve(read, state=VersionState.READY)),
             )
 
-        assert await fx_uow().read_book(project.id, lambda repos: repos.page_versions.list_for_page(page.id)) == []
+        assert await fx_uow().read_book(book_record.id, lambda repos: repos.page_versions.list_for_page(page.id)) == []
 
 
 class TestSourceStatus:
@@ -1703,11 +1722,11 @@ class TestSourceStatus:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         rejected = _unimported(status=SourceStatus.REJECTED, name=FIRST_PDF, minutes=1)
         untyped = _unimported(status=SourceStatus.REJECTED, name=NOTES_TXT, minutes=2, typed=False)
         skipped = _unimported(status=SourceStatus.SKIPPED, name=SECOND_PDF, minutes=3)
-        await store_project(fx_uow(), project, owner=await fx_new_owner(), sources=[rejected, untyped, skipped])
+        await store_book(fx_uow(), book_record, owner=await fx_new_owner(), sources=[rejected, untyped, skipped])
         reader = fx_uow()
 
         def read_all(repos: BookRepositories) -> list[Source]:
@@ -1720,7 +1739,7 @@ class TestSourceStatus:
             """
             return [repos.sources.get(source.id) for source in (rejected, untyped, skipped)]
 
-        stored = await reader.read_book(project.id, read_all)
+        stored = await reader.read_book(book_record.id, read_all)
         expect(stored == [rejected, untyped, skipped])
         expect(
             [(source.status, source.rejection, source.detail) for source in stored]
@@ -1743,17 +1762,17 @@ class TestSourceStatus:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         imported = make_source()
         repeats = [
             evolve(_unimported(status=status, name=FIRST_PDF), sha256=imported.sha256)
             for status in (SourceStatus.REJECTED, SourceStatus.REJECTED, SourceStatus.SKIPPED)
         ]
         uow = fx_uow()
-        await store_project(uow, project, owner=await fx_new_owner(), sources=[imported])
-        await uow.change_book(project.id, lambda repos, _project: repos.sources.add_many(repeats))
+        await store_book(uow, book_record, owner=await fx_new_owner(), sources=[imported])
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.sources.add_many(repeats))
 
-        listed = await fx_uow().read_book(project.id, lambda repos: repos.sources.list_unimported())
+        listed = await fx_uow().read_book(book_record.id, lambda repos: repos.sources.list_unimported())
 
         assert {source.id for source in listed} == {source.id for source in repeats}
 
@@ -1767,15 +1786,15 @@ class TestSourceStatus:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         imported = make_source()
         rejected = evolve(_unimported(status=SourceStatus.REJECTED, name=FIRST_PDF), sha256=imported.sha256)
         uow = fx_uow()
-        await store_project(uow, project, owner=await fx_new_owner(), sources=[imported, rejected])
+        await store_book(uow, book_record, owner=await fx_new_owner(), sources=[imported, rejected])
         duplicate = make_source()
 
         with pytest.raises(ConflictError, match=duplicate.sha256):
-            await fx_uow().change_book(project.id, lambda repos, _project: repos.sources.add(duplicate))
+            await fx_uow().change_book(book_record.id, lambda repos, _book_record: repos.sources.add(duplicate))
 
     async def test_listing_and_digest_lookup_return_imported_sources_only(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1787,11 +1806,11 @@ class TestSourceStatus:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project = make_project()
+        book_record = make_record()
         imported = make_source(name=FIRST_PDF)
         rejected = _unimported(status=SourceStatus.REJECTED, name=SECOND_PDF)
         skipped = _unimported(status=SourceStatus.SKIPPED, name=FIRST_PART_PDF)
-        await store_project(fx_uow(), project, owner=await fx_new_owner(), sources=[imported, rejected, skipped])
+        await store_book(fx_uow(), book_record, owner=await fx_new_owner(), sources=[imported, rejected, skipped])
         reader = fx_uow()
 
         def find_digests(repos: BookRepositories) -> list[Source | None]:
@@ -1804,11 +1823,11 @@ class TestSourceStatus:
             """
             return [repos.sources.find_by_sha256(source.sha256) for source in (rejected, skipped)]
 
-        expect(await reader.read_book(project.id, lambda repos: repos.sources.list_all()) == [imported])
-        expect(await reader.read_book(project.id, find_digests) == [None, None])
+        expect(await reader.read_book(book_record.id, lambda repos: repos.sources.list_all()) == [imported])
+        expect(await reader.read_book(book_record.id, find_digests) == [None, None])
         assert_expectations()
 
-    async def test_unimported_sources_list_in_recorded_order_inside_the_project(
+    async def test_unimported_sources_list_in_recorded_order_inside_the_book(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify the rejected and skipped files of a project list earliest first, without imported or foreign ones.
@@ -1819,20 +1838,20 @@ class TestSourceStatus:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        project, other = make_project(), make_project()
+        book_record, other = make_record(), make_record()
         later = _unimported(status=SourceStatus.SKIPPED, name=SECOND_PDF, minutes=2)
         earlier = _unimported(status=SourceStatus.REJECTED, name=FIRST_PDF, minutes=1)
         uow = fx_uow()
-        await store_project(uow, project, owner=owner_id, sources=[later, earlier, make_source(name=NOTES_TXT)])
-        await store_project(
+        await store_book(uow, book_record, owner=owner_id, sources=[later, earlier, make_source(name=NOTES_TXT)])
+        await store_book(
             uow, other, owner=owner_id, sources=[_unimported(status=SourceStatus.REJECTED, name=FIRST_PDF)]
         )
 
-        listed = await fx_uow().read_book(project.id, lambda repos: repos.sources.list_unimported())
+        listed = await fx_uow().read_book(book_record.id, lambda repos: repos.sources.list_unimported())
 
         assert listed == [earlier, later]
 
-    async def test_delete_unimported_keeps_imported_sources_and_other_projects(
+    async def test_delete_unimported_keeps_imported_sources_and_other_books(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify closing the report of an import deletes the project's rejected and skipped files and nothing else.
@@ -1843,13 +1862,13 @@ class TestSourceStatus:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        project, other = make_project(), make_project()
+        book_record, other = make_record(), make_record()
         imported = make_source()
         foreign = _unimported(status=SourceStatus.REJECTED, name=FIRST_PDF)
         uow = fx_uow()
-        await store_project(
+        await store_book(
             uow,
-            project,
+            book_record,
             owner=owner_id,
             sources=[
                 imported,
@@ -1857,17 +1876,17 @@ class TestSourceStatus:
                 _unimported(status=SourceStatus.SKIPPED, name=SECOND_PDF),
             ],
         )
-        await store_project(uow, other, owner=owner_id, sources=[foreign])
+        await store_book(uow, other, owner=owner_id, sources=[foreign])
 
-        await fx_uow().change_book(project.id, lambda repos, _project: repos.sources.delete_unimported())
+        await fx_uow().change_book(book_record.id, lambda repos, _book_record: repos.sources.delete_unimported())
 
         reader = fx_uow()
-        expect(await reader.read_book(project.id, lambda repos: repos.sources.list_unimported()) == [])
-        expect(await reader.read_book(project.id, lambda repos: repos.sources.list_all()) == [imported])
+        expect(await reader.read_book(book_record.id, lambda repos: repos.sources.list_unimported()) == [])
+        expect(await reader.read_book(book_record.id, lambda repos: repos.sources.list_all()) == [imported])
         expect(await reader.read_book(other.id, lambda repos: repos.sources.list_unimported()) == [foreign])
         assert_expectations()
 
-    async def test_project_overview_counts_imported_sources_only(
+    async def test_book_overview_counts_imported_sources_only(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
         """Verify the source count of a project does not include its rejected and skipped files.
@@ -1878,13 +1897,13 @@ class TestSourceStatus:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        project = make_project()
+        book_record = make_record()
         sources = [
             make_source(),
             _unimported(status=SourceStatus.REJECTED, name=FIRST_PDF),
             _unimported(status=SourceStatus.SKIPPED, name=SECOND_PDF),
         ]
-        await store_project(fx_uow(), project, owner=owner_id, sources=sources)
+        await store_book(fx_uow(), book_record, owner=owner_id, sources=sources)
 
-        overview = await fx_uow().read_book(project.id, lambda repos: repos.projects.overview(project))
+        overview = await fx_uow().read_book(book_record.id, lambda repos: repos.book_record.overview(book_record))
         assert overview.source_count == 1

@@ -74,7 +74,7 @@ async function openGeometry(page: Page, bookPath: string): Promise<void> {
 
 /** Create a book from the library, upload the pages into it and return the address of the book. */
 async function newBookWithPages(page: Page, title: string, folder: string): Promise<string> {
-  await page.goto('/projects');
+  await page.goto('/books');
   await createBook(page, title);
   await uploadFolder(page, folder, PAGES);
   return new URL(page.url()).pathname.replace(/\/stages\/import$/, '');

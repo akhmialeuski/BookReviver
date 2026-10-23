@@ -20,12 +20,12 @@ const sdk = vi.hoisted(() => ({ create: vi.fn(), put: vi.fn(), remove: vi.fn() }
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  createPaginationSectionApiV1ProjectsProjectIdPaginationSectionsPost: sdk.create,
-  putPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPut: sdk.put,
-  deletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDelete: sdk.remove,
+  createPaginationSectionApiV1BooksBookIdPaginationSectionsPost: sdk.create,
+  putPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPut: sdk.put,
+  deletePaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdDelete: sdk.remove,
 }));
 
-const PROJECT = 'book';
+const BOOK = 'book';
 const PAGES: PageSchema[] = [
   page('p0', { position: 0, kind: 'cover', section_id: 'cover' }),
   page('p1', { position: 1, label: '[i]', section_id: 'front' }),
@@ -86,7 +86,7 @@ describe('PaginationPanel', () => {
       root.render(
         <QueryClientProvider client={client}>
           <PaginationPanel
-            projectId={PROJECT}
+            bookId={BOOK}
             pages={pages}
             spans={sectionSpans(pages, options.sections ?? SECTIONS)}
             selectedId={options.selected}
@@ -204,7 +204,7 @@ describe('PaginationPanel', () => {
 
     expect(sdk.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: { project_id: PROJECT },
+        path: { book_id: BOOK },
         body: {
           first_page_id: 'p3',
           name: 'Foreword',
@@ -230,7 +230,7 @@ describe('PaginationPanel', () => {
     await press(button('Save the section'));
     expect(sdk.put).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: { project_id: PROJECT, section_id: 'preface' },
+        path: { book_id: BOOK, section_id: 'preface' },
         body: expect.objectContaining({ first_page_id: 'p3', name: 'Foreword', start: 6 }),
       }),
     );
@@ -239,7 +239,7 @@ describe('PaginationPanel', () => {
     await press(rows()[3] as HTMLElement);
     await press(button('Delete the section'));
     expect(sdk.remove).toHaveBeenCalledWith(
-      expect.objectContaining({ path: { project_id: PROJECT, section_id: 'preface' } }),
+      expect.objectContaining({ path: { book_id: BOOK, section_id: 'preface' } }),
     );
   });
 

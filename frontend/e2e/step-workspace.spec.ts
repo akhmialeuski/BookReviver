@@ -3,8 +3,8 @@ import path from 'node:path';
 import { expect } from '@playwright/test';
 import {
   createBook,
+  openBookId,
   openLibrary,
-  openProjectId,
   setKind,
   snap,
   stepIdsOf,
@@ -52,7 +52,7 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await openLibrary(page);
     await createBook(page, 'A book of steps');
     await uploadFolder(page, folder, PAGES);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     await setKind(page, PLATE_POSITION, 'plate');
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
@@ -113,7 +113,7 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
   });
 
   await test.step('the second Deskew is opened, and the recipe is run up to it on every page', async () => {
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     await barSteps.nth(SECOND_DESKEW_INDEX).click();
     await expect(page).toHaveURL(STEP_ADDRESS);
     await expect(page.getByTestId('step-panel-title')).toHaveText('Deskew');
@@ -169,7 +169,7 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     await expect(recipes).toContainText('Colour picture · 1 page');
     const rowsBefore = await readStageRows(page);
     expect(rowsBefore[TEXT_POSITION]?.status).toBe('fresh');
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     const runsBefore = await countRunJobs(page);
 
     await page.getByTestId('content-type-menu').click();
@@ -184,7 +184,7 @@ test('the steps of Geometry have a bar and a workspace each, on a link of their 
     const rowsAfter = await readStageRows(page);
     expect(rowsAfter[TEXT_POSITION]?.status).toBe('stale');
     expect(rowsAfter[TEXT_POSITION]?.kind).toBe('color-picture');
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     expect(await countRunJobs(page)).toBe(runsBefore);
     await snap(page, 'page-changed-to-a-colour-picture');
   });

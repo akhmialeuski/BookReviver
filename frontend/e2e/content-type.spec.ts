@@ -3,8 +3,8 @@ import path from 'node:path';
 import { expect, type Page } from '@playwright/test';
 import {
   createBook,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   uploadFolder,
   waitForIdleJobs,
@@ -39,7 +39,7 @@ interface ListedPage {
 
 /** Read what each page of the open book shows, in book order. */
 async function contentOf(page: Page): Promise<string[]> {
-  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/pages?size=100`);
+  const listed = await page.request.get(`/api/v1/books/${openBookId(page)}/pages?size=100`);
   const items = ((await listed.json()) as { items: ListedPage[] }).items;
   return items
     .toSorted((a, b) => a.position - b.position)
@@ -65,7 +65,7 @@ test('the program finds what each page shows, the strip marks it, and the select
     await expect
       .poll(() => contentOf(page), { timeout: DETECT_TIMEOUT_MS })
       .toEqual(['text:detected', 'color-picture:detected', 'bw-picture:detected', 'text:detected']);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
   });
 
   await test.step('the strip of the Geometry stage marks each page with what it shows', async () => {

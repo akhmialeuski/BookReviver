@@ -59,17 +59,17 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet: sdk.versions,
-  listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGet: sdk.edits,
-  putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPut: sdk.put,
-  deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDelete: sdk.remove,
-  runStageApiV1ProjectsProjectIdStagesStageRunPost: sdk.run,
-  undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPost: sdk.undo,
-  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
-  listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGet: sdk.settings,
-  putValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePut: sdk.putSetting,
-  listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGet: sdk.history,
-  previewStepApiV1ProjectsProjectIdStagesStagePreviewPost: sdk.preview,
+  listVersionsApiV1BooksBookIdPagesPageIdVersionsGet: sdk.versions,
+  listEditsApiV1BooksBookIdPagesPageIdEditsStageGet: sdk.edits,
+  putEditApiV1BooksBookIdPagesPageIdEditsStageStepIdPut: sdk.put,
+  deleteEditApiV1BooksBookIdPagesPageIdEditsStageStepIdDelete: sdk.remove,
+  runStageApiV1BooksBookIdStagesStageRunPost: sdk.run,
+  undoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPost: sdk.undo,
+  listBookJobsApiV1BooksBookIdJobsGet: sdk.jobs,
+  listSettingsApiV1BooksBookIdPagesPageIdSettingsStageGet: sdk.settings,
+  putValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePut: sdk.putSetting,
+  listHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGet: sdk.history,
+  previewStepApiV1BooksBookIdStagesStagePreviewPost: sdk.preview,
   readJobApiV1JobsJobIdGet: sdk.job,
 }));
 
@@ -238,7 +238,7 @@ describe('useEditorSession', () => {
 
   function Harness({ setup }: { setup: Setup }): React.JSX.Element {
     // The history of the step on the page, which stands on screen beside the editor and is read again after a save
-    usePageHistory('project', 'page', 'geometry', 'id-geometry.deskew');
+    usePageHistory('book', 'page', 'geometry', 'id-geometry.deskew');
     const items = setup.items ?? PAGE_ITEM;
     session = useEditorSession({
       processing: setup.state ?? processing(),
@@ -445,7 +445,7 @@ describe('useEditorSession', () => {
     expect(sdk.put).toHaveBeenCalledTimes(1);
     expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({
       path: {
-        project_id: 'project',
+        book_id: 'book',
         page_id: 'page',
         stage: 'geometry',
         step_id: 'id-geometry.deskew',
@@ -454,7 +454,7 @@ describe('useEditorSession', () => {
     });
     expect(sdk.run).toHaveBeenCalledTimes(1);
     expect(sdk.run.mock.calls[0]?.[0]).toMatchObject({
-      path: { project_id: 'project', stage: 'geometry' },
+      path: { book_id: 'book', stage: 'geometry' },
       body: { page_ids: ['page'] },
     });
   });
@@ -1467,7 +1467,7 @@ describe('useEditorSession', () => {
       await vi.waitFor(() => expect(sdk.preview).toHaveBeenCalledTimes(1), { timeout: 3000 });
 
       expect(sdk.preview.mock.calls[0]?.[0]).toMatchObject({
-        path: { project_id: 'project', stage: 'geometry' },
+        path: { book_id: 'book', stage: 'geometry' },
         body: { page_id: 'page', step_index: 0 },
       });
       expect(sdk.run).not.toHaveBeenCalled();

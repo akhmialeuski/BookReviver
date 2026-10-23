@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import Schema
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import UnitOfWork
 
 NO_DATABASE_FILE: str = (
@@ -154,30 +154,30 @@ class BookSessions:
 
     books: BookDatabases
 
-    async def read[T](self, project_id: ProjectId, work: Callable[[Session], T]) -> T:
+    async def read[T](self, book_id: BookId, work: Callable[[Session], T]) -> T:
         """Run ``work`` on a transaction of the book that only reads.
 
-        :param project_id: The book.
-        :type project_id: ProjectId
+        :param book_id: The book.
+        :type book_id: BookId
         :param work: Function over the session.
         :type work: Callable[[Session], T]
         :returns: What the work returns.
         :rtype: T
         """
-        async with self.books.use(project_id) as database:
+        async with self.books.use(book_id) as database:
             return await database.read(work)
 
-    async def write[T](self, project_id: ProjectId, work: Callable[[Session], T]) -> T:
+    async def write[T](self, book_id: BookId, work: Callable[[Session], T]) -> T:
         """Run ``work`` on a transaction of the book that writes, and commit it.
 
-        :param project_id: The book.
-        :type project_id: ProjectId
+        :param book_id: The book.
+        :type book_id: BookId
         :param work: Function over the session.
         :type work: Callable[[Session], T]
         :returns: What the work returns.
         :rtype: T
         """
-        async with self.books.use(project_id) as database:
+        async with self.books.use(book_id) as database:
             return await database.write(
-                work, kind=BlockKind.BOOK, book=project_id, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS
+                work, kind=BlockKind.BOOK, book=book_id, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS
             )

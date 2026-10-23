@@ -22,7 +22,7 @@ from bookreviver.domain.enums import (
     StepMeasure,
     VersionData,
 )
-from bookreviver.domain.ids import PageId, ProjectId, RecipeId
+from bookreviver.domain.ids import BookId, PageId, RecipeId
 from bookreviver.domain.stage_summaries import BookProgress, StageRow, StageSummary, StageTally, StepRow, StepTally
 from bookreviver.domain.values import ProcessorRef, Step
 from tests.helpers.builders import make_page_version
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import PageVersion
     from bookreviver.domain.values import MetadataMap
 
-PROJECT_ID: ProjectId = ProjectId(uuid4())
+BOOK_ID: BookId = BookId(uuid4())
 PAGES: int = 5
 # The processors of the steps of the recipe the tests of the rows of a step place a page in
 PERSPECTIVE_KEY: str = 'geometry.perspective'

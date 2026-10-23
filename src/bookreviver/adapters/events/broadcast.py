@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
 
     from bookreviver.domain.events import DomainEvent
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
 
 
 class InProcessEventBus(EventPublisher, EventStream):
@@ -32,7 +32,7 @@ class InProcessEventBus(EventPublisher, EventStream):
         :type queue_size: int
         """
         self._queue_size = queue_size
-        self._subscribers: defaultdict[ProjectId, set[asyncio.Queue[DomainEvent]]] = defaultdict(set)
+        self._subscribers: defaultdict[BookId, set[asyncio.Queue[DomainEvent]]] = defaultdict(set)
 
     @override
     async def publish(self, event: DomainEvent) -> None:
@@ -41,27 +41,27 @@ class InProcessEventBus(EventPublisher, EventStream):
         :param event: Event to deliver, carrying the project it belongs to.
         :type event: DomainEvent
         """
-        for queue in self._subscribers[event.project_id]:
+        for queue in self._subscribers[event.book_id]:
             if queue.full():
                 queue.get_nowait()
             queue.put_nowait(event)
 
     @override
     @asynccontextmanager
-    async def subscribe(self, project_id: ProjectId) -> AsyncGenerator[AsyncIterator[DomainEvent]]:
+    async def subscribe(self, book_id: BookId) -> AsyncGenerator[AsyncIterator[DomainEvent]]:
         """Register a new queue for the project on entry, and remove it on exit.
 
-        :param project_id: Project whose events are delivered.
-        :type project_id: ProjectId
+        :param book_id: Project whose events are delivered.
+        :type book_id: BookId
         :returns: Generator yielding once the reader of the new queue, which holds every event published since entry.
         :rtype: AsyncGenerator[AsyncIterator[DomainEvent]]
         """
         queue: asyncio.Queue[DomainEvent] = asyncio.Queue(maxsize=self._queue_size)
-        self._subscribers[project_id].add(queue)
+        self._subscribers[book_id].add(queue)
         try:
             yield _read(queue)
         finally:
-            self._subscribers[project_id].discard(queue)
+            self._subscribers[book_id].discard(queue)
 
 
 async def _read(queue: asyncio.Queue[DomainEvent]) -> AsyncIterator[DomainEvent]:

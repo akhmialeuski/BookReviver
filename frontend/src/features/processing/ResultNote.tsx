@@ -20,13 +20,13 @@ const labels = MESSAGES.processing.history;
 const MARKS: readonly ResultMark[] = ['good', 'bad'];
 
 export function ResultNote({
-  projectId,
+  bookId,
   version,
 }: {
-  projectId: string;
+  bookId: string;
   version: PageVersionSchema;
 }): React.JSX.Element {
-  const save = useMarkResult(projectId);
+  const save = useMarkResult(bookId);
   // The comment being written, or null while the stored one is shown
   const [draft, setDraft] = useState<string | null>(null);
 
@@ -35,7 +35,7 @@ export function ResultNote({
   function send(mark: ResultMark | null, comment: string, closesDraft = false): void {
     save.mutate(
       {
-        path: { project_id: projectId, page_id: version.page_id, version_id: version.id },
+        path: { book_id: bookId, page_id: version.page_id, version_id: version.id },
         body: { mark, comment },
       },
       closesDraft ? { onSuccess: () => setDraft(null) } : undefined,

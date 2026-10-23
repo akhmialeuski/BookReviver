@@ -114,13 +114,13 @@ function FieldValues({
   current: unknown;
 }): React.JSX.Element {
   const { page, stepId } = values;
-  const { projectId, stage } = page;
-  const set = useSetValue(projectId);
-  const remove = useRemoveValue(projectId);
+  const { bookId, stage } = page;
+  const set = useSetValue(bookId);
+  const remove = useRemoveValue(bookId);
   const [editing, setEditing] = useState<string | null>(null);
   const chips = chipsOf(page, stepId, name);
   const choices = choicesOf(page, stepId, name);
-  const path = { project_id: projectId, stage, step_id: stepId, name };
+  const path = { book_id: bookId, stage, step_id: stepId, name };
   const edited = chips.find((chip) => chip.id === editing);
   const failure = set.error ?? remove.error;
   // The value waiting to be sent carries the whole request, since it is made after the page may have turned

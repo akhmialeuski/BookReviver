@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 from bookreviver.domain.enums import SourceStatus
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import Slice
 from bookreviver.services.imports import IMPORT_JOBS
 
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
 
     from bookreviver.domain.entities import Actor, Scan, Source
-    from bookreviver.domain.ids import ProjectId, SourceId
+    from bookreviver.domain.ids import BookId, SourceId
     from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import JobBoard
@@ -82,7 +82,7 @@ class SourceService:
     async def list(
         self,
         actor: Actor,
-        project_id: ProjectId,
+        book_id: BookId,
         request: SliceRequest,
         *,
         statuses: Collection[SourceStatus] = (SourceStatus.IMPORTED,),
@@ -91,8 +91,8 @@ class SourceService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param request: Offset and limit of the window.
         :type request: SliceRequest
         :param statuses: Which files to list: the imported sources, which are the project's sources, and the rejected
@@ -102,7 +102,7 @@ class SourceService:
         :rtype: Slice[Source]
         :raises NotFoundError: If the actor has no such project.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories) -> Slice[Source]:
             """Read the files of the project in the statuses and cut the window.
@@ -117,52 +117,52 @@ class SourceService:
             found.sort(key=attrgetter('imported_at', 'id'))
             return _window(found, request)
 
-        return await self._uow.read_book(project_id, work)
+        return await self._uow.read_book(book_id, work)
 
-    async def delete_unimported(self, actor: Actor, project_id: ProjectId) -> None:
+    async def delete_unimported(self, actor: Actor, book_id: BookId) -> None:
         """Delete the rejected and skipped files of the project, which is closing the report of an import.
 
         The imported sources stay. The files of a rejected or skipped source were never stored, so only rows go.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :raises NotFoundError: If the actor has no such project.
         :raises ConflictError: If the project has an import queued or running, which is writing the report.
         """
-        await self._library.open(actor, project_id)
-        self._refuse_active_import(project_id)
-        await self._uow.change_book(project_id, lambda repos, _project: repos.sources.delete_unimported())
+        await self._library.open(actor, book_id)
+        self._refuse_active_import(book_id)
+        await self._uow.change_book(book_id, lambda repos, _book_record: repos.sources.delete_unimported())
 
-    def _refuse_active_import(self, project_id: ProjectId) -> None:
+    def _refuse_active_import(self, book_id: BookId) -> None:
         """Refuse a project that has an import queued or running, which writes sources and their scans.
 
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :raises ConflictError: If the project has an import queued or running.
         """
-        if any(job.kind in IMPORT_JOBS for job in self._board.jobs(project_id, active=True)):
+        if any(job.kind in IMPORT_JOBS for job in self._board.jobs(book_id, active=True)):
             raise ConflictError(SOURCE_IMPORTING)
 
-    async def get(self, actor: Actor, project_id: ProjectId, source_id: SourceId) -> Source:
+    async def get(self, actor: Actor, book_id: BookId, source_id: SourceId) -> Source:
         """Return one source of the project.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param source_id: Identifier of the source.
         :type source_id: SourceId
         :returns: The source.
         :rtype: Source
         :raises NotFoundError: If the actor has no such project, or the project has no such source.
         """
-        await self._library.open(actor, project_id)
-        return await self._uow.read_book(project_id, lambda repos: repos.sources.get(source_id))
+        await self._library.open(actor, book_id)
+        return await self._uow.read_book(book_id, lambda repos: repos.sources.get(source_id))
 
     async def scans(
-        self, actor: Actor, project_id: ProjectId, request: SliceRequest, *, source_id: SourceId | None = None
+        self, actor: Actor, book_id: BookId, request: SliceRequest, *, source_id: SourceId | None = None
     ) -> Slice[Scan]:
         """Return a window of the scans of the project, or of one of its sources, in the order of the book.
 
@@ -170,8 +170,8 @@ class SourceService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param request: Offset and limit of the window.
         :type request: SliceRequest
         :param source_id: Source whose scans are listed, or None for the scans of every source of the project.
@@ -180,7 +180,7 @@ class SourceService:
         :rtype: Slice[Scan]
         :raises NotFoundError: If the actor has no such project, or the project has no such source.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories) -> Slice[Scan]:
             """Read the window of the scans of the project, or of one of its sources.
@@ -196,9 +196,9 @@ class SourceService:
             repos.sources.get(source_id)
             return _window(repos.scans.list_for_source(source_id), request)
 
-        return await self._uow.read_book(project_id, work)
+        return await self._uow.read_book(book_id, work)
 
-    async def delete(self, actor: Actor, project_id: ProjectId, source_id: SourceId) -> None:
+    async def delete(self, actor: Actor, book_id: BookId, source_id: SourceId) -> None:
         """Delete a source's files and the renditions of its scans, then the source with its scans.
 
         The pages of the book made from the scans keep their images, versions, numbers and order, and lose only the
@@ -209,17 +209,17 @@ class SourceService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param source_id: Identifier of the source.
         :type source_id: SourceId
         :raises NotFoundError: If the actor has no such project, or the project has no such source.
         :raises ConflictError: If the project has an import queued or running.
         """
-        await self._library.open(actor, project_id)
-        await self._uow.read_book(project_id, lambda repos: repos.sources.get(source_id))
-        self._refuse_active_import(project_id)
+        await self._library.open(actor, book_id)
+        await self._uow.read_book(book_id, lambda repos: repos.sources.get(source_id))
+        self._refuse_active_import(book_id)
         # The row goes last: only an existing row lets a repeated call reach files a failed call left behind
-        await self._sources.delete_source(project_id, source_id)
-        await self._assets.delete_prefix(ProjectKeys(project_id).source_scans(source_id))
-        await self._uow.change_book(project_id, lambda repos, _project: repos.sources.delete(source_id))
+        await self._sources.delete_source(book_id, source_id)
+        await self._assets.delete_prefix(BookKeys(book_id).source_scans(source_id))
+        await self._uow.change_book(book_id, lambda repos, _book_record: repos.sources.delete(source_id))

@@ -21,7 +21,7 @@ from uuid import UUID
 from attrs import frozen
 
 from bookreviver.domain.enums import LabeledStrEnum
-from bookreviver.domain.ids import ProjectId, StorageKey
+from bookreviver.domain.ids import BookId, StorageKey
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import PageVersion, Scan
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 class KeySegment(LabeledStrEnum):
     """A fixed directory name of the storage layout."""
 
-    PROJECTS = 'projects', 'Root of every project'
+    BOOKS = 'projects', 'Root of every project'
     INCOMING = 'incoming', 'Uploads being received, owned by the source store'
     SOURCES = 'sources', 'Files of the sources as uploaded, owned by the source store'
     ASSETS = 'assets', 'Derived files, owned by the asset store'
@@ -44,13 +44,13 @@ class KeySegment(LabeledStrEnum):
 
 
 @frozen
-class ProjectKeys:
+class BookKeys:
     """The part of the storage key space that belongs to one project.
 
-    :ivar project_id: Project whose keys are built.
+    :ivar book_id: Project whose keys are built.
     """
 
-    project_id: ProjectId
+    book_id: BookId
 
     SEPARATOR: ClassVar[str] = '/'
     # Prefix of the directory of one version of a scan's renditions, as in ``v1``
@@ -238,16 +238,16 @@ class ProjectKeys:
         segments = key.split(cls.SEPARATOR)
         if (
             len(segments) < cls.MIN_SEGMENTS
-            or segments[0] != KeySegment.PROJECTS
+            or segments[0] != KeySegment.BOOKS
             or segments[2] != KeySegment.ASSETS
             or cls.UNSAFE_SEGMENTS.intersection(segments)
         ):
             return None
         try:
-            project_id = UUID(segments[1])
+            book_id = UUID(segments[1])
         except ValueError:
             return None
-        return cls(ProjectId(project_id))
+        return cls(BookId(book_id))
 
     def archived(self, name: str) -> StorageKey | None:
         """Return the key of a file of the archive of a book, which names it relative to the directory of the book.
@@ -288,4 +288,4 @@ class ProjectKeys:
         if unsafe := [segment for segment in segments if segment in self.UNSAFE_SEGMENTS or self.SEPARATOR in segment]:
             err_msg = f'Storage key segments may not be empty, "." or "..", or hold "{self.SEPARATOR}": {unsafe}.'
             raise ValueError(err_msg)
-        return StorageKey(self.SEPARATOR.join((KeySegment.PROJECTS, str(self.project_id), *segments)))
+        return StorageKey(self.SEPARATOR.join((KeySegment.BOOKS, str(self.book_id), *segments)))

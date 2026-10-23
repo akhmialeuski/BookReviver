@@ -42,11 +42,11 @@ export function SaveProfileDialog({
   /** Called with the name of the profile once it is stored and the recipe is linked to it. */
   onSaved: (name: string) => void;
 }): React.JSX.Element | null {
-  const { projectId, stage, recipe, steps } = processing;
+  const { bookId, stage, recipe, steps } = processing;
   const [name, setName] = useState('');
   const save = useSaveProfile();
-  const link = useLinkProfile(projectId);
-  const saveRecipe = useSaveRecipe(projectId);
+  const link = useLinkProfile(bookId);
+  const saveRecipe = useSaveRecipe(bookId);
   const recipeName =
     recipe === undefined ? undefined : MESSAGES.processing.recipe.kinds[recipe.kind];
   const { reset: resetSave } = save;
@@ -75,7 +75,7 @@ export function SaveProfileDialog({
     try {
       const kept = processing.dirty
         ? await saveRecipe.mutateAsync({
-            path: { project_id: projectId, stage, recipe_id: recipe.id },
+            path: { book_id: bookId, stage, recipe_id: recipe.id },
             body: { steps: bodyOf(steps), order: processing.orderMode },
           })
         : { steps: bodyOf(steps) };
@@ -83,7 +83,7 @@ export function SaveProfileDialog({
         body: { stage, name: name.trim(), steps: kept.steps, order: processing.orderMode },
       });
       await link.mutateAsync({
-        path: { project_id: projectId, stage, recipe_id: recipe.id },
+        path: { book_id: bookId, stage, recipe_id: recipe.id },
         body: { profile_id: profile.id },
       });
       onOpenChange(false);

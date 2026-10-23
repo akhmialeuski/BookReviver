@@ -3,8 +3,8 @@ import path from 'node:path';
 import { expect } from '@playwright/test';
 import {
   createBook,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   uploadFolder,
   waitForIdleJobs,
@@ -37,7 +37,7 @@ test('a collection deletes the results a run replaced and keeps the good and the
   test.setTimeout(SCENARIO_TIMEOUT_MS);
   const folder = await writePagesFolder(PAGES);
   const entries = page.locator(RESULT_ROWS);
-  let projectId = '';
+  let bookId = '';
   let pageId = '';
   let bookPath = '';
   // The results of the page from the oldest, by the identifier of the version each stands for
@@ -57,7 +57,7 @@ test('a collection deletes the results a run replaced and keeps the good and the
   /** Read the status the server answers for a version of the page: 200 while it is there, 404 once it is deleted. */
   const statusOf = async (versionId: string | undefined): Promise<number> =>
     (
-      await page.request.get(`/api/v1/projects/${projectId}/pages/${pageId}/versions/${versionId}`)
+      await page.request.get(`/api/v1/books/${bookId}/pages/${pageId}/versions/${versionId}`)
     ).status();
 
   /** Change the top margin of the recipe, save it, and run the stage, which makes a new current result. */
@@ -74,13 +74,13 @@ test('a collection deletes the results a run replaced and keeps the good and the
 
   /** Read what the About tab says a collection would delete, which is the report the dialog is drawn from. */
   const collectable = async (): Promise<{ versions: number; size_bytes: number }> => {
-    const response = await page.request.get(`/api/v1/projects/${projectId}/versions/collectable`);
+    const response = await page.request.get(`/api/v1/books/${bookId}/versions/collectable`);
     return (await response.json()) as { versions: number; size_bytes: number };
   };
 
   /** Open the dialog of "Clear old results" in the About tab of the book. */
   const openClearing = async (): Promise<void> => {
-    await page.goto(`/projects/${projectId}/about`);
+    await page.goto(`/books/${bookId}/about`);
     await page.getByRole('button', { name: 'Clear old results' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
   };
@@ -97,13 +97,13 @@ test('a collection deletes the results a run replaced and keeps the good and the
     await openLibrary(page);
     await createBook(page, 'A book that keeps its results');
     await uploadFolder(page, folder, PAGES);
-    projectId = openProjectId(page);
+    bookId = openBookId(page);
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     [pageId = ''] = await pageIds(page);
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('strip-page')).toHaveCount(PAGES);
     // The import leaves jobs behind it, and a run asked for while they last is refused
-    await waitForIdleJobs(page, projectId);
+    await waitForIdleJobs(page, bookId);
     await runPages(page);
     await expect(page.getByTestId('run-summary')).toContainText('Every page is up to date', {
       timeout: RUN_TIMEOUT_MS,
@@ -152,7 +152,7 @@ test('a collection deletes the results a run replaced and keeps the good and the
 
   await test.step('a result whose good mark is taken off is old, and the button of the About tab counts it with the room it frees', async () => {
     const response = await page.request.put(
-      `/api/v1/projects/${projectId}/pages/${pageId}/versions/${made[0]}/mark`,
+      `/api/v1/books/${bookId}/pages/${pageId}/versions/${made[0]}/mark`,
       { headers: await changeHeaders(page), data: { mark: null, comment: '' } },
     );
     expect(response.ok()).toBe(true);
@@ -169,7 +169,7 @@ test('a collection deletes the results a run replaced and keeps the good and the
   await test.step('the confirmed button deletes the old result, and the list of the page keeps the other results', async () => {
     await page.getByTestId('clear-old-results-submit').click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    await waitForIdleJobs(page, projectId);
+    await waitForIdleJobs(page, bookId);
     expect(await statusOf(made[0])).toBe(404);
     expect(await collectable()).toMatchObject({ versions: 0 });
     await openResults();

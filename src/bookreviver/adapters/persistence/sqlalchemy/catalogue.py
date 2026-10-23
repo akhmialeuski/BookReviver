@@ -24,7 +24,7 @@ from bookreviver.domain.enums import OrderMode, Stage
 
 LIBRARY_TABLE: Final = 'library'
 # The column of the library that names the book, its key
-PROJECT_ID_COLUMN: Final = 'project_id'
+BOOK_ID_COLUMN: Final = 'project_id'
 RECIPE_PROFILES_TABLE: Final = 'recipe_profiles'
 # The rows of the partial unique index of ``recipe_profiles``: the default profile of a stage of an account
 DEFAULT_PROFILE: Final = text('is_default')
@@ -33,14 +33,14 @@ DEFAULT_PROFILE: Final = text('is_default')
 class LibraryRow(DefaultBase):
     """Row of one book in the library of the account that owns it.
 
-    :ivar project_id: The book, whose file lives in the directory of the book and is reached through no key.
+    :ivar book_id: The book, whose file lives in the directory of the book and is reached through no key.
     :ivar owner_id: Account owning the book, which is not deleted while it owns a book.
     :ivar added_at: Time the book joined the library, which orders the owner's list of books.
     """
 
     __tablename__ = LIBRARY_TABLE
 
-    project_id: Mapped[UUID] = mapped_column(primary_key=True)
+    book_id: Mapped[UUID] = mapped_column(BOOK_ID_COLUMN, primary_key=True)
     owner_id: Mapped[UUID] = mapped_column(ForeignKey(AccountTable.__table__.c.id, ondelete=RESTRICT), index=True)
     added_at: Mapped[datetime]
 

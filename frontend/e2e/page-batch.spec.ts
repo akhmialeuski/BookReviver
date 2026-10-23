@@ -3,8 +3,8 @@ import path from 'node:path';
 import { expect } from '@playwright/test';
 import {
   createBook,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   stepIdsOf,
   uploadFolder,
@@ -60,7 +60,7 @@ test('a reader sets a value for the even pages and takes it back in one action, 
     await openLibrary(page);
     await createBook(page, 'A book changed in batches');
     await uploadFolder(page, folder, PAGES);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     ids = await pageIds(page);
     [stepId = ''] = await stepIdsOf(page, 'geometry', DESKEW);
     expect(stepId).not.toBe('');
@@ -130,7 +130,7 @@ test('a reader sets a value for the even pages and takes it back in one action, 
   await test.step('the confirmed run takes the edit and the values away and the history of the pages says a run did it', async () => {
     await page.getByTestId('overwrite-confirm').click();
     await expect.poll(() => countEdits(page, ids[SECOND] ?? '')).toBe(0);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     const history = await readHistory(page, ids[SECOND] ?? '', stepId);
     expect(history[0]).toMatchObject({ layer: 'hand', source: 'run', undone: false });
     const first = await readHistory(page, ids[FIRST] ?? '', stepId);
@@ -139,7 +139,7 @@ test('a reader sets a value for the even pages and takes it back in one action, 
 
   await test.step('one undo gives the edit and the values back on every page', async () => {
     const response = await page.request.post(
-      `/api/v1/projects/${openProjectId(page)}/pages/${ids[SECOND]}/history/geometry/${stepId}/undo`,
+      `/api/v1/books/${openBookId(page)}/pages/${ids[SECOND]}/history/geometry/${stepId}/undo`,
       { headers: await changeHeaders(page), data: {} },
     );
     expect(response.ok()).toBe(true);

@@ -18,7 +18,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.domain.errors import BookTooNewError, ConflictError, NotFoundError
-from bookreviver.domain.ids import ProjectId
+from bookreviver.domain.ids import BookId
 from bookreviver.domain.keys import KeySegment
 
 if TYPE_CHECKING:
@@ -41,13 +41,13 @@ VERSION_TABLE: str = 'alembic_versions'
 NOT_A_BOOK: str = 'not-a-book'
 
 
-def _new_book() -> ProjectId:
+def _new_book() -> BookId:
     """Give the identifier of a new book.
 
     :returns: A fresh identifier.
-    :rtype: ProjectId
+    :rtype: BookId
     """
-    return ProjectId(uuid4())
+    return BookId(uuid4())
 
 
 def _revisions(path: Path) -> list[str]:
@@ -109,13 +109,13 @@ class TestCreate:
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookDatabases
         """
-        project_id = _new_book()
-        await fx_books.create(project_id)
-        path = fx_books.path(project_id)
-        async with fx_books.use(project_id) as database:
+        book_id = _new_book()
+        await fx_books.create(book_id)
+        path = fx_books.path(book_id)
+        async with fx_books.use(book_id) as database:
             heads = await _heads(database)
         expect(path.name == KeySegment.DATABASE)
-        expect(path.parent.name == str(project_id))
+        expect(path.parent.name == str(book_id))
         expect(tuple(_revisions(path)) == heads)
         assert_expectations()
 
@@ -125,10 +125,10 @@ class TestCreate:
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookDatabases
         """
-        project_id = _new_book()
-        await fx_books.create(project_id)
-        with pytest.raises(ConflictError, match=str(project_id)):
-            await fx_books.create(project_id)
+        book_id = _new_book()
+        await fx_books.create(book_id)
+        with pytest.raises(ConflictError, match=str(book_id)):
+            await fx_books.create(book_id)
 
     async def test_a_registry_without_a_blank_file_makes_one_at_the_head_revision(self, fx_settings: Settings) -> None:
         """Verify the registry of the application, which is given no blank file, makes one by running the revisions.
@@ -139,14 +139,14 @@ class TestCreate:
         books = BookDatabases(
             fx_settings.storage_root, tracer=NullTracer(), wait_seconds=WAIT_SECONDS, idle_seconds=NEVER_IDLE_SECONDS
         )
-        project_id = _new_book()
+        book_id = _new_book()
         try:
-            await books.create(project_id)
-            async with books.use(project_id) as database:
+            await books.create(book_id)
+            async with books.use(book_id) as database:
                 heads = await _heads(database)
         finally:
             await books.dispose()
-        assert tuple(_revisions(books.path(project_id))) == heads
+        assert tuple(_revisions(books.path(book_id))) == heads
 
 
 class TestOpen:
@@ -158,9 +158,9 @@ class TestOpen:
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookDatabases
         """
-        project_id = _new_book()
-        with pytest.raises(NotFoundError, match=str(project_id)):
-            async with fx_books.use(project_id):
+        book_id = _new_book()
+        with pytest.raises(NotFoundError, match=str(book_id)):
+            async with fx_books.use(book_id):
                 pass
 
     async def test_a_book_behind_the_code_is_brought_to_the_head_when_it_is_opened(
@@ -171,12 +171,12 @@ class TestOpen:
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookDatabases
         """
-        project_id = _new_book()
-        path = fx_books.path(project_id)
+        book_id = _new_book()
+        path = fx_books.path(book_id)
         path.parent.mkdir(parents=True)
         with closing(sqlite3.connect(path)):
             pass
-        async with fx_books.use(project_id) as database:
+        async with fx_books.use(book_id) as database:
             heads = await _heads(database)
         assert tuple(_revisions(path)) == heads
 
@@ -186,13 +186,13 @@ class TestOpen:
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookDatabases
         """
-        project_id = _new_book()
-        await fx_books.create(project_id)
-        path = fx_books.path(project_id)
+        book_id = _new_book()
+        await fx_books.create(book_id)
+        path = fx_books.path(book_id)
         with closing(sqlite3.connect(path)) as connection, connection:
             connection.execute(f'UPDATE {VERSION_TABLE} SET version_num = ?', (NEWER_REVISION,))
         with pytest.raises(BookTooNewError):
-            async with fx_books.use(project_id):
+            async with fx_books.use(book_id):
                 pass
         assert _revisions(path) == [NEWER_REVISION]
 
@@ -202,9 +202,9 @@ class TestOpen:
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookDatabases
         """
-        project_id = _new_book()
-        await fx_books.create(project_id)
-        async with fx_books.use(project_id) as first, fx_books.use(project_id) as second:
+        book_id = _new_book()
+        await fx_books.create(book_id)
+        async with fx_books.use(book_id) as first, fx_books.use(book_id) as second:
             assert first is second
 
 
@@ -219,17 +219,17 @@ class TestRemove:
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookDatabases
         """
-        project_id = _new_book()
-        await fx_books.create(project_id)
-        path = fx_books.path(project_id)
+        book_id = _new_book()
+        await fx_books.create(book_id)
+        path = fx_books.path(book_id)
         removed = anyio.Event()
 
         async def remove() -> None:
             """Remove the book and tell the test it is gone."""
-            await fx_books.remove(project_id)
+            await fx_books.remove(book_id)
             removed.set()
 
-        async with anyio.create_task_group() as group, fx_books.use(project_id):
+        async with anyio.create_task_group() as group, fx_books.use(book_id):
             group.start_soon(remove)
             await anyio.wait_all_tasks_blocked()
             expect(not removed.is_set(), 'the removal waited for the use')
@@ -244,13 +244,13 @@ class TestRemove:
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookDatabases
         """
-        project_id = _new_book()
-        await fx_books.create(project_id)
-        async with anyio.create_task_group() as group, fx_books.use(project_id):
-            group.start_soon(fx_books.remove, project_id)
+        book_id = _new_book()
+        await fx_books.create(book_id)
+        async with anyio.create_task_group() as group, fx_books.use(book_id):
+            group.start_soon(fx_books.remove, book_id)
             await anyio.wait_all_tasks_blocked()
             with pytest.raises(NotFoundError):
-                async with fx_books.use(project_id):
+                async with fx_books.use(book_id):
                     pass
 
     async def test_removal_keeps_the_other_files_of_the_book_and_a_second_removal_does_nothing(
@@ -261,13 +261,13 @@ class TestRemove:
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookDatabases
         """
-        project_id = _new_book()
-        await fx_books.create(project_id)
-        path = fx_books.path(project_id)
+        book_id = _new_book()
+        await fx_books.create(book_id)
+        path = fx_books.path(book_id)
         kept = path.parent / KeySegment.SOURCES
         kept.mkdir()
-        await fx_books.remove(project_id)
-        await fx_books.remove(project_id)
+        await fx_books.remove(book_id)
+        await fx_books.remove(book_id)
         expect(not path.exists())
         expect(kept.is_dir())
         assert_expectations()
@@ -287,11 +287,11 @@ class TestStored:
         :type fx_settings: Settings
         """
         made = sorted([_new_book(), _new_book()])
-        for project_id in made:
-            await fx_books.create(project_id)
-        projects = fx_settings.storage_root / KeySegment.PROJECTS
-        (projects / str(_new_book())).mkdir()
-        (projects / NOT_A_BOOK).mkdir()
+        for book_id in made:
+            await fx_books.create(book_id)
+        books_root = fx_settings.storage_root / KeySegment.BOOKS
+        (books_root / str(_new_book())).mkdir()
+        (books_root / NOT_A_BOOK).mkdir()
         assert await fx_books.stored() == made
 
     async def test_a_storage_root_with_no_book_lists_none(self, fx_books: BookDatabases) -> None:
@@ -312,12 +312,12 @@ class TestCloseIdle:
         :param fx_idle_books: Registry whose books are idle as soon as they are released.
         :type fx_idle_books: BookDatabases
         """
-        project_id = _new_book()
-        await fx_idle_books.create(project_id)
-        async with fx_idle_books.use(project_id) as first:
+        book_id = _new_book()
+        await fx_idle_books.create(book_id)
+        async with fx_idle_books.use(book_id) as first:
             pass
         await fx_idle_books.close_idle()
-        async with fx_idle_books.use(project_id) as second:
+        async with fx_idle_books.use(book_id) as second:
             assert second is not first
 
     async def test_a_book_in_use_is_never_closed(self, fx_idle_books: BookDatabases) -> None:
@@ -326,11 +326,11 @@ class TestCloseIdle:
         :param fx_idle_books: Registry whose books are idle as soon as they are released.
         :type fx_idle_books: BookDatabases
         """
-        project_id = _new_book()
-        await fx_idle_books.create(project_id)
-        async with fx_idle_books.use(project_id) as held:
+        book_id = _new_book()
+        await fx_idle_books.create(book_id)
+        async with fx_idle_books.use(book_id) as held:
             await fx_idle_books.close_idle()
-            async with fx_idle_books.use(project_id) as again:
+            async with fx_idle_books.use(book_id) as again:
                 assert again is held
 
     async def test_a_book_used_within_the_limit_stays_open(self, fx_books: BookDatabases) -> None:
@@ -339,10 +339,10 @@ class TestCloseIdle:
         :param fx_books: Registry of the books of the test, whose idle limit no test reaches.
         :type fx_books: BookDatabases
         """
-        project_id = _new_book()
-        await fx_books.create(project_id)
-        async with fx_books.use(project_id) as first:
+        book_id = _new_book()
+        await fx_books.create(book_id)
+        async with fx_books.use(book_id) as first:
             pass
         await fx_books.close_idle()
-        async with fx_books.use(project_id) as second:
+        async with fx_books.use(book_id) as second:
             assert second is first

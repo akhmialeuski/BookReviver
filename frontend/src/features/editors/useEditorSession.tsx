@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FigureState, ScanSchema } from '@/api';
-import { getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetOptions } from '@/api/@tanstack/react-query.gen';
+import { getVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGetOptions } from '@/api/@tanstack/react-query.gen';
 import { stepChain, stepVersion } from '@/features/editors/chain';
 import { figureStateOf } from '@/features/editors/figure';
 import { pictureOf } from '@/features/editors/picture';
@@ -120,14 +120,14 @@ export function useEditorSession({
    */
   serverFigure?: FigureState | null;
 }): EditorSession | null {
-  const { projectId, stage, catalogue } = processing;
-  const { save, remove } = useEditChanges(projectId);
-  const run = useRunStage(projectId);
-  const { mutate: takeBack } = useUndo(projectId);
+  const { bookId, stage, catalogue } = processing;
+  const { save, remove } = useEditChanges(bookId);
+  const run = useRunStage(bookId);
+  const { mutate: takeBack } = useUndo(bookId);
   const { mutate: startRun } = run;
-  const activeJobs = useActiveJobs(projectId);
+  const activeJobs = useActiveJobs(bookId);
   const [wanted, setWanted] = useState<WantedRun | null>(null);
-  const runInFlight = useRunInFlight(projectId);
+  const runInFlight = useRunInFlight(bookId);
   const idle = activeJobs.data !== undefined && activeJobs.data.length === 0 && !runInFlight;
 
   // The steps are the ones the recipe runs by, since only its run reads an edit, and the reader works on one at a time.
@@ -151,7 +151,7 @@ export function useEditorSession({
   // Each step of the recipe made a version, and an editor starts from what its step found. The picture it lies on is the
   // one the server gives for the row of the page at the open step, which is what that step reads
   const head = current?.row?.version ?? null;
-  const versions = useVersions(projectId, current?.page.id, stage);
+  const versions = useVersions(bookId, current?.page.id, stage);
   const listed = versions.data;
   const live = useMemo(() => stepChain(listed ?? [], head), [listed, head]);
   // The versions and the row of the page arrive apart. After a run the row can name a current version that the list does
@@ -173,8 +173,8 @@ export function useEditorSession({
   const focused = focusStepId !== undefined;
   // The settings the open page has for the step, which the editor of the content box reads and sets besides its shape
   const sets = kind === 'content-box';
-  const pageSettings = usePageSettings(projectId, current?.page.id, stage, sets);
-  const setting = useSetValue(projectId);
+  const pageSettings = usePageSettings(bookId, current?.page.id, stage, sets);
+  const setting = useSetValue(bookId);
   const pageSettingsOfStep = settingsOf(pageSettings.data, step?.step_id ?? null);
   // Until the row of the page arrives it is not known whether the step has made a result on it, so nothing is shown or
   // previewed for the page: a frame drawn from the fallback would be replaced by the one the step found
@@ -199,13 +199,13 @@ export function useEditorSession({
           stepIndex: entry.index,
         }
       : null;
-  const foundPreview = usePreview(projectId, stage, previewRequest, wantsFound);
+  const foundPreview = usePreview(bookId, stage, previewRequest, wantsFound);
   const foundVersion =
     wantsFound && foundPreview.shown?.page_id === current?.page.id ? foundPreview.shown : null;
   const foundInput = useQuery({
-    ...getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetOptions({
+    ...getVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGetOptions({
       path: {
-        project_id: projectId,
+        book_id: bookId,
         page_id: current?.page.id ?? '',
         version_id: foundVersion?.input_id ?? '',
       },
@@ -246,7 +246,7 @@ export function useEditorSession({
     !skipped &&
     (editor?.needsResult !== true || result !== null || (focused && pictureSize !== null));
 
-  const { data: edits } = useEdits(projectId, owner?.id, stage, available);
+  const { data: edits } = useEdits(bookId, owner?.id, stage, available);
   const saved = edits?.find((candidate) => candidate.step_id === step?.step_id);
   const savedGeometry: Geometry | null = saved?.geometry ?? null;
 
@@ -280,7 +280,7 @@ export function useEditorSession({
     setWanted(null);
     startRun(
       {
-        path: { project_id: projectId, stage },
+        path: { book_id: bookId, stage },
         body: { page_ids: [wanted.pageId] },
       },
       {
@@ -295,7 +295,7 @@ export function useEditorSession({
         },
       },
     );
-  }, [wanted, idle, startRun, projectId, stage]);
+  }, [wanted, idle, startRun, bookId, stage]);
 
   /**
    * Save the edit of the open step, or delete it for null, and read it again.
@@ -319,7 +319,7 @@ export function useEditorSession({
       waiting.current = null;
     }
     const path = {
-      project_id: projectId,
+      book_id: bookId,
       page_id: owner.id,
       stage,
       step_id: step.step_id,
@@ -360,7 +360,7 @@ export function useEditorSession({
     }
     setting.mutate(
       {
-        path: { project_id: projectId, stage, step_id: step.step_id, name },
+        path: { book_id: bookId, stage, step_id: step.step_id, name },
         body: { scope: 'pages', page_ids: [owner.id], value },
       },
       {
@@ -385,7 +385,7 @@ export function useEditorSession({
     setDraft(null);
     takeBack(
       {
-        path: { project_id: projectId, page_id: owner.id, stage, step_id: step.step_id },
+        path: { book_id: bookId, page_id: owner.id, stage, step_id: step.step_id },
         body: { change_id: null },
       },
       {

@@ -735,7 +735,7 @@ class BookResource(LabeledStrEnum):
     book is opened.
     """
 
-    PROJECT = 'project', 'The description of the book'
+    RECORD = 'record', 'The description of the book'
     SOURCES = 'sources', 'The uploaded files of the book'
     SCANS = 'scans', 'The scans of the files'
     PAGES = 'pages', 'The pages, their order, their labels and their groups'

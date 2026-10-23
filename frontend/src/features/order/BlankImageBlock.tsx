@@ -18,23 +18,23 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  */
 
 export function BlankImageBlock({
-  projectId,
+  bookId,
   selected,
   blankPages,
 }: {
-  projectId: string;
+  bookId: string;
   /** The selected pages, all of them blank pages cut from a scan. */
   selected: readonly PageSchema[];
   /** Every blank page of the book cut from a scan, which the button changes together. */
   blankPages: readonly PageSchema[];
 }): React.JSX.Element {
   const text = MESSAGES.order.panel.leaf;
-  const fill = useFillBlankPages(projectId);
+  const fill = useFillBlankPages(bookId);
   const name = useId();
   const current = commonOf(selected.map((page) => page.blank_fill));
   const change = (pages: readonly PageSchema[], chosen: BlankFill): void =>
     fill.mutate({
-      path: { project_id: projectId },
+      path: { book_id: bookId },
       body: { page_ids: pages.map((page) => page.id), blank_fill: chosen },
     });
 

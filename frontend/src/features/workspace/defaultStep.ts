@@ -28,7 +28,7 @@ import { barStepsOf, defaultStepOf, hasStepBar } from '@/features/workspace/step
  */
 export async function redirectToDefaultStep(
   queryClient: QueryClient,
-  params: { projectId: string; stage: string },
+  params: { bookId: string; stage: string },
   pageId: string | undefined,
 ): Promise<void> {
   const stage = parseStage(params.stage);
@@ -41,8 +41,8 @@ export async function redirectToDefaultStep(
     return;
   }
   const [recipes, rows] = await Promise.all([
-    queryClient.ensureQueryData(recipesOptions(params.projectId, stage)),
-    queryClient.ensureQueryData(stageRowsOptions(params.projectId, stage)),
+    queryClient.ensureQueryData(recipesOptions(params.bookId, stage)),
+    queryClient.ensureQueryData(stageRowsOptions(params.bookId, stage)),
   ]);
   // The panel shows the recipe of the kind of the open page, the page the address names or else the first one
   const open = rows.find((row) => row.page_id === pageId) ?? rows[0];
@@ -54,8 +54,8 @@ export async function redirectToDefaultStep(
   const step = defaultStepOf(barStepsOf(recipe, []), rows, recipe.id);
   if (step !== null) {
     throw redirect({
-      to: '/projects/$projectId/stages/$stage/steps/$stepId',
-      params: { projectId: params.projectId, stage: params.stage, stepId: step.stepId },
+      to: '/books/$bookId/stages/$stage/steps/$stepId',
+      params: { bookId: params.bookId, stage: params.stage, stepId: step.stepId },
       search: true,
       replace: true,
     });

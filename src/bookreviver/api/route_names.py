@@ -8,5 +8,5 @@ class RouteName(enum.StrEnum):
 
     IIIF_FILE = 'iiif-file'
     PAGE = 'page'
-    PROJECT = 'project'
-    PROJECT_EVENTS = 'project-events'
+    BOOK = 'book'
+    BOOK_EVENTS = 'book-events'

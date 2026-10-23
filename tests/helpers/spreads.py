@@ -11,9 +11,9 @@ from bookreviver.domain.values import PageStageKey, RecipeDraft, SliceRequest, S
 from tests.helpers.samples import png_bytes, spread
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, Page, PageStage, PageVersion, Project
+    from bookreviver.domain.entities import Actor, BookRecord, Page, PageStage, PageVersion
     from bookreviver.domain.enums import Stage
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import StageRun
     from tests.helpers.processing import ProcessingKit
 
@@ -23,7 +23,7 @@ EVERY_PAGE: SliceRequest = SliceRequest(limit=100)
 SPLIT_SPREAD: str = 'split.spread'
 
 
-async def seed_spreads(kit: ProcessingKit, *, count: int = 1) -> tuple[Actor, Project, list[Page]]:
+async def seed_spreads(kit: ProcessingKit, *, count: int = 1) -> tuple[Actor, BookRecord, list[Page]]:
     """Seed a project with scans of spreads, each shown whole by one page.
 
     :param kit: What the processing services of the test share.
@@ -31,73 +31,77 @@ async def seed_spreads(kit: ProcessingKit, *, count: int = 1) -> tuple[Actor, Pr
     :param count: How many scans, and so pages, to seed.
     :type count: int
     :returns: The actor, the project and the pages in book order.
-    :rtype: tuple[Actor, Project, list[Page]]
+    :rtype: tuple[Actor, BookRecord, list[Page]]
     """
-    actor, project = await kit.seed_project()
+    actor, book_record = await kit.seed_record()
     pages = [
-        (await kit.seed_scan_page(project, order_key=f'a{number}', image=png_bytes(spread(PAGE_WIDTH_PX, HEIGHT_PX))))[
-            0
-        ]
+        (
+            await kit.seed_scan_page(
+                book_record, order_key=f'a{number}', image=png_bytes(spread(PAGE_WIDTH_PX, HEIGHT_PX))
+            )
+        )[0]
         for number in range(count)
     ]
-    return actor, project, pages
+    return actor, book_record, pages
 
 
-async def use_recipe(kit: ProcessingKit, actor: Actor, project: Project, stage: Stage, processor_key: str) -> None:
+async def use_recipe(
+    kit: ProcessingKit, actor: Actor, book_record: BookRecord, stage: Stage, processor_key: str
+) -> None:
     """Give the recipe of text pages of a stage one step with default parameters.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param actor: Account owning the project.
     :type actor: Actor
-    :param project: Project the recipe belongs to.
-    :type project: Project
+    :param book_record: Project the recipe belongs to.
+    :type book_record: BookRecord
     :param stage: The stage.
     :type stage: Stage
     :param processor_key: Key of the processor of the one step.
     :type processor_key: str
     """
     draft = RecipeDraft(steps=[Step(processor_key=processor_key)])
-    await kit.edit_recipe(actor, project, stage, draft)
+    await kit.edit_recipe(actor, book_record, stage, draft)
 
 
-async def run_stage(kit: ProcessingKit, actor: Actor, project: Project, run: StageRun) -> None:
+async def run_stage(kit: ProcessingKit, actor: Actor, book_record: BookRecord, run: StageRun) -> None:
     """Start a run of a stage and let the board run it, with the jobs it puts behind it.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param actor: Account owning the project.
     :type actor: Actor
-    :param project: Project to run in.
-    :type project: Project
+    :param book_record: Project to run in.
+    :type book_record: BookRecord
     :param run: The stage, and the recipe and pages to run it on.
     :type run: StageRun
     """
-    await kit.service().start_run(actor, project.id, run.stage, run)
+    await kit.service().start_run(actor, book_record.id, run.stage, run)
     await kit.work_queue()
 
 
-async def book_of(kit: ProcessingKit, project: Project) -> list[Page]:
+async def book_of(kit: ProcessingKit, book_record: BookRecord) -> list[Page]:
     """Read the pages of a project in book order, as committed.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param project: The project.
-    :type project: Project
+    :param book_record: The project.
+    :type book_record: BookRecord
     :returns: Its pages.
     :rtype: list[Page]
     """
-    listed = await kit.uow().read_book(project.id, lambda repos: repos.pages.list_window(EVERY_PAGE))
+    listed = await kit.uow().read_book(book_record.id, lambda repos: repos.pages.list_window(EVERY_PAGE))
     return list(listed.items)
 
 
-async def stage_of(kit: ProcessingKit, project_id: ProjectId, page: Page, stage: Stage) -> PageStage:
+async def stage_of(kit: ProcessingKit, book_id: BookId, page: Page, stage: Stage) -> PageStage:
     """Read the record of a stage of a page, as committed.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param project_id: Identifier of the project of the page.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project of the page.
+    :type book_id: BookId
     :param page: The page.
     :type page: Page
     :param stage: The stage.
@@ -105,16 +109,16 @@ async def stage_of(kit: ProcessingKit, project_id: ProjectId, page: Page, stage:
     :returns: The record.
     :rtype: PageStage
     """
-    return await kit.uow().read_book(project_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, stage)))
+    return await kit.uow().read_book(book_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, stage)))
 
 
-async def head_of(kit: ProcessingKit, project_id: ProjectId, page: Page, stage: Stage) -> PageVersion:
+async def head_of(kit: ProcessingKit, book_id: BookId, page: Page, stage: Stage) -> PageVersion:
     """Read the current version of a stage of a page, as committed.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param project_id: Identifier of the project of the page.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project of the page.
+    :type book_id: BookId
     :param page: The page.
     :type page: Page
     :param stage: The stage.
@@ -122,6 +126,6 @@ async def head_of(kit: ProcessingKit, project_id: ProjectId, page: Page, stage: 
     :returns: The version the record of the stage names.
     :rtype: PageVersion
     """
-    record = await stage_of(kit, project_id, page, stage)
+    record = await stage_of(kit, book_id, page, stage)
     assert record.head_version_id is not None
-    return await kit.stored_version(project_id, record.head_version_id)
+    return await kit.stored_version(book_id, record.head_version_id)

@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageVersionSchema } from '@/api';
-import { listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey } from '@/api/@tanstack/react-query.gen';
+import { listVersionsApiV1BooksBookIdPagesPageIdVersionsGetQueryKey } from '@/api/@tanstack/react-query.gen';
 import { version } from '@/features/processing/fixtures';
 import { ResultNote } from '@/features/processing/ResultNote';
 import { ProblemError } from '@/shared/http/problem';
@@ -19,7 +19,7 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPut: sdk.mark,
+  putMarkApiV1BooksBookIdPagesPageIdVersionsVersionIdMarkPut: sdk.mark,
 }));
 
 const OLD = version('old', { mark: 'good' });
@@ -36,7 +36,7 @@ describe('ResultNote', () => {
       root.render(
         <QueryClientProvider client={client}>
           {results.map((result) => (
-            <ResultNote key={result.id} projectId="project" version={result} />
+            <ResultNote key={result.id} bookId="book" version={result} />
           ))}
         </QueryClientProvider>,
       );
@@ -76,7 +76,7 @@ describe('ResultNote', () => {
       byId('result-mark-good')?.click();
     });
     expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({
-      path: { project_id: 'project', page_id: 'page', version_id: 'new' },
+      path: { book_id: 'book', page_id: 'page', version_id: 'new' },
       body: { mark: 'good', comment: '' },
     });
     await settle();
@@ -160,7 +160,7 @@ describe('ResultNote', () => {
 
     expect(sdk.mark).toHaveBeenCalledTimes(1);
     expect(sdk.mark.mock.calls[0]?.[0]).toMatchObject({
-      path: { project_id: 'project', page_id: 'page', version_id: 'old' },
+      path: { book_id: 'book', page_id: 'page', version_id: 'old' },
       body: { mark: 'good', comment: 'Too tight' },
     });
   });
@@ -222,8 +222,8 @@ describe('ResultNote', () => {
     });
     const read = vi.fn().mockReturnValueOnce(firstRead).mockResolvedValue('marked');
     const observer = new QueryObserver<string>(client, {
-      queryKey: listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey({
-        path: { project_id: 'project', page_id: 'page' },
+      queryKey: listVersionsApiV1BooksBookIdPagesPageIdVersionsGetQueryKey({
+        path: { book_id: 'book', page_id: 'page' },
       }),
       queryFn: read,
     });

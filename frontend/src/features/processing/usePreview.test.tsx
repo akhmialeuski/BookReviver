@@ -3,10 +3,10 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobSchema, PageVersionSchema } from '@/api';
+import { applyBookEvent, EventName } from '@/features/books/events';
 import { version } from '@/features/processing/fixtures';
 import type { PreviewRequest } from '@/features/processing/preview';
 import { BUSY_RETRY_MS, type PreviewResult, usePreview } from '@/features/processing/usePreview';
-import { applyProjectEvent, EventName } from '@/features/projects/events';
 import { ProblemError } from '@/shared/http/problem';
 
 /**
@@ -27,14 +27,14 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  previewStepApiV1ProjectsProjectIdStagesStagePreviewPost: sdk.preview,
+  previewStepApiV1BooksBookIdStagesStagePreviewPost: sdk.preview,
   readJobApiV1JobsJobIdGet: sdk.job,
-  getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGet: sdk.version,
-  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
-  listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet: sdk.versions,
+  getVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGet: sdk.version,
+  listBookJobsApiV1BooksBookIdJobsGet: sdk.jobs,
+  listVersionsApiV1BooksBookIdPagesPageIdVersionsGet: sdk.versions,
 }));
 
-const PROJECT = 'book';
+const BOOK = 'book';
 const PAGE = 'page';
 
 function ask(angle: number, pageId = PAGE): PreviewRequest {
@@ -58,7 +58,7 @@ function made(id: string, angle: number): PageVersionSchema {
 function jobOf(id: string, state: JobSchema['state'] = 'running'): JobSchema {
   return {
     id,
-    project_id: PROJECT,
+    book_id: BOOK,
     kind: 'preview-step',
     stage: null,
     state,
@@ -77,7 +77,7 @@ describe('usePreview', () => {
   let latest: PreviewResult;
 
   function Probe({ request, on }: { request: PreviewRequest | null; on: boolean }): null {
-    latest = usePreview(PROJECT, 'geometry', request, on);
+    latest = usePreview(BOOK, 'geometry', request, on);
     return null;
   }
 
@@ -101,12 +101,12 @@ describe('usePreview', () => {
   /** Say what the stream says when the server has made a preview. */
   async function announce(id: string): Promise<void> {
     act(() =>
-      applyProjectEvent(
+      applyBookEvent(
         client,
-        PROJECT,
+        BOOK,
         {
           event: EventName.PageVersionReady,
-          data: { project_id: PROJECT, page_id: PAGE, version_id: id },
+          data: { book_id: BOOK, page_id: PAGE, version_id: id },
         },
         { version: null },
       ),

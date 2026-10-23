@@ -4,8 +4,8 @@ import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   stepIdsOf,
   uploadFolder,
@@ -62,13 +62,13 @@ interface DewarpVersion {
 
 /** Read the newest ready version of the dewarping step of a page of the open book, the first unless a place is given. */
 async function dewarpVersion(page: Page, position = ODD_POSITION): Promise<DewarpVersion> {
-  const projectId = openProjectId(page);
+  const bookId = openBookId(page);
   const target = (await pageIds(page))[position];
   if (target === undefined) {
     throw new Error(`The book has no page at ${position}.`);
   }
   const listed = await page.request.get(
-    `/api/v1/projects/${projectId}/pages/${target}/versions?stage=geometry&scale=full&size=100`,
+    `/api/v1/books/${bookId}/pages/${target}/versions?stage=geometry&scale=full&size=100`,
   );
   const items = (
     (await listed.json()) as {
@@ -101,7 +101,7 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
   // An edit starts a run of the stage on the page, and the next change waits until that run is over
   const settled = async (): Promise<void> => {
     await expect(page.getByTestId('editor-busy')).toHaveCount(0);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
   };
   const factsText = async (): Promise<string> => (await facts.textContent()) ?? '';
   const saves: string[] = [];
@@ -117,7 +117,7 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
     await openLibrary(page);
     await createBook(page, 'A book bent at the gutter');
     await uploadFolder(page, folder, PAGES);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     await markPagesAsText(page);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
@@ -247,7 +247,7 @@ test('a reader flattens a page bent into the gutter, lays its two curves by hand
     expect(await readEffective(page, ids[ODD_POSITION] ?? '', options)).not.toBe(
       LEAST_BEND_OF_THE_EVEN_PAGES,
     );
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
 
     await runAll(page);
     // The even page took the value and was left as it was, and the odd page is the version it had, flattened by the recipe

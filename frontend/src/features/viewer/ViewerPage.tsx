@@ -33,18 +33,18 @@ function stagePage(page: PageSchema): StagePage {
 }
 
 export function ViewerPage({
-  projectId,
+  bookId,
   stage,
   search,
   onSearchChange,
 }: {
-  projectId: string;
+  bookId: string;
   /** The stage the reader worked on before reading, which the way back leads to. */
   stage: Stage;
   search: ViewerSearch;
   onSearchChange: (search: ViewerSearch) => void;
 }): React.JSX.Element {
-  const manifest = useManifest(projectId);
+  const manifest = useManifest(bookId);
   const [fitMode, setFitMode] = useState<FitMode>(FitMode.Page);
   const [panelOpen, setPanelOpen] = useState(true);
   const [editId, setEditId] = useState<string | null>(null);
@@ -79,8 +79,8 @@ export function ViewerPage({
     <div className="flex h-full min-h-96 flex-col">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 pt-2">
         <Link
-          to="/projects/$projectId/stages/$stage"
-          params={{ projectId, stage }}
+          to="/books/$bookId/stages/$stage"
+          params={{ bookId, stage }}
           className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeftIcon className="size-4" />
@@ -170,12 +170,12 @@ export function ViewerPage({
         </>
       )}
       <PageEditDialog
-        projectId={projectId}
+        bookId={bookId}
         page={pages.find((page) => page.id === editId) ?? null}
         onClose={() => setEditId(null)}
       />
       <MovePagesDialog
-        projectId={projectId}
+        bookId={bookId}
         pages={pages}
         target={moveIds === null ? null : { pageIds: moveIds }}
         onClose={() => setMoveIds(null)}

@@ -17,11 +17,11 @@ from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import ManifestPage, ManifestParams, Pager
 from bookreviver.api.routers.processing import StagePath
 from bookreviver.api.schemas.stages import StagePageSchema, StageSummarySchema
-from bookreviver.domain.ids import ProjectId, StepId
+from bookreviver.domain.ids import BookId, StepId
 from bookreviver.domain.stage_summaries import StageRow, StageSummary
-from bookreviver.services.projects import ProjectService
+from bookreviver.services.books import BooksService
 
-PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
+BOOK_ID_DESCRIPTION: str = 'Identifier of the book'
 
 
 @dataclass(frozen=True)
@@ -34,15 +34,15 @@ class StageRowsPath(StagePath):
     request: Request
 
 
-router = APIRouter(prefix='/projects', tags=['stages'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
+router = APIRouter(prefix='/books', tags=['stages'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 
-@router.get('/{project_id}/stages')
+@router.get('/{book_id}/stages')
 async def list_stages(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     params: Annotated[Params, Depends()],
     actor: ActorDep,
-    projects: FromDishka[ProjectService],
+    books: FromDishka[BooksService],
 ) -> Page[StageSummarySchema]:
     """List the stages of a book in the order of the pipeline, each summed over the pages of the book.
 
@@ -50,27 +50,27 @@ async def list_stages(
     are zero.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param params: Page number and size from the query; the ten stages fit one page of the default size.
     :type params: Params
     :param actor: The signed-in account.
     :type actor: Actor
-    :param projects: Project service of the request.
-    :type projects: ProjectService
+    :param books: Project service of the request.
+    :type books: BooksService
     :returns: One page of the stages.
     :rtype: Page[StageSummarySchema]
     """
     pager = Pager[StageSummary, StageSummarySchema](params, StageSummarySchema.model_validate)
-    return pager.page(await projects.stages(actor, project_id, pager.request))
+    return pager.page(await books.stages(actor, book_id, pager.request))
 
 
-@router.get('/{project_id}/stages/{stage}/pages')
+@router.get('/{book_id}/stages/{stage}/pages')
 async def list_stage_pages(
     address: Annotated[StageRowsPath, Depends()],
     params: Annotated[ManifestParams, Depends()],
     actor: ActorDep,
-    projects: FromDishka[ProjectService],
+    books: FromDishka[BooksService],
     step: Annotated[StepId | None, Query(description='A step of a recipe of the stage to place every page at')] = None,
 ) -> ManifestPage[StagePageSchema]:
     """List the pages of a book in book order, each with where it stands in a stage and the version that is its result.
@@ -89,13 +89,13 @@ async def list_stage_pages(
     :type params: ManifestParams
     :param actor: The signed-in account.
     :type actor: Actor
-    :param projects: Project service of the request.
-    :type projects: ProjectService
+    :param books: Project service of the request.
+    :type books: BooksService
     :param step: The step to place every page at, or None for the rows of the stage alone.
     :type step: StepId | None
     :returns: One page of the rows of the stage.
     :rtype: ManifestPage[StagePageSchema]
     """
-    to_schema = partial(StagePageSchema.of, project_id=address.project_id, request=address.request)
+    to_schema = partial(StagePageSchema.of, book_id=address.book_id, request=address.request)
     pager = Pager[StageRow, StagePageSchema](params, to_schema)
-    return pager.page(await projects.stage_pages(actor, address.project_id, address.stage, pager.request, step))
+    return pager.page(await books.stage_pages(actor, address.book_id, address.stage, pager.request, step))

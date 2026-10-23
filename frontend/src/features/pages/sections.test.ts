@@ -9,10 +9,10 @@ const sdk = vi.hoisted(() => ({ list: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  listPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGet: sdk.list,
+  listPaginationSectionsApiV1BooksBookIdPaginationSectionsGet: sdk.list,
 }));
 
-const PROJECT = 'book';
+const BOOK = 'book';
 
 describe('sectionsOptions', () => {
   beforeEach(() => {
@@ -40,13 +40,13 @@ describe('sectionsOptions', () => {
         },
       });
 
-    const sections = await new QueryClient().fetchQuery(sectionsOptions(PROJECT));
+    const sections = await new QueryClient().fetchQuery(sectionsOptions(BOOK));
 
     expect(sections.map((entry) => entry.id)).toEqual(['a', 'b']);
     expect(sdk.list).toHaveBeenCalledTimes(2);
     expect(sdk.list).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        path: { project_id: PROJECT },
+        path: { book_id: BOOK },
         query: { page: 2, size: SECTIONS_PAGE_SIZE },
       }),
     );
@@ -57,6 +57,6 @@ describe('sectionsOptions', () => {
       data: { items: [], total: 0, page: 1, size: SECTIONS_PAGE_SIZE, pages: 0 },
     });
 
-    expect(await new QueryClient().fetchQuery(sectionsOptions(PROJECT))).toEqual([]);
+    expect(await new QueryClient().fetchQuery(sectionsOptions(BOOK))).toEqual([]);
   });
 });

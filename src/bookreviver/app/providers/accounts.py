@@ -32,7 +32,7 @@ from bookreviver.domain.entities import Actor
 from bookreviver.domain.ids import AccountId
 from bookreviver.domain.values import MailMessage
 from bookreviver.ports.runtime import Mailer
-from bookreviver.services.projects import ProjectService
+from bookreviver.services.books import BooksService
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -201,7 +201,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         *,
         hasher: PasswordHasher,
         mailer: Mailer,
-        projects: ProjectService,
+        books: BooksService,
         settings: Settings,
     ) -> None:
         """Build the manager over ``user_db``, signing tokens with the accounts secret.
@@ -212,8 +212,8 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         :type hasher: PasswordHasher
         :param mailer: Port the verification, reset and already-registered messages go through.
         :type mailer: Mailer
-        :param projects: Project service of the request, which deletes an account's projects with their files.
-        :type projects: ProjectService
+        :param books: Project service of the request, which deletes an account's projects with their files.
+        :type books: BooksService
         :param settings: Application settings holding the token secret and the public URL of the web interface.
         :type settings: Settings
         """
@@ -223,7 +223,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         self.reset_password_token_secret = secret
         self._hasher = hasher
         self._mailer = mailer
-        self._projects = projects
+        self._books = books
         self._public_url = settings.public_url
 
     @override
@@ -552,7 +552,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         :param request: Request that triggered the deletion, if any.
         :type request: Request | None
         """
-        await self._projects.delete_all(Actor(account_id=AccountId(user.id)))
+        await self._books.delete_all(Actor(account_id=AccountId(user.id)))
 
 
 class AccountsProvider(Provider):
@@ -618,7 +618,7 @@ class AccountsProvider(Provider):
         user_db: AccountDatabase,
         hasher: PasswordHasher,
         mailer: Mailer,
-        projects: ProjectService,
+        books: BooksService,
         settings: Settings,
     ) -> UserManager:
         """Build the user manager over the users of the request.
@@ -629,14 +629,14 @@ class AccountsProvider(Provider):
         :type hasher: PasswordHasher
         :param mailer: Port the account messages go through.
         :type mailer: Mailer
-        :param projects: Project service of the request, which deletes the projects of a deleted account.
-        :type projects: ProjectService
+        :param books: Project service of the request, which deletes the projects of a deleted account.
+        :type books: BooksService
         :param settings: Application settings holding the secret and the public URL.
         :type settings: Settings
         :returns: The user manager of the request.
         :rtype: UserManager
         """
-        return UserManager(user_db, hasher=hasher, mailer=mailer, projects=projects, settings=settings)
+        return UserManager(user_db, hasher=hasher, mailer=mailer, books=books, settings=settings)
 
     @provide(scope=Scope.REQUEST)
     def session_strategy(self, uow: SqlAlchemyUnitOfWork, settings: Settings) -> SessionStrategy:

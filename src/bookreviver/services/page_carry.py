@@ -22,15 +22,15 @@ from bookreviver.domain.entities import PageStepState
 from bookreviver.domain.enums import CarryScope, ChangeSource, PageOrigin, StepLayer
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.history import CarryOver
+from bookreviver.services.books import book_pages
 from bookreviver.services.page_batches import PageBatch
-from bookreviver.services.projects import book_pages
 from bookreviver.services.recipes import find_step
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Actor, Page, Project
-    from bookreviver.domain.ids import PageId, ProjectId
+    from bookreviver.domain.entities import Actor, BookRecord, Page
+    from bookreviver.domain.ids import BookId, PageId
     from bookreviver.domain.values import CarryRequest
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
@@ -61,13 +61,13 @@ class CarryOverService:
         self._records = records
         self._clock = clock
 
-    async def carry(self, actor: Actor, project_id: ProjectId, request: CarryRequest) -> CarryOver:
+    async def carry(self, actor: Actor, book_id: BookId, request: CarryRequest) -> CarryOver:
         """Write the shape a page has set by hand for a step to other pages, as one batch.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param request: The source page, the stage and the step, and the pages the shape goes to.
         :type request: CarryRequest
         :returns: The batch, the changes written and the pages skipped for a shape of their own.
@@ -76,16 +76,16 @@ class CarryOverService:
                                has the step, or the source page has no shape set by hand.
         :raises InvalidParametersError: If the scope is the selected pages and none is named, or the edit is a mask.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
         key = request.key
 
-        def work(repos: BookRepositories, _project: Project) -> CarryOver:
+        def work(repos: BookRepositories, _book_record: BookRecord) -> CarryOver:
             """Write the shape to every target page as one batch, and mark their stages stale.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it, which the work does not need.
-            :type _project: Project
+            :param _book_record: The project as the change finds it, which the work does not need.
+            :type _book_record: BookRecord
             :returns: The batch, the changes written and the pages skipped.
             :rtype: CarryOver
             :raises NotFoundError: If the project has no such page, no recipe of the
@@ -126,7 +126,7 @@ class CarryOverService:
                 self._records.mark_stale(repos, change.page_id, change.stage)
             return CarryOver(batch_id=batch.batch_id, changes=tuple(changes), skipped=tuple(skipped))
 
-        return await self._uow.change_book(project_id, work)
+        return await self._uow.change_book(book_id, work)
 
     @staticmethod
     def _targets(repos: BookRepositories, request: CarryRequest, source: Page) -> Sequence[Page]:

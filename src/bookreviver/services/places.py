@@ -13,7 +13,7 @@ from bookreviver.domain.entities import BookPlace
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import NewBookPlace
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import Clock
@@ -37,21 +37,21 @@ class PlaceService:
         self._library = library
         self._clock = clock
 
-    async def find(self, actor: Actor, project_id: ProjectId) -> BookPlace | None:
+    async def find(self, actor: Actor, book_id: BookId) -> BookPlace | None:
         """Return the place the actor left one of their books at.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the book.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the book.
+        :type book_id: BookId
         :returns: The place, or None when the actor has not worked on the book yet.
         :rtype: BookPlace | None
         :raises NotFoundError: If the actor has no such book.
         """
-        await self._library.open(actor, project_id)
-        return await self._uow.read_book(project_id, lambda repos: repos.book_places.find())
+        await self._library.open(actor, book_id)
+        return await self._uow.read_book(book_id, lambda repos: repos.book_places.find())
 
-    async def save(self, actor: Actor, project_id: ProjectId, place: NewBookPlace) -> BookPlace:
+    async def save(self, actor: Actor, book_id: BookId, place: NewBookPlace) -> BookPlace:
         """Replace the place the actor left one of their books at.
 
         The request is stamped when it starts, and the store keeps the place of the later stamp whole, so two requests
@@ -59,14 +59,14 @@ class PlaceService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the book.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the book.
+        :type book_id: BookId
         :param place: Where the actor left the book.
         :type place: NewBookPlace
         :returns: The place as stored, which is a newer place of another request when that one was stamped later.
         :rtype: BookPlace
         :raises NotFoundError: If the actor has no such book.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
         stored = BookPlace(updated_at=self._clock.now(), **asdict(place, recurse=False))
-        return await self._uow.change_book(project_id, lambda repos, _project: repos.book_places.save(stored))
+        return await self._uow.change_book(book_id, lambda repos, _book_record: repos.book_places.save(stored))

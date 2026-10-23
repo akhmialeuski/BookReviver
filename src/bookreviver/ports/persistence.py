@@ -23,23 +23,23 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, NewType
 
 from bookreviver.domain.entities import (
+    BookRecord,
     LibraryEntry,
     Page,
     PageStage,
     PageStepState,
     PageVersion,
     PaginationSection,
-    Project,
     Recipe,
     RecipeProfile,
     Scan,
     Source,
 )
 from bookreviver.domain.ids import (
+    BookId,
     PageId,
     PageVersionId,
     PaginationSectionId,
-    ProjectId,
     RecipeId,
     RecipeProfileId,
     ScanId,
@@ -53,9 +53,9 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.domain.entities import (
+        BookOverview,
         BookPlace,
         PageHistoryEntry,
-        ProjectOverview,
     )
     from bookreviver.domain.enums import RecipeKind, ResultMark, Side, Stage, VersionScale
     from bookreviver.domain.ids import (
@@ -195,7 +195,7 @@ class KeyedRepository[EntityT, KeyT](Repository[EntityT, KeyT]):
         """
 
 
-class LibraryRepository(Repository[LibraryEntry, ProjectId]):
+class LibraryRepository(Repository[LibraryEntry, BookId]):
     """The library of the catalogue: which account owns which book, one entry for each book.
 
     ``add`` raises ``NotFoundError`` when the owner is not an account, and an account is not deleted while an entry
@@ -223,17 +223,17 @@ class LibraryRepository(Repository[LibraryEntry, ProjectId]):
         """
 
 
-class ProjectRepository(Repository[Project, ProjectId]):
+class BookRecordRepository(Repository[BookRecord, BookId]):
     """The project of a book, the one row its store has."""
 
     @abstractmethod
-    def overview(self, project: Project) -> ProjectOverview:
+    def overview(self, book_record: BookRecord) -> BookOverview:
         """Return a project read earlier together with the counts of its book.
 
-        :param project: Project whose book is counted.
-        :type project: Project
+        :param book_record: Project whose book is counted.
+        :type book_record: BookRecord
         :returns: The project with the counts of its included pages, sources and scans.
-        :rtype: ProjectOverview
+        :rtype: BookOverview
         """
 
 
@@ -924,7 +924,7 @@ class CatalogueRepositories(ABC):
 class BookRepositories(ABC):
     """Every repository of one transaction of a book, which the work of ``read_book`` and ``change_book`` receives.
 
-    :ivar projects: Repository of the project of the book, of this transaction.
+    :ivar book_record: Repository of the project of the book, of this transaction.
     :ivar sources: Source repository of this transaction.
     :ivar scans: Scan repository of this transaction.
     :ivar pages: Page repository of this transaction.
@@ -939,7 +939,7 @@ class BookRepositories(ABC):
     :ivar book_places: Repository of the place the reader left the book at, of this transaction.
     """
 
-    projects: ProjectRepository
+    book_record: BookRecordRepository
     sources: SourceRepository
     scans: ScanRepository
     pages: PageRepository
@@ -997,14 +997,14 @@ class UnitOfWork(ABC):
         """
 
     @abstractmethod
-    async def read_book[T](self, project_id: ProjectId, work: Callable[[BookRepositories], T]) -> T:
+    async def read_book[T](self, book_id: BookId, work: Callable[[BookRepositories], T]) -> T:
         """Run ``work`` on a transaction of the book that only reads, and return what it returns.
 
         Every read of the work sees the same committed state of the book. A write is refused with
         ``NoChangeOpenError``.
 
-        :param project_id: Project whose book is read.
-        :type project_id: ProjectId
+        :param book_id: Project whose book is read.
+        :type book_id: BookId
         :param work: Function over the repositories of the transaction.
         :type work: Callable[[BookRepositories], T]
         :returns: What the work returns.
@@ -1014,16 +1014,16 @@ class UnitOfWork(ABC):
         """
 
     @abstractmethod
-    async def change_book[T](self, project_id: ProjectId, work: Callable[[BookRepositories, Project], T]) -> T:
+    async def change_book[T](self, book_id: BookId, work: Callable[[BookRepositories, BookRecord], T]) -> T:
         """Run ``work`` on a transaction of the book that writes, alone among its changes, with the project as it is.
 
         The change waits for any other change of the same book to end, then reads the project, so it sees what the
         previous change committed. It never waits for a change of another book or of the catalogue.
 
-        :param project_id: Project whose book is changed.
-        :type project_id: ProjectId
+        :param book_id: Project whose book is changed.
+        :type book_id: BookId
         :param work: Function over the repositories of the transaction and the project read at its start.
-        :type work: Callable[[BookRepositories, Project], T]
+        :type work: Callable[[BookRepositories, BookRecord], T]
         :returns: What the work returns.
         :rtype: T
         :raises NotFoundError: If the book is not stored.
@@ -1031,32 +1031,32 @@ class UnitOfWork(ABC):
         """
 
     @abstractmethod
-    async def create_book(self, project: Project) -> Project:
+    async def create_book(self, book_record: BookRecord) -> BookRecord:
         """Make the store of a new book, holding its project and nothing else yet.
 
-        :param project: The project of the new book.
-        :type project: Project
+        :param book_record: The project of the new book.
+        :type book_record: BookRecord
         :returns: The project as stored.
-        :rtype: Project
+        :rtype: BookRecord
         :raises ConflictError: If a book with this identifier is stored.
         """
 
     @abstractmethod
-    async def delete_book(self, project_id: ProjectId) -> None:
+    async def delete_book(self, book_id: BookId) -> None:
         """Remove the store of a book with everything in it, once its changes in progress have ended.
 
         A book that is not stored is left as it is, so a deletion broken off half way can run again.
 
-        :param project_id: Project whose book is removed.
-        :type project_id: ProjectId
+        :param book_id: Project whose book is removed.
+        :type book_id: BookId
         """
 
     @abstractmethod
-    async def book_version(self, project_id: ProjectId) -> int:
+    async def book_version(self, book_id: BookId) -> int:
         """Return the version of a book, which every committed change that wrote a part of the book raised by one.
 
-        :param project_id: The book.
-        :type project_id: ProjectId
+        :param book_id: The book.
+        :type book_id: BookId
         :returns: The version of the book.
         :rtype: int
         :raises NotFoundError: If the book is not stored.
@@ -1064,13 +1064,13 @@ class UnitOfWork(ABC):
         """
 
     @abstractmethod
-    async def snapshot_book(self, project_id: ProjectId) -> bytes:
+    async def snapshot_book(self, book_id: BookId) -> bytes:
         """Return a copy of the store of a book as one committed state of it, for the archive of the book.
 
         The copy is the store in the form it keeps on disk, which :meth:`adopt_book` takes back in another instance.
 
-        :param project_id: Project whose book is copied.
-        :type project_id: ProjectId
+        :param book_id: Project whose book is copied.
+        :type book_id: BookId
         :returns: The copy of the store.
         :rtype: bytes
         :raises NotFoundError: If the book is not stored.
@@ -1078,24 +1078,24 @@ class UnitOfWork(ABC):
         """
 
     @abstractmethod
-    async def adopt_book(self, project_id: ProjectId) -> Project:
+    async def adopt_book(self, book_id: BookId) -> BookRecord:
         """Take as a new book the store an archive placed for it, and give its project the identifier of the new book.
 
         The store is brought to the release of this code first, as any book is when it is opened.
 
-        :param project_id: Identifier of the new book, whose store the archive placed.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the new book, whose store the archive placed.
+        :type book_id: BookId
         :returns: The project of the new book.
-        :rtype: Project
+        :rtype: BookRecord
         :raises NotFoundError: If no store was placed for the book.
         :raises BookTooNewError: If the store is at a revision this code does not ship.
         :raises InvalidArchiveError: If the store does not hold exactly one project.
         """
 
     @abstractmethod
-    async def stored_books(self) -> Collection[ProjectId]:
+    async def stored_books(self) -> Collection[BookId]:
         """Return the books that have a store, whether the library lists them or not.
 
         :returns: The identifiers of the stored books.
-        :rtype: Collection[ProjectId]
+        :rtype: Collection[BookId]
         """

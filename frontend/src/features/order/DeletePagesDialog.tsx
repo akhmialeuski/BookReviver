@@ -9,16 +9,16 @@ import { ConfirmDialog } from '@/shared/ui/confirm-dialog';
  */
 
 export function DeletePagesDialog({
-  projectId,
+  bookId,
   pageIds,
   onClose,
 }: {
-  projectId: string;
+  bookId: string;
   /** The pages to delete, or null while the dialog is closed. */
   pageIds: readonly string[] | null;
   onClose: () => void;
 }): React.JSX.Element {
-  const remove = useDeletePages(projectId);
+  const remove = useDeletePages(bookId);
   const count = pageIds?.length ?? 0;
   return (
     <ConfirmDialog

@@ -23,6 +23,7 @@ from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow, Re
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     BOOK_PLACE_ID,
     BookPlaceRow,
+    BookRecordRow,
     GroupValuesRow,
     PageHistoryRow,
     PageRow,
@@ -30,7 +31,6 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     PageStepStateRow,
     PageVersionRow,
     PaginationSectionRow,
-    ProjectRow,
     RecipeRow,
     ScanRow,
     SourceRow,
@@ -39,6 +39,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
 )
 from bookreviver.domain.entities import (
     BookPlace,
+    BookRecord,
     LibraryEntry,
     Page,
     PageEdit,
@@ -47,7 +48,6 @@ from bookreviver.domain.entities import (
     PageStepState,
     PageVersion,
     PaginationSection,
-    Project,
     Recipe,
     RecipeProfile,
     Scan,
@@ -57,12 +57,12 @@ from bookreviver.domain.enums import ContributorRole, IdentifierScheme, PageKind
 from bookreviver.domain.geometry import Point, Quad, Transform, geometry_from_data
 from bookreviver.domain.ids import (
     AccountId,
+    BookId,
     ChangeBatchId,
     PageHistoryEntryId,
     PageId,
     PageVersionId,
     PaginationSectionId,
-    ProjectId,
     RecipeId,
     RecipeProfileId,
     ScanId,
@@ -174,9 +174,7 @@ class LibraryEntryMapper(RowMapper[LibraryEntry, LibraryRow]):
         :returns: The entry.
         :rtype: LibraryEntry
         """
-        return LibraryEntry(
-            project_id=ProjectId(row.project_id), owner_id=AccountId(row.owner_id), added_at=row.added_at
-        )
+        return LibraryEntry(book_id=BookId(row.book_id), owner_id=AccountId(row.owner_id), added_at=row.added_at)
 
     @override
     def to_row(self, entity: LibraryEntry) -> LibraryRow:
@@ -187,20 +185,20 @@ class LibraryEntryMapper(RowMapper[LibraryEntry, LibraryRow]):
         :returns: Transient library row.
         :rtype: LibraryRow
         """
-        return LibraryRow(project_id=entity.project_id, owner_id=entity.owner_id, added_at=entity.added_at)
+        return LibraryRow(book_id=entity.book_id, owner_id=entity.owner_id, added_at=entity.added_at)
 
 
-class ProjectMapper(RowMapper[Project, ProjectRow]):
+class BookRecordMapper(RowMapper[BookRecord, BookRecordRow]):
     """Translation of a project, whose description is flattened into project columns."""
 
     @override
-    def to_entity(self, row: ProjectRow) -> Project:
+    def to_entity(self, row: BookRecordRow) -> BookRecord:
         """Build the project stored in ``row``.
 
         :param row: Project row loaded from the database.
-        :type row: ProjectRow
-        :returns: Project with its description and settings.
-        :rtype: Project
+        :type row: BookRecordRow
+        :returns: BookRecord with its description and settings.
+        :rtype: BookRecord
         """
         details = BookDetails(
             title=row.title,
@@ -231,8 +229,8 @@ class ProjectMapper(RowMapper[Project, ProjectRow]):
             copy_notes=row.copy_notes,
             notes=row.notes,
         )
-        return Project(
-            id=ProjectId(row.id),
+        return BookRecord(
+            id=BookId(row.id),
             details=details,
             image_policy=row.image_policy,
             created_at=row.created_at,
@@ -240,16 +238,16 @@ class ProjectMapper(RowMapper[Project, ProjectRow]):
         )
 
     @override
-    def to_row(self, entity: Project) -> ProjectRow:
+    def to_row(self, entity: BookRecord) -> BookRecordRow:
         """Build the row of ``entity``.
 
         :param entity: Project to store.
-        :type entity: Project
+        :type entity: BookRecord
         :returns: Transient project row.
-        :rtype: ProjectRow
+        :rtype: BookRecordRow
         """
         details = entity.details
-        return ProjectRow(
+        return BookRecordRow(
             id=entity.id,
             title=details.title,
             subtitle=details.subtitle,

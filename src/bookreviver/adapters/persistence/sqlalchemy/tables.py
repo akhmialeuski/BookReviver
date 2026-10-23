@@ -84,7 +84,7 @@ NO_IMPLICIT_LOAD: Final = 'raise'
 # Server defaults of the columns the description gained, which existing rows take when the columns are added
 EMPTY_TEXT: Final = ''
 EMPTY_LIST: Final = '[]'
-PROJECTS_TABLE: Final = 'projects'
+BOOK_RECORDS_TABLE: Final = 'projects'
 PAGES_TABLE: Final = 'pages'
 PAGE_VERSIONS_TABLE: Final = 'page_versions'
 PAGINATION_SECTIONS_TABLE: Final = 'pagination_sections'
@@ -137,7 +137,7 @@ class BookTable(DefaultBase):
     __bind_key__ = BOOK_BIND_KEY
 
 
-class ProjectRow(BookTable):
+class BookRecordRow(BookTable):
     """Row of the book of the file, the only row of its table: its description and the settings of the work on it.
 
     The description is a value object in the domain and columns here: a column per text field, and a JSON column per
@@ -179,7 +179,7 @@ class ProjectRow(BookTable):
                    every change that wrote a part of the book a reader asks for.
     """
 
-    __tablename__ = PROJECTS_TABLE
+    __tablename__ = BOOK_RECORDS_TABLE
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     title: Mapped[str]

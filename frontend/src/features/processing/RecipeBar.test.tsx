@@ -25,8 +25,8 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  putRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPut: sdk.save,
-  listStagesApiV1ProjectsProjectIdStagesGet: sdk.stages,
+  putRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPut: sdk.save,
+  listStagesApiV1BooksBookIdStagesGet: sdk.stages,
   listProfilesApiV1RecipeProfilesGet: sdk.profiles,
 }));
 vi.mock('@/features/profiles/ProfileLibraryPanel', () => ({
@@ -217,7 +217,7 @@ describe('RecipeBar', () => {
 
       expect(sdk.save).toHaveBeenCalledTimes(1);
       expect(sdk.save.mock.calls[0]?.[0]).toMatchObject({
-        path: { project_id: 'project', stage: 'geometry', recipe_id: 'r1' },
+        path: { book_id: 'book', stage: 'geometry', recipe_id: 'r1' },
         body: {
           steps: [
             {
