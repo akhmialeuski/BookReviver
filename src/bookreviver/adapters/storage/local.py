@@ -182,11 +182,7 @@ class LocalSourceStore(_LocalTree, SourceStore):
             await _publish(hidden, target=target, conflict_message=conflict_message)
         except BaseException:
             with anyio.CancelScope(shield=True):
-                if await hidden.is_dir():
-                    for name, stored_name in stored_names.items():
-                        if await (hidden / stored_name).exists():
-                            await (hidden / stored_name).rename(staged[name])
-                    await hidden.rmdir()
+                await _return_to_staging(hidden, staged={stored_names[name]: staged[name] for name in stored_names})
             raise
 
     @override
@@ -628,6 +624,22 @@ async def _staged_paths(directory: anyio.Path) -> dict[str, Path]:
     :rtype: dict[str, Path]
     """
     return await anyio.to_thread.run_sync(_list_files, Path(directory))
+
+
+async def _return_to_staging(hidden: anyio.Path, *, staged: Mapping[str, Path]) -> None:
+    """Move the files of a refused promotion back to where the upload staged them, and remove the hidden directory.
+
+    :param hidden: The hidden directory the files were moved into, which may not have been made.
+    :type hidden: anyio.Path
+    :param staged: The staged path of each file, by the name it has in the hidden directory.
+    :type staged: Mapping[str, Path]
+    """
+    if not await hidden.is_dir():
+        return
+    for stored_name, path in staged.items():
+        if await (hidden / stored_name).exists():
+            await (hidden / stored_name).rename(path)
+    await hidden.rmdir()
 
 
 async def _publish(staged: anyio.Path, *, target: anyio.Path, conflict_message: str) -> None:

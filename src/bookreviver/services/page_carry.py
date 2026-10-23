@@ -16,7 +16,7 @@ All the changes are one batch of the history, from a carry-over, so one undo tak
 carry-over marks the stage of each page that changed stale and processes nothing, like any change of an edit.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from bookreviver.domain.entities import PageStepState
 from bookreviver.domain.enums import CarryScope, ChangeSource, PageOrigin, StepLayer
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import BookRecord, Page
     from bookreviver.domain.ids import PageId
-    from bookreviver.domain.values import CarryRequest
+    from bookreviver.domain.values import CarryRequest, PageStepKey
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.services.book import Book
@@ -87,13 +87,7 @@ class CarryOverService:
             :raises InvalidParametersError: If the scope is the selected pages and none is named, or the edit is a mask.
             """
             source = repos.pages.get(key.page_id)
-            find_step(repos.recipes, key)
-            stored_source = repos.page_step_states.find(key)
-            if stored_source is None or stored_source.edit is None:
-                raise NotFoundError(key)
-            if stored_source.edit.mask_key is not None:
-                raise InvalidParametersError(MASK_NOT_CARRIED)
-            shape = stored_source.layer(StepLayer.HAND)
+            shape = self._hand_shape(repos, key)
             targets = self._targets(repos, request, source)
             stored = {
                 state.page_id: state
@@ -121,6 +115,27 @@ class CarryOverService:
             return CarryOver(batch_id=batch.batch_id, changes=tuple(changes), skipped=tuple(skipped))
 
         return await self._uow.change_book(book.id, work)
+
+    @staticmethod
+    def _hand_shape(repos: BookRepositories, key: PageStepKey) -> dict[str, Any] | None:
+        """Return the shape the source page has set by hand for the step, which a carry-over writes to other pages.
+
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: BookRepositories
+        :param key: The source page, the stage and the step.
+        :type key: PageStepKey
+        :returns: The hand layer of the step on the source page.
+        :rtype: dict[str, Any] | None
+        :raises NotFoundError: If no recipe of the stage has the step, or the source page has no shape set by hand.
+        :raises InvalidParametersError: If the edit is a mask, which is never carried.
+        """
+        find_step(repos.recipes, key)
+        stored = repos.page_step_states.find(key)
+        if stored is None or stored.edit is None:
+            raise NotFoundError(key)
+        if stored.edit.mask_key is not None:
+            raise InvalidParametersError(MASK_NOT_CARRIED)
+        return stored.layer(StepLayer.HAND)
 
     @staticmethod
     def _targets(repos: BookRepositories, request: CarryRequest, source: Page) -> Sequence[Page]:

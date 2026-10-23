@@ -25,7 +25,7 @@ from attrs import evolve
 from bookreviver.domain.enums import StageState
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from bookreviver.domain.entities import BookRecord, PageStage, PageVersion
     from bookreviver.domain.ids import BookId, PageVersionId
@@ -77,37 +77,8 @@ class OutdatedResults:
             :rtype: list[PageStage]
             """
             records = repos.page_stages.list_fresh()
-            versions: dict[PageVersionId, PageVersion] = {}
-            replaced: set[PageVersionId] = set()
-            asked: set[PageVersionId] = set()
-            pending = {record.head_version_id for record in records if record.head_version_id is not None}
-            while pending:
-                asked |= pending
-                for read in repos.page_versions.list_by_ids(pending):
-                    versions[read.id] = read
-                    if installed.get(read.processor.key, read.processor.version) != read.processor.version:
-                        replaced.add(read.id)
-                # The chain of a replaced version is not followed, since its stage is outdated whatever it read
-                following: set[PageVersionId] = set()
-                for version_id in pending - replaced:
-                    if (version := versions.get(version_id)) is not None and version.input_id is not None:
-                        following.add(version.input_id)
-                pending = following - asked
-            verdicts: dict[PageVersionId, bool] = {}
-            for head in {record.head_version_id for record in records if record.head_version_id is not None}:
-                chain: list[PageVersionId] = []
-                current: PageVersionId | None = head
-                outdated = False
-                while current is not None and current in versions:
-                    if current in verdicts:
-                        outdated = verdicts[current]
-                        break
-                    chain.append(current)
-                    if current in replaced:
-                        outdated = True
-                        break
-                    current = versions[current].input_id
-                verdicts.update(dict.fromkeys(chain, outdated))
+            heads = {record.head_version_id for record in records if record.head_version_id is not None}
+            verdicts = VersionChains(repos, installed, heads).verdicts()
             return [
                 record
                 for record in records
@@ -160,3 +131,64 @@ class OutdatedResults:
             return list(repos.page_stages.save_many(stale))
 
         return await self._uow.change_book(book_id, work)
+
+
+class VersionChains:
+    """The chains of versions that the fresh records of one book stand on, and which of them a replaced processor made.
+
+    :ivar versions: Every version of the chains that was read, by identifier.
+    :ivar replaced: The versions made by a processor that the catalogue now has in another version.
+    """
+
+    def __init__(self, repos: BookRepositories, installed: Mapping[str, str], heads: set[PageVersionId]) -> None:
+        """Read the chains of the heads a level at a time, each distinct version once.
+
+        :param repos: Repositories of the transaction that reads the book.
+        :type repos: BookRepositories
+        :param installed: The version of each processor the catalogue has, by key.
+        :type installed: Mapping[str, str]
+        :param heads: The current versions of the fresh records.
+        :type heads: set[PageVersionId]
+        """
+        self._heads = heads
+        self.versions: dict[PageVersionId, PageVersion] = {}
+        self.replaced: set[PageVersionId] = set()
+        asked: set[PageVersionId] = set()
+        pending = set(heads)
+        while pending:
+            asked |= pending
+            for read in repos.page_versions.list_by_ids(pending):
+                self.versions[read.id] = read
+                if installed.get(read.processor.key, read.processor.version) != read.processor.version:
+                    self.replaced.add(read.id)
+            # The chain of a replaced version is not followed, since its stage is outdated whatever it read
+            following = {
+                version.input_id
+                for version_id in pending - self.replaced
+                if (version := self.versions.get(version_id)) is not None and version.input_id is not None
+            }
+            pending = following - asked
+
+    def verdicts(self) -> dict[PageVersionId, bool]:
+        """Judge each version of the chains once: outdated when it or a version before it was made by a replaced one.
+
+        A chain that meets a version judged already takes its verdict.
+
+        :returns: Whether each version that was walked is outdated.
+        :rtype: dict[PageVersionId, bool]
+        """
+        verdicts: dict[PageVersionId, bool] = {}
+        for head in self._heads:
+            chain: list[PageVersionId] = []
+            current: PageVersionId | None = head
+            outdated = False
+            while current is not None and current in self.versions and current not in verdicts:
+                chain.append(current)
+                if current in self.replaced:
+                    outdated = True
+                    break
+                current = self.versions[current].input_id
+            if current is not None and current in verdicts:
+                outdated = verdicts[current]
+            verdicts.update(dict.fromkeys(chain, outdated))
+        return verdicts

@@ -16,7 +16,7 @@ pages and the steps that did not read the cleared one are untouched.
 """
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from attrs import evolve
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.domain.entities import BookRecord, Recipe
-    from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId
+    from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId, RecipeId
     from bookreviver.domain.values import PageStepKey
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
@@ -130,35 +130,10 @@ class PageHistoryService:
                 return ()
             moment = self._clock.now()
             batch = ChangeBatchId(uuid4()) if len(targets) > 1 else None
-            stored: dict[PageStepKey, PageStepState | None] = {}
-            working: dict[PageStepKey, PageStepState] = {}
-            written: list[PageHistoryEntry] = []
-            for target in targets:
-                if target.scope is not ValueScope.PAGES:
-                    continue
-                if target.key not in working:
-                    stored[target.key] = repos.page_step_states.find(target.key)
-                    working[target.key] = stored[target.key] or PageStepState(
-                        page_id=target.page_id, stage=target.stage, step_id=target.step_id, updated_at=moment
-                    )
-                state = working[target.key]
-                if state.layer(target.layer) != target.after:
-                    raise ConflictError(CHANGED_SINCE.format(layer=target.layer.label))
-                reverted = state.with_layer(target.layer, target.before, moment)
-                working[target.key] = reverted
-                written.append(
-                    evolve(
-                        PageHistoryEntry.between(state, reverted, target.layer, ChangeSource.UNDO),
-                        batch_id=batch,
-                        undoes=target.id,
-                    )
-                )
-            for state_key, final in working.items():
-                if not final.is_empty:
-                    repos.page_step_states.save(final)
-                elif stored[state_key] is not None:
-                    repos.page_step_states.delete(state_key)
-            written.extend(self._take_parts_back(repos, targets, moment, batch))
+            written = [
+                *self._take_pages_back(repos, targets, moment, batch),
+                *self._take_parts_back(repos, targets, moment, batch),
+            ]
             added = repos.page_history.add_many(written)
             for page_id, stage in dict.fromkeys((change.page_id, change.stage) for change in added):
                 self._records.mark_stale(repos, page_id, stage)
@@ -206,7 +181,7 @@ class PageHistoryService:
         if await self._starter.free_of_previews(book.id):
             raise ConflictError(BOOK_BUSY)
 
-        def work(repos: BookRepositories, _book_record: BookRecord) -> tuple[ClearedStep, list[PageVersionId]]:
+        def work(repos: BookRepositories, _book_record: BookRecord) -> tuple[ClearedStep, Sequence[PageVersionId]]:
             """Delete the history, the state and the results of the step on the page, and mark the stages stale.
 
             :param repos: Repositories of the transaction.
@@ -214,7 +189,7 @@ class PageHistoryService:
             :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             :returns: What was deleted, and the versions whose pyramid is not cut.
-            :rtype: tuple[ClearedStep, list[PageVersionId]]
+            :rtype: tuple[ClearedStep, Sequence[PageVersionId]]
             :raises NotFoundError: If the book has no such page, or no recipe of the
                                    stage has the step.
             """
@@ -226,26 +201,8 @@ class PageHistoryService:
             versions = repos.page_versions.list_for_page(key.page_id)
             chain = StepVersions.of(versions, key.stage, step_places(recipes, key.step_id))
             if stored is None and not changes and not chain.doomed:
-                return ClearedStep(changes=0, versions=()), []
-            untiled: list[PageVersionId] = []
-            for record in repos.page_stages.list_for_page(key.page_id):
-                if record.head_version_id is None or record.head_version_id not in chain.doomed:
-                    continue
-                head = chain.input_of(record.head_version_id) if record.stage is key.stage else None
-                if head is None:
-                    self._records.clear(repos, record.key)
-                    continue
-                if (kept := chain.versions[head]).renditions is not None and not kept.tiles_ready:
-                    untiled.append(head)
-                # The new head is the result of the step at its depth in the recipe the page was run by, and the page
-                # was run through that step only, which is before the last step that is on
-                recipe = next((recipe for recipe in recipes if recipe.id == record.recipe_id), None)
-                enabled = () if recipe is None else recipe.indexed_steps_through(None)
-                place = chain.depths[head]
-                through_step = None if recipe is None or place >= len(enabled) else recipe.stopped_at(enabled[place][0])
-                self._records.set_head(
-                    repos, record.key, head_version_id=head, recipe_id=record.recipe_id, through_step=through_step
-                )
+                return ClearedStep(changes=0, versions=()), ()
+            untiled = self._restore_heads(repos, key, chain, recipes)
             self._records.mark_stale(repos, key.page_id, key.stage)
             deleted = tuple(version for version in versions if version.id in chain.doomed)
             repos.page_versions.delete_many([version.id for version in deleted])
@@ -259,6 +216,103 @@ class PageHistoryService:
             except OSError:
                 logger.exception('The files of the version %s were not removed after its page was cleared', version.id)
         return cleared
+
+    def _restore_heads(
+        self, repos: BookRepositories, key: PageStepKey, chain: StepVersions, recipes: Sequence[Recipe]
+    ) -> Sequence[PageVersionId]:
+        """Stand each stage of the page whose current version goes on the version the step read, or on none.
+
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: BookRepositories
+        :param key: The page, the stage and the step that is cleared.
+        :type key: PageStepKey
+        :param chain: The versions of the page the clear deletes, and what each of them read.
+        :type chain: StepVersions
+        :param recipes: The recipes of the stage of the step.
+        :type recipes: Sequence[Recipe]
+        :returns: The versions that became current without a pyramid, whose cutting the caller queues.
+        :rtype: Sequence[PageVersionId]
+        """
+        untiled: list[PageVersionId] = []
+        for record in repos.page_stages.list_for_page(key.page_id):
+            if record.head_version_id is None or record.head_version_id not in chain.doomed:
+                continue
+            head = chain.input_of(record.head_version_id) if record.stage is key.stage else None
+            if head is None:
+                self._records.clear(repos, record.key)
+                continue
+            if (kept := chain.versions[head]).renditions is not None and not kept.tiles_ready:
+                untiled.append(head)
+            through_step = self._through_step(recipes, record.recipe_id, chain.depths[head])
+            self._records.set_head(
+                repos, record.key, head_version_id=head, recipe_id=record.recipe_id, through_step=through_step
+            )
+        return untiled
+
+    @staticmethod
+    def _through_step(recipes: Sequence[Recipe], recipe_id: RecipeId | None, place: int) -> int | None:
+        """Return the index of the step a page was run through when its new current version is the result at this depth.
+
+        The new head is the result of the step at its depth in the recipe the page was run by, and the page was run
+        through that step only, which is before the last step that is on.
+
+        :param recipes: The recipes of the stage.
+        :type recipes: Sequence[Recipe]
+        :param recipe_id: The recipe the page was run by, or None.
+        :type recipe_id: RecipeId | None
+        :param place: The depth of the new current version among the steps that are on.
+        :type place: int
+        :returns: The index of the step the run stopped at, or None when the version is the result of the last step
+                  that is on.
+        :rtype: int | None
+        """
+        recipe = next((recipe for recipe in recipes if recipe.id == recipe_id), None)
+        enabled = () if recipe is None else recipe.indexed_steps_through(None)
+        return None if recipe is None or place >= len(enabled) else recipe.stopped_at(enabled[place][0])
+
+    def _take_pages_back(
+        self,
+        repos: BookRepositories,
+        targets: Sequence[PageHistoryEntry],
+        moment: datetime,
+        batch: ChangeBatchId | None,
+    ) -> Sequence[PageHistoryEntry]:
+        """Put back the layers of the pages that the targets changed, and store the states that result.
+
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: BookRepositories
+        :param targets: The changes taken back, of any scope, of which those of the parts are left to the caller.
+        :type targets: Sequence[PageHistoryEntry]
+        :param moment: When the changes are taken back.
+        :type moment: datetime
+        :param batch: The batch the undos of one action share, or None.
+        :type batch: ChangeBatchId | None
+        :returns: The undos of the changes of single pages.
+        :rtype: Sequence[PageHistoryEntry]
+        :raises ConflictError: If a layer changed after the change that is taken back.
+        """
+        stored: dict[PageStepKey, PageStepState | None] = {}
+        working: dict[PageStepKey, PageStepState] = {}
+        written: list[PageHistoryEntry] = []
+        for target in (target for target in targets if target.scope is ValueScope.PAGES):
+            if target.key not in working:
+                stored[target.key] = repos.page_step_states.find(target.key)
+                working[target.key] = stored[target.key] or PageStepState(
+                    page_id=target.page_id, stage=target.stage, step_id=target.step_id, updated_at=moment
+                )
+            state = working[target.key]
+            if state.layer(target.layer) != target.after:
+                raise ConflictError(CHANGED_SINCE.format(layer=target.layer.label))
+            reverted = state.with_layer(target.layer, target.before, moment)
+            working[target.key] = reverted
+            undo = PageHistoryEntry.between(state, reverted, target.layer, ChangeSource.UNDO)
+            written.append(evolve(undo, batch_id=batch, undoes=target.id))
+        for state_key, final in working.items():
+            if not final.is_empty:
+                repos.page_step_states.save(final)
+            elif stored[state_key] is not None:
+                repos.page_step_states.delete(state_key)
+        return written
 
     @staticmethod
     def _history(repos: BookRepositories, key: PageStepKey) -> StepHistory:
@@ -337,13 +391,7 @@ class PageHistoryService:
         for key, changes in parts.items():
             stored = repos.step_values.find(key)
             current = {} if stored is None else dict(stored.params)
-            # One before and after for each batch, since every page a batch reached holds the same pair
-            remaining = {change.batch_id or change.id: (change.before or {}, change.after or {}) for change in changes}
-            while remaining:
-                latest = next((batch_id for batch_id, (_, after) in remaining.items() if after == current), None)
-                if latest is None:
-                    raise ConflictError(CHANGED_SINCE.format(layer=changes[0].layer.label))
-                current = dict(remaining.pop(latest)[0])
+            current = self._values_before(changes, current)
             stage = changes[0].stage
             holder = stored or StepValues(
                 stage=stage,
@@ -373,6 +421,27 @@ class PageHistoryService:
             ]
             self._records.mark_pages_stale(repos, covered, {stage})
         return undone
+
+    @staticmethod
+    def _values_before(changes: Sequence[PageHistoryEntry], current: dict[str, Any]) -> dict[str, Any]:
+        """Return the values of a part of the pages as they were before the changes, taken back from the newest batch.
+
+        :param changes: The changes of the part that are taken back.
+        :type changes: Sequence[PageHistoryEntry]
+        :param current: The values of the part now.
+        :type current: dict[str, Any]
+        :returns: The values before the oldest of the changes.
+        :rtype: dict[str, Any]
+        :raises ConflictError: If the values changed after the changes, by a change that is not taken back.
+        """
+        # One before and after for each batch, since every page a batch reached holds the same pair
+        remaining = {change.batch_id or change.id: (change.before or {}, change.after or {}) for change in changes}
+        while remaining:
+            latest = next((batch_id for batch_id, (_, after) in remaining.items() if after == current), None)
+            if latest is None:
+                raise ConflictError(CHANGED_SINCE.format(layer=changes[0].layer.label))
+            current = dict(remaining.pop(latest)[0])
+        return current
 
     @staticmethod
     def _with_batches(repos: BookRepositories, chosen: Sequence[PageHistoryEntry]) -> Sequence[PageHistoryEntry]:

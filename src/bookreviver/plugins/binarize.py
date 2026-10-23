@@ -358,11 +358,7 @@ class Binarize(ModelProcessor):
         facts = step_input.input_data
         enlargement = self._enlargement(params, step_input)
         enlarged = enlargement > 1.0
-        page = scan
-        if enlarged:
-            page = np.asarray(
-                cv2.resize(scan, None, fx=enlargement, fy=enlargement, interpolation=cv2.INTER_CUBIC), dtype=np.uint8
-            )
+        page = self._enlarged(scan, enlargement)
         gray = np.asarray(cv2.cvtColor(page, cv2.COLOR_BGR2GRAY) if page.ndim == COLOR_PLANES else page, dtype=np.uint8)
         ink = InkMask(gray, params, window_factor=step_input.scale * enlargement, sigma_factor=enlargement).find()
         zones: list[dict[str, object]] = []
@@ -379,11 +375,7 @@ class Binarize(ModelProcessor):
         target = step_input.workdir / BINARIZED_IMAGE_NAME
         write_png(result, target)
         data = image_data(result, facts, color_mode) | source_size_data(scan, step_input.scale)
-        data |= {VersionData.METHOD: params.method.value, VersionData.MODE: params.mode.value}
-        if params.method is BinarizationMethod.OTSU:
-            data[VersionData.THRESHOLD] = OtsuSplit.of(gray).threshold
-        if params.mode is OutputMode.MIXED:
-            data[VersionData.ZONES] = zones
+        data |= self._method_data(params, gray, zones)
         if frame := content_frame_of(facts):
             data[VersionData.CONTENT_FRAME] = frame.scaled(enlargement).to_data()
         transform = Transform()
@@ -396,6 +388,44 @@ class Binarize(ModelProcessor):
         return StepResult(
             outputs=[StepOutput(image=target, color_mode=color_mode, transform=transform, data=data, review=review)]
         )
+
+    @staticmethod
+    def _enlarged(scan: Samples, enlargement: float) -> Samples:
+        """Return the scan made larger by the factor, or the scan itself when the factor does not enlarge it.
+
+        :param scan: The samples of the scan.
+        :type scan: Samples
+        :param enlargement: How much larger the page is to be made.
+        :type enlargement: float
+        :returns: The samples of the page.
+        :rtype: Samples
+        """
+        if enlargement <= 1.0:
+            return scan
+        resized = cv2.resize(scan, None, fx=enlargement, fy=enlargement, interpolation=cv2.INTER_CUBIC)
+        return np.asarray(resized, dtype=np.uint8)
+
+    @staticmethod
+    def _method_data(
+        params: BinarizeChoice, gray: NDArray[np.uint8], zones: list[dict[str, object]]
+    ) -> dict[str, object]:
+        """Return what the version records of the method and the mode: the threshold of Otsu, the zones of a mixed page.
+
+        :param params: The parameters of the step.
+        :type params: BinarizeChoice
+        :param gray: The gray page the method read.
+        :type gray: NDArray[np.uint8]
+        :param zones: The picture zones a mixed page found, empty for the other modes.
+        :type zones: list[dict[str, object]]
+        :returns: The data to add to the version.
+        :rtype: dict[str, object]
+        """
+        data: dict[str, object] = {VersionData.METHOD: params.method.value, VersionData.MODE: params.mode.value}
+        if params.method is BinarizationMethod.OTSU:
+            data[VersionData.THRESHOLD] = OtsuSplit.of(gray).threshold
+        if params.mode is OutputMode.MIXED:
+            data[VersionData.ZONES] = zones
+        return data
 
     @staticmethod
     def _enlargement(params: CommonParams, step_input: StepInput) -> float:

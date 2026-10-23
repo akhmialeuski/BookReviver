@@ -54,6 +54,29 @@ class StageInputs:
         """
         if stage is Stage.PAGE_SPLIT or not page_ids:
             return {}
+        found = StageInputs._earlier_heads(repos, page_ids, stage)
+        if missing := {page_id for page_id in page_ids if page_id not in found}:
+            # The base versions of a page come earliest first, so the last one that is ready is the latest
+            for base in repos.page_versions.list_base_versions(missing):
+                if base.state is VersionState.READY and StageInputs.has_image(base):
+                    found[base.page_id] = base
+        return found
+
+    @staticmethod
+    def _earlier_heads(
+        repos: BookRepositories, page_ids: Collection[PageId], stage: Stage
+    ) -> dict[PageId, PageVersion]:
+        """Find, for each page, the current version of the nearest earlier stage that has its images ready.
+
+        :param repos: Repositories of the transaction the caller runs in, which are only read.
+        :type repos: BookRepositories
+        :param page_ids: The pages.
+        :type page_ids: Collection[PageId]
+        :param stage: The stage that reads.
+        :type stage: Stage
+        :returns: The version found, by page, with no entry for a page whose earlier stages have none.
+        :rtype: dict[PageId, PageVersion]
+        """
         heads: defaultdict[PageId, dict[Stage, PageVersionId]] = defaultdict(dict)
         for record in repos.page_stages.list_for_pages(page_ids):
             if record.stage in stage.earlier and record.head_version_id is not None:
@@ -71,9 +94,4 @@ class StageInputs:
                 if head is not None and StageInputs.has_image(head):
                     found[page_id] = head
                     break
-        if missing := {page_id for page_id in page_ids if page_id not in found}:
-            # The base versions of a page come earliest first, so the last one that is ready is the latest
-            for base in repos.page_versions.list_base_versions(missing):
-                if base.state is VersionState.READY and StageInputs.has_image(base):
-                    found[base.page_id] = base
         return found
