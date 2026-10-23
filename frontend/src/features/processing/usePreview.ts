@@ -16,7 +16,6 @@ import {
   previewKey,
 } from '@/features/processing/preview';
 import { usePreviewStep } from '@/features/processing/queries';
-import { isActiveJob } from '@/features/projects/events';
 import { type VersionReady, versionReadyKey } from '@/features/projects/queries';
 import { useActiveJobs } from '@/features/workspace/queries';
 import { useDebouncedCallback } from '@/shared/hooks/useDebouncedCallback';
@@ -258,11 +257,11 @@ export function usePreview(
     };
   }, [inflight, readyAt, readyId, projectId, queryClient]);
 
-  // The job ends, which is the end of the ask even when no event named a version
+  // The job ends, which is the end of the ask even when no event named a version. The events of the job keep it
+  // current, and a break of the stream reads it again, which finds a job a restarted server no longer has
   const job = useQuery({
     ...readJobApiV1JobsJobIdGetOptions({ path: { job_id: inflight?.jobId ?? '' } }),
     enabled: inflight !== null,
-    refetchInterval: (query) => (isActiveJob(query.state.data) ? 1500 : false),
   });
   const jobState = job.data?.state;
   const jobError = job.data?.error ?? '';

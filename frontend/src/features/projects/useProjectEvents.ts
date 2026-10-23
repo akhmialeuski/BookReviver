@@ -1,8 +1,8 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { projectEventsApiV1ProjectsProjectIdEventsGet } from '@/api';
-import { applyProjectEvent, refreshProject } from '@/features/projects/events';
-import { invalidateJobs } from '@/features/projects/queries';
+import { applyProjectEvent, type BookSync, refreshJobs } from '@/features/projects/events';
+import { invalidateJobReads, invalidateJobs } from '@/features/projects/queries';
 import { keepListening } from '@/features/projects/reconnect';
 
 /**
@@ -11,24 +11,33 @@ import { keepListening } from '@/features/projects/reconnect';
  * The stream is read with the generated server-sent events client, which sends the session cookie and gives the
  * name and data of every event. The connection is closed when the page is left. The generated client ends its stream
  * without a word when the server closes it, so reconnecting is done by `keepListening`, which opens the stream again
- * until the page is left and refreshes the book after every end, since the events of the gap are lost. The jobs are
- * read again after every connection too, since the end of a job before the server subscribed the stream has no event.
+ * until the page is left. A stream opened again names the version of the book the tab holds as `Last-Event-ID`, and the
+ * server answers `book-reset` when the book changed meanwhile and nothing when it did not, so a break costs no read of
+ * the book. The jobs raise no version, so the reads that show them are read again after every end. The jobs are read
+ * again after every connection too, since the end of a job before the server subscribed the stream has no event.
  */
 
 // The generated client's own retry is off, so that one loop decides when to reconnect
 const GENERATED_CLIENT_ATTEMPTS = 1;
+// The header that names the version of the book the tab holds when the stream is opened again
+const LAST_EVENT_ID = 'Last-Event-ID';
 
 export function useProjectEvents(projectId: string): void {
   const queryClient = useQueryClient();
 
   useEffect(() => {
     const controller = new AbortController();
+    const sync: BookSync = { version: null };
     void keepListening({
       signal: controller.signal,
-      catchUp: () => void refreshProject(queryClient, projectId),
+      catchUp: () => {
+        void refreshJobs(queryClient, projectId);
+        void invalidateJobReads(queryClient);
+      },
       open: async (onActivity) => {
         const { stream } = await projectEventsApiV1ProjectsProjectIdEventsGet({
           path: { project_id: projectId },
+          headers: sync.version === null ? {} : { [LAST_EVENT_ID]: String(sync.version) },
           signal: controller.signal,
           sseMaxRetryAttempts: GENERATED_CLIENT_ATTEMPTS,
           // The jobs are read again once the server has subscribed this stream, so the end of a job that came between
@@ -43,7 +52,7 @@ export function useProjectEvents(projectId: string): void {
           },
           onSseEvent: (event) => {
             onActivity();
-            applyProjectEvent(queryClient, projectId, event);
+            applyProjectEvent(queryClient, projectId, event, sync);
           },
         });
         return stream;

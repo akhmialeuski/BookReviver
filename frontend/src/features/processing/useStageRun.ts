@@ -89,7 +89,7 @@ export function useStageRun(
   selected: ReadonlySet<string>,
 ): StageRun {
   const { projectId, stage, recipe } = processing;
-  const run = useRunStage(projectId, stage);
+  const run = useRunStage(projectId);
   const activeJobs = useActiveJobs(projectId);
   const runInFlight = useRunInFlight(projectId);
   const impact = useRunImpact();

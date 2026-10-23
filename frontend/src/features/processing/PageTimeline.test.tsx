@@ -899,7 +899,7 @@ describe('PageTimeline', () => {
       expect(byId('page-history-count')).toBeNull();
     });
 
-    it('marks the results of the page, the rows of the stage and its summary out of date', async () => {
+    it('marks the results of the page out of date, which the server deleted', async () => {
       serve(settingsChanges(2));
       open();
       await render();
@@ -912,13 +912,7 @@ describe('PageTimeline', () => {
         const head = filters?.queryKey?.[0];
         return typeof head === 'object' && head !== null && '_id' in head ? head._id : null;
       });
-      expect(asked).toEqual(
-        expect.arrayContaining([
-          'listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet',
-          'listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet',
-          'listStagesApiV1ProjectsProjectIdStagesGet',
-        ]),
-      );
+      expect(asked).toContain('listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet');
     });
 
     it('is the last thing in the list, and is not there while no step is open', async () => {

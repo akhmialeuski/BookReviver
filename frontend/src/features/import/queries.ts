@@ -1,10 +1,4 @@
-import {
-  queryOptions,
-  type UseQueryResult,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query';
+import { queryOptions, type UseQueryResult, useMutation, useQuery } from '@tanstack/react-query';
 import {
   type JobSchema,
   listSourcesApiV1ProjectsProjectIdSourcesGet,
@@ -16,8 +10,6 @@ import {
   listScansApiV1ProjectsProjectIdScansGetOptions,
   listSourcesApiV1ProjectsProjectIdSourcesGetQueryKey,
 } from '@/api/@tanstack/react-query.gen';
-import { isActiveJob } from '@/features/projects/events';
-import { invalidateSources } from '@/features/projects/queries';
 import { jobsOptions } from '@/features/workspace/queries';
 
 /**
@@ -46,9 +38,6 @@ const SOURCES_PAGE_SIZE = 100;
 
 /** Scans asked for per page of the grid; the route accepts at most 100. */
 const SCANS_PAGE_SIZE = 60;
-
-/** How often a book with a running import reads its jobs again, a safety net for an event stream that was cut. */
-const POLL_INTERVAL_MS = 5000;
 
 /**
  * Query options of every file of a book.
@@ -125,12 +114,10 @@ export function useImportReport(projectId: string): UseQueryResult<SourceSchema[
 }
 
 /** Close the report of the imports, which deletes the rejected and skipped files on the server. */
-export function useCloseImportReport(projectId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...deleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteMutation(),
-    onSuccess: () => invalidateSources(queryClient, projectId),
-  });
+export function useCloseImportReport() {
+  return useMutation(
+    deleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteMutation(),
+  );
 }
 
 /**
@@ -150,10 +137,7 @@ export function useScans(projectId: string, sourceId: string | undefined, page: 
   });
 }
 
-/** Read the latest jobs of the book, and keep reading them while one is queued or running. */
+/** Read the latest jobs of the book, which the events of the jobs keep current. */
 export function useJobs(projectId: string): UseQueryResult<JobSchema[]> {
-  return useQuery({
-    ...jobsOptions(projectId, false),
-    refetchInterval: (query) => (query.state.data?.some(isActiveJob) ? POLL_INTERVAL_MS : false),
-  });
+  return useQuery(jobsOptions(projectId, false));
 }

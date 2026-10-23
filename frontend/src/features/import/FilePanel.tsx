@@ -12,7 +12,6 @@ import { planSuggestion } from '@/features/about/suggestion';
 import { formatRuns, pageRunsOf, resolutionOf } from '@/features/import/facts';
 import type { ImportedSource } from '@/features/import/queries';
 import { DeleteSourceDialog } from '@/features/projects/DeleteSourceDialog';
-import { invalidateProjectList } from '@/features/projects/queries';
 import { FactList } from '@/features/workspace/FactList';
 import { PanelHeading } from '@/features/workspace/PanelHeading';
 import { StagePanel } from '@/features/workspace/StagePanel';
@@ -55,7 +54,6 @@ export function FilePanel({
         projectApiV1ProjectsProjectIdGetQueryKey({ path: { project_id: updated.id } }),
         updated,
       );
-      void invalidateProjectList(queryClient);
     },
   });
 

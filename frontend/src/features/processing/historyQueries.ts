@@ -12,11 +12,7 @@ import {
   undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostMutation,
 } from '@/api/@tanstack/react-query.gen';
 import type * as sdk from '@/api/sdk.gen';
-import {
-  invalidateStageRows,
-  invalidateStageSummary,
-  invalidateVersions,
-} from '@/features/projects/queries';
+import { invalidateVersions } from '@/features/projects/queries';
 
 /**
  * The history of a step on a page, the undo that takes its changes back and the clear that deletes it.
@@ -99,35 +95,19 @@ export function usePageHistory(
 }
 
 /**
- * What an undo and a clear change: the settings, the edits and the histories of the pages, and the rows and the
- * summary of the stage, which a change marks out of date on the server.
- */
-function invalidateAfterHistoryChange(
-  queryClient: QueryClient,
-  projectId: string,
-  stage: Stage,
-): Promise<unknown[]> {
-  return Promise.all([
-    invalidatePageLayers(queryClient),
-    invalidateStageRows(queryClient, projectId, stage),
-    invalidateStageSummary(queryClient, projectId),
-  ]);
-}
-
-/**
  * Take back the newest change of a step on a page, or every change back to a chosen one.
  *
  * The undo joins the mutation scope of the edits of the book, so it reaches the server after the edit that was saved
- * just before it. It marks the stage out of date on the server, and the rows and the summary of the stage, the
- * settings, the edits and the histories of the pages are read again, since a batch is taken back on every page it
- * reached.
+ * just before it. The settings, the edits and the histories of the pages are read again, since a batch is taken back
+ * on every page it reached. It marks the stage out of date on the server, and the rows and the summary of the stage
+ * follow the `book-changed` event.
  */
-export function useUndo(projectId: string, stage: Stage) {
+export function useUndo(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostMutation(),
     scope: { id: `page-edits:${projectId}` },
-    onSettled: () => invalidateAfterHistoryChange(queryClient, projectId, stage),
+    onSettled: () => invalidatePageLayers(queryClient),
   });
 }
 
@@ -137,14 +117,14 @@ export function useUndo(projectId: string, stage: Stage) {
  * The clear joins the mutation scope of the edits of the book like an undo, and reads again what an undo does, and
  * the results of the page too, since the server deleted the results of the step and the ones that read them.
  */
-export function useClearHistory(projectId: string, stage: Stage) {
+export function useClearHistory(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...clearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteMutation(),
     scope: { id: `page-edits:${projectId}` },
     onSettled: (_cleared, _error, { path }) =>
       Promise.all([
-        invalidateAfterHistoryChange(queryClient, projectId, stage),
+        invalidatePageLayers(queryClient),
         invalidateVersions(queryClient, projectId, path.page_id),
       ]),
   });
