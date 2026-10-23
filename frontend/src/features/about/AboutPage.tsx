@@ -4,7 +4,6 @@ import { EraserIcon, XIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { ProjectSchema } from '@/api';
 import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
-import { CoverPicker } from '@/features/about/CoverPicker';
 import { DescriptionForm } from '@/features/about/DescriptionForm';
 import { SaveStatus } from '@/features/about/SaveStatus';
 import { SuggestionBanners } from '@/features/about/SuggestionBanners';
@@ -19,9 +18,8 @@ import { Button } from '@/shared/ui/button';
 import { ErrorAlert } from '@/shared/ui/error-alert';
 
 /**
- * The About tab of a book: the sections of its description on the left, the forms on the right, the choice of the
- * cover above them, and the actions on the whole book last on the left, apart from the rest: the clearing of its old
- * results and its deletion.
+ * The About tab of a book: the sections of its description on the left, the forms on the right, and the actions on the
+ * whole book last on the left, apart from the rest: the clearing of its old results and its deletion.
  *
  * The forms save by themselves, and the line at the bottom says where the saving stands.
  */
@@ -73,11 +71,6 @@ function AboutForm({ project }: { project: ProjectSchema }): React.JSX.Element {
         </DeleteProjectDialog>
       </nav>
       <div className="grid max-w-5xl content-start gap-6 px-6 pt-6">
-        <CoverPicker
-          projectId={project.id}
-          coverPageId={autosave.fields.cover_page_id}
-          onChoose={(pageId) => autosave.edit({ cover_page_id: pageId }, { immediate: true })}
-        />
         <SuggestionBanners projectId={project.id} fields={autosave.fields} onEdit={autosave.edit} />
         <DescriptionForm
           fields={autosave.fields}

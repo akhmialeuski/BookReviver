@@ -12560,7 +12560,7 @@
           "updated_at"
         ],
         "title": "ProjectSchema",
-        "description": "A book being digitised.\n\n:ivar id: Identifier of the project.\n:ivar details: Bibliographic description of the book.\n:ivar image_policy: How the images of the project's scans and page versions are stored.\n:ivar cover_page_id: Page whose thumbnail the project list shows, or None for the first page of the book.\n:ivar page_count: Number of pages of the book, without the pages kept out of it.\n:ivar source_count: Number of sources the book was assembled from.\n:ivar scan_count: Number of scans in all the sources.\n:ivar progress: The status of every stage of the book, in the order of the pipeline.\n:ivar next_stage: The first available stage with work to do or being worked, or None when there is none.\n:ivar created_at: When the project was created.\n:ivar updated_at: When the project was last changed."
+        "description": "A book being digitised.\n\n:ivar id: Identifier of the project.\n:ivar details: Bibliographic description of the book.\n:ivar image_policy: How the images of the project's scans and page versions are stored.\n:ivar cover_page_id: Page the library shows as the cover, the first page of the kind ``cover`` or else the first\n                     page of the book, or None for a book without pages.\n:ivar page_count: Number of pages of the book, without the pages kept out of it.\n:ivar source_count: Number of sources the book was assembled from.\n:ivar scan_count: Number of scans in all the sources.\n:ivar progress: The status of every stage of the book, in the order of the pipeline.\n:ivar next_stage: The first available stage with work to do or being worked, or None when there is none.\n:ivar created_at: When the project was created.\n:ivar updated_at: When the project was last changed."
       },
       "ProjectUpdate": {
         "properties": {
@@ -12906,24 +12906,12 @@
                 "type": "null"
               }
             ]
-          },
-          "cover_page_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cover Page Id"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "ProjectUpdate",
-        "description": "A JSON Merge Patch of a book description: an omitted field is kept and a null one is cleared.\n\n:ivar title: New title, which may be omitted but not null.\n:ivar subtitle: New subtitle, or None to clear it.\n:ivar parallel_titles: New titles in other languages, replacing the list, or None to empty it.\n:ivar original_title: New title of the original work, or None to clear it.\n:ivar contributors: New people who made the book, replacing the list, or None to empty it.\n:ivar publisher: New publisher, or None to clear it.\n:ivar printer: New printing house, or None to clear it.\n:ivar publication_place: New city of publication, or None to clear it.\n:ivar publication_year: New year of publication, or None to clear it.\n:ivar edition: New edition statement, or None to clear it.\n:ivar censorship: New censor's permit, or None to clear it.\n:ivar series: New series, or None to clear it.\n:ivar series_number: New number in the series, or None to clear it.\n:ivar volume: New volume, or None to clear it.\n:ivar languages: New ISO 639-3 codes, replacing the list, or None to empty it.\n:ivar orthography: New orthography, or None to set it to unknown.\n:ivar script: New writing system, or None to set it to unknown.\n:ivar printed_pagination: New pagination, or None to clear it.\n:ivar height_cm: New height in centimetres, or None to clear it.\n:ivar illustrations: New statement of the illustrations, or None to clear it.\n:ivar binding: New binding, or None to clear it.\n:ivar identifiers: New identifiers, replacing the list, or None to empty it.\n:ivar subjects: New topics, replacing the list, or None to empty it.\n:ivar rights: New publishing rights, or None to set them to unknown.\n:ivar copy_holder: New owner of the scanned copy, or None to clear it.\n:ivar copy_notes: New marks of the scanned copy, or None to clear them.\n:ivar notes: New notes, or None to clear them.\n:ivar image_policy: New way to store the images of new scans and page versions, or None to set the default.\n:ivar cover_page_id: New cover page, which must be a page of the project, or None to fall back to the first page."
+        "description": "A JSON Merge Patch of a book description: an omitted field is kept and a null one is cleared.\n\n:ivar title: New title, which may be omitted but not null.\n:ivar subtitle: New subtitle, or None to clear it.\n:ivar parallel_titles: New titles in other languages, replacing the list, or None to empty it.\n:ivar original_title: New title of the original work, or None to clear it.\n:ivar contributors: New people who made the book, replacing the list, or None to empty it.\n:ivar publisher: New publisher, or None to clear it.\n:ivar printer: New printing house, or None to clear it.\n:ivar publication_place: New city of publication, or None to clear it.\n:ivar publication_year: New year of publication, or None to clear it.\n:ivar edition: New edition statement, or None to clear it.\n:ivar censorship: New censor's permit, or None to clear it.\n:ivar series: New series, or None to clear it.\n:ivar series_number: New number in the series, or None to clear it.\n:ivar volume: New volume, or None to clear it.\n:ivar languages: New ISO 639-3 codes, replacing the list, or None to empty it.\n:ivar orthography: New orthography, or None to set it to unknown.\n:ivar script: New writing system, or None to set it to unknown.\n:ivar printed_pagination: New pagination, or None to clear it.\n:ivar height_cm: New height in centimetres, or None to clear it.\n:ivar illustrations: New statement of the illustrations, or None to clear it.\n:ivar binding: New binding, or None to clear it.\n:ivar identifiers: New identifiers, replacing the list, or None to empty it.\n:ivar subjects: New topics, replacing the list, or None to empty it.\n:ivar rights: New publishing rights, or None to set them to unknown.\n:ivar copy_holder: New owner of the scanned copy, or None to clear it.\n:ivar copy_notes: New marks of the scanned copy, or None to clear them.\n:ivar notes: New notes, or None to clear them.\n:ivar image_policy: New way to store the images of new scans and page versions, or None to set the default."
       },
       "QuadSchema": {
         "properties": {

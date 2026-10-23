@@ -124,7 +124,6 @@ class Project:
     :ivar id: Identifier of the project.
     :ivar details: Bibliographic description of the book.
     :ivar image_policy: How the ``full`` images of the project's scans and page versions are stored.
-    :ivar cover_page_id: Page whose thumbnail the project list shows, or None for the first page of the book.
     :ivar created_at: When the project was created.
     :ivar updated_at: When the project was last changed.
     """
@@ -134,7 +133,6 @@ class Project:
     id: ProjectId
     details: BookDetails
     image_policy: ImagePolicy = DEFAULT_IMAGE_POLICY
-    cover_page_id: PageId | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -177,6 +175,8 @@ class ProjectOverview:
     :ivar source_count: Number of sources the book was assembled from.
     :ivar scan_count: Number of scans in all the sources.
     :ivar image_page_count: Number of pages with an image, kept out of the book or not, which a run goes over.
+    :ivar cover_page_id: Page the library shows as the cover: the first page of the kind ``cover``, else the first page
+                         of the book, or None for a book without pages.
     :ivar progress: How far the book has come along the pipeline, which a repository cannot tell and a service adds, or
                     None before it has.
     """
@@ -186,6 +186,7 @@ class ProjectOverview:
     source_count: int = field(default=0, validator=validators.ge(0))
     scan_count: int = field(default=0, validator=validators.ge(0))
     image_page_count: int = field(default=0, validator=validators.ge(0))
+    cover_page_id: PageId | None = None
     progress: BookProgress | None = None
 
 

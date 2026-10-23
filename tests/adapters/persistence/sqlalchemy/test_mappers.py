@@ -117,10 +117,9 @@ class TestProjectMapper:
         :type fx_owner_id: AccountId
         """
         project = make_project()
-        cover = make_page(project_id=project.id)
-        described = evolve(project, details=FULL_DETAILS, image_policy=ImagePolicy.LOSSLESS, cover_page_id=cover.id)
+        described = evolve(project, details=FULL_DETAILS, image_policy=ImagePolicy.LOSSLESS)
         uow = fx_uow()
-        await store_project(uow, project, cover, owner=fx_owner_id)
+        await store_project(uow, project, owner=fx_owner_id)
         await uow.change_book(project.id, lambda repos, _project: repos.projects.update(described))
         assert await uow.read_book(project.id, lambda repos: repos.projects.get(project.id)) == described
 

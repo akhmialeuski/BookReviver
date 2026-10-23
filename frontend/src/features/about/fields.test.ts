@@ -28,14 +28,10 @@ describe('toFields', () => {
     expect(fields).not.toHaveProperty('primary_author');
   });
 
-  it('takes the image policy and the cover from the book itself', () => {
-    const project = {
-      ...projectWith(),
-      image_policy: 'lossless',
-      cover_page_id: 'page-3',
-    } as const;
+  it('takes the image policy from the book itself', () => {
+    const project = { ...projectWith(), image_policy: 'lossless' } as const;
 
-    expect(toFields(project)).toMatchObject({ image_policy: 'lossless', cover_page_id: 'page-3' });
+    expect(toFields(project)).toMatchObject({ image_policy: 'lossless' });
   });
 });
 
@@ -76,10 +72,10 @@ describe('planSave', () => {
     expect(edited.patch.contributors).toHaveLength(2);
   });
 
-  it('sends the choices of the image policy and of the cover with the description', () => {
-    const plan = planSave(SAVED, { image_policy: 'lossless', cover_page_id: 'page-2' });
+  it('sends the choice of the image policy with the description', () => {
+    const plan = planSave(SAVED, { image_policy: 'lossless' });
 
-    expect(plan.patch).toEqual({ image_policy: 'lossless', cover_page_id: 'page-2' });
+    expect(plan.patch).toEqual({ image_policy: 'lossless' });
   });
 
   it('tells one set of changes from another by its key', () => {

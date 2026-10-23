@@ -161,7 +161,6 @@ class ProjectRow(BookTable):
     :ivar copy_notes: Marks of the scanned copy.
     :ivar notes: Free-form notes of the owner.
     :ivar image_policy: How the images of the project's scans and page versions are stored, stored by value.
-    :ivar cover_page_id: Page whose thumbnail the project list shows, or null for the first page.
     :ivar created_at: Time the project was created.
     :ivar updated_at: Time of the last change, set by the domain through its ``Clock``.
     :ivar sources: Sources of the project, never loaded implicitly.
@@ -200,23 +199,14 @@ class ProjectRow(BookTable):
     copy_notes: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     notes: Mapped[str]
     image_policy: Mapped[ImagePolicy] = mapped_column(enum_by_value(ImagePolicy))
-    # By table name, and added after both tables exist, since the pages table refers back to this one
-    cover_page_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey(f'{PAGES_TABLE}.{ID_COLUMN}', ondelete=SET_NULL, use_alter=True)
-    )
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
 
     sources: Mapped[list[SourceRow]] = relationship(
         back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
-    # The project's own key of its pages, not the cover's key the other way
     pages: Mapped[list[PageRow]] = relationship(
-        back_populates=Relation.PROJECT,
-        cascade=CHILD_CASCADE,
-        passive_deletes=True,
-        lazy=NO_IMPLICIT_LOAD,
-        foreign_keys=lambda: [PageRow.project_id],
+        back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
     recipes: Mapped[list[RecipeRow]] = relationship(
         back_populates=Relation.PROJECT, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
@@ -387,9 +377,7 @@ class PageRow(BookTable):
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
 
-    project: Mapped[ProjectRow] = relationship(
-        back_populates=Relation.PAGES, lazy=NO_IMPLICIT_LOAD, foreign_keys=lambda: [PageRow.project_id]
-    )
+    project: Mapped[ProjectRow] = relationship(back_populates=Relation.PAGES, lazy=NO_IMPLICIT_LOAD)
     versions: Mapped[list[PageVersionRow]] = relationship(
         back_populates=Relation.PAGE, cascade=CHILD_CASCADE, passive_deletes=True, lazy=NO_IMPLICIT_LOAD
     )
@@ -477,7 +465,10 @@ class PageVersionRow(BookTable):
     processor_key: Mapped[str]
     processor_version: Mapped[str]
     # A string, since the table refers to itself before its class exists
-    input_id: Mapped[str | None] = mapped_column(ForeignKey(f'{PAGE_VERSIONS_TABLE}.{ID_COLUMN}', ondelete=SET_NULL))
+    # Indexed, since the deletion of a version by the collection looks up the versions that read it
+    input_id: Mapped[str | None] = mapped_column(
+        ForeignKey(f'{PAGE_VERSIONS_TABLE}.{ID_COLUMN}', ondelete=SET_NULL), index=True
+    )
     params: Mapped[dict[str, Any]] = mapped_column(JSON)
     transform: Mapped[dict[str, Any]] = mapped_column(JSON)
     data: Mapped[dict[str, Any]] = mapped_column(JSON)
@@ -660,8 +651,8 @@ class ResultMarkChangeRow(BookTable):
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     version_id: Mapped[str] = mapped_column(ForeignKey(PageVersionRow.id, ondelete=CASCADE))
-    mark_before: Mapped[ResultMark | None] = mapped_column(enum_by_value(ResultMark))
-    mark_after: Mapped[ResultMark | None] = mapped_column(enum_by_value(ResultMark))
+    mark_before: Mapped[ResultMark | None] = mapped_column(enum_by_value(ResultMark, name='mark_before'))
+    mark_after: Mapped[ResultMark | None] = mapped_column(enum_by_value(ResultMark, name='mark_after'))
     comment_before: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     comment_after: Mapped[str] = mapped_column(server_default=EMPTY_TEXT)
     created_at: Mapped[datetime]

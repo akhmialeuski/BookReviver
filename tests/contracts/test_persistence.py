@@ -55,7 +55,7 @@ from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, Project, Source
-    from bookreviver.domain.ids import AccountId
+    from bookreviver.domain.ids import AccountId, PageId
     from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories, UnitOfWork
     from tests.contracts.conftest import OwnerFactory
     from tests.helpers.database import UnitOfWorkFactory
@@ -254,10 +254,10 @@ class TestProjectRepository:
         overview = await fx_uow().read_book(project.id, lambda repos: repos.projects.overview(project))
         assert (overview.page_count, overview.image_page_count) == (BOOK[0] + 1, PAGE_COUNT)
 
-    async def test_deleted_cover_page_leaves_the_project_without_a_cover(
+    async def test_the_cover_is_the_first_page_of_the_kind_cover(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify deleting the cover page empties the project's cover, so the list falls back to the first page.
+        """Verify the overview names as the cover the page of the kind cover that comes first in the book.
 
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -265,19 +265,18 @@ class TestProjectRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        cover = make_page(project_id=project.id)
-        await store_project(fx_uow(), project, cover, owner=await fx_new_owner())
-        await fx_uow().change_book(
-            project.id, lambda repos, _project: repos.projects.update(evolve(project, cover_page_id=cover.id))
+        text, cover, back = (
+            make_page(project_id=project.id, order_key=key, kind=kind)
+            for key, kind in (('a0', PageKind.TEXT), ('a1', PageKind.COVER), ('a2', PageKind.COVER))
         )
-        await fx_uow().change_book(project.id, lambda repos, _project: repos.pages.delete(cover.id))
-        stored = await fx_uow().read_book(project.id, lambda repos: repos.projects.get(project.id))
-        assert stored.cover_page_id is None
+        await store_project(fx_uow(), project, back, text, cover, owner=await fx_new_owner())
+        overview = await fx_uow().read_book(project.id, lambda repos: repos.projects.overview(project))
+        assert overview.cover_page_id == cover.id
 
-    async def test_cover_outside_the_project_raises_not_found(
+    async def test_a_book_without_a_cover_page_shows_its_first_page_and_an_empty_book_none(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify a project's cover must be one of its own stored pages, not a missing page or another book's.
+        """Verify the cover falls back to the first page of the book, and a book without pages has no cover.
 
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -285,26 +284,22 @@ class TestProjectRepository:
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
-        project, other = make_project(), make_project()
-        foreign = make_page(project_id=other.id)
-        missing = make_page(project_id=project.id)
-        uow = fx_uow()
-        await store_project(uow, project, owner=owner_id)
-        await store_project(uow, other, foreign, owner=owner_id)
+        empty, project = make_project(), make_project()
+        first, second = (make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1'))
+        await store_project(fx_uow(), empty, owner=owner_id)
+        await store_project(fx_uow(), project, second, first, owner=owner_id)
 
-        async def refuse_cover(page: Page) -> None:
-            """Take the page as the cover of the project, which the repository refuses.
+        async def cover_of(book: Project) -> PageId | None:
+            """Read the cover the overview of a book names.
 
-            :param page: Page that is not a stored page of the project.
-            :type page: Page
+            :param book: The project of the book.
+            :type book: Project
+            :returns: The cover page, or None.
+            :rtype: PageId | None
             """
-            with pytest.raises(NotFoundError, match=str(page.id)):
-                await fx_uow().change_book(
-                    project.id, lambda repos, _project: repos.projects.update(evolve(project, cover_page_id=page.id))
-                )
+            return (await fx_uow().read_book(book.id, lambda repos: repos.projects.overview(book))).cover_page_id
 
-        await refuse_cover(foreign)
-        await refuse_cover(missing)
+        assert [await cover_of(book) for book in (empty, project)] == [None, first.id]
 
 
 class TestLibraryRepository:

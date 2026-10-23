@@ -21,7 +21,7 @@ from uuid import UUID, uuid4
 from advanced_alchemy.base import DefaultBase
 from fastapi_users.authentication.strategy.db import AccessTokenDatabase as AccessTokenDatabaseProtocol
 from fastapi_users.db import BaseUserDatabase
-from sqlalchemy import ForeignKey, String, func, select
+from sqlalchemy import ForeignKey, String, UniqueConstraint, func, select
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from bookreviver.adapters.persistence.sqlalchemy.columns import CASCADE
@@ -44,6 +44,8 @@ class OAuthAccountTable(DefaultBase):
     """An account at a social sign-in provider linked to a user."""
 
     __tablename__ = 'oauth_account'
+    # A provider names one of its accounts once, which the sign-in through the provider reads as one row
+    __table_args__ = (UniqueConstraint('oauth_name', 'account_id'),)
 
     # Plain annotations for the type checkers, as in ``AccountTable``
     if TYPE_CHECKING:
@@ -57,7 +59,7 @@ class OAuthAccountTable(DefaultBase):
         account_email: str
     else:
         id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-        user_id: Mapped[UUID] = mapped_column(ForeignKey(USER_ID, ondelete=CASCADE))
+        user_id: Mapped[UUID] = mapped_column(ForeignKey(USER_ID, ondelete=CASCADE), index=True)
         oauth_name: Mapped[str] = mapped_column(String(length=100), index=True)
         access_token: Mapped[str] = mapped_column(String(length=1024))
         expires_at: Mapped[int | None]
@@ -107,7 +109,7 @@ class AccessTokenTable(DefaultBase):
     else:
         token: Mapped[str] = mapped_column(String(length=43), primary_key=True)
         created_at: Mapped[datetime] = mapped_column(index=True, default=partial(datetime.now, UTC))
-        user_id: Mapped[UUID] = mapped_column(ForeignKey(USER_ID, ondelete=CASCADE))
+        user_id: Mapped[UUID] = mapped_column(ForeignKey(USER_ID, ondelete=CASCADE), index=True)
 
 
 # The columns of the tables, for the conditions of a query, which the plain annotations above would type as values
