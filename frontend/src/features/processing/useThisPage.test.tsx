@@ -40,8 +40,8 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet: sdk.versions,
-  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
+  listVersionsApiV1BooksBookIdPagesPageIdVersionsGet: sdk.versions,
+  listBookJobsApiV1BooksBookIdJobsGet: sdk.jobs,
 }));
 
 const OLD = version('old', {

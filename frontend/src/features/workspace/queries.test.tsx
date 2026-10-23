@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StagePageSchema } from '@/api';
-import { invalidateStageRows } from '@/features/projects/queries';
+import { invalidateStageRows } from '@/features/books/queries';
 import { row, stepPage } from '@/features/workspace/fixtures';
 import { useStepRows } from '@/features/workspace/queries';
 
@@ -16,7 +16,7 @@ const sdk = vi.hoisted(() => ({ rows: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet: sdk.rows,
+  listStagePagesApiV1BooksBookIdStagesStagePagesGet: sdk.rows,
 }));
 
 const MARGINS = 'margins';
@@ -34,7 +34,7 @@ describe('useStepRows', () => {
   let seen: UseQueryResult<StagePageSchema[]> | undefined;
 
   function Probe({ step }: { step: string }): null {
-    seen = useStepRows('project', 'geometry', step);
+    seen = useStepRows('book', 'geometry', step);
     return null;
   }
 
@@ -77,7 +77,7 @@ describe('useStepRows', () => {
     // The reader moves to another step, and a run there changes the rows of Margins, which nobody reads again
     sdk.rows.mockResolvedValue(answer(row('p1', { step: stepPage(CROP, 'found') })));
     await open(CROP);
-    await act(async () => invalidateStageRows(client, 'project', 'geometry'));
+    await act(async () => invalidateStageRows(client, 'book', 'geometry'));
 
     let respond: (value: ReturnType<typeof answer>) => void = () => undefined;
     sdk.rows.mockReturnValue(

@@ -3,8 +3,8 @@ import path from 'node:path';
 import { expect, type Page } from '@playwright/test';
 import {
   createBook,
+  openBookId,
   openLibrary,
-  openProjectId,
   setContentType,
   snap,
   stepIdsOf,
@@ -57,8 +57,8 @@ interface StoredVersion {
 
 /** Read the full results the Geometry stage made on the first page of the open book, the oldest first. */
 async function geometryVersions(page: Page): Promise<StoredVersion[]> {
-  const projectId = openProjectId(page);
-  const pages = await page.request.get(`/api/v1/projects/${projectId}/pages?size=100`);
+  const bookId = openBookId(page);
+  const pages = await page.request.get(`/api/v1/books/${bookId}/pages?size=100`);
   const first = ((await pages.json()) as { items: { id: string; position: number }[] }).items.find(
     (item) => item.position === FIRST,
   );
@@ -66,7 +66,7 @@ async function geometryVersions(page: Page): Promise<StoredVersion[]> {
     throw new Error('The book has no first page.');
   }
   const listed = await page.request.get(
-    `/api/v1/projects/${projectId}/pages/${first.id}/versions?stage=geometry&scale=full&size=100`,
+    `/api/v1/books/${bookId}/pages/${first.id}/versions?stage=geometry&scale=full&size=100`,
   );
   const items = ((await listed.json()) as { items: StoredVersion[] }).items;
   return items.toSorted((a, b) => a.created_at.localeCompare(b.created_at));

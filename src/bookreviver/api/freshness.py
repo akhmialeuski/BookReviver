@@ -21,7 +21,7 @@ from dishka.integrations.fastapi import FromDishka, inject
 from fastapi import Request, Response
 
 from bookreviver.api.auth import ActorDep
-from bookreviver.domain.ids import ProjectId
+from bookreviver.domain.ids import BookId
 from bookreviver.services.freshness import BookFreshness
 
 if TYPE_CHECKING:
@@ -32,7 +32,7 @@ IF_NONE_MATCH_HEADER: Final = 'If-None-Match'
 CACHE_CONTROL_HEADER: Final = 'Cache-Control'
 # The browser keeps the answer for this account alone and asks again before it uses it
 REVALIDATE: Final = 'private, no-cache'
-PROJECT_ID_PARAMETER: Final = 'project_id'
+BOOK_ID_PARAMETER: Final = 'book_id'
 WEAK_PREFIX: Final = 'W/'
 ANY_TAG: Final = '*'
 TAG_SEPARATOR: Final = ','
@@ -92,13 +92,13 @@ async def fresh_book(
     if request.method != HTTPMethod.GET:
         return
     try:
-        project_id = ProjectId(UUID(request.path_params[PROJECT_ID_PARAMETER]))
+        book_id = BookId(UUID(request.path_params[BOOK_ID_PARAMETER]))
     except KeyError, ValueError:
         # No book, or a malformed identifier, which the validation of the route answers
         return
     asked = request.url.path if not request.url.query else f'{request.url.path}?{request.url.query}'
     digest = hashlib.blake2b(asked.encode(), digest_size=DIGEST_BYTES).hexdigest()
-    tag = f'{WEAK_PREFIX}"{await freshness.mark(actor, project_id)}-{digest}"'
+    tag = f'{WEAK_PREFIX}"{await freshness.mark(actor, book_id)}-{digest}"'
     headers = {ETAG_HEADER: tag, CACHE_CONTROL_HEADER: REVALIDATE}
     if _matches(request.headers.get(IF_NONE_MATCH_HEADER), tag):
         raise NotModifiedError(headers)

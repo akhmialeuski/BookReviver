@@ -8,14 +8,14 @@ from fastapi import UploadFile
 
 from bookreviver.domain.enums import Rendition
 from bookreviver.domain.ids import JobId, SourceId, StorageKey
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from tests.helpers.builders import make_page_version
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.entities import Page
-    from bookreviver.domain.ids import PageId, ProjectId
+    from bookreviver.domain.ids import BookId, PageId
     from bookreviver.ports.storage import AssetStore, SourceStore
 
 # More than one read chunk of the local store, so staging has to stream
@@ -77,50 +77,50 @@ class BookFiles:
         self._sources = sources
         self._assets = assets
         self._root = root
-        self._stored: dict[PageId, tuple[ProjectId, StorageKey, StorageKey]] = {}
+        self._stored: dict[PageId, tuple[BookId, StorageKey, StorageKey]] = {}
 
-    async def store(self, project_id: ProjectId, page: Page) -> None:
+    async def store(self, book_id: BookId, page: Page) -> None:
         """Store a source for the page's project and the full image of the page's base version, as an import would.
 
-        :param project_id: Identifier of the project of the page.
+        :param book_id: Identifier of the project of the page.
 
-        :type project_id: ProjectId
+        :type book_id: BookId
 
         :param page: Page whose project and image are stored.
         :type page: Page
         """
-        keys = ProjectKeys(project_id)
+        keys = BookKeys(book_id)
         job_id, source_id = JobId(uuid4()), SourceId(uuid4())
-        staged = await self._sources.stage(project_id, job_id, [upload(SOURCE_NAME)], max_bytes=MAX_SOURCE_BYTES)
-        await self._sources.promote(project_id, job_id, source_id, names=[file.name for file in staged])
+        staged = await self._sources.stage(book_id, job_id, [upload(SOURCE_NAME)], max_bytes=MAX_SOURCE_BYTES)
+        await self._sources.promote(book_id, job_id, source_id, names=[file.name for file in staged])
         image = keys.version_rendition(make_page_version(page_id=page.id), Rendition.FULL_JPEG)
         async with self._assets.writable(image) as path:
             path.write_bytes(PAGE_IMAGE_CONTENT)
-        self._stored[page.id] = (project_id, keys.source(source_id), image)
+        self._stored[page.id] = (book_id, keys.source(source_id), image)
 
-    def kept(self, page: Page, *, project_id: ProjectId | None = None) -> bool:
+    def kept(self, page: Page, *, book_id: BookId | None = None) -> bool:
         """Return whether the source stored for the page's project and the page's full image are still on disk.
 
         :param page: Page stored earlier with ``store``.
         :type page: Page
-        :param project_id: Another book that holds the same files under its own directory, such as an imported copy,
+        :param book_id: Another book that holds the same files under its own directory, such as an imported copy,
                            or None for the book the files were stored for.
-        :type project_id: ProjectId | None
+        :type book_id: BookId | None
         :returns: True when both files are there with their content.
         :rtype: bool
         """
         owner, source, image = self._stored[page.id]
-        if project_id is not None:
-            stored, copy = ProjectKeys(owner), ProjectKeys(project_id)
+        if book_id is not None:
+            stored, copy = BookKeys(owner), BookKeys(book_id)
             source, image = (StorageKey(copy.prefix + stored.relative(key)) for key in (source, image))
         return (self._root / source / SOURCE_NAME).is_file() and (self._root / image).read_bytes() == PAGE_IMAGE_CONTENT
 
-    def gone(self, project_id: ProjectId) -> bool:
+    def gone(self, book_id: BookId) -> bool:
         """Return whether nothing of the project, not even its directory, is left on disk.
 
-        :param project_id: Project whose files were deleted.
-        :type project_id: ProjectId
+        :param book_id: Project whose files were deleted.
+        :type book_id: BookId
         :returns: True when the project's directory does not exist.
         :rtype: bool
         """
-        return not (self._root / ProjectKeys(project_id).prefix).exists()
+        return not (self._root / BookKeys(book_id).prefix).exists()

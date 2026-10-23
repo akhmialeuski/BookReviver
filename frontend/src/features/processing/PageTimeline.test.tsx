@@ -28,12 +28,12 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGet: sdk.history,
-  undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPost: sdk.undo,
-  clearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDelete: sdk.clear,
-  listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet: sdk.versions,
-  chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePut: sdk.choose,
-  putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPut: sdk.mark,
+  listHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGet: sdk.history,
+  undoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPost: sdk.undo,
+  clearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDelete: sdk.clear,
+  listVersionsApiV1BooksBookIdPagesPageIdVersionsGet: sdk.versions,
+  chooseVersionApiV1BooksBookIdPagesPageIdStagesStagePut: sdk.choose,
+  putMarkApiV1BooksBookIdPagesPageIdVersionsVersionIdMarkPut: sdk.mark,
 }));
 
 const STEP_ID = 'id-geometry.deskew';
@@ -324,7 +324,7 @@ describe('PageTimeline', () => {
       await render();
 
       expect(sdk.history.mock.calls[0]?.[0]).toMatchObject({
-        path: { project_id: 'project', page_id: 'page', stage: 'geometry', step_id: STEP_ID },
+        path: { book_id: 'book', page_id: 'page', stage: 'geometry', step_id: STEP_ID },
         query: { size: 100 },
       });
     });
@@ -463,7 +463,7 @@ describe('PageTimeline', () => {
       expect(byId('page-history-dialog')).toBeNull();
       expect(sdk.undo).toHaveBeenCalledTimes(1);
       expect(sdk.undo.mock.calls[0]?.[0]).toMatchObject({
-        path: { project_id: 'project', page_id: 'page', stage: 'geometry', step_id: STEP_ID },
+        path: { book_id: 'book', page_id: 'page', stage: 'geometry', step_id: STEP_ID },
         body: { change_id: 'c3' },
       });
     });
@@ -773,7 +773,7 @@ describe('PageTimeline', () => {
       });
 
       expect(sdk.choose.mock.calls[0]?.[0]).toMatchObject({
-        path: { project_id: 'project', page_id: 'page', stage: 'geometry' },
+        path: { book_id: 'book', page_id: 'page', stage: 'geometry' },
         body: { version_id: 'old' },
       });
     });
@@ -859,7 +859,7 @@ describe('PageTimeline', () => {
 
       expect(sdk.clear).toHaveBeenCalledTimes(1);
       expect(sdk.clear.mock.calls[0]?.[0]).toMatchObject({
-        path: { project_id: 'project', page_id: 'page', stage: 'geometry', step_id: STEP_ID },
+        path: { book_id: 'book', page_id: 'page', stage: 'geometry', step_id: STEP_ID },
       });
       expect(byId('page-history-dialog')).toBeNull();
     });
@@ -912,7 +912,7 @@ describe('PageTimeline', () => {
         const head = filters?.queryKey?.[0];
         return typeof head === 'object' && head !== null && '_id' in head ? head._id : null;
       });
-      expect(asked).toContain('listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet');
+      expect(asked).toContain('listVersionsApiV1BooksBookIdPagesPageIdVersionsGet');
     });
 
     it('is the last thing in the list, and is not there while no step is open', async () => {

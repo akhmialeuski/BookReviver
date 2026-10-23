@@ -16,16 +16,16 @@ import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
-import { Route as AuthenticatedProjectsIndexRouteImport } from './routes/_authenticated/projects/index'
-import { Route as AuthenticatedProjectsProjectIdRouteRouteImport } from './routes/_authenticated/projects/$projectId/route'
+import { Route as AuthenticatedBooksIndexRouteImport } from './routes/_authenticated/books/index'
+import { Route as AuthenticatedBooksBookIdRouteRouteImport } from './routes/_authenticated/books/$bookId/route'
 import { Route as AuthenticatedSettingsProfilesRouteImport } from './routes/_authenticated/settings/profiles'
 import { Route as AuthProviderCallbackRouteImport } from './routes/auth.$provider.callback'
-import { Route as AuthenticatedProjectsProjectIdIndexRouteImport } from './routes/_authenticated/projects/$projectId/index'
-import { Route as AuthenticatedProjectsProjectIdAboutRouteImport } from './routes/_authenticated/projects/$projectId/about'
-import { Route as AuthenticatedProjectsProjectIdViewerRouteImport } from './routes/_authenticated/projects/$projectId/viewer'
-import { Route as AuthenticatedProjectsProjectIdStagesStageRouteImport } from './routes/_authenticated/projects/$projectId/stages.$stage'
-import { Route as AuthenticatedProjectsProjectIdStagesStageIndexRouteImport } from './routes/_authenticated/projects/$projectId/stages.$stage.index'
-import { Route as AuthenticatedProjectsProjectIdStagesStageStepsStepIdRouteImport } from './routes/_authenticated/projects/$projectId/stages.$stage.steps.$stepId'
+import { Route as AuthenticatedBooksBookIdIndexRouteImport } from './routes/_authenticated/books/$bookId/index'
+import { Route as AuthenticatedBooksBookIdAboutRouteImport } from './routes/_authenticated/books/$bookId/about'
+import { Route as AuthenticatedBooksBookIdViewerRouteImport } from './routes/_authenticated/books/$bookId/viewer'
+import { Route as AuthenticatedBooksBookIdStagesStageRouteImport } from './routes/_authenticated/books/$bookId/stages.$stage'
+import { Route as AuthenticatedBooksBookIdStagesStageIndexRouteImport } from './routes/_authenticated/books/$bookId/stages.$stage.index'
+import { Route as AuthenticatedBooksBookIdStagesStageStepsStepIdRouteImport } from './routes/_authenticated/books/$bookId/stages.$stage.steps.$stepId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -61,16 +61,15 @@ const VerifyEmailRoute = VerifyEmailRouteImport.update({
   path: '/verify-email',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedProjectsIndexRoute =
-  AuthenticatedProjectsIndexRouteImport.update({
-    id: '/projects/',
-    path: '/projects/',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedProjectsProjectIdRouteRoute =
-  AuthenticatedProjectsProjectIdRouteRouteImport.update({
-    id: '/projects/$projectId',
-    path: '/projects/$projectId',
+const AuthenticatedBooksIndexRoute = AuthenticatedBooksIndexRouteImport.update({
+  id: '/books/',
+  path: '/books/',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedBooksBookIdRouteRoute =
+  AuthenticatedBooksBookIdRouteRouteImport.update({
+    id: '/books/$bookId',
+    path: '/books/$bookId',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
 const AuthenticatedSettingsProfilesRoute =
@@ -84,41 +83,41 @@ const AuthProviderCallbackRoute = AuthProviderCallbackRouteImport.update({
   path: '/auth/$provider/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedProjectsProjectIdIndexRoute =
-  AuthenticatedProjectsProjectIdIndexRouteImport.update({
+const AuthenticatedBooksBookIdIndexRoute =
+  AuthenticatedBooksBookIdIndexRouteImport.update({
     id: '/',
     path: '/',
-    getParentRoute: () => AuthenticatedProjectsProjectIdRouteRoute,
+    getParentRoute: () => AuthenticatedBooksBookIdRouteRoute,
   } as any)
-const AuthenticatedProjectsProjectIdAboutRoute =
-  AuthenticatedProjectsProjectIdAboutRouteImport.update({
+const AuthenticatedBooksBookIdAboutRoute =
+  AuthenticatedBooksBookIdAboutRouteImport.update({
     id: '/about',
     path: '/about',
-    getParentRoute: () => AuthenticatedProjectsProjectIdRouteRoute,
+    getParentRoute: () => AuthenticatedBooksBookIdRouteRoute,
   } as any)
-const AuthenticatedProjectsProjectIdViewerRoute =
-  AuthenticatedProjectsProjectIdViewerRouteImport.update({
+const AuthenticatedBooksBookIdViewerRoute =
+  AuthenticatedBooksBookIdViewerRouteImport.update({
     id: '/viewer',
     path: '/viewer',
-    getParentRoute: () => AuthenticatedProjectsProjectIdRouteRoute,
+    getParentRoute: () => AuthenticatedBooksBookIdRouteRoute,
   } as any)
-const AuthenticatedProjectsProjectIdStagesStageRoute =
-  AuthenticatedProjectsProjectIdStagesStageRouteImport.update({
+const AuthenticatedBooksBookIdStagesStageRoute =
+  AuthenticatedBooksBookIdStagesStageRouteImport.update({
     id: '/stages/$stage',
     path: '/stages/$stage',
-    getParentRoute: () => AuthenticatedProjectsProjectIdRouteRoute,
+    getParentRoute: () => AuthenticatedBooksBookIdRouteRoute,
   } as any)
-const AuthenticatedProjectsProjectIdStagesStageIndexRoute =
-  AuthenticatedProjectsProjectIdStagesStageIndexRouteImport.update({
+const AuthenticatedBooksBookIdStagesStageIndexRoute =
+  AuthenticatedBooksBookIdStagesStageIndexRouteImport.update({
     id: '/',
     path: '/',
-    getParentRoute: () => AuthenticatedProjectsProjectIdStagesStageRoute,
+    getParentRoute: () => AuthenticatedBooksBookIdStagesStageRoute,
   } as any)
-const AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute =
-  AuthenticatedProjectsProjectIdStagesStageStepsStepIdRouteImport.update({
+const AuthenticatedBooksBookIdStagesStageStepsStepIdRoute =
+  AuthenticatedBooksBookIdStagesStageStepsStepIdRouteImport.update({
     id: '/steps/$stepId',
     path: '/steps/$stepId',
-    getParentRoute: () => AuthenticatedProjectsProjectIdStagesStageRoute,
+    getParentRoute: () => AuthenticatedBooksBookIdStagesStageRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -128,16 +127,16 @@ export interface FileRoutesByFullPath {
   '/reset-password': typeof ResetPasswordRoute
   '/sign-in': typeof SignInRoute
   '/verify-email': typeof VerifyEmailRoute
-  '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteRouteWithChildren
+  '/books/$bookId': typeof AuthenticatedBooksBookIdRouteRouteWithChildren
   '/settings/profiles': typeof AuthenticatedSettingsProfilesRoute
   '/auth/$provider/callback': typeof AuthProviderCallbackRoute
-  '/projects/': typeof AuthenticatedProjectsIndexRoute
-  '/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
-  '/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
-  '/projects/$projectId/': typeof AuthenticatedProjectsProjectIdIndexRoute
-  '/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageRouteWithChildren
-  '/projects/$projectId/stages/$stage/': typeof AuthenticatedProjectsProjectIdStagesStageIndexRoute
-  '/projects/$projectId/stages/$stage/steps/$stepId': typeof AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute
+  '/books/': typeof AuthenticatedBooksIndexRoute
+  '/books/$bookId/about': typeof AuthenticatedBooksBookIdAboutRoute
+  '/books/$bookId/viewer': typeof AuthenticatedBooksBookIdViewerRoute
+  '/books/$bookId/': typeof AuthenticatedBooksBookIdIndexRoute
+  '/books/$bookId/stages/$stage': typeof AuthenticatedBooksBookIdStagesStageRouteWithChildren
+  '/books/$bookId/stages/$stage/': typeof AuthenticatedBooksBookIdStagesStageIndexRoute
+  '/books/$bookId/stages/$stage/steps/$stepId': typeof AuthenticatedBooksBookIdStagesStageStepsStepIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -148,12 +147,12 @@ export interface FileRoutesByTo {
   '/verify-email': typeof VerifyEmailRoute
   '/settings/profiles': typeof AuthenticatedSettingsProfilesRoute
   '/auth/$provider/callback': typeof AuthProviderCallbackRoute
-  '/projects': typeof AuthenticatedProjectsIndexRoute
-  '/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
-  '/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
-  '/projects/$projectId': typeof AuthenticatedProjectsProjectIdIndexRoute
-  '/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageIndexRoute
-  '/projects/$projectId/stages/$stage/steps/$stepId': typeof AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute
+  '/books': typeof AuthenticatedBooksIndexRoute
+  '/books/$bookId/about': typeof AuthenticatedBooksBookIdAboutRoute
+  '/books/$bookId/viewer': typeof AuthenticatedBooksBookIdViewerRoute
+  '/books/$bookId': typeof AuthenticatedBooksBookIdIndexRoute
+  '/books/$bookId/stages/$stage': typeof AuthenticatedBooksBookIdStagesStageIndexRoute
+  '/books/$bookId/stages/$stage/steps/$stepId': typeof AuthenticatedBooksBookIdStagesStageStepsStepIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -164,16 +163,16 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/sign-in': typeof SignInRoute
   '/verify-email': typeof VerifyEmailRoute
-  '/_authenticated/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteRouteWithChildren
+  '/_authenticated/books/$bookId': typeof AuthenticatedBooksBookIdRouteRouteWithChildren
   '/_authenticated/settings/profiles': typeof AuthenticatedSettingsProfilesRoute
   '/auth/$provider/callback': typeof AuthProviderCallbackRoute
-  '/_authenticated/projects/': typeof AuthenticatedProjectsIndexRoute
-  '/_authenticated/projects/$projectId/about': typeof AuthenticatedProjectsProjectIdAboutRoute
-  '/_authenticated/projects/$projectId/viewer': typeof AuthenticatedProjectsProjectIdViewerRoute
-  '/_authenticated/projects/$projectId/': typeof AuthenticatedProjectsProjectIdIndexRoute
-  '/_authenticated/projects/$projectId/stages/$stage': typeof AuthenticatedProjectsProjectIdStagesStageRouteWithChildren
-  '/_authenticated/projects/$projectId/stages/$stage/': typeof AuthenticatedProjectsProjectIdStagesStageIndexRoute
-  '/_authenticated/projects/$projectId/stages/$stage/steps/$stepId': typeof AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute
+  '/_authenticated/books/': typeof AuthenticatedBooksIndexRoute
+  '/_authenticated/books/$bookId/about': typeof AuthenticatedBooksBookIdAboutRoute
+  '/_authenticated/books/$bookId/viewer': typeof AuthenticatedBooksBookIdViewerRoute
+  '/_authenticated/books/$bookId/': typeof AuthenticatedBooksBookIdIndexRoute
+  '/_authenticated/books/$bookId/stages/$stage': typeof AuthenticatedBooksBookIdStagesStageRouteWithChildren
+  '/_authenticated/books/$bookId/stages/$stage/': typeof AuthenticatedBooksBookIdStagesStageIndexRoute
+  '/_authenticated/books/$bookId/stages/$stage/steps/$stepId': typeof AuthenticatedBooksBookIdStagesStageStepsStepIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -184,16 +183,16 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/sign-in'
     | '/verify-email'
-    | '/projects/$projectId'
+    | '/books/$bookId'
     | '/settings/profiles'
     | '/auth/$provider/callback'
-    | '/projects/'
-    | '/projects/$projectId/about'
-    | '/projects/$projectId/viewer'
-    | '/projects/$projectId/'
-    | '/projects/$projectId/stages/$stage'
-    | '/projects/$projectId/stages/$stage/'
-    | '/projects/$projectId/stages/$stage/steps/$stepId'
+    | '/books/'
+    | '/books/$bookId/about'
+    | '/books/$bookId/viewer'
+    | '/books/$bookId/'
+    | '/books/$bookId/stages/$stage'
+    | '/books/$bookId/stages/$stage/'
+    | '/books/$bookId/stages/$stage/steps/$stepId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -204,12 +203,12 @@ export interface FileRouteTypes {
     | '/verify-email'
     | '/settings/profiles'
     | '/auth/$provider/callback'
-    | '/projects'
-    | '/projects/$projectId/about'
-    | '/projects/$projectId/viewer'
-    | '/projects/$projectId'
-    | '/projects/$projectId/stages/$stage'
-    | '/projects/$projectId/stages/$stage/steps/$stepId'
+    | '/books'
+    | '/books/$bookId/about'
+    | '/books/$bookId/viewer'
+    | '/books/$bookId'
+    | '/books/$bookId/stages/$stage'
+    | '/books/$bookId/stages/$stage/steps/$stepId'
   id:
     | '__root__'
     | '/'
@@ -219,16 +218,16 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/sign-in'
     | '/verify-email'
-    | '/_authenticated/projects/$projectId'
+    | '/_authenticated/books/$bookId'
     | '/_authenticated/settings/profiles'
     | '/auth/$provider/callback'
-    | '/_authenticated/projects/'
-    | '/_authenticated/projects/$projectId/about'
-    | '/_authenticated/projects/$projectId/viewer'
-    | '/_authenticated/projects/$projectId/'
-    | '/_authenticated/projects/$projectId/stages/$stage'
-    | '/_authenticated/projects/$projectId/stages/$stage/'
-    | '/_authenticated/projects/$projectId/stages/$stage/steps/$stepId'
+    | '/_authenticated/books/'
+    | '/_authenticated/books/$bookId/about'
+    | '/_authenticated/books/$bookId/viewer'
+    | '/_authenticated/books/$bookId/'
+    | '/_authenticated/books/$bookId/stages/$stage'
+    | '/_authenticated/books/$bookId/stages/$stage/'
+    | '/_authenticated/books/$bookId/stages/$stage/steps/$stepId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -293,18 +292,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof VerifyEmailRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/projects/': {
-      id: '/_authenticated/projects/'
-      path: '/projects'
-      fullPath: '/projects/'
-      preLoaderRoute: typeof AuthenticatedProjectsIndexRouteImport
+    '/_authenticated/books/': {
+      id: '/_authenticated/books/'
+      path: '/books'
+      fullPath: '/books/'
+      preLoaderRoute: typeof AuthenticatedBooksIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/projects/$projectId': {
-      id: '/_authenticated/projects/$projectId'
-      path: '/projects/$projectId'
-      fullPath: '/projects/$projectId'
-      preLoaderRoute: typeof AuthenticatedProjectsProjectIdRouteRouteImport
+    '/_authenticated/books/$bookId': {
+      id: '/_authenticated/books/$bookId'
+      path: '/books/$bookId'
+      fullPath: '/books/$bookId'
+      preLoaderRoute: typeof AuthenticatedBooksBookIdRouteRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/settings/profiles': {
@@ -321,104 +320,101 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthProviderCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/projects/$projectId/': {
-      id: '/_authenticated/projects/$projectId/'
+    '/_authenticated/books/$bookId/': {
+      id: '/_authenticated/books/$bookId/'
       path: '/'
-      fullPath: '/projects/$projectId/'
-      preLoaderRoute: typeof AuthenticatedProjectsProjectIdIndexRouteImport
-      parentRoute: typeof AuthenticatedProjectsProjectIdRouteRoute
+      fullPath: '/books/$bookId/'
+      preLoaderRoute: typeof AuthenticatedBooksBookIdIndexRouteImport
+      parentRoute: typeof AuthenticatedBooksBookIdRouteRoute
     }
-    '/_authenticated/projects/$projectId/about': {
-      id: '/_authenticated/projects/$projectId/about'
+    '/_authenticated/books/$bookId/about': {
+      id: '/_authenticated/books/$bookId/about'
       path: '/about'
-      fullPath: '/projects/$projectId/about'
-      preLoaderRoute: typeof AuthenticatedProjectsProjectIdAboutRouteImport
-      parentRoute: typeof AuthenticatedProjectsProjectIdRouteRoute
+      fullPath: '/books/$bookId/about'
+      preLoaderRoute: typeof AuthenticatedBooksBookIdAboutRouteImport
+      parentRoute: typeof AuthenticatedBooksBookIdRouteRoute
     }
-    '/_authenticated/projects/$projectId/viewer': {
-      id: '/_authenticated/projects/$projectId/viewer'
+    '/_authenticated/books/$bookId/viewer': {
+      id: '/_authenticated/books/$bookId/viewer'
       path: '/viewer'
-      fullPath: '/projects/$projectId/viewer'
-      preLoaderRoute: typeof AuthenticatedProjectsProjectIdViewerRouteImport
-      parentRoute: typeof AuthenticatedProjectsProjectIdRouteRoute
+      fullPath: '/books/$bookId/viewer'
+      preLoaderRoute: typeof AuthenticatedBooksBookIdViewerRouteImport
+      parentRoute: typeof AuthenticatedBooksBookIdRouteRoute
     }
-    '/_authenticated/projects/$projectId/stages/$stage': {
-      id: '/_authenticated/projects/$projectId/stages/$stage'
+    '/_authenticated/books/$bookId/stages/$stage': {
+      id: '/_authenticated/books/$bookId/stages/$stage'
       path: '/stages/$stage'
-      fullPath: '/projects/$projectId/stages/$stage'
-      preLoaderRoute: typeof AuthenticatedProjectsProjectIdStagesStageRouteImport
-      parentRoute: typeof AuthenticatedProjectsProjectIdRouteRoute
+      fullPath: '/books/$bookId/stages/$stage'
+      preLoaderRoute: typeof AuthenticatedBooksBookIdStagesStageRouteImport
+      parentRoute: typeof AuthenticatedBooksBookIdRouteRoute
     }
-    '/_authenticated/projects/$projectId/stages/$stage/': {
-      id: '/_authenticated/projects/$projectId/stages/$stage/'
+    '/_authenticated/books/$bookId/stages/$stage/': {
+      id: '/_authenticated/books/$bookId/stages/$stage/'
       path: '/'
-      fullPath: '/projects/$projectId/stages/$stage/'
-      preLoaderRoute: typeof AuthenticatedProjectsProjectIdStagesStageIndexRouteImport
-      parentRoute: typeof AuthenticatedProjectsProjectIdStagesStageRoute
+      fullPath: '/books/$bookId/stages/$stage/'
+      preLoaderRoute: typeof AuthenticatedBooksBookIdStagesStageIndexRouteImport
+      parentRoute: typeof AuthenticatedBooksBookIdStagesStageRoute
     }
-    '/_authenticated/projects/$projectId/stages/$stage/steps/$stepId': {
-      id: '/_authenticated/projects/$projectId/stages/$stage/steps/$stepId'
+    '/_authenticated/books/$bookId/stages/$stage/steps/$stepId': {
+      id: '/_authenticated/books/$bookId/stages/$stage/steps/$stepId'
       path: '/steps/$stepId'
-      fullPath: '/projects/$projectId/stages/$stage/steps/$stepId'
-      preLoaderRoute: typeof AuthenticatedProjectsProjectIdStagesStageStepsStepIdRouteImport
-      parentRoute: typeof AuthenticatedProjectsProjectIdStagesStageRoute
+      fullPath: '/books/$bookId/stages/$stage/steps/$stepId'
+      preLoaderRoute: typeof AuthenticatedBooksBookIdStagesStageStepsStepIdRouteImport
+      parentRoute: typeof AuthenticatedBooksBookIdStagesStageRoute
     }
   }
 }
 
-interface AuthenticatedProjectsProjectIdStagesStageRouteChildren {
-  AuthenticatedProjectsProjectIdStagesStageIndexRoute: typeof AuthenticatedProjectsProjectIdStagesStageIndexRoute
-  AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute: typeof AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute
+interface AuthenticatedBooksBookIdStagesStageRouteChildren {
+  AuthenticatedBooksBookIdStagesStageIndexRoute: typeof AuthenticatedBooksBookIdStagesStageIndexRoute
+  AuthenticatedBooksBookIdStagesStageStepsStepIdRoute: typeof AuthenticatedBooksBookIdStagesStageStepsStepIdRoute
 }
 
-const AuthenticatedProjectsProjectIdStagesStageRouteChildren: AuthenticatedProjectsProjectIdStagesStageRouteChildren =
+const AuthenticatedBooksBookIdStagesStageRouteChildren: AuthenticatedBooksBookIdStagesStageRouteChildren =
   {
-    AuthenticatedProjectsProjectIdStagesStageIndexRoute:
-      AuthenticatedProjectsProjectIdStagesStageIndexRoute,
-    AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute:
-      AuthenticatedProjectsProjectIdStagesStageStepsStepIdRoute,
+    AuthenticatedBooksBookIdStagesStageIndexRoute:
+      AuthenticatedBooksBookIdStagesStageIndexRoute,
+    AuthenticatedBooksBookIdStagesStageStepsStepIdRoute:
+      AuthenticatedBooksBookIdStagesStageStepsStepIdRoute,
   }
 
-const AuthenticatedProjectsProjectIdStagesStageRouteWithChildren =
-  AuthenticatedProjectsProjectIdStagesStageRoute._addFileChildren(
-    AuthenticatedProjectsProjectIdStagesStageRouteChildren,
+const AuthenticatedBooksBookIdStagesStageRouteWithChildren =
+  AuthenticatedBooksBookIdStagesStageRoute._addFileChildren(
+    AuthenticatedBooksBookIdStagesStageRouteChildren,
   )
 
-interface AuthenticatedProjectsProjectIdRouteRouteChildren {
-  AuthenticatedProjectsProjectIdAboutRoute: typeof AuthenticatedProjectsProjectIdAboutRoute
-  AuthenticatedProjectsProjectIdViewerRoute: typeof AuthenticatedProjectsProjectIdViewerRoute
-  AuthenticatedProjectsProjectIdIndexRoute: typeof AuthenticatedProjectsProjectIdIndexRoute
-  AuthenticatedProjectsProjectIdStagesStageRoute: typeof AuthenticatedProjectsProjectIdStagesStageRouteWithChildren
+interface AuthenticatedBooksBookIdRouteRouteChildren {
+  AuthenticatedBooksBookIdAboutRoute: typeof AuthenticatedBooksBookIdAboutRoute
+  AuthenticatedBooksBookIdViewerRoute: typeof AuthenticatedBooksBookIdViewerRoute
+  AuthenticatedBooksBookIdIndexRoute: typeof AuthenticatedBooksBookIdIndexRoute
+  AuthenticatedBooksBookIdStagesStageRoute: typeof AuthenticatedBooksBookIdStagesStageRouteWithChildren
 }
 
-const AuthenticatedProjectsProjectIdRouteRouteChildren: AuthenticatedProjectsProjectIdRouteRouteChildren =
+const AuthenticatedBooksBookIdRouteRouteChildren: AuthenticatedBooksBookIdRouteRouteChildren =
   {
-    AuthenticatedProjectsProjectIdAboutRoute:
-      AuthenticatedProjectsProjectIdAboutRoute,
-    AuthenticatedProjectsProjectIdViewerRoute:
-      AuthenticatedProjectsProjectIdViewerRoute,
-    AuthenticatedProjectsProjectIdIndexRoute:
-      AuthenticatedProjectsProjectIdIndexRoute,
-    AuthenticatedProjectsProjectIdStagesStageRoute:
-      AuthenticatedProjectsProjectIdStagesStageRouteWithChildren,
+    AuthenticatedBooksBookIdAboutRoute: AuthenticatedBooksBookIdAboutRoute,
+    AuthenticatedBooksBookIdViewerRoute: AuthenticatedBooksBookIdViewerRoute,
+    AuthenticatedBooksBookIdIndexRoute: AuthenticatedBooksBookIdIndexRoute,
+    AuthenticatedBooksBookIdStagesStageRoute:
+      AuthenticatedBooksBookIdStagesStageRouteWithChildren,
   }
 
-const AuthenticatedProjectsProjectIdRouteRouteWithChildren =
-  AuthenticatedProjectsProjectIdRouteRoute._addFileChildren(
-    AuthenticatedProjectsProjectIdRouteRouteChildren,
+const AuthenticatedBooksBookIdRouteRouteWithChildren =
+  AuthenticatedBooksBookIdRouteRoute._addFileChildren(
+    AuthenticatedBooksBookIdRouteRouteChildren,
   )
 
 interface AuthenticatedRouteChildren {
-  AuthenticatedProjectsProjectIdRouteRoute: typeof AuthenticatedProjectsProjectIdRouteRouteWithChildren
+  AuthenticatedBooksBookIdRouteRoute: typeof AuthenticatedBooksBookIdRouteRouteWithChildren
   AuthenticatedSettingsProfilesRoute: typeof AuthenticatedSettingsProfilesRoute
-  AuthenticatedProjectsIndexRoute: typeof AuthenticatedProjectsIndexRoute
+  AuthenticatedBooksIndexRoute: typeof AuthenticatedBooksIndexRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
-  AuthenticatedProjectsProjectIdRouteRoute:
-    AuthenticatedProjectsProjectIdRouteRouteWithChildren,
+  AuthenticatedBooksBookIdRouteRoute:
+    AuthenticatedBooksBookIdRouteRouteWithChildren,
   AuthenticatedSettingsProfilesRoute: AuthenticatedSettingsProfilesRoute,
-  AuthenticatedProjectsIndexRoute: AuthenticatedProjectsIndexRoute,
+  AuthenticatedBooksIndexRoute: AuthenticatedBooksIndexRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(

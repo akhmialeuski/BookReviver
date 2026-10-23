@@ -9,22 +9,22 @@ from bookreviver.domain.values import Renditions
 from tests.helpers.builders import make_page_stage, make_page_version
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import PageVersion, Project
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.entities import BookRecord, PageVersion
+    from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import PageStageKey
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.processing import ProcessingKit
 
 
 async def seed_head(
-    kit: ProcessingKit, project_id: ProjectId, key: PageStageKey, *, after: PageVersion, ready: bool = True
+    kit: ProcessingKit, book_id: BookId, key: PageStageKey, *, after: PageVersion, ready: bool = True
 ) -> PageVersion:
     """Commit a version of a stage that reads another version, and the record of the stage that names it as current.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param project_id: Identifier of the project of the page.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project of the page.
+    :type book_id: BookId
     :param key: The page and the stage the version and the record belong to.
     :type key: PageStageKey
     :param after: The version the new one reads, which an earlier stage made.
@@ -42,18 +42,18 @@ async def seed_head(
         state=VersionState.READY,
     )
 
-    def save_head(repos: BookRepositories, _project: Project) -> None:
+    def save_head(repos: BookRepositories, _book_record: BookRecord) -> None:
         """Add the version and save the record of the stage that names it as current.
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _project: Project of the book, which the work does not need.
-        :type _project: Project
+        :param _book_record: Project of the book, which the work does not need.
+        :type _book_record: BookRecord
         """
         repos.page_versions.add(version)
         repos.page_stages.save(
             make_page_stage(page_id=key.page_id, stage=key.stage, head_version_id=version.id, state=StageState.FRESH)
         )
 
-    await kit.uow().change_book(project_id, save_head)
+    await kit.uow().change_book(book_id, save_head)
     return version

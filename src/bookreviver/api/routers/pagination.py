@@ -18,29 +18,29 @@ from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.pagination import PaginationSectionBody, PaginationSectionSchema
 from bookreviver.domain.entities import PaginationSection
-from bookreviver.domain.ids import PaginationSectionId, ProjectId
+from bookreviver.domain.ids import BookId, PaginationSectionId
 from bookreviver.services.pagination import PaginationService
 
-PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
+BOOK_ID_DESCRIPTION: str = 'Identifier of the book'
 
-router = APIRouter(prefix='/projects', tags=['pagination'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
+router = APIRouter(prefix='/books', tags=['pagination'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 
 @dataclass(frozen=True)
 class SectionPath:
     """The identifiers in the address of one pagination section of a project.
 
-    :ivar project_id: Identifier of the project.
+    :ivar book_id: Identifier of the project.
     :ivar section_id: Identifier of the section.
     """
 
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)]
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     section_id: Annotated[PaginationSectionId, Path(description='Identifier of the pagination section')]
 
 
-@router.get('/{project_id}/pagination-sections')
+@router.get('/{book_id}/pagination-sections')
 async def list_pagination_sections(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     params: Annotated[Params, Depends()],
     actor: ActorDep,
     pagination: FromDishka[PaginationService],
@@ -48,8 +48,8 @@ async def list_pagination_sections(
     """List the pagination sections of a project in book order, which is the order of the pages they start at.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param params: Page number and size from the query.
     :type params: Params
     :param actor: The signed-in account.
@@ -60,12 +60,12 @@ async def list_pagination_sections(
     :rtype: Page[PaginationSectionSchema]
     """
     pager = Pager[PaginationSection, PaginationSectionSchema](params, PaginationSectionSchema.of)
-    return pager.page(await pagination.sections(actor, project_id, pager.request))
+    return pager.page(await pagination.sections(actor, book_id, pager.request))
 
 
-@router.post('/{project_id}/pagination-sections', status_code=status.HTTP_201_CREATED)
+@router.post('/{book_id}/pagination-sections', status_code=status.HTTP_201_CREATED)
 async def create_pagination_section(
-    project_id: Annotated[ProjectId, Path(description=PROJECT_ID_DESCRIPTION)],
+    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     body: PaginationSectionBody,
     actor: ActorDep,
     pagination: FromDishka[PaginationService],
@@ -76,8 +76,8 @@ async def create_pagination_section(
     pages starts at that page already, or when a number does not fit the style, such as 4000 in Roman numerals.
 
     \N{FORM FEED}
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project.
+    :type book_id: BookId
     :param body: The first page, the name, the style, the first number, the prefix, the display and the kinds.
     :type body: PaginationSectionBody
     :param actor: The signed-in account.
@@ -87,10 +87,10 @@ async def create_pagination_section(
     :returns: The section as stored.
     :rtype: PaginationSectionSchema
     """
-    return PaginationSectionSchema.of(await pagination.add(actor, project_id, body.to_draft()))
+    return PaginationSectionSchema.of(await pagination.add(actor, book_id, body.to_draft()))
 
 
-@router.put('/{project_id}/pagination-sections/{section_id}')
+@router.put('/{book_id}/pagination-sections/{section_id}')
 async def put_pagination_section(
     address: Annotated[SectionPath, Depends()],
     body: PaginationSectionBody,
@@ -114,11 +114,11 @@ async def put_pagination_section(
     :returns: The section as stored.
     :rtype: PaginationSectionSchema
     """
-    section = await pagination.update(actor, address.project_id, address.section_id, body.to_draft())
+    section = await pagination.update(actor, address.book_id, address.section_id, body.to_draft())
     return PaginationSectionSchema.of(section)
 
 
-@router.delete('/{project_id}/pagination-sections/{section_id}', status_code=status.HTTP_204_NO_CONTENT)
+@router.delete('/{book_id}/pagination-sections/{section_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_pagination_section(
     address: Annotated[SectionPath, Depends()], actor: ActorDep, pagination: FromDishka[PaginationService]
 ) -> None:
@@ -132,4 +132,4 @@ async def delete_pagination_section(
     :param pagination: Pagination service of the request.
     :type pagination: PaginationService
     """
-    await pagination.remove(actor, address.project_id, address.section_id)
+    await pagination.remove(actor, address.book_id, address.section_id)

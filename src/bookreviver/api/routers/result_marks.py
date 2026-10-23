@@ -15,10 +15,10 @@ from bookreviver.api.schemas.processing import PageVersionSchema
 from bookreviver.api.schemas.result_marks import ResultMarkForm
 from bookreviver.services.result_marks import ResultMarksService
 
-router = APIRouter(prefix='/projects', tags=['result-marks'], route_class=DishkaRoute)
+router = APIRouter(prefix='/books', tags=['result-marks'], route_class=DishkaRoute)
 
 
-@router.put('/{project_id}/pages/{page_id}/versions/{version_id}/mark')
+@router.put('/{book_id}/pages/{page_id}/versions/{version_id}/mark')
 async def put_mark(
     address: Annotated[VersionPath, Depends()],
     form: ResultMarkForm,
@@ -45,5 +45,5 @@ async def put_mark(
     :returns: The version with its mark and comment.
     :rtype: PageVersionSchema
     """
-    version = await marks.set(actor, address.project_id, address.page_id, address.version_id, form.to_note())
-    return PageVersionSchema.of(version, address.project_id, request)
+    version = await marks.set(actor, address.book_id, address.page_id, address.version_id, form.to_note())
+    return PageVersionSchema.of(version, address.book_id, request)

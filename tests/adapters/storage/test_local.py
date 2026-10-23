@@ -10,8 +10,8 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.ids import JobId, PageId, ProjectId, SourceId
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.ids import BookId, JobId, PageId, SourceId
+from bookreviver.domain.keys import BookKeys
 from tests.helpers.builders import make_page_version
 from tests.helpers.storage import WriterFailedError, abandon_write, upload
 
@@ -23,9 +23,9 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 STORE_TYPES_ARG: str = 'store_types'
-PROJECT_ID: ProjectId = ProjectId(uuid4())
-OTHER_PROJECT_ID: ProjectId = ProjectId(uuid4())
-KEYS: ProjectKeys = ProjectKeys(PROJECT_ID)
+BOOK_ID: BookId = BookId(uuid4())
+OTHER_BOOK_ID: BookId = BookId(uuid4())
+KEYS: BookKeys = BookKeys(BOOK_ID)
 JOB_ID: JobId = JobId(uuid4())
 SOURCE_ID: SourceId = SourceId(uuid4())
 PAGE_NAME: str = 'page.png'
@@ -45,9 +45,9 @@ class TestLocalSourceStore:
         """
         store = LocalSourceStore(root=tmp_path)
 
-        await store.stage(PROJECT_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await store.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
 
-        assert (tmp_path / 'projects' / str(PROJECT_ID) / 'incoming' / str(JOB_ID) / PAGE_NAME).read_bytes() == (
+        assert (tmp_path / 'projects' / str(BOOK_ID) / 'incoming' / str(JOB_ID) / PAGE_NAME).read_bytes() == (
             PAGE_CONTENT
         )
 
@@ -58,11 +58,11 @@ class TestLocalSourceStore:
         :type tmp_path: Path
         """
         store = LocalSourceStore(root=tmp_path)
-        await store.stage(PROJECT_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await store.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
 
-        await store.promote(PROJECT_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+        await store.promote(BOOK_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
-        sources_dir = tmp_path / 'projects' / str(PROJECT_ID) / 'sources'
+        sources_dir = tmp_path / 'projects' / str(BOOK_ID) / 'sources'
         assert [path.name for path in sources_dir.iterdir()] == [str(SOURCE_ID)]
         assert (sources_dir / str(SOURCE_ID) / PAGE_NAME).read_bytes() == PAGE_CONTENT
 
@@ -73,28 +73,28 @@ class TestLocalSourceStore:
         :type tmp_path: Path
         """
         store = LocalSourceStore(root=tmp_path)
-        await store.stage(PROJECT_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await store.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
         sources_dir = tmp_path / KEYS.sources_area
         (sources_dir / str(SOURCE_ID)).mkdir(parents=True)
         (sources_dir / str(SOURCE_ID) / PAGE_NAME).write_bytes(PAGE_CONTENT)
 
         with pytest.raises(ConflictError):
-            await store.promote(PROJECT_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+            await store.promote(BOOK_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
         assert [path.name for path in sources_dir.iterdir()] == [str(SOURCE_ID)]
 
-    async def test_discarding_all_staged_removes_the_directory_of_a_project_left_empty(self, tmp_path: Path) -> None:
+    async def test_discarding_all_staged_removes_the_directory_of_a_book_left_empty(self, tmp_path: Path) -> None:
         """Verify a project with an upload only leaves no directory, and a project with a source keeps its sources.
 
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
         store = LocalSourceStore(root=tmp_path)
-        other_sources_dir = tmp_path / ProjectKeys(OTHER_PROJECT_ID).sources_area
-        await store.stage(PROJECT_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
-        await store.stage(OTHER_PROJECT_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
-        await store.promote(OTHER_PROJECT_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
-        await store.stage(OTHER_PROJECT_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        other_sources_dir = tmp_path / BookKeys(OTHER_BOOK_ID).sources_area
+        await store.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await store.stage(OTHER_BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await store.promote(OTHER_BOOK_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+        await store.stage(OTHER_BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
 
         await store.discard_all_staged()
 
@@ -132,7 +132,7 @@ class TestLocalAssetStore:
 
         assert [path async for path in anyio.Path(tmp_path / FILE_KEY).parent.iterdir()] == []
 
-    async def test_project_deletion_keeps_uploads_and_sources(self, tmp_path: Path) -> None:
+    async def test_book_deletion_keeps_uploads_and_sources(self, tmp_path: Path) -> None:
         """Verify ``incoming/`` and ``sources/`` stay, since removing them is the source store's job.
 
         :param tmp_path: Temporary directory of the test.
@@ -140,23 +140,23 @@ class TestLocalAssetStore:
         """
         sources = LocalSourceStore(root=tmp_path)
         assets = LocalAssetStore(root=tmp_path)
-        await sources.stage(PROJECT_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
-        await sources.promote(PROJECT_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
-        await sources.stage(PROJECT_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await sources.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await sources.promote(BOOK_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+        await sources.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
         async with assets.writable(FILE_KEY) as path:
             path.write_bytes(PAGE_CONTENT)
 
-        await assets.delete_project(PROJECT_ID)
+        await assets.delete_book(BOOK_ID)
 
-        project_dir = tmp_path / 'projects' / str(PROJECT_ID)
-        assert sorted(path.name for path in project_dir.iterdir()) == ['incoming', 'sources']
+        book_dir = tmp_path / 'projects' / str(BOOK_ID)
+        assert sorted(path.name for path in book_dir.iterdir()) == ['incoming', 'sources']
 
     @pytest.mark.parametrize(
         STORE_TYPES_ARG,
         [(LocalSourceStore, LocalAssetStore), (LocalAssetStore, LocalSourceStore)],
         ids=['sources-first', 'assets-first'],
     )
-    async def test_both_stores_leave_no_project_directory(
+    async def test_both_stores_leave_no_book_directory(
         self, tmp_path: Path, store_types: tuple[type[LocalSourceStore | LocalAssetStore], ...]
     ) -> None:
         """Verify deleting a project from both stores, in either order, leaves nothing of it on disk.
@@ -168,12 +168,12 @@ class TestLocalAssetStore:
         """
         sources = LocalSourceStore(root=tmp_path)
         assets = LocalAssetStore(root=tmp_path)
-        await sources.stage(PROJECT_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
-        await sources.promote(PROJECT_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+        await sources.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await sources.promote(BOOK_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
         async with assets.writable(FILE_KEY) as path:
             path.write_bytes(PAGE_CONTENT)
 
         for store_type in store_types:
-            await store_type(root=tmp_path).delete_project(PROJECT_ID)
+            await store_type(root=tmp_path).delete_book(BOOK_ID)
 
         assert list((tmp_path / 'projects').iterdir()) == []

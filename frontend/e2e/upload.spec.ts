@@ -45,7 +45,7 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
   const email = `reader-${Date.now()}@example.com`;
 
   await test.step('a visitor is sent to the sign-in page', async () => {
-    await page.goto('/projects');
+    await page.goto('/books');
     await expect(page).toHaveURL(/\/sign-in\?redirect=%2Fprojects$/);
   });
 

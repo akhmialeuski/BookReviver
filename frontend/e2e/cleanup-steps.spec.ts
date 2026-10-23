@@ -4,8 +4,8 @@ import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   stepIdsOf,
   uploadFolder,
@@ -37,7 +37,7 @@ test.use({ viewport: { width: 1280, height: 1000 } });
 /** The flags the server puts on each page of the book at a step of Cleanup, in the order of the book. */
 async function flagsAt(page: Page, stepId: string): Promise<string[][]> {
   const listed = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/stages/cleanup/pages?step=${stepId}&size=100`,
+    `/api/v1/books/${openBookId(page)}/stages/cleanup/pages?step=${stepId}&size=100`,
   );
   const items = ((await listed.json()) as { items: { step: { flags: string[] } }[] }).items;
   return items.map((item) => item.step.flags);
@@ -63,7 +63,7 @@ test('the steps of Cleanup have a bar and a workspace each, Thickness is set and
     await openLibrary(page);
     await createBook(page, 'A book to clean in steps');
     await uploadFolder(page, folder, PAGES);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     await markPagesAsText(page);
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);

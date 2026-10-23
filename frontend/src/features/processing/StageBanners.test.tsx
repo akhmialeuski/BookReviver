@@ -16,9 +16,9 @@ const sdk = vi.hoisted(() => ({ run: vi.fn(), jobs: vi.fn(), scans: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  runStageApiV1ProjectsProjectIdStagesStageRunPost: sdk.run,
-  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
-  listScansApiV1ProjectsProjectIdScansGet: sdk.scans,
+  runStageApiV1BooksBookIdStagesStageRunPost: sdk.run,
+  listBookJobsApiV1BooksBookIdJobsGet: sdk.jobs,
+  listScansApiV1BooksBookIdScansGet: sdk.scans,
 }));
 
 const EMPTY = { items: [], total: 0, page: 1, size: 20, pages: 1 };

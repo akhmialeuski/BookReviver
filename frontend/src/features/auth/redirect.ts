@@ -6,7 +6,7 @@
  * a path of this application is accepted.
  */
 
-export const DEFAULT_LANDING = '/projects';
+export const DEFAULT_LANDING = '/books';
 
 /** Return `value` when it is a path inside this application, and the default landing path otherwise. */
 export function safeRedirect(value: unknown): string {

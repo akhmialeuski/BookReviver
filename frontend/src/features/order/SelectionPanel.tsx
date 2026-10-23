@@ -88,7 +88,7 @@ function BlurField({
 }
 
 export function SelectionPanel({
-  projectId,
+  bookId,
   selected,
   thumbnails,
   gaps,
@@ -104,7 +104,7 @@ export function SelectionPanel({
   onShowPlace,
   pagination,
 }: {
-  projectId: string;
+  bookId: string;
   /** The selected pages in book order. */
   selected: readonly PageSchema[];
   /** The thumbnail of each page at the Order stage by the identifier of the page; a page without one has no entry. */
@@ -127,7 +127,7 @@ export function SelectionPanel({
   pagination: React.ReactNode;
 }): React.JSX.Element {
   const text = MESSAGES.order.panel;
-  const update = useUpdatePages(projectId);
+  const update = useUpdatePages(bookId);
   const [shown, setShown] = useState(-1);
   // The changes made and not yet settled, which the controls show at once, since a control that waits for the cache
   // to be read back jumps to its old value for a moment
@@ -247,7 +247,7 @@ export function SelectionPanel({
           ) : null}
 
           {leafPages(selected).length === selected.length ? (
-            <BlankImageBlock projectId={projectId} selected={selected} blankPages={blankPages} />
+            <BlankImageBlock bookId={bookId} selected={selected} blankPages={blankPages} />
           ) : null}
 
           <div className="grid gap-1">

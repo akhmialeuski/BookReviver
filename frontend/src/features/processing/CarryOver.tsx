@@ -38,7 +38,7 @@ export function CarryOver({
   result,
   onResult,
 }: {
-  processing: Pick<Processing, 'projectId' | 'stage'>;
+  processing: Pick<Processing, 'bookId' | 'stage'>;
   pageId: string;
   stepId: string;
   /** What is carried is called, such as the shape. */
@@ -52,15 +52,15 @@ export function CarryOver({
   /** Called with what a carry-over did, and with null once it was taken back. */
   onResult: (result: CarryOverSchema | null) => void;
 }): React.JSX.Element {
-  const { projectId, stage } = processing;
-  const carry = useCarryShape(projectId, onResult);
-  const undo = useUndo(projectId);
+  const { bookId, stage } = processing;
+  const carry = useCarryShape(bookId, onResult);
+  const undo = useUndo(bookId);
   const others = [...selected].filter((id) => id !== pageId);
   const first = result?.changes[0];
 
   const send = (scope: CarryScope): void => {
     const body = { scope, overwrite, ...(scope === 'selected' ? { page_ids: others } : {}) };
-    const path = { project_id: projectId, page_id: pageId, stage, step_id: stepId };
+    const path = { book_id: bookId, page_id: pageId, stage, step_id: stepId };
     carry.mutate({ path, body });
   };
 
@@ -112,7 +112,7 @@ export function CarryOver({
                 undo.mutate(
                   {
                     path: {
-                      project_id: projectId,
+                      book_id: bookId,
                       page_id: first.page_id,
                       stage,
                       step_id: stepId,

@@ -3,9 +3,9 @@ import path from 'node:path';
 import { type Browser, type BrowserContext, expect } from '@playwright/test';
 import {
   createBook,
+  openBookId,
   openLibrary,
   openOrderStage,
-  openProjectId,
   readPlace,
   uploadFolder,
   writePagesFolder,
@@ -47,9 +47,9 @@ async function openTabs(
   browser: Browser,
   contexts: BrowserContext[],
   storageState: Awaited<ReturnType<BrowserContext['storageState']>>,
-  projectId: string,
+  bookId: string,
 ): Promise<void> {
-  const eventsPath = `/api/v1/projects/${projectId}/events`;
+  const eventsPath = `/api/v1/books/${bookId}/events`;
   await Promise.all(
     Array.from({ length: TABS }, async () => {
       const context = await browser.newContext({ storageState });
@@ -59,7 +59,7 @@ async function openTabs(
       const answered = tab.waitForResponse((response) => response.url().endsWith(eventsPath), {
         timeout: STREAMS_TIMEOUT_MS,
       });
-      await tab.goto(`/projects/${projectId}/about`);
+      await tab.goto(`/books/${bookId}/about`);
       const response = await answered;
       expect(response.status()).toBe(200);
       expect(response.headers()['content-type']).toContain('text/event-stream');
@@ -79,12 +79,12 @@ test('twenty open tabs of a book do not hinder saving the reading place and edit
     await openLibrary(page);
     await createBook(page, 'A book in many tabs');
     await uploadFolder(page, folder, PAGES);
-    const projectId = openProjectId(page);
-    await page.goto(`/projects/${projectId}/stages/geometry`);
+    const bookId = openBookId(page);
+    await page.goto(`/books/${bookId}/stages/geometry`);
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
 
     await test.step(`the book is open in ${TABS} tabs, each with its event stream`, async () => {
-      await openTabs(browser, contexts, await page.context().storageState(), projectId);
+      await openTabs(browser, contexts, await page.context().storageState(), bookId);
       expect(contexts).toHaveLength(TABS);
     });
 
@@ -94,14 +94,14 @@ test('twenty open tabs of a book do not hinder saving the reading place and edit
       const saved = page.waitForResponse(
         (response) =>
           response.request().method() === 'PUT' &&
-          response.url().endsWith(`/api/v1/projects/${projectId}/place`) &&
+          response.url().endsWith(`/api/v1/books/${bookId}/place`) &&
           (response.request().postData() ?? '').includes(second),
         { timeout: SAVE_TIMEOUT_MS },
       );
       await page.getByTestId('strip-page').nth(1).click();
       await expect(page.getByTestId('canvas-caption')).toContainText(`2 of ${PAGES}`);
       expect((await saved).ok()).toBe(true);
-      expect((await readPlace(page, projectId)).place?.page_id).toBe(second);
+      expect((await readPlace(page, bookId)).place?.page_id).toBe(second);
     });
 
     await test.step('a page is edited in the normal time', async () => {

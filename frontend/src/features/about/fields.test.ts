@@ -12,26 +12,26 @@ import {
   planSave,
   toFields,
 } from './fields';
-import { projectWith } from './fixtures';
+import { bookWith } from './fixtures';
 
 /**
  * What the About tab sends for the changes made so far, and how it reads the text of its list fields.
  */
 
-const SAVED = toFields(projectWith());
+const SAVED = toFields(bookWith());
 
 describe('toFields', () => {
   it('holds every editable field once and leaves out the derived author', () => {
-    const fields = toFields(projectWith({ primary_author: 'Yanka Kupala' }));
+    const fields = toFields(bookWith({ primary_author: 'Yanka Kupala' }));
 
     expect(Object.keys(fields).sort()).toEqual([...FIELD_KEYS].sort());
     expect(fields).not.toHaveProperty('primary_author');
   });
 
   it('takes the image policy from the book itself', () => {
-    const project = { ...projectWith(), image_policy: 'lossless' } as const;
+    const book = { ...bookWith(), image_policy: 'lossless' } as const;
 
-    expect(toFields(project)).toMatchObject({ image_policy: 'lossless' });
+    expect(toFields(book)).toMatchObject({ image_policy: 'lossless' });
   });
 });
 
@@ -50,7 +50,7 @@ describe('planSave', () => {
   });
 
   it('sends a field the person emptied as an empty value, which clears it', () => {
-    const saved = toFields(projectWith({ subtitle: 'Tales', height_cm: 22 }));
+    const saved = toFields(bookWith({ subtitle: 'Tales', height_cm: 22 }));
 
     expect(planSave(saved, { subtitle: '', height_cm: null }).patch).toEqual({
       subtitle: '',
@@ -59,7 +59,7 @@ describe('planSave', () => {
   });
 
   it('sends a list whole when an entry of it changed', () => {
-    const saved = toFields(projectWith({ contributors: [{ name: 'Ivan', role: 'aut' }] }));
+    const saved = toFields(bookWith({ contributors: [{ name: 'Ivan', role: 'aut' }] }));
     const same = planSave(saved, { contributors: [{ role: 'aut', name: 'Ivan' }] });
     const edited = planSave(saved, {
       contributors: [

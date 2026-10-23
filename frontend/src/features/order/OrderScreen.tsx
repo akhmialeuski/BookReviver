@@ -57,23 +57,23 @@ const NO_SECTIONS: readonly PaginationSectionSchema[] = [];
 const NOTHING_SELECTED: SelectionState = { selected: new Set(), anchorId: null };
 
 export function OrderScreen({
-  projectId,
+  bookId,
   search,
   onSearchChange,
 }: {
-  projectId: string;
+  bookId: string;
   search: StageSearch;
   /** Merge changes into the search params of the route; an undefined value takes the param out. */
   onSearchChange: (changes: Partial<StageSearch>) => void;
 }): React.JSX.Element {
   const navigate = useNavigate();
-  const manifest = useManifest(projectId);
-  const movePages = useMovePages(projectId);
-  const createPages = useCreatePages(projectId);
-  const sections = useSections(projectId);
+  const manifest = useManifest(bookId);
+  const movePages = useMovePages(bookId);
+  const createPages = useCreatePages(bookId);
+  const sections = useSections(bookId);
   const pages = manifest.data ?? NO_PAGES;
   // Every picture of the screen is the page at this stage, which the rows give, and never the latest result of the book
-  const rows = useStageRows(projectId, 'page-order');
+  const rows = useStageRows(bookId, 'page-order');
   const thumbnails = useMemo(
     () => thumbnailsOf(joinRows(pages, rows.data ?? NO_ROWS)),
     [pages, rows.data],
@@ -127,7 +127,7 @@ export function OrderScreen({
     [pages, sections.data],
   );
   const sectionOfPage = useMemo(() => spanOfPages(spans), [spans]);
-  const preview = usePreviewLabels(projectId, pages, draft);
+  const preview = usePreviewLabels(bookId, pages, draft);
   // The grid is a step behind the server while a change is in flight or a read is on its way
   const busy = useIsMutating() > 0 || manifest.isFetching || preview.isFetching;
 
@@ -204,14 +204,14 @@ export function OrderScreen({
         onSelect={select}
         onOpen={(pageId) =>
           void navigate({
-            to: '/projects/$projectId/viewer',
-            params: { projectId },
+            to: '/books/$bookId/viewer',
+            params: { bookId },
             search: { page: pageId },
           })
         }
         onMove={(ids, anchor) =>
           movePages.mutate({
-            path: { project_id: projectId },
+            path: { book_id: bookId },
             body: { page_ids: [...ids], ...anchorBody(anchor) },
           })
         }
@@ -223,7 +223,7 @@ export function OrderScreen({
   const panel =
     draft === null ? (
       <SelectionPanel
-        projectId={projectId}
+        bookId={bookId}
         selected={selectedPages}
         thumbnails={thumbnails}
         gaps={gaps}
@@ -242,7 +242,7 @@ export function OrderScreen({
             <ErrorAlert message={describeError(sections.error)} />
           ) : sections.data === undefined ? null : (
             <PaginationPanel
-              projectId={projectId}
+              bookId={bookId}
               pages={pages}
               spans={spans}
               selectedId={selectedIds[0]}
@@ -252,7 +252,7 @@ export function OrderScreen({
       />
     ) : (
       <NumberingPanel
-        projectId={projectId}
+        bookId={bookId}
         pages={pages}
         draft={draft}
         preview={preview}
@@ -268,18 +268,14 @@ export function OrderScreen({
     <>
       <StageWorkspace strip={null} canvas={canvas} panel={panel} />
       <MovePagesDialog
-        projectId={projectId}
+        bookId={bookId}
         pages={pages}
         thumbnails={thumbnails}
         target={moveTarget}
         onClose={() => setMoveTarget(null)}
       />
-      <AttachDialog projectId={projectId} page={attachPage} onClose={() => setAttachPage(null)} />
-      <DeletePagesDialog
-        projectId={projectId}
-        pageIds={deleteIds}
-        onClose={() => setDeleteIds(null)}
-      />
+      <AttachDialog bookId={bookId} page={attachPage} onClose={() => setAttachPage(null)} />
+      <DeletePagesDialog bookId={bookId} pageIds={deleteIds} onClose={() => setDeleteIds(null)} />
     </>
   );
 }

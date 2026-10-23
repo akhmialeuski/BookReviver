@@ -4,9 +4,9 @@ import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openBookId,
   openLibrary,
   openOrderStage,
-  openProjectId,
   setKind,
   snap,
   uploadFolder,
@@ -45,7 +45,7 @@ interface ListedPage {
 
 /** Read the pages of the open book as the API lists them, each with its picture at the Order stage from the rows. */
 async function listPages(page: Page): Promise<ListedPage[]> {
-  const book = `/api/v1/projects/${openProjectId(page)}`;
+  const book = `/api/v1/books/${openBookId(page)}`;
   const listed = await page.request.get(`${book}/pages?size=100`);
   const items = ((await listed.json()) as { items: Omit<ListedPage, 'latest'>[] }).items;
   const rowed = await page.request.get(`${book}/stages/page-order/pages?size=100`);
@@ -158,7 +158,7 @@ test('a blank scan gets a leaf of the paper of the book in its place, and the sc
     await block.getByRole('radio', { name: 'Paper of the book' }).click();
     await block.getByRole('button', { name: 'Apply to all 2 Blank pages' }).click();
     await waitForImages(page, BLANK_POSITIONS, 'paper', true);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     await expect(tiles.nth(2)).toContainText('Blank');
     // The grid itself draws the leaf of every blank page, which is its picture at the Order stage and not the result of
     // Geometry the manifest names, with no reload of the screen

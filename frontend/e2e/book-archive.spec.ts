@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
   createBook,
-  openProjectId,
+  openBookId,
   readPlace,
   registerAndSignIn,
   snap,
@@ -24,7 +24,7 @@ test('a downloaded book is imported by another account and opens where it was le
   browser,
 }) => {
   const folder = await writePagesFolder(PAGES);
-  let projectId = '';
+  let bookId = '';
   let archive = '';
   let title = '';
 
@@ -32,18 +32,18 @@ test('a downloaded book is imported by another account and opens where it was le
     await registerAndSignIn(page);
     title = await createBook(page, WORDS);
     await uploadFolder(page, folder, PAGES);
-    projectId = openProjectId(page);
-    await page.goto(`/projects/${projectId}/stages/geometry`);
+    bookId = openBookId(page);
+    await page.goto(`/books/${bookId}/stages/geometry`);
     await expect(page.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
     await page.getByTestId('strip-page').nth(2).click();
     await expect(page.getByTestId('canvas-caption')).toContainText('3 of 6');
     await expect
-      .poll(async () => (await readPlace(page, projectId)).place)
+      .poll(async () => (await readPlace(page, bookId)).place)
       .toMatchObject({ mode: 'workspace', stage: 'geometry' });
   });
 
   await test.step('the book is downloaded from its About tab as one archive named after it', async () => {
-    await page.goto(`/projects/${projectId}/about`);
+    await page.goto(`/books/${bookId}/about`);
     const link = page.getByRole('link', { name: 'Download the book' });
     await expect(link).toBeVisible();
     await snap(page, 'book-archive-download');
@@ -74,8 +74,8 @@ test('a downloaded book is imported by another account and opens where it was le
     await reader.getByLabel('Archive of a book').setInputFiles(archive);
 
     await expect(reader).toHaveURL(/\/stages\/geometry/);
-    const copyId = openProjectId(reader);
-    expect(copyId).not.toBe(projectId);
+    const copyId = openBookId(reader);
+    expect(copyId).not.toBe(bookId);
     await expect(reader.getByTestId('viewer-canvas')).toHaveAttribute('data-state', 'ready');
     await expect(reader.getByTestId('canvas-caption')).toContainText('3 of 6');
     await expect(reader.getByTestId('strip-page').nth(2).locator('img')).toBeVisible();
@@ -84,8 +84,8 @@ test('a downloaded book is imported by another account and opens where it was le
     await snap(reader, 'book-archive-imported');
 
     await reader.getByRole('link', { name: 'Library', exact: true }).click();
-    await expect(reader.getByTestId('project-card')).toHaveCount(1);
-    await expect(reader.getByTestId('project-card')).toContainText(title);
+    await expect(reader.getByTestId('book-card')).toHaveCount(1);
+    await expect(reader.getByTestId('book-card')).toContainText(title);
     await other.close();
   });
 });

@@ -31,9 +31,9 @@ from bookreviver.domain.ids import RecipeProfileId
 from bookreviver.domain.values import RecipeDraft, RecipeKey, Slice
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, Project, Recipe
+    from bookreviver.domain.entities import Actor, BookRecord, Recipe
     from bookreviver.domain.enums import RecipeKind, Stage
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import ProfileDraft, SliceRequest
     from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
@@ -292,9 +292,7 @@ class RecipeProfiles:
 
         return await self._uow.change(work)
 
-    async def link(
-        self, actor: Actor, project_id: ProjectId, key: RecipeKey, profile_id: RecipeProfileId | None
-    ) -> Recipe:
+    async def link(self, actor: Actor, book_id: BookId, key: RecipeKey, profile_id: RecipeProfileId | None) -> Recipe:
         """Record which profile a recipe of a book was made from, or that it was made from none.
 
         The steps of the recipe do not change and no page goes stale. A book that saves its steps as a new profile uses
@@ -302,8 +300,8 @@ class RecipeProfiles:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param key: The stage and the identifier of the recipe, which must belong to that stage.
         :type key: RecipeKey
         :param profile_id: Identifier of the profile, or None to unlink the recipe.
@@ -314,18 +312,18 @@ class RecipeProfiles:
                                account has no such profile.
         :raises InvalidParametersError: If the profile is for another stage than the recipe.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
         profile = (
             None if profile_id is None else await self._uow.read(lambda repos: self._owned(repos, actor, profile_id))
         )
 
-        def work(repos: BookRepositories, _project: Project) -> Recipe:
+        def work(repos: BookRepositories, _book_record: BookRecord) -> Recipe:
             """Check the recipe and the stage of the profile, and store the recipe with its new link.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it, which the work does not need.
-            :type _project: Project
+            :param _book_record: The project as the change finds it, which the work does not need.
+            :type _book_record: BookRecord
             :returns: The recipe as stored.
             :rtype: Recipe
             :raises NotFoundError: If the project has no such recipe of the stage.
@@ -338,7 +336,7 @@ class RecipeProfiles:
                 )
             return repos.recipes.update(evolve(recipe, profile_id=profile_id))
 
-        return await self._uow.change_book(project_id, work)
+        return await self._uow.change_book(book_id, work)
 
     async def rename(self, actor: Actor, profile_id: RecipeProfileId, name: str) -> RecipeProfile:
         """Give a profile another name.
@@ -418,24 +416,24 @@ class RecipeProfiles:
         """
         await self._uow.read(lambda repos: self._owned(repos, actor, profile_id))
 
-        def unlink(repos: BookRepositories, _project: Project) -> None:
+        def unlink(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Clear the link of every recipe of the book that was made from the profile.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it, which the work does not need.
-            :type _project: Project
+            :param _book_record: The project as the change finds it, which the work does not need.
+            :type _book_record: BookRecord
             """
             for recipe in repos.recipes.list_all():
                 if recipe.profile_id == profile_id:
                     repos.recipes.update(evolve(recipe, profile_id=None))
 
-        for project_id in await self._owned_books(actor):
-            await self._uow.change_book(project_id, unlink)
+        for book_id in await self._owned_books(actor):
+            await self._uow.change_book(book_id, unlink)
         await self._uow.change(lambda repos: repos.recipe_profiles.delete(profile_id))
 
     async def apply(
-        self, actor: Actor, project_id: ProjectId, profile_id: RecipeProfileId, *, kind: RecipeKind
+        self, actor: Actor, book_id: BookId, profile_id: RecipeProfileId, *, kind: RecipeKind
     ) -> AppliedProfile:
         """Put the steps of a profile into the recipe of one kind of page of the profile's stage, and link it.
 
@@ -445,8 +443,8 @@ class RecipeProfiles:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param profile_id: Identifier of the profile.
         :type profile_id: RecipeProfileId
         :param kind: The kind of page whose recipe takes the steps.
@@ -456,18 +454,18 @@ class RecipeProfiles:
         :raises NotFoundError: If the account has no such profile or project, or the stage has no recipe.
         :raises InvalidParametersError: If no step of the profile can run here, or a step no longer fits its processor.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
         profile = await self._uow.read(lambda repos: self._owned(repos, actor, profile_id))
         steps, missing = self._recipes.installed(profile.steps)
         if missing and not any(step.enabled for step in steps):
             raise InvalidParametersError(NOTHING_TO_APPLY.format(keys=KEY_SEPARATOR.join(missing)))
-        recipe = await self._recipes.of_kind(project_id, profile.stage, kind)
+        recipe = await self._recipes.of_kind(book_id, profile.stage, kind)
         # The steps were checked when the profile was saved, and rules may have been added to the processors since
         draft = RecipeDraft(steps=steps, order=OrderMode.FREE, profile_id=profile.id)
-        applied = await self._put(actor, project_id, RecipeKey(stage=profile.stage, recipe_id=recipe.id), draft)
+        applied = await self._put(actor, book_id, RecipeKey(stage=profile.stage, recipe_id=recipe.id), draft)
         return AppliedProfile(recipe=applied, missing_processors=missing)
 
-    async def reset(self, actor: Actor, project_id: ProjectId, key: RecipeKey) -> Recipe:
+    async def reset(self, actor: Actor, book_id: BookId, key: RecipeKey) -> Recipe:
         """Put the steps a recipe starts with back into it, and mark the pages it processed stale.
 
         The steps are those of the account's default profile for the stage when the recipe is the one of text pages and
@@ -479,8 +477,8 @@ class RecipeProfiles:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param key: The stage the request names and the identifier of the recipe, which must belong to that stage.
         :type key: RecipeKey
         :returns: The recipe as stored.
@@ -488,22 +486,22 @@ class RecipeProfiles:
         :raises NotFoundError: If the actor has no such project, the project has no such recipe of the stage, or the
                                stage has no steps by default.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
         recipe = await self._uow.read_book(
-            project_id, lambda repos: self._recipes.get(repos, key.recipe_id, stage=key.stage)
+            book_id, lambda repos: self._recipes.get(repos, key.recipe_id, stage=key.stage)
         )
-        default = await self._recipes.default_profile(project_id, key.stage)
-        return await self._put(actor, project_id, key, self._recipes.default_draft(key.stage, recipe.kind, default))
+        default = await self._recipes.default_profile(book_id, key.stage)
+        return await self._put(actor, book_id, key, self._recipes.default_draft(key.stage, recipe.kind, default))
 
-    async def _put(self, actor: Actor, project_id: ProjectId, key: RecipeKey, draft: RecipeDraft) -> Recipe:
+    async def _put(self, actor: Actor, book_id: BookId, key: RecipeKey, draft: RecipeDraft) -> Recipe:
         """Put the steps of a draft into a recipe, and link the recipe to the profile the draft names, or to none.
 
         Called outside the work of any transaction, since the two steps it takes each open one.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param key: The stage and the identifier of the recipe.
         :type key: RecipeKey
         :param draft: The steps, and the profile they come from.
@@ -515,10 +513,10 @@ class RecipeProfiles:
         :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
                                         usual order.
         """
-        stored = await self._processing.save_recipe(actor, project_id, key, draft)
+        stored = await self._processing.save_recipe(actor, book_id, key, draft)
         if stored.profile_id == draft.profile_id:
             return stored
-        return await self.link(actor, project_id, key, draft.profile_id)
+        return await self.link(actor, book_id, key, draft.profile_id)
 
     @staticmethod
     def _owned(repos: CatalogueRepositories, actor: Actor, profile_id: RecipeProfileId) -> RecipeProfile:
@@ -539,16 +537,16 @@ class RecipeProfiles:
             raise NotFoundError(profile_id)
         return profile
 
-    async def _owned_books(self, actor: Actor) -> list[ProjectId]:
+    async def _owned_books(self, actor: Actor) -> list[BookId]:
         """List every book of the account.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
         :returns: The identifiers of the account's books, the latest added first.
-        :rtype: list[ProjectId]
+        :rtype: list[BookId]
         """
         entries = await self._uow.read(lambda repos: repos.library.list_all())
-        return [entry.project_id for entry in entries if entry.owner_id == actor.account_id]
+        return [entry.book_id for entry in entries if entry.owner_id == actor.account_id]
 
     async def _books_by_profile(self, actor: Actor) -> Counter[RecipeProfileId]:
         """Count the books of the account that have a recipe made from each profile.
@@ -571,6 +569,6 @@ class RecipeProfiles:
             return {recipe.profile_id for recipe in recipes if recipe.profile_id is not None}
 
         books: Counter[RecipeProfileId] = Counter()
-        for project_id in await self._owned_books(actor):
-            books.update(await self._uow.read_book(project_id, profiles_of))
+        for book_id in await self._owned_books(actor):
+            books.update(await self._uow.read_book(book_id, profiles_of))
         return books

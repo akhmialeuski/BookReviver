@@ -172,7 +172,7 @@ export const MESSAGES = {
     signOut: 'Sign out',
     signingOut: 'Signing out…',
   },
-  projects: {
+  books: {
     title: 'Your books',
     empty: 'You have no books yet. Create one to start uploading its scans.',
     create: {

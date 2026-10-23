@@ -20,7 +20,7 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  putRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPut: sdk.save,
+  putRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPut: sdk.save,
 }));
 
 class SizeObserverStandIn {

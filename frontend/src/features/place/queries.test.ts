@@ -8,14 +8,14 @@ import { HttpStatus } from '@/shared/http/status';
 const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn() }));
 
 vi.mock('@/api', () => ({
-  getPlaceApiV1ProjectsProjectIdPlaceGet: api.get,
-  putPlaceApiV1ProjectsProjectIdPlacePut: api.put,
+  getPlaceApiV1BooksBookIdPlaceGet: api.get,
+  putPlaceApiV1BooksBookIdPlacePut: api.put,
 }));
 
 vi.mock('@/api/@tanstack/react-query.gen', () => ({
-  getPlaceApiV1ProjectsProjectIdPlaceGetQueryKey: (options: { path: { project_id: string } }) => [
+  getPlaceApiV1BooksBookIdPlaceGetQueryKey: (options: { path: { book_id: string } }) => [
     'place',
-    options.path.project_id,
+    options.path.book_id,
   ],
 }));
 
@@ -37,7 +37,7 @@ describe('placeOptions', () => {
     api.get.mockResolvedValue({ data: PLACE, response: { status: 200 } });
     const place = await new QueryClient().fetchQuery(placeOptions(BOOK));
     expect(place).toEqual(PLACE);
-    expect(api.get).toHaveBeenCalledWith(expect.objectContaining({ path: { project_id: BOOK } }));
+    expect(api.get).toHaveBeenCalledWith(expect.objectContaining({ path: { book_id: BOOK } }));
   });
 
   it('reads no place for a book the account has not worked on', async () => {
@@ -82,7 +82,7 @@ describe('sendPlace', () => {
     api.put.mockResolvedValue({ data: PLACE });
     await sendPlace(BOOK, BODY, true);
     expect(api.put).toHaveBeenCalledWith({
-      path: { project_id: BOOK },
+      path: { book_id: BOOK },
       body: BODY,
       keepalive: true,
       throwOnError: true,

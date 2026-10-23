@@ -7,45 +7,45 @@ from delayed_assert import assert_expectations, expect
 from fastapi import status
 
 from bookreviver.api.freshness import CACHE_CONTROL_HEADER, ETAG_HEADER, IF_NONE_MATCH_HEADER, REVALIDATE
-from tests.helpers.builders import make_page, make_project, new_account_id
-from tests.helpers.seeding import commit_project, store_project
+from tests.helpers.builders import make_page, make_record, new_account_id
+from tests.helpers.seeding import commit_record, store_book
 
 if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, Page, Project
+    from bookreviver.domain.entities import Actor, BookRecord, Page
     from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
-PROJECTS_PATH: str = '/api/v1/projects'
+BOOKS_PATH: str = '/api/v1/books'
 GROUP_FIELD: str = 'group_label'
 GROUP: str = 'Engravings'
 
 
-def _pages_path(project: Project) -> str:
+def _pages_path(book_record: BookRecord) -> str:
     """Return the path of the pages of a book.
 
-    :param project: The book.
-    :type project: Project
+    :param book_record: The book.
+    :type book_record: BookRecord
     :returns: The path of the read of its pages.
     :rtype: str
     """
-    return f'{PROJECTS_PATH}/{project.id}/pages'
+    return f'{BOOKS_PATH}/{book_record.id}/pages'
 
 
-def _page_path(project: Project, page: Page) -> str:
+def _page_path(book_record: BookRecord, page: Page) -> str:
     """Return the path of one page of a book.
 
-    :param project: The book.
-    :type project: Project
+    :param book_record: The book.
+    :type book_record: BookRecord
     :param page: The page.
     :type page: Page
     :returns: The path of the page.
     :rtype: str
     """
-    return f'{_pages_path(project)}/{page.id}'
+    return f'{_pages_path(book_record)}/{page.id}'
 
 
 class TestConditionalRead:
@@ -63,14 +63,14 @@ class TestConditionalRead:
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        project, page = make_project(), make_page()
-        await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
+        book_record, page = make_record(), make_page()
+        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id)
 
-        first = await fx_client.get(_pages_path(project))
+        first = await fx_client.get(_pages_path(book_record))
         tag = first.headers[ETAG_HEADER]
-        repeated = await fx_client.get(_pages_path(project), headers={IF_NONE_MATCH_HEADER: tag})
-        await fx_client.patch(_page_path(project, page), json={GROUP_FIELD: GROUP})
-        changed = await fx_client.get(_pages_path(project), headers={IF_NONE_MATCH_HEADER: tag})
+        repeated = await fx_client.get(_pages_path(book_record), headers={IF_NONE_MATCH_HEADER: tag})
+        await fx_client.patch(_page_path(book_record, page), json={GROUP_FIELD: GROUP})
+        changed = await fx_client.get(_pages_path(book_record), headers={IF_NONE_MATCH_HEADER: tag})
 
         expect(first.status_code == status.HTTP_200_OK and tag.startswith('W/"'))
         expect(first.headers[CACHE_CONTROL_HEADER] == REVALIDATE)
@@ -92,11 +92,11 @@ class TestConditionalRead:
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        project, page = make_project(), make_page()
-        await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
-        tag = (await fx_client.get(_pages_path(project))).headers[ETAG_HEADER]
+        book_record, page = make_record(), make_page()
+        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id)
+        tag = (await fx_client.get(_pages_path(book_record))).headers[ETAG_HEADER]
 
-        response = await fx_client.get(_page_path(project, page), headers={IF_NONE_MATCH_HEADER: tag})
+        response = await fx_client.get(_page_path(book_record, page), headers={IF_NONE_MATCH_HEADER: tag})
 
         assert response.status_code == status.HTTP_200_OK
 
@@ -112,10 +112,10 @@ class TestConditionalRead:
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        project = make_project()
-        await commit_project(fx_database, fx_uow(), project, owner=new_account_id())
+        book_record = make_record()
+        await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id())
 
-        response = await fx_client.get(_pages_path(project), headers={IF_NONE_MATCH_HEADER: '*'})
+        response = await fx_client.get(_pages_path(book_record), headers={IF_NONE_MATCH_HEADER: '*'})
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -131,9 +131,9 @@ class TestConditionalRead:
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        project = make_project()
-        await store_project(fx_uow(), project, owner=fx_actor.account_id)
+        book_record = make_record()
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
 
-        response = await fx_client.get(f'{PROJECTS_PATH}/{project.id}/place')
+        response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/place')
 
         assert ETAG_HEADER not in response.headers

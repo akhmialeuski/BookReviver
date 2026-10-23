@@ -75,27 +75,27 @@ export function PageTimeline({
   /** The current version of the stage on the page, or undefined when it has none. */
   headId: string | undefined;
 }): React.JSX.Element {
-  const { projectId, stage, catalogue, recipe } = processing;
+  const { bookId, stage, catalogue, recipe } = processing;
   const stepId = step?.stepId ?? null;
   const unsaved = step !== null && stepId === null;
   const processor = catalogue.find((entry) => entry.key === step?.processorKey);
 
-  const history = usePageHistory(projectId, pageId, stage, stepId);
+  const history = usePageHistory(bookId, pageId, stage, stepId);
   // A step reads its own results from the server by its id, and the stage reads the versions no other version reads. A
   // step that is not saved has no id, and the list of the stage would show the results of every step
   const ofStep = useVersions(
-    projectId,
+    bookId,
     unsaved || stepId === null ? undefined : pageId,
     stage,
     stepId === null ? {} : { step: stepId },
   );
   // The versions of the whole stage tell what the page stands on, whatever steps ran it: the step row of the server
   // follows the recipe the page was run by, which may have had other steps than the recipe of the open step
-  const ofStage = useVersions(projectId, unsaved ? undefined : pageId, stage);
+  const ofStage = useVersions(bookId, unsaved ? undefined : pageId, stage);
   const versions = stepId === null ? ofStage : ofStep;
-  const undo = useUndo(projectId);
-  const clear = useClearHistory(projectId);
-  const choose = useChooseVersion(projectId, stage);
+  const undo = useUndo(bookId);
+  const clear = useClearHistory(bookId);
+  const choose = useChooseVersion(bookId, stage);
   const [filter, setFilter] = useState<TimelineFilter>(TimelineFilter.All);
   const [shown, setShown] = useState(ROWS_AT_A_TIME);
   const [question, setQuestion] = useState<Question>(null);
@@ -152,7 +152,7 @@ export function PageTimeline({
   const takeBack = (changeId: string | null): void => {
     if (pageId !== undefined && stepId !== null) {
       undo.mutate({
-        path: { project_id: projectId, page_id: pageId, stage, step_id: stepId },
+        path: { book_id: bookId, page_id: pageId, stage, step_id: stepId },
         body: { change_id: changeId },
       });
     }
@@ -180,7 +180,7 @@ export function PageTimeline({
       return;
     }
     choose.mutate({
-      path: { project_id: projectId, page_id: pageId, stage },
+      path: { book_id: bookId, page_id: pageId, stage },
       body: { version_id: version.id },
     });
   };
@@ -189,7 +189,7 @@ export function PageTimeline({
       takeBack(question.changeId);
     } else if (question?.kind === 'clear' && pageId !== undefined && stepId !== null) {
       clear.mutate({
-        path: { project_id: projectId, page_id: pageId, stage, step_id: stepId },
+        path: { book_id: bookId, page_id: pageId, stage, step_id: stepId },
       });
     }
     setQuestion(null);
@@ -268,7 +268,7 @@ export function PageTimeline({
               ) : (
                 <ResultRow
                   key={`result:${row.id}`}
-                  projectId={projectId}
+                  bookId={bookId}
                   entry={row.entry}
                   processor={catalogue.find(
                     (candidate) => candidate.key === row.entry.version.processor.key,

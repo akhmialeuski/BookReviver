@@ -20,8 +20,8 @@ export const GRID_STORAGE_PREFIX = 'bookreviver.grid';
 export const GRID_KEY = 'g';
 
 /** Give the key the choice of a book is kept under. */
-export function gridStorageKey(projectId: string): string {
-  return `${GRID_STORAGE_PREFIX}.${projectId}`;
+export function gridStorageKey(bookId: string): string {
+  return `${GRID_STORAGE_PREFIX}.${bookId}`;
 }
 
 /**
@@ -32,20 +32,20 @@ export function gridStorageKey(projectId: string): string {
  * @returns Whether the grid is on, or null when the reader has not chosen.
  */
 export function readGrid(
-  projectId: string,
+  bookId: string,
   storage: WorkspaceStorage = browserStorage,
 ): boolean | null {
-  const stored = storage.getItem(gridStorageKey(projectId));
+  const stored = storage.getItem(gridStorageKey(bookId));
   return stored === 'on' ? true : stored === 'off' ? false : null;
 }
 
 /** Keep the choice of a book. */
 export function writeGrid(
-  projectId: string,
+  bookId: string,
   on: boolean,
   storage: WorkspaceStorage = browserStorage,
 ): void {
-  storage.setItem(gridStorageKey(projectId), on ? 'on' : 'off');
+  storage.setItem(gridStorageKey(bookId), on ? 'on' : 'off');
 }
 
 /**
@@ -55,17 +55,17 @@ export function writeGrid(
  * @returns Whether the grid is on, which it is not until the reader has chosen, and the function that switches it and
  * keeps the choice.
  */
-export function useGrid(projectId: string): [boolean, () => void] {
-  const [picked, setPicked] = useState<{ projectId: string; on: boolean | null }>(() => ({
-    projectId,
-    on: readGrid(projectId),
+export function useGrid(bookId: string): [boolean, () => void] {
+  const [picked, setPicked] = useState<{ bookId: string; on: boolean | null }>(() => ({
+    bookId,
+    on: readGrid(bookId),
   }));
   // A choice belongs to one book, so the one of another book is read again
-  const choice = picked.projectId === projectId ? picked.on : readGrid(projectId);
+  const choice = picked.bookId === bookId ? picked.on : readGrid(bookId);
   const on = choice ?? false;
   const toggle = (): void => {
-    writeGrid(projectId, !on);
-    setPicked({ projectId, on: !on });
+    writeGrid(bookId, !on);
+    setPicked({ bookId, on: !on });
   };
   return [on, toggle];
 }

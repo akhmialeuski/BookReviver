@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from bookreviver.domain.entities import (
     BookPlace,
+    BookRecord,
     Job,
     Page,
     PageEdit,
@@ -15,7 +16,6 @@ from bookreviver.domain.entities import (
     PageStepState,
     PageVersion,
     PaginationSection,
-    Project,
     Recipe,
     RecipeProfile,
     Scan,
@@ -52,12 +52,12 @@ from bookreviver.domain.events import BookChanged
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import (
     AccountId,
+    BookId,
     JobId,
     PageHistoryEntryId,
     PageId,
     PageVersionId,
     PaginationSectionId,
-    ProjectId,
     RecipeId,
     RecipeProfileId,
     ScanId,
@@ -143,7 +143,7 @@ def new_account_id() -> AccountId:
     return AccountId(uuid4())
 
 
-def make_project(*, title: str = 'Book', minutes: int = 0) -> Project:
+def make_record(*, title: str = 'Book', minutes: int = 0) -> BookRecord:
     """Build a project updated ``minutes`` after the epoch.
 
     :param title: Title of the book.
@@ -151,28 +151,28 @@ def make_project(*, title: str = 'Book', minutes: int = 0) -> Project:
     :param minutes: Minutes after ``EPOCH`` the project was created and last updated.
     :type minutes: int
     :returns: A project with a fresh identifier and no source.
-    :rtype: Project
+    :rtype: BookRecord
     """
     moment = EPOCH + timedelta(minutes=minutes)
-    return Project(
-        id=ProjectId(uuid4()),
+    return BookRecord(
+        id=BookId(uuid4()),
         details=BookDetails(title=title),
         created_at=moment,
         updated_at=moment,
     )
 
 
-def make_book_change(*, project_id: ProjectId, version: int = 1) -> BookChanged:
+def make_book_change(*, book_id: BookId, version: int = 1) -> BookChanged:
     """Build a committed change of the description of a book, which a test publishes as any event of the book.
 
-    :param project_id: The book.
-    :type project_id: ProjectId
+    :param book_id: The book.
+    :type book_id: BookId
     :param version: The version of the book after the change.
     :type version: int
     :returns: The change.
     :rtype: BookChanged
     """
-    return BookChanged(project_id=project_id, version=version, resources=frozenset({BookResource.PROJECT}))
+    return BookChanged(book_id=book_id, version=version, resources=frozenset({BookResource.RECORD}))
 
 
 def make_page(
@@ -301,7 +301,7 @@ def make_page_version(*, page_id: PageId, minutes: int = 0) -> PageVersion:
 
 def make_job(
     *,
-    project_id: ProjectId,
+    book_id: BookId,
     state: JobState = JobState.QUEUED,
     minutes: int = 0,
     kind: JobKind = JobKind.IMPORT_SOURCE,
@@ -309,8 +309,8 @@ def make_job(
 ) -> Job:
     """Build a job created ``minutes`` after the epoch, an import job unless told otherwise.
 
-    :param project_id: Project the job imports into.
-    :type project_id: ProjectId
+    :param book_id: Project the job imports into.
+    :type book_id: BookId
     :param state: State of the job.
     :type state: JobState
     :param minutes: Minutes after ``EPOCH`` the job was created.
@@ -324,7 +324,7 @@ def make_job(
     """
     return Job(
         id=JobId(uuid4()),
-        project_id=project_id,
+        book_id=book_id,
         kind=kind,
         state=state,
         params={} if params is None else params,

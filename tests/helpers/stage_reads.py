@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Project, ProjectOverview
+    from bookreviver.domain.entities import BookOverview, BookRecord
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import StepId
     from bookreviver.domain.stage_summaries import StageRow, StageSummary
@@ -12,14 +12,14 @@ if TYPE_CHECKING:
 
 
 async def stage_rows(
-    kit: ProcessingKit, project: Project, stage: Stage, request: SliceRequest, step_id: StepId | None = None
+    kit: ProcessingKit, book_record: BookRecord, stage: Stage, request: SliceRequest, step_id: StepId | None = None
 ) -> Slice[StageRow]:
     """Read a window of the rows of a stage of a book, as ``StageSummaries.rows`` gives them.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param project: The book.
-    :type project: Project
+    :param book_record: The book.
+    :type book_record: BookRecord
     :param stage: The stage.
     :type stage: Stage
     :param request: Offset and limit of the window of pages.
@@ -31,45 +31,47 @@ async def stage_rows(
     :raises NotFoundError: If no recipe of the stage has the step.
     """
     stages = kit.stages()
-    return await kit.uow().read_book(project.id, lambda repos: stages.rows(repos, stage, request, step_id))
+    return await kit.uow().read_book(book_record.id, lambda repos: stages.rows(repos, stage, request, step_id))
 
 
-async def book_summaries(kit: ProcessingKit, project: Project) -> list[StageSummary]:
+async def book_summaries(kit: ProcessingKit, book_record: BookRecord) -> list[StageSummary]:
     """Sum every stage of a book, as ``StageSummaries.of_book`` does.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param project: The book.
-    :type project: Project
+    :param book_record: The book.
+    :type book_record: BookRecord
     :returns: One summary for each stage, in the order of the pipeline.
     :rtype: list[StageSummary]
     """
     stages = kit.stages()
-    return await kit.uow().read_book(project.id, lambda repos: stages.of_book(repos, repos.projects.overview(project)))
+    return await kit.uow().read_book(
+        book_record.id, lambda repos: stages.of_book(repos, repos.book_record.overview(book_record))
+    )
 
 
-async def books_with_progress(kit: ProcessingKit, *projects: Project) -> list[ProjectOverview]:
+async def books_with_progress(kit: ProcessingKit, *books: BookRecord) -> list[BookOverview]:
     """Read the overviews of some books with their progress, as ``StageSummaries.with_progress`` gives them.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param projects: The books, which may be none.
-    :type projects: Project
+    :param books: The books, which may be none.
+    :type books: BookRecord
     :returns: The overview of each book with its progress, in the order given.
-    :rtype: list[ProjectOverview]
+    :rtype: list[BookOverview]
     """
     stages = kit.stages()
 
-    async def overview_of(project: Project) -> ProjectOverview:
+    async def overview_of(book_record: BookRecord) -> BookOverview:
         """Read the overview of one book with its progress.
 
-        :param project: The book.
-        :type project: Project
+        :param book_record: The book.
+        :type book_record: BookRecord
         :returns: The overview with the progress.
-        :rtype: ProjectOverview
+        :rtype: BookOverview
         """
         return await kit.uow().read_book(
-            project.id, lambda repos: stages.with_progress(repos, repos.projects.overview(project))
+            book_record.id, lambda repos: stages.with_progress(repos, repos.book_record.overview(book_record))
         )
 
-    return [await overview_of(project) for project in projects]
+    return [await overview_of(book_record) for book_record in books]

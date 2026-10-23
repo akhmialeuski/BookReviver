@@ -1,6 +1,6 @@
 import { keepPreviousData, type UseQueryResult, useQuery } from '@tanstack/react-query';
 import type { PageSchema } from '@/api';
-import { previewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPost } from '@/api';
+import { previewPageNumbersApiV1BooksBookIdPagesLabelsPreviewPost } from '@/api';
 import { type NumberingDraft, numberingBody, pagesInRange } from '@/features/order/numbering';
 
 /**
@@ -13,8 +13,8 @@ import { type NumberingDraft, numberingBody, pagesInRange } from '@/features/ord
  */
 
 /** The key every preview of a numbering of a book extends, by the body it asks about. */
-export function numberingPreviewKey(projectId: string): readonly string[] {
-  return ['order', 'numbering-preview', projectId];
+export function numberingPreviewKey(bookId: string): readonly string[] {
+  return ['order', 'numbering-preview', bookId];
 }
 
 /**
@@ -26,20 +26,20 @@ export function numberingPreviewKey(projectId: string): readonly string[] {
  * @returns The new label of every page the numbering counts, by page id.
  */
 export function usePreviewLabels(
-  projectId: string,
+  bookId: string,
   pages: readonly PageSchema[],
   draft: NumberingDraft | null,
 ): UseQueryResult<Map<string, string>> {
   // A range that runs backwards or leaves the book is refused by the server, so it is not asked
   const body = draft === null || pagesInRange(pages, draft) === null ? null : numberingBody(draft);
   return useQuery({
-    queryKey: [...numberingPreviewKey(projectId), body],
+    queryKey: [...numberingPreviewKey(bookId), body],
     queryFn: async ({ signal }) => {
       if (body === null) {
         return new Map<string, string>();
       }
-      const { data } = await previewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPost({
-        path: { project_id: projectId },
+      const { data } = await previewPageNumbersApiV1BooksBookIdPagesLabelsPreviewPost({
+        path: { book_id: bookId },
         body,
         signal,
         throwOnError: true,

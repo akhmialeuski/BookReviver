@@ -42,11 +42,11 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.geometry import ContentBox, Line, Mesh, SplitChoice
 from bookreviver.domain.ids import PageVersionId
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import PageStageKey, Renditions, StageRun
-from tests.helpers.builders import make_page, make_project, make_scan, make_source, new_account_id
+from tests.helpers.builders import make_page, make_record, make_scan, make_source, new_account_id
 from tests.helpers.processing import ProcessingFakesProvider
-from tests.helpers.seeding import store_project
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.domain.entities import Actor, Page, Project, Scan
+    from bookreviver.domain.entities import Actor, BookRecord, Page, Scan
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.storage import AssetStore
     from tests.helpers.board_idle import JobsIdle
@@ -62,7 +62,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
-PROJECTS_PATH: str = '/api/v1/projects'
+BOOKS_PATH: str = '/api/v1/books'
 PROCESSORS_PATH: str = '/api/v1/processors'
 JOBS_PATH: str = '/api/v1/jobs'
 MEASURE_SUFFIX: str = '/stages/geometry/measure'
@@ -80,17 +80,17 @@ COLLECTABLE_PATH: str = '/versions/collectable'
 class Book(NamedTuple):
     """A book of the signed-in account with one page cut from a scan whose image is stored.
 
-    :ivar project: The project of the book.
+    :ivar book_record: The project of the book.
     :ivar page: The page the import made of the scan.
     """
 
-    project: Project
+    book_record: BookRecord
     page: Page
 
     @property
     def path(self) -> str:
         """The path of the project."""
-        return f'{PROJECTS_PATH}/{self.project.id}'
+        return f'{BOOKS_PATH}/{self.book_record.id}'
 
     @property
     def page_path(self) -> str:
@@ -121,29 +121,29 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project()
+    book_record = make_record()
     source = make_source()
     scan = evolve(
         make_scan(source=source, number=0),
         renditions=Renditions(ready=True),
     )
     page = make_page(scan=scan)
-    await store_project(fx_uow(), project, page, owner=fx_actor.account_id, sources=[source], scans=[scan])
-    await store_scan_images(fx_asset_store, project, scan)
-    return Book(project=project, page=page)
+    await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, sources=[source], scans=[scan])
+    await store_scan_images(fx_asset_store, book_record, scan)
+    return Book(book_record=book_record, page=page)
 
 
-async def store_scan_images(asset_store: AssetStore, project: Project, scan: Scan) -> None:
+async def store_scan_images(asset_store: AssetStore, book_record: BookRecord, scan: Scan) -> None:
     """Store the full image and the preview of a scan as real JPEGs.
 
     :param asset_store: Asset store of the application.
     :type asset_store: AssetStore
-    :param project: Project owning the scan.
-    :type project: Project
+    :param book_record: Project owning the scan.
+    :type book_record: BookRecord
     :param scan: The scan, whose renditions are ready.
     :type scan: Scan
     """
-    keys = ProjectKeys(project.id)
+    keys = BookKeys(book_record.id)
     buffer = io.BytesIO()
     Image.new('L', SCAN_SIZE_PX, color=200).save(buffer, format='JPEG')
     for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
@@ -185,7 +185,7 @@ async def run_stage(client: httpx.AsyncClient, idle: JobsIdle, book: Book, stage
     """
     response = await client.post(f'{book.path}/stages/{stage}/run', json={})
     assert response.status_code == status.HTTP_202_ACCEPTED
-    await idle(book.project.id)
+    await idle(book.book_record.id)
     return JobSchema.model_validate_json(response.content)
 
 
@@ -351,13 +351,13 @@ class TestRecipes:
         response = await fx_client.post(f'{fx_book.path}/stages/geometry/recipes/{uuid4()}/reset')
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    async def test_project_of_another_account_is_not_found(self, fx_client: httpx.AsyncClient) -> None:
+    async def test_book_of_another_account_is_not_found(self, fx_client: httpx.AsyncClient) -> None:
         """Verify a project the account does not own is answered 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
         """
-        response = await fx_client.get(f'{PROJECTS_PATH}/{new_account_id()}/stages/geometry/recipes')
+        response = await fx_client.get(f'{BOOKS_PATH}/{new_account_id()}/stages/geometry/recipes')
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_stage_that_does_not_exist_is_a_422(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
@@ -400,7 +400,7 @@ class TestStageSummaries:
         :type fx_asset_store: AssetStore
         """
         _, scan = await add_page(fx_uow(), fx_book, 'a1', PageKind.PLATE)
-        await store_scan_images(fx_asset_store, fx_book.project, scan)
+        await store_scan_images(fx_asset_store, fx_book.book_record, scan)
         await run_stage(fx_client, fx_idle, fx_book, 'geometry')
         recipes = await recipes_of(fx_client, fx_book, 'geometry')
         summaries = (await fx_client.get(f'{fx_book.path}/stages')).json()[ITEMS]
@@ -578,7 +578,7 @@ class TestRunAndVersions:
         """
         await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         response = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
-        await fx_idle(fx_book.project.id)
+        await fx_idle(fx_book.book_record.id)
         previews = await fx_client.get(f'{fx_book.page_path}/versions', params={'scale': 'preview'})
         [version] = [PageVersionSchema.model_validate(item) for item in previews.json()[ITEMS]]
         assert version.preview is not None
@@ -674,22 +674,22 @@ class TestRunAndVersions:
         await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         uow = fx_uow()
         record = await uow.read_book(
-            fx_book.project.id,
+            fx_book.book_record.id,
             lambda repos: repos.page_stages.get(PageStageKey(fx_book.page.id, Stage.PAGE_SPLIT)),
         )
         assert record.head_version_id is not None
         head_id = record.head_version_id
         # A version made from the current one and left behind: it reads the head, and no current chain reads it
         old = evolve(
-            await uow.read_book(fx_book.project.id, lambda repos: repos.page_versions.get(head_id)),
+            await uow.read_book(fx_book.book_record.id, lambda repos: repos.page_versions.get(head_id)),
             id=PageVersionId(OLD_VERSION_ID),
             input_id=head_id,
         )
         async with fx_asset_store.writable(
-            ProjectKeys(fx_book.project.id).version_rendition(old, Rendition.FULL_JPEG)
+            BookKeys(fx_book.book_record.id).version_rendition(old, Rendition.FULL_JPEG)
         ) as path:
             path.write_bytes(OLD_VERSION_CONTENT)
-        await uow.change_book(fx_book.project.id, lambda repos, _project: repos.page_versions.add(old))
+        await uow.change_book(fx_book.book_record.id, lambda repos, _book_record: repos.page_versions.add(old))
 
         first = await fx_client.get(f'{fx_book.path}{COLLECTABLE_PATH}')
         second = await fx_client.get(f'{fx_book.path}{COLLECTABLE_PATH}')
@@ -698,7 +698,7 @@ class TestRunAndVersions:
         expect(
             first.json() == {'versions': 1, 'size_bytes': len(OLD_VERSION_CONTENT)} and second.json() == first.json()
         )
-        expect(await uow.read_book(fx_book.project.id, lambda repos: repos.page_versions.find(old.id)) is not None)
+        expect(await uow.read_book(fx_book.book_record.id, lambda repos: repos.page_versions.find(old.id)) is not None)
         assert_expectations()
 
     async def test_collectable_versions_of_another_account_are_a_404(self, fx_client: httpx.AsyncClient) -> None:
@@ -707,7 +707,7 @@ class TestRunAndVersions:
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
         """
-        response = await fx_client.get(f'{PROJECTS_PATH}/{uuid4()}{COLLECTABLE_PATH}')
+        response = await fx_client.get(f'{BOOKS_PATH}/{uuid4()}{COLLECTABLE_PATH}')
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_measuring_the_book_is_a_202_job(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
@@ -746,7 +746,7 @@ class TestRunAndVersions:
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
         """
-        response = await fx_client.post(f'{PROJECTS_PATH}/{uuid4()}{MEASURE_SUFFIX}')
+        response = await fx_client.post(f'{BOOKS_PATH}/{uuid4()}{MEASURE_SUFFIX}')
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_tiles_of_a_version_are_cut_on_request(
@@ -1010,7 +1010,7 @@ class TestPageHistory:
         response = await fx_client.delete(f'{fx_book.path}/pages/{uuid4()}/history/geometry/{uuid4()}')
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    async def test_clear_while_the_project_is_busy_is_a_409_and_deletes_nothing(
+    async def test_clear_while_the_book_is_busy_is_a_409_and_deletes_nothing(
         self, fx_client: httpx.AsyncClient, fx_book: Book
     ) -> None:
         """Verify a clear answers 409 while a run of the project is queued, which may read the versions, and keeps the step.
@@ -1102,19 +1102,19 @@ async def add_page(uow: UnitOfWork, book: Book, order_key: str, kind: PageKind =
     scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
     page = make_page(order_key=order_key, scan=scan, kind=kind)
 
-    def add_scan_page(repos: BookRepositories, _project: Project) -> None:
+    def add_scan_page(repos: BookRepositories, _book_record: BookRecord) -> None:
         """Add the source, its scan and the page that shows the scan.
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _project: Project of the book, which the work does not need.
-        :type _project: Project
+        :param _book_record: Project of the book, which the work does not need.
+        :type _book_record: BookRecord
         """
         repos.sources.add(source)
         repos.scans.add(scan)
         repos.pages.add(page)
 
-    await uow.change_book(book.project.id, add_scan_page)
+    await uow.change_book(book.book_record.id, add_scan_page)
     return page, scan
 
 
@@ -1258,7 +1258,7 @@ class TestRunModes:
         path = f'{fx_book.path}/stages/geometry/run'
         refused = await fx_client.post(path, json={'mode': 'drop-own-work'})
         accepted = await fx_client.post(path, json={'mode': 'drop-own-work', 'confirm_overwrite': True})
-        await fx_idle(fx_book.project.id)
+        await fx_idle(fx_book.book_record.id)
         settings = await fx_client.get(f'{fx_book.page_path}/settings/geometry')
         expect(refused.status_code == status.HTTP_409_CONFLICT and '1 pages' in refused.json()['detail'])
         expect(accepted.status_code == status.HTTP_202_ACCEPTED)

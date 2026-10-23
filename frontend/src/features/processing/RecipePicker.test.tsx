@@ -3,7 +3,7 @@ import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RecipeKind, StageSummarySchema } from '@/api';
-import { listStagesApiV1ProjectsProjectIdStagesGetOptions } from '@/api/@tanstack/react-query.gen';
+import { listStagesApiV1BooksBookIdStagesGetOptions } from '@/api/@tanstack/react-query.gen';
 import { deskew, processing, processor, recipe, step } from '@/features/processing/fixtures';
 import { RecipePicker } from '@/features/processing/RecipePicker';
 import { StepBar } from '@/features/workspace/StepBar';
@@ -18,8 +18,8 @@ const sdk = vi.hoisted(() => ({ run: vi.fn(), save: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  runStageApiV1ProjectsProjectIdStagesStageRunPost: sdk.run,
-  putRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPut: sdk.save,
+  runStageApiV1BooksBookIdStagesStageRunPost: sdk.run,
+  putRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPut: sdk.save,
 }));
 
 const KINDS: readonly RecipeKind[] = ['text', 'color-picture', 'bw-picture', 'blank'];
@@ -54,8 +54,7 @@ describe('RecipePicker', () => {
   function mount(element: React.JSX.Element): void {
     const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
     client.setQueryData(
-      listStagesApiV1ProjectsProjectIdStagesGetOptions({ path: { project_id: 'project' } })
-        .queryKey,
+      listStagesApiV1BooksBookIdStagesGetOptions({ path: { book_id: 'book' } }).queryKey,
       { items: [SUMMARY], total: 1, page: 1, size: 100, pages: 1 },
     );
     act(() => root.render(<QueryClientProvider client={client}>{element}</QueryClientProvider>));

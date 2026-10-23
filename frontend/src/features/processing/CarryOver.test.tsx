@@ -14,8 +14,8 @@ const sdk = vi.hoisted(() => ({ carry: vi.fn(), undo: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  carryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPost: sdk.carry,
-  undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPost: sdk.undo,
+  carryOverEditApiV1BooksBookIdPagesPageIdEditsStageStepIdCarryOverPost: sdk.carry,
+  undoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPost: sdk.undo,
 }));
 
 // The component reads only the identifiers of the changes, so the other fields of a change are left out
@@ -53,7 +53,7 @@ describe('CarryOver', () => {
         <output data-testid="kept">{result?.batch_id ?? ''}</output>
         {shown ? (
           <CarryOver
-            processing={{ projectId: 'project', stage: 'geometry' }}
+            processing={{ bookId: 'book', stage: 'geometry' }}
             pageId="page"
             stepId="step"
             title="the shape"
@@ -135,7 +135,7 @@ describe('CarryOver', () => {
     expect(sdk.carry).toHaveBeenCalledTimes(1);
     expect(sdk.carry.mock.calls[0]?.[0]).toMatchObject({
       path: {
-        project_id: 'project',
+        book_id: 'book',
         page_id: 'page',
         stage: 'geometry',
         step_id: 'step',
@@ -219,7 +219,7 @@ describe('CarryOver', () => {
 
     expect(sdk.undo).toHaveBeenCalledTimes(1);
     expect(sdk.undo.mock.calls[0]?.[0]).toMatchObject({
-      path: { project_id: 'project', page_id: 'next-1', stage: 'geometry', step_id: 'step' },
+      path: { book_id: 'book', page_id: 'next-1', stage: 'geometry', step_id: 'step' },
       body: { change_id: 'change-1' },
     });
     expect(container.querySelector('[data-testid="carry-result"]')).toBeNull();

@@ -451,7 +451,7 @@ export function scan(id: string, widthPx: number, heightPx: number): ScanSchema 
 export function processing(overrides: Partial<Processing> = {}): Processing {
   const saved = recipe('r1');
   return {
-    projectId: 'project',
+    bookId: 'book',
     stage: 'geometry',
     available: true,
     ready: true,
@@ -488,7 +488,7 @@ export function processing(overrides: Partial<Processing> = {}): Processing {
  */
 export function pageValues(overrides: Partial<PageValues> = {}): PageValues {
   return {
-    projectId: 'project',
+    bookId: 'book',
     stage: 'geometry',
     page: { id: 'page-143', name: 'p. 143' },
     settings: [],

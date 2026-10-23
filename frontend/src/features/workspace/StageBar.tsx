@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useMatch, useParams, useSearch } from '@tanstack/react-router';
 import { CheckCircle2Icon, InfoIcon, ListIcon, Loader2Icon } from 'lucide-react';
 import type { Stage, StageStatus, StageSummarySchema } from '@/api';
-import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
+import { bookApiV1BooksBookIdGetOptions } from '@/api/@tanstack/react-query.gen';
 import { parseStage } from '@/features/stages/parse';
 import { STAGES, type StageEntry } from '@/features/stages/stages';
 import { parseIdentifier } from '@/features/viewer/params';
@@ -85,23 +85,20 @@ function StageBody({
   );
 }
 
-export function StageBar({ projectId }: { projectId: string }): React.JSX.Element {
-  const project = useQuery(
-    projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: projectId } }),
-  );
-  const summaries = useStageSummaries(projectId);
+export function StageBar({ bookId }: { bookId: string }): React.JSX.Element {
+  const book = useQuery(bookApiV1BooksBookIdGetOptions({ path: { book_id: bookId } }));
+  const summaries = useStageSummaries(bookId);
   const narrow = useIsNarrow();
   const { stage } = useParams({ strict: false });
   const page = parseIdentifier(useSearch({ strict: false }).page);
   const current = parseStage(stage);
   const onAbout =
-    useMatch({ from: '/_authenticated/projects/$projectId/about', shouldThrow: false }) !==
-    undefined;
+    useMatch({ from: '/_authenticated/books/$bookId/about', shouldThrow: false }) !== undefined;
 
   const summaryOf = (key: Stage): StageSummarySchema | undefined =>
     summaries.data?.find((summary) => summary.stage === key);
   const statusOf = (key: Stage): StageStatus =>
-    project.data?.progress.find((entry) => entry.stage === key)?.status ?? 'waiting';
+    book.data?.progress.find((entry) => entry.stage === key)?.status ?? 'waiting';
 
   if (narrow) {
     const currentEntry = onAbout ? undefined : STAGES.find((entry) => entry.stage === current);
@@ -119,8 +116,8 @@ export function StageBar({ projectId }: { projectId: string }): React.JSX.Elemen
           </span>
         ) : (
           <Link
-            to="/projects/$projectId/stages/$stage"
-            params={{ projectId, stage: currentEntry.stage }}
+            to="/books/$bookId/stages/$stage"
+            params={{ bookId, stage: currentEntry.stage }}
             search={page === undefined ? {} : { page }}
             aria-current="page"
             data-testid={`stage-${currentEntry.stage}`}
@@ -147,8 +144,8 @@ export function StageBar({ projectId }: { projectId: string }): React.JSX.Elemen
               return (
                 <DropdownMenuItem key={entry.stage} asChild>
                   <Link
-                    to="/projects/$projectId/stages/$stage"
-                    params={{ projectId, stage: entry.stage }}
+                    to="/books/$bookId/stages/$stage"
+                    params={{ bookId, stage: entry.stage }}
                     search={page === undefined ? {} : { page }}
                     data-testid={`stage-${entry.stage}`}
                     data-status={status}
@@ -163,11 +160,7 @@ export function StageBar({ projectId }: { projectId: string }): React.JSX.Elemen
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
-                  <Link
-                    to="/projects/$projectId/about"
-                    params={{ projectId }}
-                    data-testid="stage-about"
-                  >
+                  <Link to="/books/$bookId/about" params={{ bookId }} data-testid="stage-about">
                     <InfoIcon aria-hidden="true" />
                     {MESSAGES.workspace.bar.about}
                   </Link>
@@ -198,8 +191,8 @@ export function StageBar({ projectId }: { projectId: string }): React.JSX.Elemen
               return (
                 <Link
                   key={entry.stage}
-                  to="/projects/$projectId/stages/$stage"
-                  params={{ projectId, stage: entry.stage }}
+                  to="/books/$bookId/stages/$stage"
+                  params={{ bookId, stage: entry.stage }}
                   search={page === undefined ? {} : { page }}
                   aria-current={isCurrent ? 'page' : undefined}
                   data-testid={`stage-${entry.stage}`}
@@ -220,8 +213,8 @@ export function StageBar({ projectId }: { projectId: string }): React.JSX.Elemen
         </div>
       ))}
       <Link
-        to="/projects/$projectId/about"
-        params={{ projectId }}
+        to="/books/$bookId/about"
+        params={{ bookId }}
         aria-current={onAbout ? 'page' : undefined}
         data-testid="stage-about"
         className={cn(

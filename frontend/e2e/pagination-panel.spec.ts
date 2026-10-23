@@ -2,9 +2,9 @@ import { expect, type Page } from '@playwright/test';
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../src/shared/http/csrf';
 import {
   createBook,
+  openBookId,
   openLibrary,
   openOrderStage,
-  openProjectId,
   setKind,
   snap,
   uploadFolder,
@@ -33,7 +33,7 @@ test.use({ viewport: { width: 1280, height: 1000 } });
 
 /** The ids of the pages of the open book in book order, read from the server. */
 async function pageIds(page: Page): Promise<string[]> {
-  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/pages?size=100`);
+  const listed = await page.request.get(`/api/v1/books/${openBookId(page)}/pages?size=100`);
   const items = ((await listed.json()) as { items: { id: string; position: number }[] }).items;
   return items.toSorted((a, b) => a.position - b.position).map((item) => item.id);
 }
@@ -43,7 +43,7 @@ async function makeSection(page: Page, body: Record<string, unknown>): Promise<v
   const cookies = await page.context().cookies();
   const token = cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '';
   const response = await page.request.post(
-    `/api/v1/projects/${openProjectId(page)}/pagination-sections`,
+    `/api/v1/books/${openBookId(page)}/pagination-sections`,
     { headers: { [CSRF_HEADER_NAME]: token }, data: body },
   );
   expect(response.status()).toBe(201);

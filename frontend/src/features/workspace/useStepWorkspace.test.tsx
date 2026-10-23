@@ -20,7 +20,7 @@ const sdk = vi.hoisted(() => ({ rows: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet: sdk.rows,
+  listStagePagesApiV1BooksBookIdStagesStagePagesGet: sdk.rows,
 }));
 
 const SAVED = recipe('r1', {

@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Job
     from bookreviver.domain.events import DomainEvent
-    from bookreviver.domain.ids import JobId, ProjectId
+    from bookreviver.domain.ids import BookId, JobId
     from bookreviver.domain.values import MailMessage
 
 
@@ -98,11 +98,11 @@ class JobBoard(ABC):
         """
 
     @abstractmethod
-    def jobs(self, project_id: ProjectId, *, active: bool) -> Sequence[Job]:
+    def jobs(self, book_id: BookId, *, active: bool) -> Sequence[Job]:
         """Return the jobs of a book the process holds, the newest first.
 
-        :param project_id: Project whose jobs are listed.
-        :type project_id: ProjectId
+        :param book_id: Project whose jobs are listed.
+        :type book_id: BookId
         :param active: Whether to list only the jobs that are queued or running.
         :type active: bool
         :returns: The jobs of the book.
@@ -110,11 +110,11 @@ class JobBoard(ABC):
         """
 
     @abstractmethod
-    def jobs_of(self, project_ids: Collection[ProjectId], *, active: bool) -> Sequence[Job]:
+    def jobs_of(self, book_ids: Collection[BookId], *, active: bool) -> Sequence[Job]:
         """Return the jobs of several books the process holds, the newest first.
 
-        :param project_ids: Projects whose jobs are listed.
-        :type project_ids: Collection[ProjectId]
+        :param book_ids: Projects whose jobs are listed.
+        :type book_ids: Collection[BookId]
         :param active: Whether to list only the jobs that are queued or running.
         :type active: bool
         :returns: The jobs of the books.
@@ -122,14 +122,14 @@ class JobBoard(ABC):
         """
 
     @abstractmethod
-    def revision(self, project_id: ProjectId) -> str:
+    def revision(self, book_id: BookId) -> str:
         """Return a mark that changes whenever a job of a book is put, started, advanced, cancelled or ended.
 
         A read of a book that shows its jobs is fresh while the version of the book and this mark are both the same.
         The mark names the process too, so it never repeats after a restart, when the jobs held before are gone.
 
-        :param project_id: The book.
-        :type project_id: ProjectId
+        :param book_id: The book.
+        :type book_id: BookId
         :returns: The mark of the jobs of the book.
         :rtype: str
         """
@@ -171,11 +171,11 @@ class EventStream(ABC):
     """
 
     @abstractmethod
-    def subscribe(self, project_id: ProjectId) -> AbstractAsyncContextManager[AsyncIterator[DomainEvent]]:
+    def subscribe(self, book_id: BookId) -> AbstractAsyncContextManager[AsyncIterator[DomainEvent]]:
         """Return a subscription to the project's events.
 
-        :param project_id: Project whose events are delivered.
-        :type project_id: ProjectId
+        :param book_id: Project whose events are delivered.
+        :type book_id: BookId
         :returns: Context manager that subscribes when entered, yields the iterator of every event published since,
                   and unsubscribes when left.
         :rtype: AbstractAsyncContextManager[AsyncIterator[DomainEvent]]

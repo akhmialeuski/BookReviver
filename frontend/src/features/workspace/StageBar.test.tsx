@@ -11,10 +11,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobSchema, StageSummarySchema } from '@/api';
 import {
-  listStagesApiV1ProjectsProjectIdStagesGetOptions,
-  projectApiV1ProjectsProjectIdGetOptions,
+  bookApiV1BooksBookIdGetOptions,
+  listStagesApiV1BooksBookIdStagesGetOptions,
 } from '@/api/@tanstack/react-query.gen';
-import { projectWith } from '@/features/about/fixtures';
+import { bookWith } from '@/features/about/fixtures';
 import { jobsOptions } from '@/features/workspace/queries';
 import { StageBar } from '@/features/workspace/StageBar';
 import { NARROW_QUERY } from '@/shared/hooks/useMediaQuery';
@@ -25,7 +25,7 @@ import { NARROW_QUERY } from '@/shared/hooks/useMediaQuery';
  * The queries the bar reads are filled in beforehand and never go stale, so it draws from them without a server.
  */
 
-const PROJECT_ID = 'project-1';
+const BOOK_ID = 'book-1';
 
 const IMPORT_SUMMARY: StageSummarySchema = {
   stage: 'import',
@@ -68,31 +68,27 @@ describe('StageBar, the Import stage', () => {
     summaries: StageSummarySchema[] = [IMPORT_SUMMARY],
   ) {
     const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
+    client.setQueryData(bookApiV1BooksBookIdGetOptions({ path: { book_id: BOOK_ID } }).queryKey, {
+      ...bookWith(),
+      source_count: counts.files,
+      scan_count: counts.scans,
+      page_count: counts.scans,
+    });
     client.setQueryData(
-      projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: PROJECT_ID } }).queryKey,
-      {
-        ...projectWith(),
-        source_count: counts.files,
-        scan_count: counts.scans,
-        page_count: counts.scans,
-      },
-    );
-    client.setQueryData(
-      listStagesApiV1ProjectsProjectIdStagesGetOptions({ path: { project_id: PROJECT_ID } })
-        .queryKey,
+      listStagesApiV1BooksBookIdStagesGetOptions({ path: { book_id: BOOK_ID } }).queryKey,
       { items: summaries, total: summaries.length, page: 1, size: 100, pages: 1 },
     );
-    client.setQueryData(jobsOptions(PROJECT_ID, true).queryKey, active);
+    client.setQueryData(jobsOptions(BOOK_ID, true).queryKey, active);
 
     const rootRoute = createRootRoute({
       component: () => (
         <QueryClientProvider client={client}>
-          <StageBar projectId={PROJECT_ID} />
+          <StageBar bookId={BOOK_ID} />
         </QueryClientProvider>
       ),
     });
-    const children = ['/projects/$projectId/stages/$stage', '/projects/$projectId/about'].map(
-      (path) => createRoute({ getParentRoute: () => rootRoute, path }),
+    const children = ['/books/$bookId/stages/$stage', '/books/$bookId/about'].map((path) =>
+      createRoute({ getParentRoute: () => rootRoute, path }),
     );
     const router = createRouter({
       routeTree: rootRoute.addChildren(children),
@@ -104,7 +100,7 @@ describe('StageBar, the Import stage', () => {
   }
 
   describe('in a narrow window', () => {
-    const IMPORT_PATH = `/projects/${PROJECT_ID}/stages/import`;
+    const IMPORT_PATH = `/books/${BOOK_ID}/stages/import`;
 
     beforeEach(() => {
       // Only the query of the narrow layout matches, as in a window below the lg breakpoint

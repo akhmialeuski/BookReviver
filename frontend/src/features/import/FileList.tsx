@@ -2,8 +2,8 @@ import { useMutation } from '@tanstack/react-query';
 import { FileImageIcon, FileTextIcon, Loader2Icon } from 'lucide-react';
 import type { JobSchema } from '@/api';
 import { cancelJobApiV1JobsJobIdDeleteMutation } from '@/api/@tanstack/react-query.gen';
+import { UploadDialog } from '@/features/books/upload/UploadDialog';
 import type { ImportedSource } from '@/features/import/queries';
-import { UploadDialog } from '@/features/projects/upload/UploadDialog';
 import { describeError } from '@/shared/http/problem';
 import { formatBytes, formatDateTime } from '@/shared/lib/format';
 import { cn } from '@/shared/lib/utils';
@@ -117,13 +117,13 @@ function ImportRow({ job }: { job: JobSchema }): React.JSX.Element {
 }
 
 export function FileList({
-  projectId,
+  bookId,
   sources,
   imports,
   selectedId,
   onSelect,
 }: {
-  projectId: string;
+  bookId: string;
   sources: readonly ImportedSource[];
   /** The imports that are queued or running. */
   imports: readonly JobSchema[];
@@ -144,7 +144,7 @@ export function FileList({
             {MESSAGES.import.files.summary(sources.length, scans, size)}
           </p>
         </div>
-        <UploadDialog projectId={projectId} />
+        <UploadDialog bookId={bookId} />
       </div>
       <ul className="grid max-h-[40vh] gap-2 overflow-y-auto" data-testid="source-list">
         {sources.map((source) => (

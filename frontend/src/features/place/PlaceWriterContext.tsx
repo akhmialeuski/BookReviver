@@ -30,15 +30,15 @@ export function usePlaceWriter(): PlaceWriter | null {
  * @param projectId The book.
  * @param address Where the reader is, or null while the screen has no address to write.
  */
-export function useBookPlaceWriter(projectId: string, address: PlaceAddress | null): PlaceWriter {
+export function useBookPlaceWriter(bookId: string, address: PlaceAddress | null): PlaceWriter {
   const queryClient = useQueryClient();
   const [writer] = useState(
     () =>
       new PlaceWriter({
         address,
-        initial: cachedPlace(queryClient, projectId),
-        send: (body, keepalive) => sendPlace(projectId, body, keepalive),
-        remember: (place) => cachePlace(queryClient, projectId, place),
+        initial: cachedPlace(queryClient, bookId),
+        send: (body, keepalive) => sendPlace(bookId, body, keepalive),
+        remember: (place) => cachePlace(queryClient, bookId, place),
       }),
   );
 

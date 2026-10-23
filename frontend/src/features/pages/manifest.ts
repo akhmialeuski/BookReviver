@@ -1,6 +1,6 @@
 import { queryOptions, type UseQueryResult, useQuery } from '@tanstack/react-query';
-import { listPagesApiV1ProjectsProjectIdPagesGet, type PageSchema } from '@/api';
-import { listPagesApiV1ProjectsProjectIdPagesGetQueryKey } from '@/api/@tanstack/react-query.gen';
+import { listPagesApiV1BooksBookIdPagesGet, type PageSchema } from '@/api';
+import { listPagesApiV1BooksBookIdPagesGetQueryKey } from '@/api/@tanstack/react-query.gen';
 
 /**
  * The page manifest of a book as one query shared by the page strip and the viewer.
@@ -16,10 +16,10 @@ import { listPagesApiV1ProjectsProjectIdPagesGetQueryKey } from '@/api/@tanstack
 export const MANIFEST_PAGE_SIZE = 1000;
 
 /** Query options of the whole manifest of a book, every page included or excluded. */
-export function manifestOptions(projectId: string) {
+export function manifestOptions(bookId: string) {
   return queryOptions({
-    queryKey: listPagesApiV1ProjectsProjectIdPagesGetQueryKey({
-      path: { project_id: projectId },
+    queryKey: listPagesApiV1BooksBookIdPagesGetQueryKey({
+      path: { book_id: bookId },
       query: { size: MANIFEST_PAGE_SIZE },
     }),
     queryFn: async ({ signal }): Promise<PageSchema[]> => {
@@ -27,8 +27,8 @@ export function manifestOptions(projectId: string) {
       let page = 1;
       let total = 1;
       while (page <= total) {
-        const { data } = await listPagesApiV1ProjectsProjectIdPagesGet({
-          path: { project_id: projectId },
+        const { data } = await listPagesApiV1BooksBookIdPagesGet({
+          path: { book_id: bookId },
           query: { page, size: MANIFEST_PAGE_SIZE },
           signal,
           throwOnError: true,
@@ -43,6 +43,6 @@ export function manifestOptions(projectId: string) {
 }
 
 /** Read the pages of a book in book order. */
-export function useManifest(projectId: string): UseQueryResult<PageSchema[]> {
-  return useQuery(manifestOptions(projectId));
+export function useManifest(bookId: string): UseQueryResult<PageSchema[]> {
+  return useQuery(manifestOptions(bookId));
 }

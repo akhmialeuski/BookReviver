@@ -15,8 +15,8 @@ const sdk = vi.hoisted(() => ({ put: vi.fn(), remove: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  putValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePut: sdk.put,
-  deleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDelete: sdk.remove,
+  putValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePut: sdk.put,
+  deleteValueApiV1BooksBookIdStagesStageStepsStepIdValuesNameDelete: sdk.remove,
 }));
 
 class SizeObserverStandIn {
@@ -156,7 +156,7 @@ describe('the values of a setting for parts of the pages', () => {
     });
 
     expect(sdk.remove.mock.calls[0]?.[0]).toMatchObject({
-      path: { project_id: 'project', stage: 'geometry', step_id: STEP, name: 'max_angle' },
+      path: { book_id: 'book', stage: 'geometry', step_id: STEP, name: 'max_angle' },
       query: { scope: 'even', group_label: '' },
     });
     expect(sdk.remove.mock.calls[1]?.[0]).toMatchObject({
@@ -213,7 +213,7 @@ describe('the values of a setting for parts of the pages', () => {
 
     expect(sdk.put).toHaveBeenCalledTimes(1);
     expect(sdk.put.mock.calls[0]?.[0]).toMatchObject({
-      path: { project_id: 'project', stage: 'geometry', step_id: STEP, name: 'min_confidence' },
+      path: { book_id: 'book', stage: 'geometry', step_id: STEP, name: 'min_confidence' },
       body: { scope: 'odd', value: 0.3 },
     });
   });

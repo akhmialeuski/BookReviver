@@ -48,14 +48,14 @@ class TestPreviewBudget:
         :param fx_cv_kit: The processing kit with the OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
-        actor, project = await fx_cv_kit.seed_project()
-        page, _ = await fx_cv_kit.seed_scan_page(project)
+        actor, book_record = await fx_cv_kit.seed_record()
+        page, _ = await fx_cv_kit.seed_scan_page(book_record)
         scan = turned(text_page(PAGE_WIDTH_PX, PAGE_HEIGHT_PX), SKEW_DEGREES)
-        await fx_cv_kit.seed_base_version(project.id, page, image=png_bytes(scan))
+        await fx_cv_kit.seed_base_version(book_record.id, page, image=png_bytes(scan))
         preview = StepPreview(
             page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=DESKEW_KEY),), step_index=0
         )
-        job = await fx_cv_kit.service().start_preview(actor, project.id, preview)
+        job = await fx_cv_kit.service().start_preview(actor, book_record.id, preview)
         # The application opens this span around the entry point of every job in app.jobs.job_runner, which the runner
         # of the kit does not do, so it is opened here with the same name and attributes
         job_attributes = {SpanAttribute.JOB_KIND: JobKind.PREVIEW_STEP, SpanAttribute.JOB_ID: str(job.id)}

@@ -22,9 +22,9 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  carryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPost: sdk.carry,
-  listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGet: sdk.history,
-  listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet: sdk.versions,
+  carryOverEditApiV1BooksBookIdPagesPageIdEditsStageStepIdCarryOverPost: sdk.carry,
+  listHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGet: sdk.history,
+  listVersionsApiV1BooksBookIdPagesPageIdVersionsGet: sdk.versions,
 }));
 
 /**

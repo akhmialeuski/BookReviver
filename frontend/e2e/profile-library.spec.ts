@@ -31,7 +31,7 @@ function cardsOf(page: Page, name: string) {
 
 /** Create a book, upload the pages into it and open its Geometry stage. */
 async function openNewGeometry(page: Page, title: string, folder: string): Promise<void> {
-  await page.goto('/projects');
+  await page.goto('/books');
   await createBook(page, title);
   await uploadFolder(page, folder, PAGES);
   const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');

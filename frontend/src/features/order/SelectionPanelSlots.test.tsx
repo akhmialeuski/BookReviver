@@ -22,7 +22,7 @@ describe('SelectionPanel slots', () => {
       root.render(
         <QueryClientProvider client={client}>
           <SelectionPanel
-            projectId="book"
+            bookId="book"
             selected={selected}
             thumbnails={new Map()}
             gaps={[]}

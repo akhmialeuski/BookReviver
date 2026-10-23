@@ -1,4 +1,4 @@
-import type { BookDetailsSchema, PageSchema, ProjectSchema } from '@/api';
+import type { BookDetailsSchema, BookSchema, PageSchema } from '@/api';
 
 /**
  * Books and pages for the tests of the About tab: a book described by its title alone and a page of a given kind.
@@ -35,9 +35,9 @@ export const EMPTY_DETAILS: BookDetailsSchema = {
   notes: '',
 };
 
-export function projectWith(details: Partial<BookDetailsSchema> = {}): ProjectSchema {
+export function bookWith(details: Partial<BookDetailsSchema> = {}): BookSchema {
   return {
-    id: 'project-1',
+    id: 'book-1',
     details: { ...EMPTY_DETAILS, ...details },
     image_policy: 'compact',
     cover_page_id: null,

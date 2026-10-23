@@ -6,14 +6,14 @@ from uuid import uuid4
 import pytest
 
 from bookreviver.domain.enums import ValueScope
-from bookreviver.domain.ids import PageId, ProjectId
+from bookreviver.domain.ids import BookId, PageId
 from bookreviver.domain.step_values import StepValueLayers, ValueTarget, pages_changing_side
 from tests.helpers.builders import make_step_values
 
 if TYPE_CHECKING:
     from bookreviver.domain.step_values import StepValues
 
-PROJECT_ID: ProjectId = ProjectId(uuid4())
+BOOK_ID: BookId = BookId(uuid4())
 GROUP: str = 'Index'
 RECIPE: dict[str, int] = {'strength': 1, 'depth': 10}
 

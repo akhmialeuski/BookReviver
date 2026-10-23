@@ -1,17 +1,17 @@
 import { queryOptions, type UseQueryResult, useQuery } from '@tanstack/react-query';
 import {
   type JobSchema,
-  type ListStagesApiV1ProjectsProjectIdStagesGetError,
-  listProjectJobsApiV1ProjectsProjectIdJobsGet,
-  listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet,
+  type ListStagesApiV1BooksBookIdStagesGetError,
+  listBookJobsApiV1BooksBookIdJobsGet,
+  listStagePagesApiV1BooksBookIdStagesStagePagesGet,
   type Stage,
   type StagePageSchema,
   type StageSummarySchema,
 } from '@/api';
 import {
-  listProjectJobsApiV1ProjectsProjectIdJobsGetQueryKey,
-  listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey,
-  listStagesApiV1ProjectsProjectIdStagesGetOptions,
+  listBookJobsApiV1BooksBookIdJobsGetQueryKey,
+  listStagePagesApiV1BooksBookIdStagesStagePagesGetQueryKey,
+  listStagesApiV1BooksBookIdStagesGetOptions,
 } from '@/api/@tanstack/react-query.gen';
 
 /**
@@ -35,11 +35,11 @@ export const JOBS_LISTED = 20;
  * @param stage The stage.
  * @param step A step of the recipe to place every page at, or undefined for the rows of the stage alone.
  */
-export function stageRowsOptions(projectId: string, stage: Stage, step?: string) {
+export function stageRowsOptions(bookId: string, stage: Stage, step?: string) {
   const extra = step === undefined ? {} : { step };
   return queryOptions({
-    queryKey: listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey({
-      path: { project_id: projectId, stage },
+    queryKey: listStagePagesApiV1BooksBookIdStagesStagePagesGetQueryKey({
+      path: { book_id: bookId, stage },
       query: { size: ROWS_PAGE_SIZE, ...extra },
     }),
     queryFn: async ({ signal }): Promise<StagePageSchema[]> => {
@@ -47,8 +47,8 @@ export function stageRowsOptions(projectId: string, stage: Stage, step?: string)
       let page = 1;
       let total = 1;
       while (page <= total) {
-        const { data } = await listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet({
-          path: { project_id: projectId, stage },
+        const { data } = await listStagePagesApiV1BooksBookIdStagesStagePagesGet({
+          path: { book_id: bookId, stage },
           query: { page, size: ROWS_PAGE_SIZE, ...extra },
           signal,
           throwOnError: true,
@@ -63,8 +63,8 @@ export function stageRowsOptions(projectId: string, stage: Stage, step?: string)
 }
 
 /** Read where every page of the book stands in one stage. */
-export function useStageRows(projectId: string, stage: Stage): UseQueryResult<StagePageSchema[]> {
-  return useQuery(stageRowsOptions(projectId, stage));
+export function useStageRows(bookId: string, stage: Stage): UseQueryResult<StagePageSchema[]> {
+  return useQuery(stageRowsOptions(bookId, stage));
 }
 
 /**
@@ -76,12 +76,12 @@ export function useStageRows(projectId: string, stage: Stage): UseQueryResult<St
  * that opens again has no rows until the server answers.
  */
 export function useStepRows(
-  projectId: string,
+  bookId: string,
   stage: Stage,
   step: string | undefined,
 ): UseQueryResult<StagePageSchema[]> {
   return useQuery({
-    ...stageRowsOptions(projectId, stage, step),
+    ...stageRowsOptions(bookId, stage, step),
     enabled: step !== undefined,
     gcTime: 0,
   });
@@ -89,10 +89,10 @@ export function useStepRows(
 
 /** Read the summary of every stage of the book, in the order of the pipeline. */
 export function useStageSummaries(
-  projectId: string,
-): UseQueryResult<StageSummarySchema[], ListStagesApiV1ProjectsProjectIdStagesGetError> {
+  bookId: string,
+): UseQueryResult<StageSummarySchema[], ListStagesApiV1BooksBookIdStagesGetError> {
   return useQuery({
-    ...listStagesApiV1ProjectsProjectIdStagesGetOptions({ path: { project_id: projectId } }),
+    ...listStagesApiV1BooksBookIdStagesGetOptions({ path: { book_id: bookId } }),
     select: (page) => page.items,
   });
 }
@@ -103,16 +103,16 @@ export function useStageSummaries(
  * @param projectId The book.
  * @param active Whether to list only the jobs that are queued or running, as the chip does, or the latest of any state.
  */
-export function jobsOptions(projectId: string, active: boolean) {
+export function jobsOptions(bookId: string, active: boolean) {
   const query = active ? { active: true, size: JOBS_LISTED } : { size: JOBS_LISTED };
   return queryOptions({
-    queryKey: listProjectJobsApiV1ProjectsProjectIdJobsGetQueryKey({
-      path: { project_id: projectId },
+    queryKey: listBookJobsApiV1BooksBookIdJobsGetQueryKey({
+      path: { book_id: bookId },
       query,
     }),
     queryFn: async ({ signal }): Promise<JobSchema[]> => {
-      const { data } = await listProjectJobsApiV1ProjectsProjectIdJobsGet({
-        path: { project_id: projectId },
+      const { data } = await listBookJobsApiV1BooksBookIdJobsGet({
+        path: { book_id: bookId },
         query,
         signal,
         throwOnError: true,
@@ -123,13 +123,13 @@ export function jobsOptions(projectId: string, active: boolean) {
 }
 
 /** Read the jobs of the book that are queued or running. */
-export function useActiveJobs(projectId: string): UseQueryResult<JobSchema[]> {
-  return useQuery(jobsOptions(projectId, true));
+export function useActiveJobs(bookId: string): UseQueryResult<JobSchema[]> {
+  return useQuery(jobsOptions(bookId, true));
 }
 
 /** Read the latest jobs of the book in every state, for the list of the activity when it is open. */
-export function useRecentJobs(projectId: string, enabled: boolean): UseQueryResult<JobSchema[]> {
-  return useQuery({ ...jobsOptions(projectId, false), enabled });
+export function useRecentJobs(bookId: string, enabled: boolean): UseQueryResult<JobSchema[]> {
+  return useQuery({ ...jobsOptions(bookId, false), enabled });
 }
 
 /**
@@ -141,16 +141,16 @@ export function useRecentJobs(projectId: string, enabled: boolean): UseQueryResu
  * @param step The step of the recipe to place the page at.
  * @param position Place of the page in the book from zero.
  */
-export function stepRowOptions(projectId: string, stage: Stage, step: string, position: number) {
+export function stepRowOptions(bookId: string, stage: Stage, step: string, position: number) {
   const query = { step, page: position + 1, size: 1 };
   return queryOptions({
-    queryKey: listStagePagesApiV1ProjectsProjectIdStagesStagePagesGetQueryKey({
-      path: { project_id: projectId, stage },
+    queryKey: listStagePagesApiV1BooksBookIdStagesStagePagesGetQueryKey({
+      path: { book_id: bookId, stage },
       query,
     }),
     queryFn: async ({ signal }): Promise<StagePageSchema | null> => {
-      const { data } = await listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet({
-        path: { project_id: projectId, stage },
+      const { data } = await listStagePagesApiV1BooksBookIdStagesStagePagesGet({
+        path: { book_id: bookId, stage },
         query,
         signal,
         throwOnError: true,

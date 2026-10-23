@@ -18,8 +18,8 @@ from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlData
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ChangeWaitSettings
 from bookreviver.domain.entities import LibraryEntry
-from tests.helpers.builders import EPOCH, make_project
-from tests.helpers.seeding import store_project
+from tests.helpers.builders import EPOCH, make_record
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -133,12 +133,12 @@ class TestSqlDatabase:
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        project = make_project()
-        renamed = evolve(project, details=evolve(project.details, title=NEW_TITLE))
+        book_record = make_record()
+        renamed = evolve(book_record, details=evolve(book_record.details, title=NEW_TITLE))
         uow = fx_uow()
-        await store_project(uow, project, owner=fx_owner_id)
-        await uow.change_book(project.id, lambda repos, _project: repos.projects.update(renamed))
-        stored = await uow.read_book(project.id, lambda repos: repos.projects.get(project.id))
+        await store_book(uow, book_record, owner=fx_owner_id)
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.book_record.update(renamed))
+        stored = await uow.read_book(book_record.id, lambda repos: repos.book_record.get(book_record.id))
         assert stored.updated_at == renamed.updated_at
 
     async def test_url_of_the_async_driver_gets_the_driver_of_the_standard_library(self, tmp_path: Path) -> None:
@@ -286,7 +286,7 @@ class TestSqliteTransactions:
         :param fx_owner_id: Committed account the entry of the change names.
         :type fx_owner_id: AccountId
         """
-        entry = LibraryEntry(project_id=make_project().id, owner_id=fx_owner_id, added_at=EPOCH)
+        entry = LibraryEntry(book_id=make_record().id, owner_id=fx_owner_id, added_at=EPOCH)
         uow = fx_uow()
         path = fx_database.engine.url.database
         assert path is not None
@@ -294,9 +294,9 @@ class TestSqliteTransactions:
             reader.execute(BEGIN_READ)
             reader.execute(SELECT_SCHEMA).fetchall()
             await uow.change(lambda repos: repos.library.add(entry))
-        assert await uow.read(lambda repos: repos.library.get(entry.project_id)) == entry
+        assert await uow.read(lambda repos: repos.library.get(entry.book_id)) == entry
 
-    async def test_change_book_hands_the_work_the_project_as_the_last_change_committed_it(
+    async def test_change_book_hands_the_work_the_book_as_the_last_change_committed_it(
         self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId
     ) -> None:
         """Verify a ``change_book`` reads the project row at its start, so it sees the title another change stored.
@@ -306,10 +306,10 @@ class TestSqliteTransactions:
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        project = make_project()
-        renamed = evolve(project, details=evolve(project.details, title=NEW_TITLE))
+        book_record = make_record()
+        renamed = evolve(book_record, details=evolve(book_record.details, title=NEW_TITLE))
         uow = fx_uow()
-        await store_project(uow, project, owner=fx_owner_id)
-        await uow.change_book(project.id, lambda repos, _project: repos.projects.update(renamed))
-        held = await uow.change_book(project.id, lambda _repos, current: current)
+        await store_book(uow, book_record, owner=fx_owner_id)
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.book_record.update(renamed))
+        held = await uow.change_book(book_record.id, lambda _repos, current: current)
         assert held.details.title == NEW_TITLE

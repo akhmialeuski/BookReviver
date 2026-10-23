@@ -16,11 +16,11 @@ import {
  */
 
 export function AttachDialog({
-  projectId,
+  bookId,
   page,
   onClose,
 }: {
-  projectId: string;
+  bookId: string;
   /** The missing page to bind a scan to, or null while the dialog is closed. */
   page: PageSchema | null;
   onClose: () => void;
@@ -35,7 +35,7 @@ export function AttachDialog({
           </DialogDescription>
         </DialogHeader>
         {page === null ? null : (
-          <AttachScanView projectId={projectId} page={page} onBack={onClose} onDone={onClose} />
+          <AttachScanView bookId={bookId} page={page} onBack={onClose} onDone={onClose} />
         )}
       </DialogContent>
     </Dialog>

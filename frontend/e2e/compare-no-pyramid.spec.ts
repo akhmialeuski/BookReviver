@@ -3,8 +3,8 @@ import path from 'node:path';
 import { expect, type Page } from '@playwright/test';
 import {
   createBook,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   uploadFolder,
   waitForIdleJobs,
@@ -58,14 +58,14 @@ function hideTiles(value: unknown): void {
  * the stages again, which is the one thing the scenario needs from it.
  */
 async function readRowsAgain(page: Page): Promise<void> {
-  const projectId = openProjectId(page);
+  const bookId = openBookId(page);
   const [first = ''] = await pageIds(page);
-  const response = await page.request.post(
-    `/api/v1/projects/${projectId}/pages/content-types/detect`,
-    { headers: await changeHeaders(page), data: { page_ids: [first] } },
-  );
+  const response = await page.request.post(`/api/v1/books/${bookId}/pages/content-types/detect`, {
+    headers: await changeHeaders(page),
+    data: { page_ids: [first] },
+  });
   expect(response.ok()).toBe(true);
-  await waitForIdleJobs(page, projectId);
+  await waitForIdleJobs(page, bookId);
 }
 
 test('a page whose result has no pyramid says the picture failed, and draws it once the tiles are cut, on the same page', async ({

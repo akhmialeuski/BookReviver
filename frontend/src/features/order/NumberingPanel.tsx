@@ -41,7 +41,7 @@ import { TextField } from '@/shared/ui/text-field';
  */
 
 export function NumberingPanel({
-  projectId,
+  bookId,
   pages,
   draft,
   preview,
@@ -51,7 +51,7 @@ export function NumberingPanel({
   onClose,
   onAddMissing,
 }: {
-  projectId: string;
+  bookId: string;
   pages: readonly PageSchema[];
   draft: NumberingDraft;
   /** The labels the numbering would write, by page id. */
@@ -66,7 +66,7 @@ export function NumberingPanel({
   onAddMissing: (gaps: readonly LabelGap[]) => void;
 }): React.JSX.Element {
   const text = MESSAGES.order.numbering;
-  const apply = useNumberPages(projectId);
+  const apply = useNumberPages(bookId);
   const range = pagesInRange(pages, draft);
   const runsForward = range !== null;
   const labels = preview.data;
@@ -118,7 +118,7 @@ export function NumberingPanel({
           }
           onClick={() =>
             apply.mutate(
-              { path: { project_id: projectId }, body: numberingBody(draft) },
+              { path: { book_id: bookId }, body: numberingBody(draft) },
               { onSuccess: onClose },
             )
           }

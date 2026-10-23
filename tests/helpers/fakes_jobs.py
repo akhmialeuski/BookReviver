@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.jobs.board import JobRunner
     from bookreviver.domain.enums import BookResource
     from bookreviver.domain.events import DomainEvent
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
 
 EVENT_QUEUE_SIZE: int = 16
 
@@ -81,15 +81,15 @@ class RecordingEventBus(InProcessEventBus):
 
     @override
     @asynccontextmanager
-    async def subscribe(self, project_id: ProjectId) -> AsyncGenerator[AsyncIterator[DomainEvent]]:
+    async def subscribe(self, book_id: BookId) -> AsyncGenerator[AsyncIterator[DomainEvent]]:
         """Subscribe as the in-process bus does, announcing the subscription once it is in place and counting it.
 
-        :param project_id: Project whose events are delivered.
-        :type project_id: ProjectId
+        :param book_id: Project whose events are delivered.
+        :type book_id: BookId
         :returns: Generator yielding once the reader of every event published since entry.
         :rtype: AsyncGenerator[AsyncIterator[DomainEvent]]
         """
-        async with super().subscribe(project_id) as events:
+        async with super().subscribe(book_id) as events:
             self.open_subscriptions += 1
             self.subscribed.set()
             arrived, self._arrival = self._arrival, anyio.Event()

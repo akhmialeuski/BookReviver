@@ -13,17 +13,17 @@ from attrs import frozen
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Job, PageVersion
     from bookreviver.domain.enums import BookResource
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
 
 
 @frozen(kw_only=True)
 class DomainEvent:
     """Something that happened within one project.
 
-    :ivar project_id: Project the event belongs to, whose subscribers receive it.
+    :ivar book_id: Project the event belongs to, whose subscribers receive it.
     """
 
-    project_id: ProjectId
+    book_id: BookId
 
 
 @frozen(kw_only=True)

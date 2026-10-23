@@ -18,10 +18,10 @@ const sdk = vi.hoisted(() => ({ fill: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  fillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPost: sdk.fill,
+  fillBlankPagesApiV1BooksBookIdPagesBlankFillPost: sdk.fill,
 }));
 
-const PROJECT = 'book';
+const BOOK = 'book';
 const BLANK_PAGES = [
   page('a', { kind: 'blank', blank_fill: 'white' }),
   page('b', { kind: 'blank', blank_fill: 'scan' }),
@@ -37,7 +37,7 @@ describe('BlankImageBlock', () => {
     act(() =>
       root.render(
         <QueryClientProvider client={client}>
-          <BlankImageBlock projectId={PROJECT} selected={selected} blankPages={BLANK_PAGES} />
+          <BlankImageBlock bookId={BOOK} selected={selected} blankPages={BLANK_PAGES} />
         </QueryClientProvider>,
       ),
     );
@@ -102,7 +102,7 @@ describe('BlankImageBlock', () => {
     await vi.waitFor(() => expect(sdk.fill).toHaveBeenCalledTimes(1));
     expect(sdk.fill).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: { project_id: PROJECT },
+        path: { book_id: BOOK },
         body: { page_ids: ['b', 'c'], blank_fill: 'paper' },
       }),
     );
