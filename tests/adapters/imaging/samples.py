@@ -193,17 +193,7 @@ def write_pdf(
     """
     with pymupdf.open() as document:
         for spec in pages:
-            width, height = spec.size_pt
-            page = document.new_page(width=width, height=height)
-            for image in spec.images:
-                rect = pymupdf.Rect(image.rect) if image.rect else page.rect
-                xref = page.insert_image(rect, stream=image.encoded(), keep_proportion=False, rotate=image.rotate)
-                if image.decode:
-                    document.xref_set_key(xref, DECODE_KEY, image.decode)
-            if spec.text:
-                page.insert_text(TEXT_ORIGIN_PT, spec.text)
-            if spec.ocr_text:
-                page.insert_text(TEXT_ORIGIN_PT, spec.ocr_text, render_mode=INVISIBLE_RENDER_MODE)
+            _draw_page(document, spec)
         if metadata:
             document.set_metadata(dict(metadata))
         if outline:
@@ -215,6 +205,27 @@ def write_pdf(
         else:
             document.save(path)
     return path
+
+
+def _draw_page(document: pymupdf.Document, spec: PdfPage) -> None:
+    """Add one page to the document with its images, its visible text and its invisible OCR text.
+
+    :param document: The document the page is appended to.
+    :type document: pymupdf.Document
+    :param spec: What the page holds.
+    :type spec: PdfPage
+    """
+    width, height = spec.size_pt
+    page = document.new_page(width=width, height=height)
+    for image in spec.images:
+        rect = pymupdf.Rect(image.rect) if image.rect else page.rect
+        xref = page.insert_image(rect, stream=image.encoded(), keep_proportion=False, rotate=image.rotate)
+        if image.decode:
+            document.xref_set_key(xref, DECODE_KEY, image.decode)
+    if spec.text:
+        page.insert_text(TEXT_ORIGIN_PT, spec.text)
+    if spec.ocr_text:
+        page.insert_text(TEXT_ORIGIN_PT, spec.ocr_text, render_mode=INVISIBLE_RENDER_MODE)
 
 
 def write_pdf_of_image(path: Path, *, image: Path, size_pt: tuple[float, float] = LETTER_SIZE_PT) -> Path:
