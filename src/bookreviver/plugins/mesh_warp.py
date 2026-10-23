@@ -128,7 +128,9 @@ class FlatteningField:
             ys = np.array([node.y for node in row])
             coefficients = np.polyfit(xs / width, ys, min(CURVE_DEGREE, len(xs) - 1))
             # Beyond its first and last node a curve is not followed, so it goes on at the height of the end
-            curves.append(np.asarray(np.polyval(coefficients, np.clip(columns, xs.min(), xs.max()) / width)))
+            curves.append(
+                np.asarray(np.polyval(coefficients, np.clip(columns, xs.min(), xs.max()) / width), dtype=np.float64)
+            )
             heights.append(float(np.polyval(coefficients, np.clip(middle, xs.min(), xs.max()) / width)))
         order = np.argsort(heights)
         targets = [heights[order[0]]]
