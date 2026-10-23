@@ -86,8 +86,9 @@ class TestStreamConnections:
     ) -> None:
         """Verify three streams of one book that are open at once leave the connections in use where they were.
 
-        The count is read once the third subscription is in place, which is after the owner check of every request,
-        so each stream is open and the connection of its check would be held if the read were left in a transaction.
+        The count is read once every stream sent the version it opens with, which is after the owner check and the read
+        of the version of every request, so each stream is open and the connection of a read would be held if the read
+        were left in a transaction.
         The streams then end by one event that all of them receive.
 
         :param fx_app: The running application.
@@ -109,6 +110,9 @@ class TestStreamConnections:
                 group.start_soon(reader.read, fx_app, path)
             with anyio.fail_after(STREAM_TIMEOUT_SECONDS):
                 await fx_fakes.events.wait_for_subscriptions(OPEN_TABS)
+                # Each stream reads the version of the book once it subscribed, and is open once it sent it
+                for reader in readers:
+                    await reader.opened.wait()
             while_open.append(checked_out_connections(fx_database))
             await fx_fakes.events.publish(ProjectChanged(project_id=fx_owned_project.id))
 

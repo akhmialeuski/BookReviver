@@ -7368,7 +7368,7 @@
           "jobs"
         ],
         "summary": "Project-Events",
-        "description": "Stream the project's events as they happen: jobs, imported sources, ready scans, pages, versions, description.\n\nA committed change of the book is a ``book-changed`` event whose id is the new version of the book. The stream keeps\nno changes, so a browser that comes back with the id of an older version is sent ``book-reset`` first.",
+        "description": "Stream the project's events as they happen: jobs, imported sources, ready scans, pages, versions, description.\n\nA committed change of the book is a ``book-changed`` event whose id is the new version of the book. A browser that\nconnects is first sent ``book-version`` with the version now, so it knows which version it holds. The stream keeps\nno changes, so a browser that comes back with the id of another version is sent ``book-reset`` instead, and one that\ncomes back with the id of the version now is sent nothing.",
         "operationId": "project_events_api_v1_projects__project_id__events_get",
         "parameters": [
           {
