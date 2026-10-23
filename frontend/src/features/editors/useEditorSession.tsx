@@ -1,11 +1,11 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FigureState, ScanSchema } from '@/api';
 import { getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetOptions } from '@/api/@tanstack/react-query.gen';
 import { stepChain, stepVersion } from '@/features/editors/chain';
 import { figureStateOf } from '@/features/editors/figure';
 import { pictureOf } from '@/features/editors/picture';
-import { editsKey, useEditChanges, useEdits } from '@/features/editors/queries';
+import { useEditChanges, useEdits } from '@/features/editors/queries';
 import {
   type EditableStep,
   editableStepsOf,
@@ -121,7 +121,6 @@ export function useEditorSession({
   serverFigure?: FigureState | null;
 }): EditorSession | null {
   const { projectId, stage, catalogue } = processing;
-  const queryClient = useQueryClient();
   const { save, remove } = useEditChanges(projectId);
   const run = useRunStage(projectId);
   const { mutate: takeBack } = useUndo(projectId);
@@ -247,7 +246,7 @@ export function useEditorSession({
     !skipped &&
     (editor?.needsResult !== true || result !== null || (focused && pictureSize !== null));
 
-  const edits = useEdits(projectId, owner?.id, stage, available);
+  const { data: edits } = useEdits(projectId, owner?.id, stage, available);
   const saved = edits?.find((candidate) => candidate.step_id === step?.step_id);
   const savedGeometry: Geometry | null = saved?.geometry ?? null;
 
@@ -346,8 +345,7 @@ export function useEditorSession({
     } catch (failure) {
       setError(describeError(failure));
     } finally {
-      await queryClient.invalidateQueries({ queryKey: editsKey(projectId, owner.id, stage) });
-      // The server has the shape and the edit is read again, so the draft is no longer needed. A shape held meanwhile is
+      // The change read the edit again before it ended, so the draft is no longer needed. A shape held meanwhile is
       // another draft, and a save that did not go through keeps its draft on screen beside the error
       if (taken) {
         setDraft((held) => (held?.seq === seq ? null : held));
