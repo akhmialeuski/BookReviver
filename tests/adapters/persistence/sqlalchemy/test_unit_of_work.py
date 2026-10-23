@@ -17,6 +17,7 @@ from anyio import to_thread
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
+from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyBookRepositories
 from bookreviver.domain.enums import BlockKind
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import SliceRequest
@@ -39,6 +40,8 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 NEW_TITLE: str = 'Renamed'
+# The group a page is put in and taken out of
+GROUP: str = 'Engravings'
 # A version of no page, which no row holds
 MISSING_VERSION: PageVersion = make_page_version(page_id=PageId(uuid4()))
 WRITE_ARG: str = 'write'
@@ -146,6 +149,49 @@ class TestRead:
         after = await uow.read_book(project.id, lambda repos: count_pages(repos, project))
         expect(seen == [(1, 1)], f'{seen} seen by the read')
         expect(after == 2, f'{after} seen by a later read')
+        assert_expectations()
+
+
+def group_key(repos: BookRepositories) -> int | None:
+    """Return the key of the row of the group of the test, read from the table.
+
+    :param repos: Repositories of the transaction, which are those of this adapter.
+    :type repos: BookRepositories
+    :returns: The key, or None when the book has no such group.
+    :rtype: int | None
+    """
+    assert isinstance(repos, SqlAlchemyBookRepositories)
+    return repos.groups.find(GROUP)
+
+
+class TestGroups:
+    """Tests for the rows of the groups of the pages, which a change makes and prunes."""
+
+    async def test_a_group_is_made_by_its_first_page_and_removed_with_its_last(
+        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId
+    ) -> None:
+        """Verify putting a page in a group makes the row of the group, and taking it out removes the row.
+
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
+        """
+        project, page = make_project(), make_page()
+        uow = fx_uow()
+        await store_project(uow, project, owner=fx_owner_id)
+        await uow.change_book(project.id, lambda repos, _project: repos.pages.add(page))
+
+        grouped = await uow.change_book(
+            project.id, lambda repos, _project: repos.pages.update(evolve(page, group_label=GROUP))
+        )
+        made = await uow.read_book(project.id, group_key)
+        await uow.change_book(project.id, lambda repos, _project: repos.pages.update(page))
+        left = await uow.read_book(project.id, group_key)
+
+        expect(grouped.group_label == GROUP)
+        expect(made is not None)
+        expect(left is None)
         assert_expectations()
 
 
