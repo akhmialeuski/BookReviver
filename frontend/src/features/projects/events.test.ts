@@ -7,6 +7,7 @@ import {
 } from '@/api/@tanstack/react-query.gen';
 import { numberingPreviewKey } from '@/features/order/usePreviewLabels';
 import { pagesScope, versionReadyKey } from '@/features/projects/queries';
+import { STAGES } from '@/features/stages/stages';
 import {
   applyProjectEvent,
   type BookResource,
@@ -134,6 +135,24 @@ describe('applyProjectEvent', () => {
     vi.advanceTimersByTime(BURST_DELAY_MS);
 
     expect(stageReads()).toHaveLength(2);
+  });
+
+  it('reads the rows of each stage once for a change that names several parts drawn in them', async () => {
+    applyProjectEvent(
+      queryClient,
+      PROJECT_ID,
+      change(['versions', 'stages', 'settings', 'history']),
+      sync,
+    );
+    // The rows of the stages cancel their reads in flight first, and ask for the new read a turn later
+    await vi.advanceTimersByTimeAsync(0);
+
+    const reads = invalidated();
+    expect(
+      reads.filter((read) => read === 'listStagePagesApiV1ProjectsProjectIdStagesStagePagesGet'),
+    ).toHaveLength(STAGES.length);
+    // The layers of the pages are read with their histories, so the histories are not read a second time
+    expect(reads.filter((read) => read === BY_PREDICATE)).toHaveLength(1);
   });
 
   it('leaves the pages alone while a change of the reader is in flight, and reads what depends on them', () => {
