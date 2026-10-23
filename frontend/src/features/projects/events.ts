@@ -33,7 +33,8 @@ import { Coalescer } from '@/shared/lib/coalescer';
  * The jobs live in the memory of the server and raise no version of the book, so a job event carries the whole job, which
  * is written straight into the query of that job, and the reads that show jobs are read again when a job ends. A version
  * a page gains is announced with its identifier, which a preview waits for. A run changes the book once per page and
- * reports a job once per task, so the reads of a part are made once per burst, not once per event.
+ * reports a job once per task, so the reads of a part are made at the start and at the end of a burst, not once per
+ * event.
  *
  * A change made on this screen reads again only what the control that made it shows, so that control never shows the
  * state before it for the length of a burst. Everything else the change wrote follows its `book-changed` event. A change
@@ -67,7 +68,17 @@ export type BookResource = (typeof BOOK_RESOURCES)[number];
 /** How long the first event of a burst waits for the rest before the queries it affects are read again. */
 export const BURST_DELAY_MS = 400;
 
-const bursts = new Coalescer(BURST_DELAY_MS);
+// The bursts of each cache are folded apart, since a burst is the reads of that cache a run of events asks for
+const burstsOfCache = new WeakMap<QueryClient, Coalescer>();
+
+function burstsOf(queryClient: QueryClient): Coalescer {
+  let bursts = burstsOfCache.get(queryClient);
+  if (bursts === undefined) {
+    bursts = new Coalescer(BURST_DELAY_MS);
+    burstsOfCache.set(queryClient, bursts);
+  }
+  return bursts;
+}
 
 /** One event received from the stream. */
 export interface ProjectEvent {
@@ -244,7 +255,10 @@ export function applyProjectEvent(
           event.data,
         );
         if (isActiveJob(event.data)) {
-          bursts.schedule(`${projectId}/jobs`, () => void invalidateJobs(queryClient, projectId));
+          burstsOf(queryClient).schedule(
+            `${projectId}/jobs`,
+            () => void invalidateJobs(queryClient, projectId),
+          );
         } else {
           void refreshJobs(queryClient, projectId);
         }
@@ -276,7 +290,7 @@ export function applyProjectEvent(
         break;
       }
       for (const resource of change.resources) {
-        bursts.schedule(
+        burstsOf(queryClient).schedule(
           `${projectId}/book/${resource}`,
           () => void refreshPart(queryClient, projectId, resource),
         );
