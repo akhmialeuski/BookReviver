@@ -13,7 +13,7 @@ from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.errors import AnchorInsideMovedPagesError
 from tests.helpers.builders import make_page, make_project, make_scan, make_source, new_account_id
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import commit_project, store_project
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -67,17 +67,17 @@ class Book(NamedTuple):
 
 
 @pytest.fixture
-async def fx_book(fx_database: SqlDatabase, fx_actor: Actor) -> Book:
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     """Commit a book of five pages of two sources for the signed-in account.
 
-    :param fx_database: Database of the test, which the application runs on.
-    :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project(owner_id=fx_actor.account_id)
+    project = make_project()
     first, second = (
         make_source(project_id=project.id, name='part1.pdf'),
         make_source(project_id=project.id, name='part2.pdf'),
@@ -88,7 +88,7 @@ async def fx_book(fx_database: SqlDatabase, fx_actor: Actor) -> Book:
     ]
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(scans))
     pages = [make_page(project_id=project.id, order_key=key, scan=scan) for key, scan in zip(keys, scans, strict=True)]
-    await commit_project(fx_database, project, *pages, sources=[first, second], scans=scans)
+    await store_project(fx_uow(), project, *pages, owner=fx_actor.account_id, sources=[first, second], scans=scans)
     return Book(project=project, first=first, second=second, pages=pages)
 
 
@@ -220,7 +220,7 @@ class TestMovePage:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_missing_anchor_and_page_of_another_account_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify an unknown anchor, and a project of another account, answer 404.
 
@@ -230,10 +230,12 @@ class TestMovePage:
         :type fx_book: Book
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
-        stranger = make_project(owner_id=new_account_id())
+        stranger = make_project()
         page = make_page(project_id=stranger.id)
-        await commit_project(fx_database, stranger, page)
+        await commit_project(fx_database, fx_uow(), stranger, page, owner=new_account_id())
 
         unknown = await fx_client.post(
             f'{fx_book.path}/pages/{fx_book.pages[1].id}/move', json={'before_page_id': str(uuid4())}
@@ -317,7 +319,7 @@ class TestMovePages:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_page_of_another_project_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify a group that names a page of another project is answered 404.
 
@@ -325,14 +327,14 @@ class TestMovePages:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        other = make_project(owner_id=fx_actor.account_id)
+        other = make_project()
         page = make_page(project_id=other.id)
-        await commit_project(fx_database, other, page)
+        await store_project(fx_uow(), other, page, owner=fx_actor.account_id)
 
         response = await fx_client.post(
             f'{fx_book.path}/pages/move',

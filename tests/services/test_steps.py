@@ -25,7 +25,7 @@ from bookreviver.ports.processing import StepOutput
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.steps import StepRun, StepRunner
 from tests.helpers.books import IMAGE
-from tests.helpers.builders import EPOCH, make_page, make_project, make_scan, make_source, new_account_id
+from tests.helpers.builders import EPOCH, make_page, make_project, make_scan, make_source
 from tests.helpers.fake_processing import PREVIEW_TOKEN, FakeCatalogue, FakeRenditionWriter
 from tests.helpers.in_process_executor import InProcessStepExecutor
 from tests.helpers.page_services import INFO_NAME, FakeTiler
@@ -49,7 +49,7 @@ def _scan() -> Scan:
     :returns: The scan, a gray JPEG.
     :rtype: Scan
     """
-    source = make_source(project_id=make_project(owner_id=new_account_id()).id)
+    source = make_source(project_id=make_project().id)
     scan = make_scan(source=source, number=0)
     return evolve(scan, renditions=Renditions(ready=True))
 

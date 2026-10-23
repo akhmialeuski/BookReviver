@@ -141,7 +141,7 @@ async def _commit_book(uow: UnitOfWork, owner: Actor) -> Book:
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project(owner_id=owner.account_id)
+    project = make_project()
     first, second = (
         make_source(project_id=project.id, name='part1.pdf'),
         make_source(project_id=project.id, name='part2.pdf'),
@@ -152,7 +152,7 @@ async def _commit_book(uow: UnitOfWork, owner: Actor) -> Book:
     ]
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(scans))
     pages = [make_page(project_id=project.id, order_key=key, scan=scan) for key, scan in zip(keys, scans, strict=True)]
-    await store_project(uow, project, *pages, sources=[first, second], scans=scans)
+    await store_project(uow, project, *pages, owner=owner.account_id, sources=[first, second], scans=scans)
     return Book(project=project, first=first, second=second, pages=pages)
 
 
@@ -244,7 +244,7 @@ class TestMove:
             fx_actor, book.project.id, book.pages[2].id, PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)
         )
 
-        stored = await fx_uow().read(lambda repos: repos.pages.get(book.pages[2].id))
+        stored = await fx_uow().read_book(book.project.id, lambda repos: repos.pages.get(book.pages[2].id))
         expect(stored.updated_at == LATER)
         expect(evolve(stored, order_key=book.pages[2].order_key, updated_at=EPOCH) == book.pages[2])
         expect(stored.order_key < book.pages[0].order_key)

@@ -312,7 +312,7 @@ class TestMarginsAfterSelectContent:
         for index, page in enumerate(pages):
             margins = await margins_of(fx_cv_kit, page)
             assert margins.input_id is not None
-            select = await fx_cv_kit.stored_version(margins.input_id)
+            select = await fx_cv_kit.stored_version(project.id, margins.input_id)
             frame = Rect.from_data(select.data[VersionData.FRAME])
             box = Rect.from_data(margins.data[VersionData.CONTENT_BOX])
             (size_x, _), (place_x, place_y) = BLOCKS[index]
@@ -339,7 +339,7 @@ class TestMarginsAfterSelectContent:
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         margins = await margins_of(fx_cv_kit, pages[CHANGED])
         assert margins.input_id is not None
-        select = await fx_cv_kit.stored_version(margins.input_id)
+        select = await fx_cv_kit.stored_version(project.id, margins.input_id)
         box = Rect.from_data(margins.data[VersionData.CONTENT_BOX])
         expect(Rect.from_data(select.data[VersionData.FRAME]) == HAND_FRAME)
         expect(abs(box.left - HAND_FRAME.left) <= 1 and abs(box.top - HAND_FRAME.top) <= 1)

@@ -60,8 +60,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
 
     from bookreviver.domain.entities import Job, Page, PageVersion, Project
-    from bookreviver.domain.ids import StorageKey
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.domain.ids import ProjectId, StorageKey
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -106,7 +106,7 @@ async def ran_geometry(kit: ProcessingKit) -> tuple[Actor, Project, Page, PageVe
     await run_stage(kit, actor, project, StageRun(stage=Stage.GEOMETRY))
     record = await stage_of(kit, page, Stage.GEOMETRY)
     assert record.head_version_id is not None
-    return actor, project, page, await kit.stored_version(record.head_version_id)
+    return actor, project, page, await kit.stored_version(project.id, record.head_version_id)
 
 
 async def ran_two_steps(
@@ -128,7 +128,7 @@ async def ran_two_steps(
     steps = [Step(processor_key=FakeProcessor.spec.key, enabled=first_on), Step(processor_key=FakeProcessor.spec.key)]
     recipe = await kit.edit_recipe(actor, project, Stage.GEOMETRY, RecipeDraft(steps=steps))
     await run_stage(kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-    found = await kit.uow().read(lambda repos: repos.page_versions.list_for_page(page.id))
+    found = await kit.uow().read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id))
     in_stage = [version for version in found if version.stage is Stage.GEOMETRY]
     # The steps run within one tick of the clock, so the order is the one of the chain: each step reads the version of
     # the step before it, and the first reads the image of an earlier stage
@@ -141,17 +141,19 @@ async def ran_two_steps(
     return actor, project, page, [step.step_id for step in recipe.steps], made
 
 
-async def mark_version(kit: ProcessingKit, version: PageVersion, mark: ResultMark) -> None:
+async def mark_version(kit: ProcessingKit, project_id: ProjectId, version: PageVersion, mark: ResultMark) -> None:
     """Set the mark of a stored version.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Project whose book holds the version.
+    :type project_id: ProjectId
     :param version: The version.
     :type version: PageVersion
     :param mark: The mark to set.
     :type mark: ResultMark
     """
-    await change_versions(kit, version, lambda versions: versions.update(evolve(version, mark=mark)))
+    await change_versions(kit, project_id, lambda versions: versions.update(evolve(version, mark=mark)))
 
 
 @asynccontextmanager
@@ -198,11 +200,11 @@ class TestChooseVersion:
         actor, project, page, first = await ran_geometry(fx_kit)
         second = evolve(first, id=PageVersionId(CHOSEN_VERSION_ID), params={STRENGTH_PARAMETER: 7})
 
-        def add_second(repos: Repositories, _project: Project) -> None:
+        def add_second(repos: BookRepositories, _project: Project) -> None:
             """Add the second version, and a record of the cleanup stage that reads the first.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: Project of the book, which the work does not need.
             :type _project: Project
             """
@@ -427,7 +429,7 @@ class TestVersionsOfAStep:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, [first, _], [made_first, _] = await ran_two_steps(fx_kit)
-        await mark_version(fx_kit, made_first, ResultMark.BAD)
+        await mark_version(fx_kit, project.id, made_first, ResultMark.BAD)
         service = fx_kit.service()
         bad_of_step = await service.versions(
             actor,
@@ -496,10 +498,10 @@ class TestStartTiles:
         actor, project, page, first = await ran_geometry(fx_kit)
         untiled = evolve(first, id=PageVersionId('8899aabbccddeeff'), tiles_ready=False)
         await fx_kit.uow().change_book(project.id, lambda repos, _project: repos.page_versions.add(untiled))
-        await fx_kit.store_files(untiled)
+        await fx_kit.store_files(untiled, project.id)
         job = await fx_kit.service().start_tiles(actor, project.id, page.id, untiled.id)
         await fx_kit.work_queue()
-        cut = await fx_kit.stored_version(untiled.id)
+        cut = await fx_kit.stored_version(project.id, untiled.id)
         tiles = ProjectKeys(project.id).version_rendition(cut, Rendition.TILES)
         async with fx_kit.assets.readable(tiles) as directory:
             exists = directory.is_dir()
@@ -589,11 +591,11 @@ class TestCollection:
         """
         actor, project, page, current, old = await self.collectable_book(fx_kit)
 
-        def mark_old(repos: Repositories, _project: Project) -> None:
+        def mark_old(repos: BookRepositories, _project: Project) -> None:
             """Mark the old version bad, and log the mark.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: Project of the book, which the work does not need.
             :type _project: Project
             """
@@ -609,8 +611,8 @@ class TestCollection:
                 pass
         expect(old.id not in {version.id for version in remaining})
         expect(len(remaining) == 2)
-        expect(await found_version(fx_kit, current.id) is not None)
-        expect(await mark_log(fx_kit, old) == [])
+        expect(await found_version(fx_kit, project.id, current.id) is not None)
+        expect(await mark_log(fx_kit, project.id, old) == [])
         stored = stored_job(fx_kit, job.id)
         expect((stored.state, stored.error) == (JobState.SUCCEEDED, ''))
         assert_expectations()
@@ -630,8 +632,8 @@ class TestCollection:
         )
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY, page_ids=(page.id,)))
         jobs = fx_kit.board.jobs(project.id, active=False)
-        gone = await found_version(fx_kit, old.id)
-        kept = await fx_kit.stored_version(current.id)
+        gone = await found_version(fx_kit, project.id, old.id)
+        kept = await fx_kit.stored_version(project.id, current.id)
         record = await stage_of(fx_kit, page, Stage.GEOMETRY)
         keys = ProjectKeys(project.id)
         with pytest.raises(NotFoundError):
@@ -644,7 +646,7 @@ class TestCollection:
         expect(gone is None)
         expect(kept.state is VersionState.READY)
         expect(record.head_version_id == current.id)
-        expect(current.input_id is not None and await found_version(fx_kit, current.input_id) is not None)
+        expect(current.input_id is not None and await found_version(fx_kit, project.id, current.input_id) is not None)
         assert_expectations()
 
     async def test_a_preview_is_deleted_with_its_row_like_any_other_version(self, fx_kit: ProcessingKit) -> None:
@@ -669,9 +671,9 @@ class TestCollection:
         with pytest.raises(NotFoundError):
             async with fx_kit.assets.readable(keys.version_directory(preview)):
                 pass
-        expect(await found_version(fx_kit, preview.id) is None)
+        expect(await found_version(fx_kit, project.id, preview.id) is None)
         # The version of the full run that nothing reads goes in the same collection, so the preview is no exception
-        expect(await found_version(fx_kit, old.id) is None)
+        expect(await found_version(fx_kit, project.id, old.id) is None)
         assert_expectations()
 
     async def test_young_preview_is_kept_since_the_editor_still_shows_it(self, fx_kit: ProcessingKit) -> None:
@@ -695,7 +697,7 @@ class TestCollection:
         await fx_kit.work_queue()
         async with fx_kit.assets.readable(keys.version_rendition(preview, Rendition.PREVIEW)):
             pass
-        assert (await found_version(fx_kit, preview.id)) is not None
+        assert (await found_version(fx_kit, project.id, preview.id)) is not None
 
     async def test_a_second_request_while_one_is_active_gets_the_active_job(self, fx_kit: ProcessingKit) -> None:
         """Verify a project has one collection at a time.
@@ -723,11 +725,11 @@ class TestCollection:
         monkeypatch.setattr(fx_kit.assets, DELETE_PREFIX, AsyncMock(side_effect=OSError(READ_ONLY_DISK)))
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.work_queue()
-        marked = await fx_kit.stored_version(old.id)
+        marked = await fx_kit.stored_version(project.id, old.id)
         stored = stored_job(fx_kit, job.id)
         expect((stored.state, stored.error) == (JobState.FAILED, VERSIONS_LEFT.format(count=1)))
         expect((marked.state, marked.data[VersionData.ERROR]) == (VersionState.FAILED, BEING_COLLECTED))
-        expect((await fx_kit.stored_version(current.id)).state is VersionState.READY)
+        expect((await fx_kit.stored_version(project.id, current.id)).state is VersionState.READY)
         assert_expectations()
 
     async def test_the_next_collection_finishes_what_a_failed_one_left(
@@ -750,7 +752,7 @@ class TestCollection:
         with pytest.raises(NotFoundError):
             async with fx_kit.assets.readable(ProjectKeys(project.id).version_directory(old)):
                 pass
-        expect(await found_version(fx_kit, old.id) is None)
+        expect(await found_version(fx_kit, project.id, old.id) is None)
         expect(stored_job(fx_kit, again.id).state is JobState.SUCCEEDED)
         assert_expectations()
 
@@ -773,11 +775,11 @@ class TestCollection:
         async with fx_kit.assets.writable(keys.version_rendition(other, Rendition.FULL_JPEG)) as target:
             target.write_bytes(IMAGE_CONTENT)
 
-        def add_other(repos: Repositories, _project: Project) -> None:
+        def add_other(repos: BookRepositories, _project: Project) -> None:
             """Add the second old version, and a log entry for the first.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: Project of the book, which the work does not need.
             :type _project: Project
             """
@@ -805,13 +807,13 @@ class TestCollection:
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.work_queue()
 
-        stayed = await fx_kit.stored_version(old.id)
+        stayed = await fx_kit.stored_version(project.id, old.id)
         stored = stored_job(fx_kit, job.id)
         async with fx_kit.assets.readable(keys.version_rendition(old, Rendition.FULL_JPEG)):
             pass
-        expect(await found_version(fx_kit, other.id) is None)
+        expect(await found_version(fx_kit, project.id, other.id) is None)
         expect((stayed.state, stayed.data[VersionData.ERROR]) == (VersionState.FAILED, BEING_COLLECTED))
-        expect(len(await mark_log(fx_kit, old)) == 1)
+        expect(len(await mark_log(fx_kit, project.id, old)) == 1)
         expect((stored.state, stored.error) == (JobState.FAILED, VERSIONS_LEFT.format(count=1)))
         assert_expectations()
 
@@ -850,7 +852,7 @@ class TestCollection:
         job = await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.work_queue()
 
-        stored = await fx_kit.stored_version(reader.id)
+        stored = await fx_kit.stored_version(project.id, reader.id)
         async with fx_kit.assets.readable(keys.version_rendition(old, Rendition.FULL_JPEG)):
             pass
         expect(stored.input_id == old.id)
@@ -872,11 +874,11 @@ class TestCollection:
         async with fx_kit.assets.writable(keys.version_rendition(commented, Rendition.FULL_JPEG)) as target:
             target.write_bytes(IMAGE_CONTENT)
 
-        def judge(repos: Repositories, _project: Project) -> None:
+        def judge(repos: BookRepositories, _project: Project) -> None:
             """Mark the old version good, add the commented one, and log an entry for the old one.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: Project of the book, which the work does not need.
             :type _project: Project
             """
@@ -890,9 +892,9 @@ class TestCollection:
         for kept in (good, commented):
             async with fx_kit.assets.readable(keys.version_rendition(kept, Rendition.FULL_JPEG)):
                 pass
-        expect(await found_version(fx_kit, good.id) is not None)
-        expect(await found_version(fx_kit, commented.id) is not None)
-        expect(len(await mark_log(fx_kit, good)) == 1)
+        expect(await found_version(fx_kit, project.id, good.id) is not None)
+        expect(await found_version(fx_kit, project.id, commented.id) is not None)
+        expect(len(await mark_log(fx_kit, project.id, good)) == 1)
         assert_expectations()
 
     async def test_the_versions_of_an_old_chain_go_together(self, fx_kit: ProcessingKit) -> None:
@@ -906,8 +908,8 @@ class TestCollection:
         await fx_kit.uow().change_book(project.id, lambda repos, _project: repos.page_versions.add(reader))
         await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.work_queue()
-        expect(await found_version(fx_kit, old.id) is None)
-        expect(await found_version(fx_kit, reader.id) is None)
+        expect(await found_version(fx_kit, project.id, old.id) is None)
+        expect(await found_version(fx_kit, project.id, reader.id) is None)
         assert_expectations()
 
     async def test_the_report_counts_the_versions_a_collection_would_delete_and_their_bytes(
@@ -985,7 +987,7 @@ class TestCollection:
         monkeypatch.setattr(ProcessingJobs, BATCH_SIZE_ATTRIBUTE, 1)
         monkeypatch.setattr(fx_kit.assets, DELETE_PREFIX, remove_and_cancel)
         await fx_kit.work_queue()
-        found = [await found_version(fx_kit, version.id) for version in (old, other)]
+        found = [await found_version(fx_kit, project.id, version.id) for version in (old, other)]
         expect(stored_job(fx_kit, job.id).state is JobState.CANCELLED)
         expect(sum(version is None for version in found) == 1)
         assert_expectations()
@@ -1001,11 +1003,11 @@ class TestCollection:
             current, id=PageVersionId('1234123412341234'), input_id=old.id, created_at=EPOCH, stage=Stage.CLEANUP
         )
 
-        def add_reader(repos: Repositories, _project: Project) -> None:
+        def add_reader(repos: BookRepositories, _project: Project) -> None:
             """Add a version of the cleanup stage that reads the old version, and make it the current one.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: Project of the book, which the work does not need.
             :type _project: Project
             """
@@ -1017,8 +1019,8 @@ class TestCollection:
         await fx_kit.uow().change_book(project.id, add_reader)
         await fx_kit.service().start_collection(actor, project.id)
         await fx_kit.work_queue()
-        stored = await fx_kit.stored_version(reader.id)
-        untouched = await fx_kit.stored_version(old.id)
+        stored = await fx_kit.stored_version(project.id, reader.id)
+        untouched = await fx_kit.stored_version(project.id, old.id)
         async with fx_kit.assets.readable(ProjectKeys(project.id).version_rendition(old, Rendition.FULL_JPEG)):
             pass
         expect(untouched.id == old.id)
@@ -1037,7 +1039,7 @@ class TestMapToScan:
         """
         actor, project, page, geometry = await ran_geometry(fx_kit)
         assert geometry.input_id is not None
-        base = await fx_kit.stored_version(geometry.input_id)
+        base = await fx_kit.stored_version(project.id, geometry.input_id)
         cropped = evolve(
             base, transform=Transform(kind=TransformKind.CROP, quad=HALF, matrix=(1, 0, -1100, 0, 1, 0, 0, 0, 1))
         )
@@ -1045,11 +1047,11 @@ class TestMapToScan:
             geometry, transform=Transform(kind=TransformKind.CROP, quad=HALF, matrix=(1, 0, -10, 0, 1, -20, 0, 0, 1))
         )
 
-        def move(repos: Repositories, _project: Project) -> None:
+        def move(repos: BookRepositories, _project: Project) -> None:
             """Give the two versions their transforms.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: Project of the book, which the work does not need.
             :type _project: Project
             """
@@ -1061,27 +1063,30 @@ class TestMapToScan:
         assert mapped == Point(x=1115, y=27)
 
 
-async def fail_the_chosen_version(kit: ProcessingKit, version: PageVersion) -> None:
+async def fail_the_chosen_version(kit: ProcessingKit, project_id: ProjectId, version: PageVersion) -> None:
     """Store the version as failed, as a run that made it again and failed would.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Project whose book holds the version.
+    :type project_id: ProjectId
     :param version: The version a user chose.
     :type version: PageVersion
     """
-    await change_versions(kit, version, lambda versions: versions.update(evolve(version, state=VersionState.FAILED)))
+    await change_versions(kit, project_id, lambda versions: versions.update(evolve(version, state=VersionState.FAILED)))
 
 
-async def delete_the_page_of_the_version(kit: ProcessingKit, version: PageVersion) -> None:
+async def delete_the_page_of_the_version(kit: ProcessingKit, project_id: ProjectId, version: PageVersion) -> None:
     """Delete the page the version belongs to, as a request of the user does.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Project whose book holds the version.
+    :type project_id: ProjectId
     :param version: The version a user chose, which goes with its page.
     :type version: PageVersion
     """
-    page = await kit.uow().read(lambda repos: repos.pages.get(version.page_id))
-    await kit.uow().change_book(page.project_id, lambda repos, _project: repos.pages.delete(page.id))
+    await kit.uow().change_book(project_id, lambda repos, _project: repos.pages.delete(version.page_id))
 
 
 class TestChooseVersionApplyStep:
@@ -1098,7 +1103,7 @@ class TestChooseVersionApplyStep:
         self,
         fx_kit: ProcessingKit,
         monkeypatch: pytest.MonkeyPatch,
-        change: Callable[[ProcessingKit, PageVersion], Awaitable[None]],
+        change: Callable[[ProcessingKit, ProjectId, PageVersion], Awaitable[None]],
         refusal: type[Exception],
     ) -> None:
         """Verify the version is checked again inside the change, after the cancelling that comes before it.
@@ -1112,7 +1117,7 @@ class TestChooseVersionApplyStep:
         :param monkeypatch: Fixture that restores the event bus.
         :type monkeypatch: pytest.MonkeyPatch
         :param change: The change another request makes while the preview is cancelled.
-        :type change: Callable[[ProcessingKit, PageVersion], Awaitable[None]]
+        :type change: Callable[[ProcessingKit, ProjectId, PageVersion], Awaitable[None]]
         :param refusal: What the use case refuses with.
         :type refusal: type[Exception]
         """
@@ -1120,7 +1125,7 @@ class TestChooseVersionApplyStep:
         second = evolve(first, id=PageVersionId(CHOSEN_VERSION_ID), params={STRENGTH_PARAMETER: 7})
         await fx_kit.uow().change_book(project.id, lambda repos, _project: repos.page_versions.add(second))
         await fx_kit.parts(fx_kit.uow()).starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
-        change_when_published(fx_kit, monkeypatch, partial(change, fx_kit, second))
+        change_when_published(fx_kit, monkeypatch, partial(change, fx_kit, project.id, second))
         with pytest.raises(refusal):
             await fx_kit.service().choose_version(actor, project.id, page.id, Stage.GEOMETRY, second.id)
         record = await found_stage(fx_kit, page, Stage.GEOMETRY)

@@ -62,7 +62,8 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Job, Page, Project
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -198,7 +199,7 @@ class TestRunStage:
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, strong)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         second = await head_of(fx_kit, page, Stage.GEOMETRY)
-        replaced = await fx_kit.uow().read(lambda repos: repos.page_versions.find(first.id))
+        replaced = await fx_kit.uow().read_book(page.project_id, lambda repos: repos.page_versions.find(first.id))
         back_draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY)])
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, back_draft)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
@@ -347,7 +348,7 @@ class TestRunStage:
             ),
         )
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        again = await fx_kit.stored_version(good.id)
+        again = await fx_kit.stored_version(project.id, good.id)
         expect((again.state, again.data) == (VersionState.READY, {RAN_KEY: 1}))
         assert_expectations()
 
@@ -417,7 +418,7 @@ class TestRunStage:
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         last = await head_of(fx_kit, page, Stage.GEOMETRY)
         assert last.input_id is not None
-        first = await fx_kit.stored_version(last.input_id)
+        first = await fx_kit.stored_version(project.id, last.input_id)
         assert (first.tiles_ready, last.tiles_ready) == (False, True)
 
     async def test_step_switched_off_is_not_run(self, fx_kit: ProcessingKit) -> None:
@@ -656,8 +657,9 @@ class TestPreviewStep:
         )
         await fx_kit.service().start_preview(actor, project.id, preview)
         await fx_kit.work_queue()
-        versions = await fx_kit.uow().read(
-            lambda repos: repos.page_versions.list_for_stage(page.id, Stage.GEOMETRY, VersionScale.PREVIEW, EVERYTHING)
+        versions = await fx_kit.uow().read_book(
+            project.id,
+            lambda repos: repos.page_versions.list_for_stage(page.id, Stage.GEOMETRY, VersionScale.PREVIEW, EVERYTHING),
         )
         [version] = versions.items
         async with fx_kit.assets.readable(
@@ -818,11 +820,11 @@ async def replace_the_input(kit: ProcessingKit, seeded: SeededPage) -> None:
     :type seeded: SeededPage
     """
 
-    def replace(repos: Repositories, _project: Project) -> None:
+    def replace(repos: BookRepositories, _project: Project) -> None:
         """Add a copy of the base version under another identifier, and make it the head of the page split.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: Project of the book, which the work does not need.
         :type _project: Project
         """
@@ -1004,7 +1006,7 @@ class TestRestart:
     """Tests for a run asked for after the process restarted, whose board holds none of the jobs of the one before."""
 
     async def test_whole_book_run_after_a_restart_goes_over_the_page_that_was_left_and_makes_its_running_version_again(
-        self, fx_kit: ProcessingKit, fx_asset_store: LocalAssetStore
+        self, fx_kit: ProcessingKit, fx_asset_store: LocalAssetStore, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify only the third page gets tasks, and its version that a crash left running is made again.
 
@@ -1016,21 +1018,23 @@ class TestRestart:
         :type fx_kit: ProcessingKit
         :param fx_asset_store: Asset store the two kits share.
         :type fx_asset_store: LocalAssetStore
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
         actor, project, pages, interrupted = await interrupted_book(fx_kit)
         [left] = (await stage_versions(fx_kit, pages[-1], Stage.GEOMETRY)).items
         await change_versions(
             fx_kit,
-            left,
+            project.id,
             lambda versions: versions.update(
                 evolve(left, state=VersionState.RUNNING, renditions=None, tiles_ready=False)
             ),
         )
-        restarted = ProcessingKit(fx_kit.database, fx_asset_store)
+        restarted = ProcessingKit(fx_kit.database, fx_uow, fx_asset_store)
         job = await restarted.service().start_run(actor, project.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
         await restarted.work_queue()
         stored = stored_job(restarted, job.id)
-        made_again = await restarted.stored_version(left.id)
+        made_again = await restarted.stored_version(project.id, left.id)
         record = await found_stage(restarted, pages[-1], Stage.GEOMETRY)
         with pytest.raises(NotFoundError):
             restarted.board.get(interrupted.id)
@@ -1045,7 +1049,7 @@ class TestStartRun:
     """Tests for the reads that ``ProcessingService.start_run`` makes before it queues the job."""
 
     async def test_run_over_chosen_pages_with_stored_recipes_takes_one_read(self, fx_kit: ProcessingKit) -> None:
-        """Verify the ownership, the pages and the recipes are read in one transaction, not one for each.
+        """Verify the pages and the recipes are read in one transaction of the book, not one for each.
 
         The recipes are stored by a first read of them, the mode is ``keep`` and no step is named, so the request needs
         no plan beyond the check. The job is stored by a change, which is no read.

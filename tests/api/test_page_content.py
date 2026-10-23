@@ -19,7 +19,7 @@ from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import FakeBoardProvider, RecordingEventBus
 from tests.helpers.scripted_runner import ScriptedRunner
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import commit_project, store_project
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project
     from bookreviver.domain.entities import Page as BookPage
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -92,24 +93,24 @@ def fx_extra_providers(fx_board: FakeJobBoard) -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_book(fx_database: SqlDatabase, fx_actor: Actor) -> Book:
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     """Commit the book for the signed-in account.
 
-    :param fx_database: Database of the test, which the application runs on.
-    :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project(owner_id=fx_actor.account_id)
+    project = make_project()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(LAYOUT))
     pages = [
         evolve(make_page(project_id=project.id, order_key=key), kind=kind)
         for key, kind in zip(keys, LAYOUT, strict=True)
     ]
     pages[1] = evolve(pages[1], content_type=FOUND)
-    await commit_project(fx_database, project, *pages)
+    await store_project(fx_uow(), project, *pages, owner=fx_actor.account_id)
     return Book(project=project, pages=pages)
 
 
@@ -277,7 +278,7 @@ class TestDetectContent:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_a_page_that_is_not_in_the_book_and_a_book_of_another_account_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify a page that does not exist and a project that is not the account's answer 404 and queue nothing.
 
@@ -287,10 +288,12 @@ class TestDetectContent:
         :type fx_book: Book
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
-        stranger = make_project(owner_id=new_account_id())
+        stranger = make_project()
         page = make_page(project_id=stranger.id)
-        await commit_project(fx_database, stranger, page)
+        await commit_project(fx_database, fx_uow(), stranger, page, owner=new_account_id())
 
         missing = await fx_client.post(fx_book.detect_path, json={PAGE_IDS_FIELD: [str(uuid4())]})
         foreign = await fx_client.post(f'{PROJECTS_PATH}/{stranger.id}{DETECT_SUFFIX}', json={})

@@ -16,7 +16,7 @@ from bookreviver.domain.enums import ContributorRole, IdentifierScheme, ImagePol
 from bookreviver.domain.values import BookDetails, Contributor
 from tests.conftest import TEST_BASE_URL
 from tests.helpers.builders import FULL_DETAILS, make_page, make_project, make_scan, make_source, new_account_id
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import commit_project, store_project
 
 if TYPE_CHECKING:
     import httpx
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor
+    from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.storage import BookFiles
 
 pytestmark = pytest.mark.anyio
@@ -184,20 +185,23 @@ class TestListProjects:
     """Tests for GET /projects."""
 
     async def test_pages_through_own_projects_newest_first(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify the list is paged, ordered by update time and limited to the signed-in account.
+        """Verify the list is paged, the latest added first, and limited to the signed-in account.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        projects = [make_project(owner_id=fx_actor.account_id, minutes=minutes) for minutes in range(PROJECT_COUNT)]
-        for project in [*projects, make_project(owner_id=new_account_id(), minutes=PROJECT_COUNT)]:
-            await commit_project(fx_database, project)
+        projects = [make_project(minutes=minutes) for minutes in range(PROJECT_COUNT)]
+        for project in projects:
+            await store_project(fx_uow(), project, owner=fx_actor.account_id)
+        await commit_project(fx_database, fx_uow(), make_project(minutes=PROJECT_COUNT), owner=new_account_id())
 
         first = await _list_projects(fx_client, {PAGE_SIZE_PARAM: PAGE_SIZE})
         second = await _list_projects(fx_client, {PAGE_SIZE_PARAM: PAGE_SIZE, PAGE_NUMBER_PARAM: 2})
@@ -209,23 +213,23 @@ class TestListProjects:
         assert_expectations()
 
     async def test_counts_the_book_of_each_project(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify every listed project carries the numbers of its pages, sources and scans.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
+        project = make_project()
         source = make_source(project_id=project.id)
         scans = [make_scan(source=source, number=number) for number in range(2)]
         # The second scan is a spread whose page has not been made yet, so the book has one page
         page = make_page(project_id=project.id, scan=scans[0])
-        await commit_project(fx_database, project, page, sources=[source], scans=scans)
+        await store_project(fx_uow(), project, page, owner=fx_actor.account_id, sources=[source], scans=scans)
 
         listed = await _list_projects(fx_client, {})
 
@@ -329,7 +333,7 @@ class TestGetProject:
 
     @pytest.mark.parametrize('owned_by_other', [True, False], ids=['other-account', 'unknown'])
     async def test_invisible_project_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, *, owned_by_other: bool
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, *, owned_by_other: bool
     ) -> None:
         """Verify another account's project answers exactly like a project that does not exist.
 
@@ -337,12 +341,14 @@ class TestGetProject:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param owned_by_other: Whether the project is stored for another account, rather than not stored at all.
         :type owned_by_other: bool
         """
-        project = make_project(owner_id=new_account_id())
+        project = make_project()
         if owned_by_other:
-            await commit_project(fx_database, project)
+            await commit_project(fx_database, fx_uow(), project, owner=new_account_id())
 
         response = await fx_client.get(_project_path(project.id))
 
@@ -365,19 +371,19 @@ class TestUpdateProject:
     """Tests for PATCH /projects/{project_id}."""
 
     async def test_changes_only_the_fields_sent(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify a partial body changes its fields and keeps the rest of the description.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id, title=TITLE)
-        await commit_project(fx_database, project)
+        project = make_project(title=TITLE)
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
 
         response = await fx_client.patch(_project_path(project.id), json={PUBLISHER_FIELD: ' Press '})
 
@@ -388,19 +394,19 @@ class TestUpdateProject:
         assert_expectations()
 
     async def test_a_sent_list_replaces_the_whole_list_and_omitted_fields_keep_their_values(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify a list is replaced as a whole and a normalized identifier is stored, while unsent fields stay.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        project = attrs.evolve(make_project(owner_id=fx_actor.account_id), details=FULL_DETAILS)
-        await commit_project(fx_database, project)
+        project = attrs.evolve(make_project(), details=FULL_DETAILS)
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
 
         response = await fx_client.patch(
             _project_path(project.id),
@@ -421,19 +427,19 @@ class TestUpdateProject:
         assert_expectations()
 
     async def test_null_clears_lists_the_height_and_enums_and_omitted_fields_stay(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify null empties a list, clears the height and sets an enum to unknown, and other fields stay.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        project = attrs.evolve(make_project(owner_id=fx_actor.account_id), details=FULL_DETAILS)
-        await commit_project(fx_database, project)
+        project = attrs.evolve(make_project(), details=FULL_DETAILS)
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
 
         response = await fx_client.patch(
             _project_path(project.id),
@@ -454,21 +460,21 @@ class TestUpdateProject:
         assert_expectations()
 
     async def test_null_clears_a_field_as_a_merge_patch(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify a merge patch sent with its own media type clears the fields sent as null and keeps the omitted ones.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
         author = (Contributor(name=AUTHOR['name'], role=ContributorRole.AUTHOR),)
         details = BookDetails(title=TITLE, contributors=author, notes=NOTES, orthography=Orthography.PRE_REFORM)
-        project = attrs.evolve(make_project(owner_id=fx_actor.account_id), details=details)
-        await commit_project(fx_database, project)
+        project = attrs.evolve(make_project(), details=details)
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
 
         response = await fx_client.patch(
             _project_path(project.id),
@@ -483,20 +489,20 @@ class TestUpdateProject:
         assert_expectations()
 
     async def test_sets_the_cover_and_the_image_policy_and_null_clears_them(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify a page of the project becomes the cover and the policy changes, and null restores their defaults.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
+        project = make_project()
         page = make_page(project_id=project.id)
-        await commit_project(fx_database, project, page)
+        await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
 
         set_response = await fx_client.patch(
             _project_path(project.id), json={COVER_FIELD: str(page.id), IMAGE_POLICY_FIELD: ImagePolicy.LOSSLESS}
@@ -513,19 +519,19 @@ class TestUpdateProject:
         assert_expectations()
 
     async def test_cover_that_is_not_a_page_of_the_project_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify a page identifier the project does not have is refused with 404 and the cover stays empty.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
 
         response = await fx_client.patch(_project_path(project.id), json={COVER_FIELD: str(uuid4())})
 
@@ -535,21 +541,21 @@ class TestUpdateProject:
 
     @pytest.mark.parametrize(CASE_ARG, INVALID_UPDATE_CASES, ids=INVALID_UPDATE_IDS)
     async def test_invalid_body_is_a_problem_and_changes_nothing(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor, case: InvalidBody
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, case: InvalidBody
     ) -> None:
         """Verify the title cannot be emptied or cleared, unknown fields are refused, and the project stays.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param case: Body breaking one constraint, and the field it breaks.
         :type case: InvalidBody
         """
-        project = make_project(owner_id=fx_actor.account_id, title=TITLE)
-        await commit_project(fx_database, project)
+        project = make_project(title=TITLE)
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
 
         response = await fx_client.patch(_project_path(project.id), json=case.body)
 
@@ -560,7 +566,7 @@ class TestUpdateProject:
         assert_expectations()
 
     async def test_another_accounts_project_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify another account's project cannot be changed.
 
@@ -568,9 +574,11 @@ class TestUpdateProject:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
-        project = make_project(owner_id=new_account_id())
-        await commit_project(fx_database, project)
+        project = make_project()
+        await commit_project(fx_database, fx_uow(), project, owner=new_account_id())
 
         response = await fx_client.patch(_project_path(project.id), json={PUBLISHER_FIELD: 'Press'})
 
@@ -581,22 +589,22 @@ class TestDeleteProject:
     """Tests for DELETE /projects/{project_id}."""
 
     async def test_deletes_the_project_and_its_files(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_files: BookFiles, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_files: BookFiles, fx_actor: Actor
     ) -> None:
         """Verify the answer is 204, the project is gone, and nothing of it is left on disk.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_files: Files of imported books in the application's stores.
         :type fx_files: BookFiles
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
+        project = make_project()
         page = make_page(project_id=project.id)
-        await commit_project(fx_database, project, page)
+        await store_project(fx_uow(), project, page, owner=fx_actor.account_id)
         await fx_files.store(page)
 
         response = await fx_client.delete(_project_path(project.id))
@@ -607,7 +615,7 @@ class TestDeleteProject:
         assert_expectations()
 
     async def test_another_accounts_project_is_not_found_and_kept(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_files: BookFiles
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_files: BookFiles
     ) -> None:
         """Verify another account's project and files survive a delete request.
 
@@ -615,12 +623,14 @@ class TestDeleteProject:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_files: Files of imported books in the application's stores.
         :type fx_files: BookFiles
         """
-        project = make_project(owner_id=new_account_id())
+        project = make_project()
         page = make_page(project_id=project.id)
-        await commit_project(fx_database, project, page)
+        await commit_project(fx_database, fx_uow(), project, page, owner=new_account_id())
         await fx_files.store(page)
 
         response = await fx_client.delete(_project_path(project.id))

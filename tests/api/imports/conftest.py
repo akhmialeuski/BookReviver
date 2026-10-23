@@ -12,7 +12,7 @@ from tests.api.imports.watch import ImportWatch, JobEndBus
 from tests.helpers.builders import EPOCH, make_project
 from tests.helpers.fakes_imports import TickingClock
 from tests.helpers.fakes_jobs import JobFakes, JobFakesProvider
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -20,8 +20,8 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project
+    from tests.helpers.database import UnitOfWorkFactory
 
 
 @pytest.fixture
@@ -59,18 +59,18 @@ def fx_extra_providers(fx_fakes: JobFakes) -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_project(fx_database: SqlDatabase, fx_actor: Actor) -> Project:
+async def fx_project(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Project:
     """Store a project of the signed-in account with no sources.
 
-    :param fx_database: Database of the test, which the application runs on.
-    :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored project.
     :rtype: Project
     """
-    project = make_project(owner_id=fx_actor.account_id)
-    await commit_project(fx_database, project)
+    project = make_project()
+    await store_project(fx_uow(), project, owner=fx_actor.account_id)
     return project
 
 

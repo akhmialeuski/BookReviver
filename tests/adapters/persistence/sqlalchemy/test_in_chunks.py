@@ -12,17 +12,17 @@ from delayed_assert import assert_expectations, expect
 from sqlalchemy import event
 
 from bookreviver.adapters.persistence.sqlalchemy.repositories import RowRepository
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from tests.helpers.builders import make_page, make_page_stage, make_page_version, make_project
 from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
     from bookreviver.domain.entities import Page, PageVersion, Project
     from bookreviver.domain.ids import AccountId
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -75,27 +75,26 @@ class Statements:
             self.bound.append(len(arguments['parameters']))
 
 
-async def _seed_book(database: SqlDatabase, owner_id: AccountId) -> tuple[Project, list[Page], list[PageVersion]]:
+async def _seed_book(uow: UnitOfWork, owner_id: AccountId) -> tuple[Project, list[Page], list[PageVersion]]:
     """Commit a book of seven pages in book order, each with one version created a minute after the one before.
 
-    :param database: Database to commit into.
-    :type database: SqlDatabase
+    :param uow: Unit of work to commit through.
+    :type uow: UnitOfWork
     :param owner_id: Account owning the book.
     :type owner_id: AccountId
     :returns: The project, the pages in book order and the versions in the order they were created.
     :rtype: tuple[Project, list[Page], list[PageVersion]]
     """
-    project = make_project(owner_id=owner_id)
+    project = make_project()
     pages = [make_page(project_id=project.id, order_key=f'a{number}') for number in range(COUNT)]
     versions = [make_page_version(page_id=page.id, minutes=number) for number, page in enumerate(pages)]
-    uow = SqlAlchemyUnitOfWork(database)
-    await store_project(uow, project, *pages, versions=versions)
+    await store_project(uow, project, *pages, owner=owner_id, versions=versions)
 
-    def save_stages(repos: Repositories, _project: Project) -> None:
+    def save_stages(repos: BookRepositories, _project: Project) -> None:
         """Save a record of a stage for every page of the book.
 
-        :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :param repos: BookRepositories of the transaction.
+        :type repos: BookRepositories
         :param _project: Project of the book, which the work does not need.
         :type _project: Project
         """
@@ -121,24 +120,26 @@ class TestListsLongerThanAChunk:
     """Tests for the reads that take more identifiers than one chunk holds."""
 
     async def test_every_row_comes_back_in_the_order_one_statement_would_give_it(
-        self, fx_database: SqlDatabase, fx_owner_id: AccountId
+        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId
     ) -> None:
         """Verify the pages come in book order and the versions earliest first, whichever chunk each is read in.
 
         The identifiers are given in reverse, so no chunk holds a run of the order.
 
-        :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Account that may own projects.
         :type fx_owner_id: AccountId
         """
-        project, pages, versions = await _seed_book(fx_database, fx_owner_id)
-        listed_pages, listed_versions, listed_stages = await SqlAlchemyUnitOfWork(fx_database).read(
+        uow = fx_uow()
+        project, pages, versions = await _seed_book(uow, fx_owner_id)
+        listed_pages, listed_versions, listed_stages = await uow.read_book(
+            project.id,
             lambda repos: (
                 repos.pages.list_by_ids(project.id, [page.id for page in reversed(pages)]),
                 repos.page_versions.list_by_ids([version.id for version in reversed(versions)]),
                 repos.page_stages.list_for_pages([page.id for page in reversed(pages)]),
-            )
+            ),
         )
         expect([page.id for page in listed_pages] == [page.id for page in pages])
         expect([version.id for version in listed_versions] == [version.id for version in versions])
@@ -146,52 +147,55 @@ class TestListsLongerThanAChunk:
         assert_expectations()
 
     async def test_no_statement_binds_more_values_than_a_chunk(
-        self, fx_database: SqlDatabase, fx_owner_id: AccountId
+        self, fx_uow: UnitOfWorkFactory, fx_books: BookDatabases, fx_owner_id: AccountId
     ) -> None:
         """Verify a read of seven identifiers is three statements of at most three values, and so is a deletion.
 
-        :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_books: Registry of the books of the test, whose engines of the book are listened to.
+        :type fx_books: BookDatabases
         :param fx_owner_id: Account that may own projects.
         :type fx_owner_id: AccountId
         """
-        project, pages, versions = await _seed_book(fx_database, fx_owner_id)
-        uow = SqlAlchemyUnitOfWork(fx_database)
+        uow = fx_uow()
+        project, pages, versions = await _seed_book(uow, fx_owner_id)
         version_ids = [version.id for version in versions]
 
-        def list_versions(repos: Repositories) -> Statements:
+        def list_versions(repos: BookRepositories) -> Statements:
             """List the versions by their identifiers, and count the statements that took.
 
             Only the statements of the read are counted, not the ones that begin and end its transaction.
 
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :param repos: BookRepositories of the transaction.
+            :type repos: BookRepositories
             :returns: The counter of the statements the listing sent.
             :rtype: Statements
             """
-            with Statements(fx_database.read_engine) as counted:
+            with Statements(book.read_engine) as counted:
                 repos.page_versions.list_by_ids(version_ids)
             return counted
 
-        def delete_versions(repos: Repositories, _project: Project) -> Statements:
+        def delete_versions(repos: BookRepositories, _project: Project) -> Statements:
             """Delete the versions by their identifiers, and count the statements that took.
 
             Only the deletion is counted, not the statements that begin the transaction or read the project.
 
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :param repos: BookRepositories of the transaction.
+            :type repos: BookRepositories
             :param _project: Project of the book, which the work does not need.
             :type _project: Project
             :returns: The counter of the statements the deletion sent.
             :rtype: Statements
             """
-            with Statements(fx_database.engine) as counted:
+            with Statements(book.engine) as counted:
                 repos.page_versions.delete_many(version_ids)
             return counted
 
-        reading = await uow.read(list_versions)
-        deleting = await uow.change_book(project.id, delete_versions)
-        remaining = await uow.read(lambda repos: repos.page_versions.list_for_page(pages[0].id))
+        async with fx_books.use(project.id) as book:
+            reading = await uow.read_book(project.id, list_versions)
+            deleting = await uow.change_book(project.id, delete_versions)
+        remaining = await uow.read_book(project.id, lambda repos: repos.page_versions.list_for_page(pages[0].id))
         expect(reading.bound == [CHUNK] * (COUNT // CHUNK) + [COUNT % CHUNK], f'read bound {reading.bound}')
         expect(
             len(deleting.bound) == ceil(COUNT / CHUNK) and max(deleting.bound) <= CHUNK,

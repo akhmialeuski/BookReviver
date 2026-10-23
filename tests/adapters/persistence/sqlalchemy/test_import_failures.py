@@ -1,23 +1,23 @@
-"""Tests of what a failed import leaves in the SQL database, whose foreign keys refuse a row without its parent."""
+"""Tests of what a failed import leaves in the file of the book, whose foreign keys refuse a row without its parent."""
 
 from typing import TYPE_CHECKING
 
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.values import JobEnd, SliceRequest
 from tests.helpers.builders import make_project
 from tests.helpers.fakes_imports import pdf_upload
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.ids import AccountId
+    from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fakes_imports import ImportRig
 
 pytestmark = pytest.mark.anyio
@@ -30,7 +30,7 @@ class TestFailedImportOnSqlAlchemy:
     """Tests for ImportService.run_import() against the database, when a source's files cannot be promoted."""
 
     async def test_source_whose_files_cannot_be_promoted_leaves_no_row_of_it(
-        self, fx_database: SqlDatabase, fx_owner_id: AccountId, fx_import_rig: Callable[..., ImportRig], tmp_path: Path
+        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_import_rig: Callable[..., ImportRig], tmp_path: Path
     ) -> None:
         """Verify the withdrawal removes the source, its scans and its pages, and the failed job counts none of them.
 
@@ -38,8 +38,8 @@ class TestFailedImportOnSqlAlchemy:
         leave the pages of the book without a scan, and a source that was committed without its files. The withdrawn
         source is no rejected one either, since the job failed and nobody reads a report of it.
 
-        :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         :param fx_import_rig: Function building the import rig whose board runs an import on the database.
@@ -50,9 +50,9 @@ class TestFailedImportOnSqlAlchemy:
         rig = fx_import_rig()
         samples = tmp_path / 'samples'
         samples.mkdir()
-        project = make_project(owner_id=fx_owner_id)
-        uow = SqlAlchemyUnitOfWork(fx_database)
-        await uow.change(lambda repos: repos.projects.add(project))
+        project = make_project()
+        uow = fx_uow()
+        await store_project(uow, project, owner=fx_owner_id)
         job = await rig.service(uow=uow).start_import(
             Actor(account_id=fx_owner_id), project.id, [pdf_upload(samples, 'a.pdf', pages=PAGES)]
         )
@@ -60,13 +60,14 @@ class TestFailedImportOnSqlAlchemy:
 
         await rig.fakes.board.run_queued()
 
-        sources, unimported, scans, pages = await uow.read(
+        sources, unimported, scans, pages = await uow.read_book(
+            project.id,
             lambda repos: (
                 repos.sources.list_for_project(project.id),
                 repos.sources.list_unimported(project.id),
                 repos.scans.list_for_project(project.id, EVERY_SLICE),
                 repos.pages.list_for_project(project.id, EVERY_SLICE),
-            )
+            ),
         )
         stored = rig.stored_job(job)
         expect(sources == [])

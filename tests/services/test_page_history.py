@@ -43,7 +43,8 @@ if TYPE_CHECKING:
         Project,
         ResultMarkChange,
     )
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.domain.ids import ProjectId
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -92,17 +93,19 @@ async def history_of(kit: ProcessingKit, actor: Actor, project: Project, key: Pa
     return list((await kit.page_history().list(actor, project.id, key)).changes)
 
 
-async def stored_edit(kit: ProcessingKit, key: PageStepKey) -> PageEdit | None:
+async def stored_edit(kit: ProcessingKit, project_id: ProjectId, key: PageStepKey) -> PageEdit | None:
     """Read the manual edit a step has on a page.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Project whose book holds the page.
+    :type project_id: ProjectId
     :param key: The page, the stage and the step.
     :type key: PageStepKey
     :returns: The edit, or None.
     :rtype: PageEdit | None
     """
-    state = await kit.uow().read(lambda repos: repos.page_step_states.find(key))
+    state = await kit.uow().read_book(project_id, lambda repos: repos.page_step_states.find(key))
     return None if state is None else state.edit
 
 
@@ -140,11 +143,11 @@ async def store_carried_batch(
     :type batch: ChangeBatchId
     """
 
-    def carry(repos: Repositories, _project: Project) -> None:
+    def carry(repos: BookRepositories, _project: Project) -> None:
         """Write the setting and the change of the batch on every page.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: The project as the change finds it, which the work does not need.
         :type _project: Project
         """
@@ -235,7 +238,7 @@ class TestUndo:
         [change] = await history_of(fx_kit, actor, project, key)
         [undo] = await fx_kit.page_history().undo(actor, project.id, key, None)
         history = await fx_kit.page_history().list(actor, project.id, key)
-        expect(await fx_kit.uow().read(lambda repos: repos.page_step_states.find(key)) is None)
+        expect(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.find(key)) is None)
         expect(history.changes == (change, undo))
         expect((undo.source, undo.layer, undo.undoes) == (ChangeSource.UNDO, StepLayer.SETTINGS, change.id))
         expect((undo.before, undo.after) == (change.after, change.before))
@@ -253,11 +256,11 @@ class TestUndo:
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGEST)
         await fx_kit.page_history().undo(actor, project.id, key, None)
-        after_one = await fx_kit.uow().read(lambda repos: repos.page_step_states.get(key))
+        after_one = await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.get(key))
         await fx_kit.page_history().undo(actor, project.id, key, None)
         nothing = await fx_kit.page_history().undo(actor, project.id, key, None)
         expect(after_one.params == {STRENGTH_PARAMETER: STRONGER})
-        expect(await fx_kit.uow().read(lambda repos: repos.page_step_states.find(key)) is None)
+        expect(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.find(key)) is None)
         expect(len(nothing) == 0)
         expect(len(await history_of(fx_kit, actor, project, key)) == 4)
         assert_expectations()
@@ -273,10 +276,10 @@ class TestUndo:
         first = await fx_kit.edits().save(actor, project.id, key, FIRST, None)
         await fx_kit.edits().save(actor, project.id, key, SECOND, None)
         await fx_kit.page_history().undo(actor, project.id, key, None)
-        back = await stored_edit(fx_kit, key)
+        back = await stored_edit(fx_kit, project.id, key)
         await fx_kit.page_history().undo(actor, project.id, key, None)
         expect(back is not None and (back.edit_hash, back.geometry) == (first.edit_hash, first.geometry))
-        expect(await stored_edit(fx_kit, key) is None)
+        expect(await stored_edit(fx_kit, project.id, key) is None)
         assert_expectations()
 
     async def test_a_deleted_edit_comes_back_and_the_settings_stay_as_they_are(self, fx_kit: ProcessingKit) -> None:
@@ -291,9 +294,9 @@ class TestUndo:
         await fx_kit.edits().delete(actor, project.id, key)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         await fx_kit.page_history().undo(actor, project.id, key, None)
-        expect(await fx_kit.uow().read(lambda repos: repos.page_step_states.find(key)) is None)
+        expect(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.find(key)) is None)
         await fx_kit.page_history().undo(actor, project.id, key, None)
-        back = await stored_edit(fx_kit, key)
+        back = await stored_edit(fx_kit, project.id, key)
         expect(back is not None and (back.edit_hash, back.geometry) == (saved.edit_hash, saved.geometry))
         assert_expectations()
 
@@ -307,11 +310,11 @@ class TestUndo:
         key = await step_key(fx_kit, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
 
-        def make_fresh(repos: Repositories, _project: Project) -> None:
+        def make_fresh(repos: BookRepositories, _project: Project) -> None:
             """Mark the record of the geometry stage fresh, as a run leaves it.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             """
@@ -321,7 +324,9 @@ class TestUndo:
         await fx_kit.uow().change_book(project.id, make_fresh)
         fx_kit.events.published.clear()
         await fx_kit.page_history().undo(actor, project.id, key, None)
-        stored = await fx_kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)))
+        stored = await fx_kit.uow().read_book(
+            project.id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        )
         expect(stored.state is StageState.STALE)
         expect(any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
         assert_expectations()
@@ -344,7 +349,9 @@ class TestUndo:
         )
         with pytest.raises(ConflictError):
             await fx_kit.page_history().undo(actor, project.id, key, change.id)
-        expect((await fx_kit.uow().read(lambda repos: repos.page_step_states.get(key))).params == {'x': 1})
+        expect(
+            (await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.get(key))).params == {'x': 1}
+        )
         expect(await history_of(fx_kit, actor, project, key) == [change])
         assert_expectations()
 
@@ -386,7 +393,7 @@ class TestUndoBackTo:
         await fx_kit.edits().save(actor, project.id, key, SECOND, None)
         chosen = (await history_of(fx_kit, actor, project, key))[1]
         undone = await fx_kit.page_history().undo(actor, project.id, key, chosen.id)
-        state = await fx_kit.uow().read(lambda repos: repos.page_step_states.get(key))
+        state = await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.get(key))
         history = await fx_kit.page_history().list(actor, project.id, key)
         expect([undo.undoes for undo in undone] == [change.id for change in reversed(history.changes[1:4])])
         expect(state.params == {STRENGTH_PARAMETER: STRONGER} and state.edit is None)
@@ -428,8 +435,8 @@ class TestUndoOfABatch:
         undone = await fx_kit.page_history().undo(actor, project.id, key, None)
         expect(sorted(undo.page_id for undo in undone) == sorted([page.id, other.id]))
         expect(len({undo.batch_id for undo in undone}) == 1 and undone[0].batch_id not in {None, batch})
-        expect(await fx_kit.uow().read(lambda repos: repos.page_step_states.find(key)) is None)
-        expect(await fx_kit.uow().read(lambda repos: repos.page_step_states.find(other_key)) is None)
+        expect(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.find(key)) is None)
+        expect(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.find(other_key)) is None)
         expect(len(await fx_kit.page_history().undo(actor, project.id, other_key, None)) == 0)
         assert_expectations()
 
@@ -445,11 +452,11 @@ class TestUndoOfABatch:
         other_key = evolve(key, page_id=other.id)
         batch = ChangeBatchId(uuid4())
 
-        def carry_then_change_one_page(repos: Repositories, _project: Project) -> None:
+        def carry_then_change_one_page(repos: BookRepositories, _project: Project) -> None:
             """Write the change of one carry-over batch on both pages, and a stronger setting on the second.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             """
@@ -468,10 +475,13 @@ class TestUndoOfABatch:
         with pytest.raises(ConflictError):
             await fx_kit.page_history().undo(actor, project.id, key, None)
         expect(
-            (await fx_kit.uow().read(lambda repos: repos.page_step_states.get(key))).params
+            (await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.get(key))).params
             == {STRENGTH_PARAMETER: STRONGER}
         )
-        expect(len(await fx_kit.uow().read(lambda repos: repos.page_step_changes.list_for_page(page.id))) == 1)
+        expect(
+            len(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_changes.list_for_page(page.id)))
+            == 1
+        )
         assert_expectations()
 
 
@@ -496,8 +506,8 @@ class TestClear:
         expect(cleared.changes == written == STEP_CHANGES)
         expect([deleted.id for deleted in cleared.versions] == [version.id])
         expect(await history_of(fx_kit, actor, project, key) == [])
-        expect(await fx_kit.uow().read(lambda repos: repos.page_step_states.find(key)) is None)
-        expect(await fx_kit.uow().read(lambda repos: repos.page_versions.find(version.id)) is None)
+        expect(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.find(key)) is None)
+        expect(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_versions.find(version.id)) is None)
         assert_expectations()
 
     async def test_the_stage_stands_on_what_the_step_read_stale_and_the_change_is_announced(
@@ -511,7 +521,9 @@ class TestClear:
         actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
         fx_kit.events.published.clear()
         await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
-        stored = await fx_kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)))
+        stored = await fx_kit.uow().read_book(
+            project.id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        )
         expect((stored.head_version_id, stored.state, stored.through_step) == (made[0].id, StageState.STALE, 0))
         expect(any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
         assert_expectations()
@@ -563,11 +575,11 @@ class TestClear:
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)])
         blank_recipe = await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, draft, RecipeKind.BLANK)
 
-        def run_by_the_blank_recipe(repos: Repositories, _project: Project) -> None:
+        def run_by_the_blank_recipe(repos: BookRepositories, _project: Project) -> None:
             """Record that the page was run by the recipe for blank pages.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             """
@@ -576,7 +588,9 @@ class TestClear:
 
         await fx_kit.uow().change_book(project.id, run_by_the_blank_recipe)
         await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
-        stored = await fx_kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)))
+        stored = await fx_kit.uow().read_book(
+            project.id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        )
         expect((stored.head_version_id, stored.recipe_id, stored.through_step) == (made[0].id, blank_recipe.id, 0))
         assert_expectations()
 
@@ -588,7 +602,9 @@ class TestClear:
         """
         actor, project, page, step_ids, _ = await ran_two_steps(fx_kit)
         await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[0]))
-        record = await fx_kit.uow().read(lambda repos: repos.page_stages.find(PageStageKey(page.id, Stage.GEOMETRY)))
+        record = await fx_kit.uow().read_book(
+            project.id, lambda repos: repos.page_stages.find(PageStageKey(page.id, Stage.GEOMETRY))
+        )
         expect(record is None)
         assert_expectations()
 
@@ -613,7 +629,7 @@ class TestClear:
         cleared = await fx_kit.page_history().clear(actor, project.id, key)
 
         def read_what_is_left(
-            repos: Repositories,
+            repos: BookRepositories,
         ) -> tuple[
             Sequence[PageVersion],
             Sequence[PageStepChange],
@@ -623,7 +639,7 @@ class TestClear:
             """Read the versions, the changes, the states and the mark logs of the cleared step, in one snapshot.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: The versions of the page, its changes of the stage, the states of the step, and the mark log of
                       each made version.
             :rtype: tuple[Sequence[PageVersion], Sequence[PageStepChange], Sequence[PageStepState],
@@ -636,7 +652,7 @@ class TestClear:
                 [repos.result_mark_changes.list_for_version(version.id) for version in made],
             )
 
-        remaining, changes, states, marks = await fx_kit.uow().read(read_what_is_left)
+        remaining, changes, states, marks = await fx_kit.uow().read_book(project.id, read_what_is_left)
         expect({version.id for version in cleared.versions} == {version.id for version in made})
         expect({version.id for version in remaining} == {made[0].input_id})
         expect(changes == [])
@@ -659,7 +675,10 @@ class TestClear:
         await fx_kit.seed_base_version(other)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         before = {
-            version.id for version in await fx_kit.uow().read(lambda repos: repos.page_versions.list_for_page(other.id))
+            version.id
+            for version in await fx_kit.uow().read_book(
+                page.project_id, lambda repos: repos.page_versions.list_for_page(other.id)
+            )
         }
         await fx_kit.uow().change_book(
             project.id,
@@ -667,11 +686,11 @@ class TestClear:
         )
         await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
 
-        def read_what_stays(repos: Repositories) -> tuple[Sequence[PageVersion], Sequence[PageVersion], int]:
+        def read_what_stays(repos: BookRepositories) -> tuple[Sequence[PageVersion], Sequence[PageVersion], int]:
             """Read the versions of both pages and the mark log of the first result, in one snapshot.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: The versions of the cleared page, those of the other page, and the number of changes in the mark
                       log of the first result.
             :rtype: tuple[Sequence[PageVersion], Sequence[PageVersion], int]
@@ -682,7 +701,7 @@ class TestClear:
                 len(repos.result_mark_changes.list_for_version(first.id)),
             )
 
-        of_page, of_other, marks = await fx_kit.uow().read(read_what_stays)
+        of_page, of_other, marks = await fx_kit.uow().read_book(project.id, read_what_stays)
         kept = {version.id for version in of_page}
         expect(second.id not in kept and first.id in kept and first.input_id in kept)
         expect(len(before) > 1)
@@ -701,17 +720,21 @@ class TestClear:
         """
         actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
-        later = await fx_kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.CLEANUP)))
+        later = await fx_kit.uow().read_book(
+            page.project_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.CLEANUP))
+        )
         assert later.head_version_id is not None
         head_id = later.head_version_id
         key = PageStepKey(page.id, Stage.GEOMETRY, step_ids[1])
         cleared = await fx_kit.page_history().clear(actor, project.id, key)
 
-        def read_what_is_left(repos: Repositories) -> tuple[PageVersion | None, PageStage | None, PageVersion | None]:
+        def read_what_is_left(
+            repos: BookRepositories,
+        ) -> tuple[PageVersion | None, PageStage | None, PageVersion | None]:
             """Read the later result, the record of its stage, and the first result, in one snapshot.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: The version the cleanup stage stood on, the record of the cleanup stage, and the first result of
                       the geometry stage, each None when it is gone.
             :rtype: tuple[PageVersion | None, PageStage | None, PageVersion | None]
@@ -722,7 +745,7 @@ class TestClear:
                 repos.page_versions.find(made[0].id),
             )
 
-        later_version, later_record, first_version = await fx_kit.uow().read(read_what_is_left)
+        later_version, later_record, first_version = await fx_kit.uow().read_book(project.id, read_what_is_left)
         expect(head_id in {version.id for version in cleared.versions})
         expect(later_version is None)
         expect(later_record is None)
@@ -744,7 +767,7 @@ class TestClear:
         monkeypatch.setattr(fx_kit.assets, 'delete_prefix', AsyncMock(side_effect=OSError('The disk is read only.')))
         cleared = await fx_kit.page_history().clear(actor, project.id, key)
         expect([deleted.id for deleted in cleared.versions] == [version.id])
-        expect(await fx_kit.uow().read(lambda repos: repos.page_versions.find(version.id)) is None)
+        expect(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_versions.find(version.id)) is None)
         expect(await has_files(fx_kit, project, version))
         assert_expectations()
 
@@ -780,7 +803,7 @@ class TestClear:
         undone = await fx_kit.page_history().undo(actor, project.id, other_key, None)
         expect(len(kept) == 1 and kept[0].batch_id == batch)
         expect([undo.page_id for undo in undone] == [other.id])
-        expect(await fx_kit.uow().read(lambda repos: repos.page_step_states.find(other_key)) is None)
+        expect(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.find(other_key)) is None)
         assert_expectations()
 
     async def test_a_page_of_another_book_or_another_owner_is_not_found(self, fx_kit: ProcessingKit) -> None:
@@ -813,8 +836,8 @@ class TestClear:
         await fx_kit.service().start_collection(actor, project.id)
         with pytest.raises(ConflictError, match=BUSY_MESSAGE):
             await fx_kit.page_history().clear(actor, project.id, key)
-        state, kept = await fx_kit.uow().read(
-            lambda repos: (repos.page_step_states.find(key), repos.page_versions.find(version.id))
+        state, kept = await fx_kit.uow().read_book(
+            project.id, lambda repos: (repos.page_step_states.find(key), repos.page_versions.find(version.id))
         )
         expect(len(await history_of(fx_kit, actor, project, key)) == written)
         expect(state is not None)
@@ -847,7 +870,7 @@ class TestClear:
         announced = [
             (event.job.id, event.job.state) for event in fx_kit.events.published if isinstance(event, JobChanged)
         ]
-        left = await fx_kit.uow().read(lambda repos: repos.page_step_states.find(key))
+        left = await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.find(key))
         expect(fx_kit.board.get(preview.id).state is JobState.CANCELLED)
         expect((preview.id, JobState.CANCELLED) in announced)
         expect([deleted.id for deleted in cleared.versions] == [version.id])
@@ -877,7 +900,7 @@ class TestClear:
         )
         with pytest.raises(ConflictError, match=BUSY_MESSAGE):
             await fx_kit.page_history().clear(actor, project.id, key)
-        kept = await fx_kit.uow().read(lambda repos: repos.page_versions.find(version.id))
+        kept = await fx_kit.uow().read_book(project.id, lambda repos: repos.page_versions.find(version.id))
         expect(fx_kit.board.get(job.id).state is JobState.QUEUED)
         expect(len(await history_of(fx_kit, actor, project, key)) == written)
         expect(kept is not None)
@@ -909,8 +932,8 @@ class TestClear:
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         with pytest.raises(NotFoundError):
             await fx_kit.page_history().clear(actor, project.id, evolve(key, step_id=StepId(uuid4())))
-        state, kept = await fx_kit.uow().read(
-            lambda repos: (repos.page_step_states.find(key), repos.page_versions.find(version.id))
+        state, kept = await fx_kit.uow().read_book(
+            project.id, lambda repos: (repos.page_step_states.find(key), repos.page_versions.find(version.id))
         )
         expect(len(await history_of(fx_kit, actor, project, key)) == 1)
         expect(state is not None)

@@ -29,7 +29,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from bookreviver.domain.entities import Page, PageStage, Project, Recipe
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.domain.ids import ProjectId
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -97,11 +98,11 @@ async def save_stage_records(kit: ProcessingKit, project: Project, *records: Pag
     :type records: PageStage
     """
 
-    def save(repos: Repositories, _project: Project) -> None:
+    def save(repos: BookRepositories, _project: Project) -> None:
         """Save the records.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: Project of the book, which the work does not need.
         :type _project: Project
         """
@@ -121,7 +122,9 @@ async def geometry_state(kit: ProcessingKit, page: Page) -> StageState:
     :returns: The state of the record.
     :rtype: StageState
     """
-    record = await kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)))
+    record = await kit.uow().read_book(
+        page.project_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+    )
     return record.state
 
 
@@ -229,7 +232,9 @@ class TestRecipes:
             page, _ = await fx_cv_kit.seed_scan_page(project, order_key=f'a{index}', kind=kind)
             pages.append(page)
         reader = fx_cv_kit.uow()
-        stored_pages = await reader.read(lambda repos: repos.pages.list_by_ids(project.id, [page.id for page in pages]))
+        stored_pages = await reader.read_book(
+            project.id, lambda repos: repos.pages.list_by_ids(project.id, [page.id for page in pages])
+        )
         picked = await fx_cv_kit.parts(reader).recipes.for_pages(project.id, Stage.CLEANUP, stored_pages)
         assert [picked[page.id].kind for page in pages] == [
             RecipeKind.TEXT,
@@ -433,7 +438,9 @@ class TestSaveRecipe:
         hijacked = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 9})])
         with pytest.raises(NotFoundError):
             await fx_kit.service().save_recipe(actor, project.id, RecipeKey(Stage.CLEANUP, recipe.id), hijacked)
-        assert (await fx_kit.uow().read(lambda repos: repos.recipes.get(recipe.id))).steps == recipe.steps
+        assert (
+            await fx_kit.uow().read_book(project.id, lambda repos: repos.recipes.get(recipe.id))
+        ).steps == recipe.steps
 
 
 class TestStartRun:
@@ -554,19 +561,21 @@ class ReadGate:
         :param monkeypatch: Fixture that restores the unit of work when the test ends.
         :type monkeypatch: pytest.MonkeyPatch
         """
-        read = uow.read
+        read = uow.read_book
         waited = False
 
-        async def gated[T](work: Callable[[Repositories], T]) -> T:
+        async def gated[T](project_id: ProjectId, work: Callable[[BookRepositories], T]) -> T:
             """Read as the unit of work does, and wait on the first call until every unit of work has read.
 
+            :param project_id: Project whose book is read.
+            :type project_id: ProjectId
             :param work: Function over the repositories of the transaction.
-            :type work: Callable[[Repositories], T]
+            :type work: Callable[[BookRepositories], T]
             :returns: What the work returns.
             :rtype: T
             """
             nonlocal waited
-            found = await read(work)
+            found = await read(project_id, work)
             if not waited:
                 waited = True
                 self.reads += 1
@@ -575,7 +584,7 @@ class ReadGate:
                 await self._all_read.wait()
             return found
 
-        monkeypatch.setattr(uow, 'read', gated)
+        monkeypatch.setattr(uow, 'read_book', gated)
 
 
 class TestDefaultRecipesInChanges:
@@ -629,7 +638,9 @@ class TestDefaultRecipesInChanges:
         async with anyio.create_task_group() as tasks:
             for unit in units:
                 tasks.start_soon(ask, unit)
-        stored = await fx_kit.uow().read(lambda repos: repos.recipes.list_for_stage(project.id, Stage.GEOMETRY))
+        stored = await fx_kit.uow().read_book(
+            project.id, lambda repos: repos.recipes.list_for_stage(project.id, Stage.GEOMETRY)
+        )
         expect(gate.reads == TASKS)
         expect(stored_sets == [len(RecipeKind)])
         expect(len(stored) == len(RecipeKind))

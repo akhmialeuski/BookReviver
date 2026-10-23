@@ -18,7 +18,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor
-from tests.helpers.builders import FULL_DETAILS, make_page, make_project, make_scan, make_source, new_account_id
+from tests.helpers.builders import FULL_DETAILS, make_page, make_project, make_scan, make_source
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page
@@ -29,7 +29,7 @@ CURRENT: BookDetails = BookDetails(
     contributors=(Contributor(name='A. Author', role=ContributorRole.AUTHOR),),
     notes='Kept',
 )
-PROJECT = attrs.evolve(make_project(owner_id=new_account_id()), details=CURRENT)
+PROJECT = attrs.evolve(make_project(), details=CURRENT)
 
 
 class TestBookDetailsChanges:
@@ -141,7 +141,7 @@ class TestPageChangesApplyTo:
         :returns: The page.
         :rtype: Page
         """
-        project = make_project(owner_id=new_account_id())
+        project = make_project()
         scan = make_scan(source=make_source(project_id=project.id), number=0)
         return attrs.evolve(
             make_page(project_id=project.id, scan=scan, kind=PageKind.BLANK), blank_fill=BlankFill.WHITE

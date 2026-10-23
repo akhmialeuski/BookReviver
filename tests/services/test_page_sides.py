@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from bookreviver.domain.entities import Actor, Page, Project
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
@@ -127,15 +127,15 @@ async def _commit_book(uow: UnitOfWork, actor: Actor, valued: tuple[ValueScope, 
     :returns: The book.
     :rtype: Book
     """
-    project = make_project(owner_id=actor.account_id)
+    project = make_project()
     pages = [make_page(project_id=project.id, order_key=f'a{number}') for number in range(PAGE_COUNT)]
-    await store_project(uow, project, *pages)
+    await store_project(uow, project, *pages, owner=actor.account_id)
 
-    def save_records(repos: Repositories, _project: Project) -> None:
+    def save_records(repos: BookRepositories, _project: Project) -> None:
         """Save a record for every checked stage of every page, and the value of the part of the pages when given.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: The project as the change finds it, which the work does not need.
         :type _project: Project
         """
@@ -163,7 +163,7 @@ async def _stale(uow: UnitOfWork, book: Book) -> set[tuple[int, Stage]]:
     :rtype: set[tuple[int, Stage]]
     """
     index = {page.id: place for place, page in enumerate(book.pages)}
-    records = await uow.read(lambda repos: repos.page_stages.list_for_pages(list(index)))
+    records = await uow.read_book(book.project.id, lambda repos: repos.page_stages.list_for_pages(list(index)))
     return {(index[record.page_id], record.stage) for record in records if record.state is StageState.STALE}
 
 

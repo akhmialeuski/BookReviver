@@ -177,8 +177,8 @@ class TestSave:
         key = PageStepKey(page.id, Stage.GEOMETRY, first.step_id)
         saved = await fx_kit.edits().save(actor, project.id, key, ROTATION, None)
         listed = await fx_kit.edits().list(actor, project.id, page.id, Stage.GEOMETRY)
-        found = await fx_kit.uow().read(
-            lambda repos: repos.page_step_states.find(PageStepKey(page.id, Stage.GEOMETRY, second.step_id))
+        found = await fx_kit.uow().read_book(
+            project.id, lambda repos: repos.page_step_states.find(PageStepKey(page.id, Stage.GEOMETRY, second.step_id))
         )
         expect(listed == [saved])
         expect(found is None)

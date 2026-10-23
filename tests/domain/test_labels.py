@@ -11,7 +11,7 @@ from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.enums import ColorMode, ContentType, LabelStyle, PageKind, SourceKind
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import PageNumbering, ScanFacts, SourceAnalysis
-from tests.helpers.builders import make_page, make_project, new_account_id
+from tests.helpers.builders import make_page, make_project
 
 
 class StyleCase(NamedTuple):
@@ -144,7 +144,7 @@ class TestPageChanges:
 
     def test_replaces_given_fields_and_keeps_the_rest(self) -> None:
         """Verify a field left as None stays, and an empty string clears a label."""
-        page = evolve(make_page(project_id=make_project(owner_id=new_account_id()).id), label='xii', notes='Stamp')
+        page = evolve(make_page(project_id=make_project().id), label='xii', notes='Stamp')
 
         changed = PageChanges(label='', kind=PageKind.PLATE, included=False).apply_to(page)
 
@@ -162,9 +162,7 @@ class TestPageChanges:
         :param manual: Whether the page is then labelled by hand.
         :type manual: bool
         """
-        page = evolve(
-            make_page(project_id=make_project(owner_id=new_account_id()).id), label=TYPED_LABEL, label_manual=True
-        )
+        page = evolve(make_page(project_id=make_project().id), label=TYPED_LABEL, label_manual=True)
 
         changed = PageChanges(label=label).apply_to(page)
 
@@ -172,15 +170,13 @@ class TestPageChanges:
 
     def test_other_fields_leave_the_label_exception_alone(self) -> None:
         """Verify a change of the kind keeps a label written by hand."""
-        page = evolve(
-            make_page(project_id=make_project(owner_id=new_account_id()).id), label=TYPED_LABEL, label_manual=True
-        )
+        page = evolve(make_page(project_id=make_project().id), label=TYPED_LABEL, label_manual=True)
 
         assert PageChanges(kind=PageKind.PLATE).apply_to(page).label_manual is True
 
     def test_a_content_type_that_is_given_is_set_by_hand(self) -> None:
         """Verify the user's content type is kept apart from the one the detection found, which never replaces it."""
-        page = evolve(make_page(project_id=make_project(owner_id=new_account_id()).id), content_type=ContentType.TEXT)
+        page = evolve(make_page(project_id=make_project().id), content_type=ContentType.TEXT)
 
         changed = PageChanges(content_type=ContentType.BW_PICTURE).apply_to(page)
 
@@ -189,7 +185,7 @@ class TestPageChanges:
     def test_other_fields_leave_the_content_type_alone(self) -> None:
         """Verify a change of the kind keeps a content type the user set."""
         page = evolve(
-            make_page(project_id=make_project(owner_id=new_account_id()).id),
+            make_page(project_id=make_project().id),
             content_type=ContentType.COLOR_PICTURE,
             content_by_hand=True,
         )
@@ -200,7 +196,7 @@ class TestPageChanges:
 
     def test_changes_nothing_by_default(self) -> None:
         """Verify a change that names no field returns an equal page."""
-        page = make_page(project_id=make_project(owner_id=new_account_id()).id)
+        page = make_page(project_id=make_project().id)
 
         assert PageChanges().apply_to(page) == page
 

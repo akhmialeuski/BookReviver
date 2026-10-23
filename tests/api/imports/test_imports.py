@@ -291,7 +291,7 @@ class TestUploadSources:
         assert_expectations()
 
     async def test_project_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, tmp_path: Path
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, tmp_path: Path
     ) -> None:
         """Verify an upload to a project of another account answers 404, as if the project did not exist.
 
@@ -299,11 +299,13 @@ class TestUploadSources:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        stranger_project = make_project(owner_id=new_account_id())
-        await commit_project(fx_database, stranger_project)
+        stranger_project = make_project()
+        await commit_project(fx_database, fx_uow(), stranger_project, owner=new_account_id())
 
         response = await fx_client.post(
             SOURCES_PATH.format(project_id=stranger_project.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])
@@ -397,7 +399,7 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
         return (JobFakesProvider(fx_fakes), FakeBoardProvider(fx_fakes.board))
 
     async def test_project_of_another_account_is_refused_unread(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, tmp_path: Path
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, tmp_path: Path
     ) -> None:
         """Verify a non-owner gets 404 without the server reading the files it sent.
 
@@ -405,11 +407,13 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        stranger_project = make_project(owner_id=new_account_id())
-        await commit_project(fx_database, stranger_project)
+        stranger_project = make_project()
+        await commit_project(fx_database, fx_uow(), stranger_project, owner=new_account_id())
 
         response = await fx_client.post(
             SOURCES_PATH.format(project_id=stranger_project.id), files=_multipart([image_upload(tmp_path, 'a.jpg')])

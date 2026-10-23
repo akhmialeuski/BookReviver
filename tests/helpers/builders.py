@@ -145,11 +145,9 @@ def new_account_id() -> AccountId:
     return AccountId(uuid4())
 
 
-def make_project(*, owner_id: AccountId, title: str = 'Book', minutes: int = 0) -> Project:
+def make_project(*, title: str = 'Book', minutes: int = 0) -> Project:
     """Build a project updated ``minutes`` after the epoch.
 
-    :param owner_id: Account owning the project.
-    :type owner_id: AccountId
     :param title: Title of the book.
     :type title: str
     :param minutes: Minutes after ``EPOCH`` the project was created and last updated.
@@ -160,7 +158,6 @@ def make_project(*, owner_id: AccountId, title: str = 'Book', minutes: int = 0) 
     moment = EPOCH + timedelta(minutes=minutes)
     return Project(
         id=ProjectId(uuid4()),
-        owner_id=owner_id,
         details=BookDetails(title=title),
         created_at=moment,
         updated_at=moment,
@@ -434,12 +431,10 @@ def make_page_stage(
 
 
 def make_book_place(
-    *, account_id: AccountId, project_id: ProjectId, stage: Stage = Stage.GEOMETRY, page_id: PageId | None = None
+    *, project_id: ProjectId, stage: Stage = Stage.GEOMETRY, page_id: PageId | None = None
 ) -> BookPlace:
     """Build the place of a reader who zoomed into a page of a stage in the spread layout.
 
-    :param account_id: Account the place belongs to.
-    :type account_id: AccountId
     :param project_id: Book the place is in.
     :type project_id: ProjectId
     :param stage: Stage the reader was on.
@@ -450,7 +445,6 @@ def make_book_place(
     :rtype: BookPlace
     """
     return BookPlace(
-        account_id=account_id,
         project_id=project_id,
         mode=PlaceMode.WORKSPACE,
         stage=stage,

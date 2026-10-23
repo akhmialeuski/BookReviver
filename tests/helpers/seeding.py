@@ -1,9 +1,9 @@
 """Storing what earlier requests would have stored, so a test starts from a known committed state."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, Unpack
 
 from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
+from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.enums import BlockKind
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 from tests.helpers.builders import new_account_id
@@ -14,16 +14,29 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Page, PageVersion, Project, Scan, Source
     from bookreviver.domain.ids import AccountId
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
 
 # Domain of the addresses of seeded accounts, reserved for examples by RFC 2606
 ACCOUNT_DOMAIN: str = 'example.org'
 
 
+class BookContent(TypedDict, total=False):
+    """What a seeded book holds besides its project and its pages, each part left out when a test needs none.
+
+    :ivar sources: Sources of the project.
+    :ivar scans: Scans of those sources.
+    :ivar versions: Versions of the pages.
+    """
+
+    sources: Sequence[Source]
+    scans: Sequence[Scan]
+    versions: Sequence[PageVersion]
+
+
 async def commit_account(
     database: SqlDatabase, *, account_id: AccountId | None = None, hashed_password: str = ''
 ) -> AccountId:
-    """Commit a verified account, which the owner key of a project in the SQL database refers to.
+    """Commit a verified account, which the library entry of a book in the catalogue refers to.
 
     :param database: SQL database to commit into.
     :type database: SqlDatabase
@@ -56,14 +69,14 @@ async def commit_account(
 
 
 async def ensure_account(database: SqlDatabase, account_id: AccountId) -> None:
-    """Commit the account unless the database stores it already, as the owner key of a project needs it.
+    """Commit the account unless the catalogue stores it already, as the library entry of a book needs it.
 
-    The database of a test stores the signed-in actor's account from the start, so a project of the actor needs
-    nothing more, and a project of any other account needs the account committed first.
+    The catalogue of a test stores the signed-in actor's account from the start, so a book of the actor needs
+    nothing more, and a book of any other account needs the account committed first.
 
-    :param database: SQL database to commit into.
+    :param database: Catalogue to commit into.
     :type database: SqlDatabase
-    :param account_id: Identifier of the account that owns a project.
+    :param account_id: Identifier of the account that owns a book.
     :type account_id: AccountId
     """
     if await database.read(lambda session: session.get(AccountTable, account_id)) is None:
@@ -71,73 +84,67 @@ async def ensure_account(database: SqlDatabase, account_id: AccountId) -> None:
 
 
 async def store_project(
-    uow: UnitOfWork,
-    project: Project,
-    *pages: Page,
-    sources: Sequence[Source] = (),
-    scans: Sequence[Scan] = (),
-    versions: Sequence[PageVersion] = (),
+    uow: UnitOfWork, project: Project, *pages: Page, owner: AccountId, **content: Unpack[BookContent]
 ) -> None:
-    """Store a project, then its sources, their scans, its pages and their versions, each in the block that owns it.
+    """Store a book with its project, then its sources, their scans, its pages and their versions, and list it.
 
-    The project is a change outside the content of a book, so it is stored by ``change``. The rest is the content of
-    the book, so it is stored by ``change_book`` of the project, which cannot open before the project exists.
+    The store of the book is made first, then the content of the book is stored by ``change_book``, and the library entry
+    of the owner is added last, as the creation of a book does. The entry names an account, so the catalogue must store
+    the owner.
 
-    :param uow: Unit of work to store through, over a database that stores the account owning the project.
+    :param uow: Unit of work to store through, over a catalogue that stores the account owning the book.
     :type uow: UnitOfWork
     :param project: Project to store.
     :type project: Project
     :param pages: Pages of the project, which may show the given scans.
     :type pages: Page
-    :param sources: Sources of the project.
-    :type sources: Sequence[Source]
-    :param scans: Scans of those sources.
-    :type scans: Sequence[Scan]
-    :param versions: Versions of those pages.
-    :type versions: Sequence[PageVersion]
+    :param owner: Account owning the book.
+    :type owner: AccountId
+    :param content: The sources of the project, their scans and the versions of the pages, as far as the book has them.
+    :type content: Unpack[BookContent]
     """
 
-    def store_content(repos: Repositories, _project: Project) -> None:
+    def store_content(repos: BookRepositories, _project: Project) -> None:
         """Store the sources, scans, pages and versions of the book in the order their keys need.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: Project of the book, which the work does not need.
         :type _project: Project
         """
-        repos.sources.add_many(sources)
-        repos.scans.add_many(scans)
+        repos.sources.add_many(content.get('sources', ()))
+        repos.scans.add_many(content.get('scans', ()))
         repos.pages.add_many(pages)
-        repos.page_versions.add_many(versions)
+        repos.page_versions.add_many(content.get('versions', ()))
 
-    await uow.change(lambda repos: repos.projects.add(project))
+    await uow.create_book(project)
     await uow.change_book(project.id, store_content)
+    entry = LibraryEntry(project_id=project.id, owner_id=owner, added_at=project.created_at)
+    await uow.change(lambda repos: repos.library.add(entry))
 
 
 async def commit_project(
     database: SqlDatabase,
+    uow: UnitOfWork,
     project: Project,
     *pages: Page,
-    sources: Sequence[Source] = (),
-    scans: Sequence[Scan] = (),
-    versions: Sequence[PageVersion] = (),
+    owner: AccountId,
+    **content: Unpack[BookContent],
 ) -> None:
-    """Commit a project with its sources, their scans, its pages and their versions, and its owner when it is new.
+    """Store a book as ``store_project`` does, after committing its owner account when the catalogue lacks it.
 
-    :param database: SQL database to commit into.
+    :param database: Catalogue to commit the owner account into.
     :type database: SqlDatabase
-    :param project: Project to store, whose owner account is committed first unless the database stores it.
+    :param uow: Unit of work to store the book through, over the same catalogue.
+    :type uow: UnitOfWork
+    :param project: Project to store.
     :type project: Project
     :param pages: Pages of the project, which may show the given scans.
     :type pages: Page
-    :param sources: Sources of the project.
-    :type sources: Sequence[Source]
-    :param scans: Scans of those sources.
-    :type scans: Sequence[Scan]
-    :param versions: Versions of those pages.
-    :type versions: Sequence[PageVersion]
+    :param owner: Account owning the book, which is committed first unless the catalogue stores it.
+    :type owner: AccountId
+    :param content: The sources of the project, their scans and the versions of the pages, as far as the book has them.
+    :type content: Unpack[BookContent]
     """
-    await ensure_account(database, project.owner_id)
-    await store_project(
-        SqlAlchemyUnitOfWork(database), project, *pages, sources=sources, scans=scans, versions=versions
-    )
+    await ensure_account(database, owner)
+    await store_project(uow, project, *pages, owner=owner, **content)

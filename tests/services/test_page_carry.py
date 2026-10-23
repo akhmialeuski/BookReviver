@@ -28,6 +28,7 @@ from tests.helpers.spreads import run_stage, stage_of
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, Project
+    from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.values import PageStepKey
     from tests.helpers.processing import ProcessingKit
 
@@ -60,31 +61,35 @@ async def carry_book(kit: ProcessingKit) -> tuple[Actor, Project, list[Page], li
     return actor, project, pages, keys
 
 
-async def strength_of(kit: ProcessingKit, key: PageStepKey) -> object:
+async def strength_of(kit: ProcessingKit, project_id: ProjectId, key: PageStepKey) -> object:
     """Read the strength a page changes for the step, or None when it changes none.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Project whose book holds the page.
+    :type project_id: ProjectId
     :param key: The page, the stage and the step.
     :type key: PageStepKey
     :returns: The value the page stores for the field.
     :rtype: object
     """
-    state = await kit.uow().read(lambda repos: repos.page_step_states.find(key))
+    state = await kit.uow().read_book(project_id, lambda repos: repos.page_step_states.find(key))
     return None if state is None else state.params.get(STRENGTH_PARAMETER)
 
 
-async def angle_of(kit: ProcessingKit, key: PageStepKey) -> float | None:
+async def angle_of(kit: ProcessingKit, project_id: ProjectId, key: PageStepKey) -> float | None:
     """Read the angle of the rotation a page has set by hand for the step, or None when it set no shape.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Project whose book holds the page.
+    :type project_id: ProjectId
     :param key: The page, the stage and the step.
     :type key: PageStepKey
     :returns: The angle in degrees.
     :rtype: float | None
     """
-    state = await kit.uow().read(lambda repos: repos.page_step_states.find(key))
+    state = await kit.uow().read_book(project_id, lambda repos: repos.page_step_states.find(key))
     if state is None or state.edit is None or not isinstance(state.edit.geometry, Rotation):
         return None
     return state.edit.geometry.degrees
@@ -121,10 +126,12 @@ class TestShapeSetByHand:
         await fx_kit.edits().save(actor, project.id, keys[SOURCE_INDEX], SHAPE, None)
         carried = await carry_over(fx_kit).carry(actor, project.id, shape_of(keys[SOURCE_INDEX]))
         expect(sorted(change.page_id for change in carried.changes) == sorted(page.id for page in pages[2:]))
-        expect([await angle_of(fx_kit, key) for key in keys] == [None, SHAPE_ANGLE, SHAPE_ANGLE, SHAPE_ANGLE])
-        own = await fx_kit.uow().read(lambda repos: repos.page_step_states.get(keys[2]))
+        expect(
+            [await angle_of(fx_kit, project.id, key) for key in keys] == [None, SHAPE_ANGLE, SHAPE_ANGLE, SHAPE_ANGLE]
+        )
+        own = await fx_kit.uow().read_book(project.id, lambda repos: repos.page_step_states.get(keys[2]))
         expect(own.params == {FAILING_PARAMETER: NOT_FAILING})
-        expect(await strength_of(fx_kit, keys[3]) is None)
+        expect(await strength_of(fx_kit, project.id, keys[3]) is None)
         expect(all(change.layer is StepLayer.HAND for change in carried.changes))
         expect(all(change.source is ChangeSource.CARRY_OVER for change in carried.changes))
         assert_expectations()
@@ -141,7 +148,7 @@ class TestShapeSetByHand:
         carried = await carry_over(fx_kit).carry(actor, project.id, shape_of(keys[SOURCE_INDEX]))
         expect(carried.skipped == (pages[2].id,))
         expect([change.page_id for change in carried.changes] == [pages[3].id])
-        expect([await angle_of(fx_kit, key) for key in keys[2:]] == [OWN_ANGLE, SHAPE_ANGLE])
+        expect([await angle_of(fx_kit, project.id, key) for key in keys[2:]] == [OWN_ANGLE, SHAPE_ANGLE])
         assert_expectations()
 
     async def test_a_page_with_the_same_shape_is_neither_written_nor_skipped(self, fx_kit: ProcessingKit) -> None:
@@ -173,7 +180,7 @@ class TestShapeSetByHand:
         written = next(change for change in carried.changes if change.page_id == pages[2].id)
         expect(carried.skipped == ())
         expect(written.before is not None and written.after is not None and written.before != written.after)
-        expect([await angle_of(fx_kit, key) for key in keys[2:]] == [SHAPE_ANGLE, SHAPE_ANGLE])
+        expect([await angle_of(fx_kit, project.id, key) for key in keys[2:]] == [SHAPE_ANGLE, SHAPE_ANGLE])
         assert_expectations()
 
     async def test_the_kind_scope_reaches_the_pages_before_the_source_too(self, fx_kit: ProcessingKit) -> None:
@@ -185,7 +192,7 @@ class TestShapeSetByHand:
         actor, project, _, keys = await carry_book(fx_kit)
         await fx_kit.edits().save(actor, project.id, keys[SOURCE_INDEX], SHAPE, None)
         await carry_over(fx_kit).carry(actor, project.id, shape_of(keys[SOURCE_INDEX], CarryScope.KIND))
-        assert [await angle_of(fx_kit, key) for key in keys] == [SHAPE_ANGLE] * len(keys)
+        assert [await angle_of(fx_kit, project.id, key) for key in keys] == [SHAPE_ANGLE] * len(keys)
 
     async def test_the_pages_of_other_kinds_do_not_take_the_shape(self, fx_kit: ProcessingKit) -> None:
         """Verify the shape goes to the text pages of the book and not to a plate.
@@ -199,7 +206,7 @@ class TestShapeSetByHand:
         keys = [await fx_kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY) for page in (*text, plate)]
         await fx_kit.edits().save(actor, project.id, keys[0], SHAPE, None)
         await carry_over(fx_kit).carry(actor, project.id, shape_of(keys[0], CarryScope.KIND))
-        assert [await angle_of(fx_kit, key) for key in keys] == [SHAPE_ANGLE, SHAPE_ANGLE, None]
+        assert [await angle_of(fx_kit, project.id, key) for key in keys] == [SHAPE_ANGLE, SHAPE_ANGLE, None]
 
     async def test_one_undo_takes_the_shape_back_from_every_page(self, fx_kit: ProcessingKit) -> None:
         """Verify an undo on one target takes the batch back everywhere, and the source keeps its shape.
@@ -215,7 +222,7 @@ class TestShapeSetByHand:
         last = next(change for change in carried.changes if change.page_id == pages[3].id)
         undone = await fx_kit.page_history().undo(actor, project.id, keys[3], last.id)
         expect(sorted(undo.page_id for undo in undone) == sorted(page.id for page in pages[2:]))
-        expect([await angle_of(fx_kit, key) for key in keys] == [None, SHAPE_ANGLE, OWN_ANGLE, None])
+        expect([await angle_of(fx_kit, project.id, key) for key in keys] == [None, SHAPE_ANGLE, OWN_ANGLE, None])
         assert_expectations()
 
     async def test_the_stage_of_a_page_that_took_the_shape_goes_stale(self, fx_kit: ProcessingKit) -> None:
@@ -262,7 +269,9 @@ class TestSelected:
         )
         carried = await carry_over(fx_kit).carry(actor, project.id, request)
         expect(sorted(change.page_id for change in carried.changes) == sorted([pages[0].id, pages[3].id]))
-        expect([await angle_of(fx_kit, key) for key in keys] == [SHAPE_ANGLE, SHAPE_ANGLE, None, SHAPE_ANGLE])
+        expect(
+            [await angle_of(fx_kit, project.id, key) for key in keys] == [SHAPE_ANGLE, SHAPE_ANGLE, None, SHAPE_ANGLE]
+        )
         assert_expectations()
 
     async def test_a_carry_over_to_no_selected_page_is_refused(self, fx_kit: ProcessingKit) -> None:
@@ -291,7 +300,7 @@ class TestSelected:
         )
         with pytest.raises(NotFoundError):
             await carry_over(fx_kit).carry(actor, project.id, request)
-        assert await angle_of(fx_kit, keys[3]) is None
+        assert await angle_of(fx_kit, project.id, keys[3]) is None
 
 
 class TestRefusals:
@@ -310,4 +319,4 @@ class TestRefusals:
         for who, key in attempts:
             with pytest.raises(NotFoundError):
                 await carry_over(fx_kit).carry(who, project.id, shape_of(key))
-        assert [await angle_of(fx_kit, key) for key in keys] == [None, SHAPE_ANGLE, None, None]
+        assert [await angle_of(fx_kit, project.id, key) for key in keys] == [None, SHAPE_ANGLE, None, None]

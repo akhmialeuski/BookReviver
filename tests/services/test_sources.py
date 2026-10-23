@@ -13,12 +13,13 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import SourceId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import SliceRequest
+from bookreviver.services.library import Library
 from bookreviver.services.sources import SourceService
 from tests.helpers.books import SCANS_PER_SOURCE, commit_book, on_disk
 from tests.helpers.builders import make_job, make_project, make_source
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.scripted_runner import ScriptedRunner
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -28,7 +29,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Project, Source
     from bookreviver.domain.ids import ProjectId
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.storage import AssetStore, SourceStore
     from tests.helpers.books import Book
     from tests.helpers.clock import FixedClock
     from tests.helpers.database import UnitOfWorkFactory
@@ -85,6 +87,23 @@ def fx_import_board(fx_events: RecordingEventBus, fx_clock: FixedClock) -> FakeJ
     return FakeJobBoard(runner=ScriptedRunner(), publisher=fx_events, clock=fx_clock)
 
 
+def _service(uow: UnitOfWork, board: FakeJobBoard, sources: SourceStore, assets: AssetStore) -> SourceService:
+    """Build the source service for one request, over a unit of work and the stores and the board of the test.
+
+    :param uow: Unit of work of the request.
+    :type uow: UnitOfWork
+    :param board: Board the service reads the jobs of a book from.
+    :type board: FakeJobBoard
+    :param sources: Source store of the test.
+    :type sources: SourceStore
+    :param assets: Asset store of the test.
+    :type assets: AssetStore
+    :returns: The service.
+    :rtype: SourceService
+    """
+    return SourceService(uow=uow, library=Library(uow=uow), board=board, sources=sources, assets=assets)
+
+
 @pytest.fixture
 def fx_service(
     fx_uow: UnitOfWorkFactory,
@@ -105,7 +124,7 @@ def fx_service(
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], SourceService]
     """
-    return lambda: SourceService(uow=fx_uow(), board=fx_import_board, sources=fx_source_store, assets=fx_asset_store)
+    return lambda: _service(fx_uow(), fx_import_board, fx_source_store, fx_asset_store)
 
 
 @pytest.fixture
@@ -126,7 +145,7 @@ def fx_flaky_service(
     :rtype: Callable[[], SourceService]
     """
     sources = SourceStoreFailingOnce(root=fx_storage_root)
-    return lambda: SourceService(uow=fx_uow(), board=fx_import_board, sources=sources, assets=fx_asset_store)
+    return lambda: _service(fx_uow(), fx_import_board, sources, fx_asset_store)
 
 
 async def _record_unimported(uow: UnitOfWork, project_id: ProjectId) -> tuple[Source, Source]:
@@ -154,11 +173,11 @@ async def _record_unimported(uow: UnitOfWork, project_id: ProjectId) -> tuple[So
         file_type=None,
     )
 
-    def record(repos: Repositories, _project: Project) -> None:
+    def record(repos: BookRepositories, _project: Project) -> None:
         """Add the two files to the project.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: The project as the change finds it, which the work does not need.
         :type _project: Project
         """
@@ -185,12 +204,18 @@ async def fx_unimported(fx_uow: UnitOfWorkFactory, fx_book: Book) -> tuple[Sourc
 
 @pytest.fixture
 async def fx_book(
-    fx_database: SqlDatabase, fx_source_store: LocalSourceStore, fx_asset_store: LocalAssetStore, fx_actor: Actor
+    fx_database: SqlDatabase,
+    fx_uow: UnitOfWorkFactory,
+    fx_source_store: LocalSourceStore,
+    fx_asset_store: LocalAssetStore,
+    fx_actor: Actor,
 ) -> Book:
     """Commit and store a book of the acting account.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_source_store: Local source store over the test's storage root.
     :type fx_source_store: LocalSourceStore
     :param fx_asset_store: Local asset store over the test's storage root.
@@ -200,17 +225,22 @@ async def fx_book(
     :returns: The stored book.
     :rtype: Book
     """
-    return await commit_book(fx_database, fx_source_store, fx_asset_store, fx_actor)
+    return await commit_book(fx_database, fx_uow(), fx_source_store, fx_asset_store, fx_actor)
 
 
 @pytest.fixture
 async def fx_strangers_book(
-    fx_database: SqlDatabase, fx_source_store: LocalSourceStore, fx_asset_store: LocalAssetStore
+    fx_database: SqlDatabase,
+    fx_uow: UnitOfWorkFactory,
+    fx_source_store: LocalSourceStore,
+    fx_asset_store: LocalAssetStore,
 ) -> Book:
     """Commit and store a book of an account that acts nowhere in the test.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_source_store: Local source store over the test's storage root.
     :type fx_source_store: LocalSourceStore
     :param fx_asset_store: Local asset store over the test's storage root.
@@ -218,7 +248,7 @@ async def fx_strangers_book(
     :returns: The stored book.
     :rtype: Book
     """
-    return await commit_book(fx_database, fx_source_store, fx_asset_store, None)
+    return await commit_book(fx_database, fx_uow(), fx_source_store, fx_asset_store, None)
 
 
 class TestList:
@@ -308,21 +338,21 @@ class TestGet:
         assert await fx_service().get(fx_actor, fx_book.project.id, fx_book.second.id) == fx_book.second
 
     async def test_source_of_another_project_of_the_actor_is_not_found(
-        self, fx_service: Callable[[], SourceService], fx_database: SqlDatabase, fx_book: Book, fx_actor: Actor
+        self, fx_service: Callable[[], SourceService], fx_uow: UnitOfWorkFactory, fx_book: Book, fx_actor: Actor
     ) -> None:
         """Verify a source is found only through the project holding it, even for an owner of both projects.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_book: Book of the acting account.
         :type fx_book: Book
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        other = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, other)
+        other = make_project()
+        await store_project(fx_uow(), other, owner=fx_actor.account_id)
 
         with pytest.raises(NotFoundError):
             await fx_service().get(fx_actor, other.id, fx_book.first.id)
@@ -393,21 +423,21 @@ class TestScans:
         assert_expectations()
 
     async def test_source_of_another_project_is_not_found(
-        self, fx_service: Callable[[], SourceService], fx_database: SqlDatabase, fx_book: Book, fx_actor: Actor
+        self, fx_service: Callable[[], SourceService], fx_uow: UnitOfWorkFactory, fx_book: Book, fx_actor: Actor
     ) -> None:
         """Verify the scans of a source are listed only through the project holding it.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_book: Book of the acting account.
         :type fx_book: Book
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        other = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, other)
+        other = make_project()
+        await store_project(fx_uow(), other, owner=fx_actor.account_id)
 
         with pytest.raises(NotFoundError):
             await fx_service().scans(fx_actor, other.id, SliceRequest(), source_id=fx_book.first.id)
@@ -458,8 +488,10 @@ class TestDelete:
         remaining = await fx_service().list(fx_actor, fx_book.project.id, SliceRequest())
         scans = await fx_service().scans(fx_actor, fx_book.project.id, SliceRequest())
         image = ProjectKeys(fx_book.project.id).version_rendition(fx_book.version, Rendition.FULL_JPEG)
-        page = await uow.read(lambda repos: repos.pages.get(fx_book.page.id))
-        versions = await uow.read(lambda repos: repos.page_versions.list_for_page(fx_book.page.id))
+        page = await uow.read_book(fx_book.project.id, lambda repos: repos.pages.get(fx_book.page.id))
+        versions = await uow.read_book(
+            fx_book.project.id, lambda repos: repos.page_versions.list_for_page(fx_book.page.id)
+        )
         expect(remaining.items == [fx_book.second])
         expect(scans.items == fx_book.scans[SCANS_PER_SOURCE:])
         expect(on_disk(fx_storage_root, fx_book, fx_book.first) == (False, False))
@@ -651,5 +683,7 @@ class TestDeleteUnimported:
         with pytest.raises(NotFoundError):
             await fx_service().delete_unimported(fx_actor, fx_strangers_book.project.id)
 
-        kept = await fx_uow().read(lambda repos: repos.sources.list_unimported(fx_strangers_book.project.id))
+        kept = await fx_uow().read_book(
+            fx_strangers_book.project.id, lambda repos: repos.sources.list_unimported(fx_strangers_book.project.id)
+        )
         assert list(kept) == list(recorded)

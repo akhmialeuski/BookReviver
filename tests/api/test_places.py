@@ -11,13 +11,14 @@ from bookreviver.api.schemas.places import BookPlaceSchema
 from bookreviver.api.schemas.types import CANVAS_CENTRE_MAX, CANVAS_ZOOM_MAX
 from bookreviver.domain.enums import CompareMode, PageFilter, PlaceMode, Stage, ViewMode
 from tests.helpers.builders import make_project, new_account_id
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import commit_project, store_project
 
 if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -75,18 +76,18 @@ def _body() -> dict[str, Any]:
 
 
 @pytest.fixture
-async def fx_project(fx_database: SqlDatabase, fx_actor: Actor) -> Project:
+async def fx_project(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Project:
     """Commit a book of the signed-in account.
 
-    :param fx_database: Database of the test, which the application runs on.
-    :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored project.
     :rtype: Project
     """
-    project = make_project(owner_id=fx_actor.account_id)
-    await commit_project(fx_database, project)
+    project = make_project()
+    await store_project(fx_uow(), project, owner=fx_actor.account_id)
     return project
 
 
@@ -128,7 +129,7 @@ class TestGetPlace:
         assert_expectations()
 
     async def test_the_book_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify the place of a book of another account answers 404, as a missing book does.
 
@@ -136,9 +137,11 @@ class TestGetPlace:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
-        strangers = make_project(owner_id=new_account_id())
-        await commit_project(fx_database, strangers)
+        strangers = make_project()
+        await commit_project(fx_database, fx_uow(), strangers, owner=new_account_id())
         response = await fx_client.get(_path(strangers))
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -166,7 +169,7 @@ class TestPutPlace:
         assert_expectations()
 
     async def test_the_book_of_another_account_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify a place cannot be written into a book of another account.
 
@@ -174,9 +177,11 @@ class TestPutPlace:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
-        strangers = make_project(owner_id=new_account_id())
-        await commit_project(fx_database, strangers)
+        strangers = make_project()
+        await commit_project(fx_database, fx_uow(), strangers, owner=new_account_id())
         response = await fx_client.put(_path(strangers), json=_body())
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
