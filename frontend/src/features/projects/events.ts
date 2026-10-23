@@ -68,18 +68,6 @@ export type BookResource = (typeof BOOK_RESOURCES)[number];
 /** How long the first event of a burst waits for the rest before the queries it affects are read again. */
 export const BURST_DELAY_MS = 400;
 
-// The bursts of each cache are folded apart, since a burst is the reads of that cache a run of events asks for
-const burstsOfCache = new WeakMap<QueryClient, Coalescer>();
-
-function burstsOf(queryClient: QueryClient): Coalescer {
-  let bursts = burstsOfCache.get(queryClient);
-  if (bursts === undefined) {
-    bursts = new Coalescer(BURST_DELAY_MS);
-    burstsOfCache.set(queryClient, bursts);
-  }
-  return bursts;
-}
-
 /** One event received from the stream. */
 export interface ProjectEvent {
   event?: string;
@@ -150,94 +138,172 @@ function bookChangeOf(data: unknown): BookChange | null {
   return { version, resources };
 }
 
-/** Read again the reads that show the jobs of a book, which change with every job and raise no version of the book. */
-export async function refreshJobs(queryClient: QueryClient, projectId: string): Promise<void> {
-  await Promise.all([
-    invalidateJobs(queryClient, projectId),
-    invalidateStageSummary(queryClient, projectId),
-    invalidateAllStageRows(queryClient, projectId),
-    invalidateProject(queryClient, projectId),
-    invalidateProjectList(queryClient),
-  ]);
-}
+/** A read of a book that a change of the book or of its jobs makes stale. */
+const BookRead = {
+  Project: 'project',
+  ProjectList: 'project-list',
+  Sources: 'sources',
+  Scans: 'scans',
+  Pages: 'pages',
+  NumberingPreviews: 'numbering-previews',
+  Sections: 'sections',
+  StageSummary: 'stage-summary',
+  StageRows: 'stage-rows',
+  Versions: 'versions',
+  Collectable: 'collectable',
+  PageLayers: 'page-layers',
+  History: 'history',
+  Recipes: 'recipes',
+  Jobs: 'jobs',
+} as const;
 
-/** Read again the queries of one part of a book a change wrote. */
-export async function refreshPart(
-  queryClient: QueryClient,
-  projectId: string,
-  resource: BookResource,
-): Promise<void> {
-  switch (resource) {
-    case 'project':
-      await Promise.all([
-        invalidateProject(queryClient, projectId),
-        invalidateProjectList(queryClient),
-      ]);
-      return;
-    case 'sources':
-      await Promise.all([
-        invalidateSources(queryClient, projectId),
-        invalidateProject(queryClient, projectId),
-        invalidateProjectList(queryClient),
-      ]);
-      return;
-    case 'scans':
-      // A page whose scan was just cut gets its images in the manifest
-      await Promise.all([
-        invalidateScans(queryClient, projectId),
-        invalidatePages(queryClient, projectId),
-      ]);
-      return;
-    case 'pages':
-      // A section follows its first page, and pages added, removed or moved change the counts and rows of every stage
-      // and the labels a numbering would write
-      await Promise.all([
-        invalidatePages(queryClient, projectId),
-        queryClient.invalidateQueries({ queryKey: numberingPreviewKey(projectId) }),
-        invalidateSections(queryClient, projectId),
-        invalidateStageSummary(queryClient, projectId),
-        invalidateAllStageRows(queryClient, projectId),
-        invalidateProject(queryClient, projectId),
-        invalidateProjectList(queryClient),
-      ]);
-      return;
-    case 'versions':
-      // The rows of the stages draw the versions, the manifest shows the image of the latest one, and a collection
-      // counts the old ones
-      await Promise.all([
-        invalidateAllVersions(queryClient, projectId),
-        invalidateCollectable(queryClient, projectId),
-        invalidatePages(queryClient, projectId),
-        invalidateAllStageRows(queryClient, projectId),
-      ]);
-      return;
-    case 'stages':
-      // The status of each stage and the next stage are part of the book, and its card in the library
-      await Promise.all([
-        invalidateStageSummary(queryClient, projectId),
-        invalidateAllStageRows(queryClient, projectId),
-        invalidateProject(queryClient, projectId),
-        invalidateProjectList(queryClient),
-      ]);
-      return;
-    case 'settings':
-      await invalidatePageLayers(queryClient);
-      return;
-    case 'history':
-      await invalidateHistory(queryClient);
-      return;
-    case 'recipes':
-      await invalidateAllRecipes(queryClient, projectId);
-      return;
+type BookRead = (typeof BookRead)[keyof typeof BookRead];
+
+/** The reads a change of each part of a book makes stale. */
+const READS_OF_PART: Record<BookResource, readonly BookRead[]> = {
+  project: [BookRead.Project, BookRead.ProjectList],
+  sources: [BookRead.Sources, BookRead.Project, BookRead.ProjectList],
+  // A page whose scan was just cut gets its images in the manifest
+  scans: [BookRead.Scans, BookRead.Pages],
+  // A section follows its first page, and pages added, removed or moved change the counts and rows of every stage and
+  // the labels a numbering would write
+  pages: [
+    BookRead.Pages,
+    BookRead.NumberingPreviews,
+    BookRead.Sections,
+    BookRead.StageSummary,
+    BookRead.StageRows,
+    BookRead.Project,
+    BookRead.ProjectList,
+  ],
+  // The rows of the stages draw the versions, the manifest shows the image of the latest one, and a collection counts
+  // the old ones
+  versions: [BookRead.Versions, BookRead.Collectable, BookRead.Pages, BookRead.StageRows],
+  // The status of each stage and the next stage are part of the book, and its card in the library
+  stages: [BookRead.StageSummary, BookRead.StageRows, BookRead.Project, BookRead.ProjectList],
+  settings: [BookRead.PageLayers],
+  history: [BookRead.History],
+  recipes: [BookRead.Recipes],
+};
+
+/** The reads that show the jobs of a book, which change with every job and raise no version of the book. */
+const JOB_READS: readonly BookRead[] = [
+  BookRead.Jobs,
+  BookRead.StageSummary,
+  BookRead.StageRows,
+  BookRead.Project,
+  BookRead.ProjectList,
+];
+
+function readAgain(queryClient: QueryClient, projectId: string, read: BookRead): Promise<void> {
+  switch (read) {
+    case BookRead.Project:
+      return invalidateProject(queryClient, projectId);
+    case BookRead.ProjectList:
+      return invalidateProjectList(queryClient);
+    case BookRead.Sources:
+      return invalidateSources(queryClient, projectId);
+    case BookRead.Scans:
+      return invalidateScans(queryClient, projectId);
+    case BookRead.Pages:
+      return invalidatePages(queryClient, projectId);
+    case BookRead.NumberingPreviews:
+      return queryClient.invalidateQueries({ queryKey: numberingPreviewKey(projectId) });
+    case BookRead.Sections:
+      return invalidateSections(queryClient, projectId);
+    case BookRead.StageSummary:
+      return invalidateStageSummary(queryClient, projectId);
+    case BookRead.StageRows:
+      return invalidateAllStageRows(queryClient, projectId);
+    case BookRead.Versions:
+      return invalidateAllVersions(queryClient, projectId);
+    case BookRead.Collectable:
+      return invalidateCollectable(queryClient, projectId);
+    case BookRead.PageLayers:
+      return invalidatePageLayers(queryClient);
+    case BookRead.History:
+      return invalidateHistory(queryClient);
+    case BookRead.Recipes:
+      return invalidateAllRecipes(queryClient, projectId);
+    case BookRead.Jobs:
+      return invalidateJobs(queryClient, projectId);
   }
 }
 
+/**
+ * Read again each of some reads of a book once.
+ *
+ * Several parts of a book name the same read, and a read asked for twice in one turn costs two requests, since the
+ * second invalidation cancels the request of the first after it reached the server.
+ */
+async function refreshReads(
+  queryClient: QueryClient,
+  projectId: string,
+  reads: Iterable<BookRead>,
+): Promise<void> {
+  const wanted = new Set(reads);
+  // The read of the layers of the pages covers their histories
+  if (wanted.has(BookRead.PageLayers)) {
+    wanted.delete(BookRead.History);
+  }
+  await Promise.all([...wanted].map((read) => readAgain(queryClient, projectId, read)));
+}
+
+/** Read again the reads that show the jobs of a book. */
+export function refreshJobs(queryClient: QueryClient, projectId: string): Promise<void> {
+  return refreshReads(queryClient, projectId, JOB_READS);
+}
+
 /** Read the whole book again, after a break of the stream in which it changed or after a lost event. */
-export async function refreshBook(queryClient: QueryClient, projectId: string): Promise<void> {
-  await Promise.all([
-    ...BOOK_RESOURCES.map((resource) => refreshPart(queryClient, projectId, resource)),
-    refreshJobs(queryClient, projectId),
+function refreshBook(queryClient: QueryClient, projectId: string): Promise<void> {
+  return refreshReads(queryClient, projectId, [
+    ...BOOK_RESOURCES.flatMap((resource) => READS_OF_PART[resource]),
+    ...JOB_READS,
   ]);
+}
+
+/**
+ * The reads the events of the books of one cache ask for, folded into one burst per book.
+ *
+ * A step of a run commits one change of a book that names several parts, and the parts share reads, such as the rows of
+ * the stages, so the reads of a burst are gathered across its events and parts and made once each.
+ */
+class ReadBursts {
+  private readonly queryClient: QueryClient;
+  private readonly coalescer = new Coalescer(BURST_DELAY_MS);
+  private readonly pending = new Map<string, Set<BookRead>>();
+
+  constructor(queryClient: QueryClient) {
+    this.queryClient = queryClient;
+  }
+
+  /** Ask for some reads of a book, made at once or at the end of the burst a moment ago began. */
+  add(projectId: string, reads: Iterable<BookRead>): void {
+    const held = this.pending.get(projectId) ?? new Set<BookRead>();
+    for (const read of reads) {
+      held.add(read);
+    }
+    this.pending.set(projectId, held);
+    this.coalescer.schedule(projectId, () => {
+      const due = this.pending.get(projectId);
+      this.pending.delete(projectId);
+      if (due !== undefined) {
+        void refreshReads(this.queryClient, projectId, due);
+      }
+    });
+  }
+}
+
+// The bursts of each cache are folded apart, since a burst is the reads of that cache a run of events asks for
+const burstsOfCache = new WeakMap<QueryClient, ReadBursts>();
+
+function burstsOf(queryClient: QueryClient): ReadBursts {
+  let bursts = burstsOfCache.get(queryClient);
+  if (bursts === undefined) {
+    bursts = new ReadBursts(queryClient);
+    burstsOfCache.set(queryClient, bursts);
+  }
+  return bursts;
 }
 
 /** Patch or read again the queries an event makes stale, and keep the version of the book the tab holds. */
@@ -254,14 +320,7 @@ export function applyProjectEvent(
           readJobApiV1JobsJobIdGetQueryKey({ path: { job_id: event.data.id } }),
           event.data,
         );
-        if (isActiveJob(event.data)) {
-          burstsOf(queryClient).schedule(
-            `${projectId}/jobs`,
-            () => void invalidateJobs(queryClient, projectId),
-          );
-        } else {
-          void refreshJobs(queryClient, projectId);
-        }
+        burstsOf(queryClient).add(projectId, isActiveJob(event.data) ? [BookRead.Jobs] : JOB_READS);
       }
       break;
     case EventName.PageVersionReady:
@@ -289,12 +348,10 @@ export function applyProjectEvent(
         void refreshBook(queryClient, projectId);
         break;
       }
-      for (const resource of change.resources) {
-        burstsOf(queryClient).schedule(
-          `${projectId}/book/${resource}`,
-          () => void refreshPart(queryClient, projectId, resource),
-        );
-      }
+      burstsOf(queryClient).add(
+        projectId,
+        change.resources.flatMap((resource) => READS_OF_PART[resource]),
+      );
       break;
     }
     case EventName.BookReset:
