@@ -45,7 +45,7 @@ SCAN_SIZE_PX: tuple[int, int] = (120, 160)
 class Book(NamedTuple):
     """A book of the signed-in account: one page cut from a scan, a placeholder, and a second scan no page shows.
 
-    :ivar book_record: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar shown: The page the import made of the first scan.
     :ivar placeholder: The placeholder after it.
     :ivar spare: A cut scan of another source that no page shows.
@@ -58,7 +58,7 @@ class Book(NamedTuple):
 
     @property
     def pages_path(self) -> str:
-        """The path of the project's pages."""
+        """The path of the book's pages."""
         return f'{BOOKS_PATH}/{self.book_record.id}/pages'
 
     @property
@@ -138,7 +138,7 @@ async def _page(client: httpx.AsyncClient, book: Book, page_id: object) -> PageS
 
 
 class TestCreatePage:
-    """Tests for POST /projects/{project_id}/pages."""
+    """Tests for POST /books/{book_id}/pages."""
 
     async def test_adds_a_placeholder_that_has_no_images_and_points_to_it(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -290,7 +290,7 @@ class TestCreatePage:
     async def test_unknown_anchor_and_book_of_another_account_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify an anchor that is no page of the project, and a project of another account, answer 404.
+        """Verify an anchor that is no page of the book, and a book of another account, answer 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -317,7 +317,7 @@ class TestCreatePage:
 
 
 class TestCreatePages:
-    """Tests for POST /projects/{project_id}/pages/batch."""
+    """Tests for POST /books/{book_id}/pages/batch."""
 
     async def test_adds_the_list_in_order_and_answers_every_page(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -407,7 +407,7 @@ class TestCreatePages:
 
 
 class TestDeletePage:
-    """Tests for DELETE /projects/{project_id}/pages/{page_id}."""
+    """Tests for DELETE /books/{book_id}/pages/{page_id}."""
 
     async def test_deletes_the_page_and_leaves_the_scan_to_be_bound_again(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_uow: UnitOfWorkFactory
@@ -447,7 +447,7 @@ class TestDeletePage:
 
 
 class TestAttachScan:
-    """Tests for PUT /projects/{project_id}/pages/{page_id}/scan."""
+    """Tests for PUT /books/{book_id}/pages/{page_id}/scan."""
 
     async def test_binds_the_scan_and_the_job_writes_the_images_of_the_page(
         self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
@@ -549,7 +549,7 @@ class TestAttachScan:
     async def test_scan_of_another_book_and_unknown_scan_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify a scan is bound only through the project that holds it.
+        """Verify a scan is bound only through the book that holds it.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient

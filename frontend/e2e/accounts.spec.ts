@@ -34,7 +34,7 @@ test('a reader signs in with a provider and lands on the book list', async ({ pa
 
   await test.step('the button goes through the provider and back to the book list', async () => {
     await page.getByRole('button', { name: 'Continue with Google' }).click();
-    await expect(page).toHaveURL(/\/projects$/);
+    await expect(page).toHaveURL(/\/books$/);
     await expect(page.getByRole('heading', { name: 'Your books' })).toBeVisible();
   });
 });

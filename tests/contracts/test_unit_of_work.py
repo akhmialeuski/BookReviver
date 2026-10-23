@@ -98,7 +98,7 @@ WRITE_METHODS: tuple[str, ...] = (
 class Book(NamedTuple):
     """A stored book and the account that owns it.
 
-    :ivar book_record: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar owner_id: The account that owns the book.
     """
 
@@ -154,7 +154,7 @@ class ChangeKind(NamedTuple):
 
         :param book: The book of the test.
         :type book: Book
-        :returns: The project whose book the change takes, or None for a change of the catalogue.
+        :returns: The book whose store the change takes, or None for a change of the catalogue.
         :rtype: BookId | None
         """
         return book.book_record.id if self.of_book else None
@@ -363,7 +363,7 @@ async def fx_book_rows(fx_uow: UnitOfWorkFactory, fx_book: Book) -> dict[str, Ro
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: Project of the book, which the work does not need.
+        :param _book_record: Record of the book, which the work does not need.
         :type _book_record: BookRecord
         """
         repos.sources.add(source)
@@ -569,10 +569,10 @@ class TestChangeEnd:
 
 
 class TestChangeBook:
-    """Contract of UnitOfWork.change_book() on the project it hands its work."""
+    """Contract of UnitOfWork.change_book() on the book it hands its work."""
 
     async def test_work_receives_the_stored_book(self, fx_uow: UnitOfWorkFactory, fx_book: Book) -> None:
-        """Verify the work is handed the project as stored, beside the repos.
+        """Verify the work is handed the book as stored, beside the repos.
 
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -598,7 +598,7 @@ class TestChangeBook:
     async def test_work_receives_the_book_as_the_previous_change_left_it(
         self, fx_uow: UnitOfWorkFactory, fx_book: Book
     ) -> None:
-        """Verify a change reads the project once the change before it has committed, not as it was stored first.
+        """Verify a change reads the book once the change before it has committed, not as it was stored first.
 
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -616,7 +616,7 @@ class TestBookLifecycle:
     """Contract of create_book, delete_book and stored_books, which make, remove and list the books."""
 
     async def test_create_book_stores_the_book_and_returns_it(self, fx_uow: UnitOfWorkFactory) -> None:
-        """Verify a created book holds its project, which a later unit of work reads back unchanged.
+        """Verify a created book holds its record, which a later unit of work reads back unchanged.
 
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -654,9 +654,9 @@ class TestBookLifecycle:
         doomed, kept = make_record(), make_record()
 
         async def book_with_a_page(book_record: BookRecord) -> None:
-            """Make the book of a project and store one page in it.
+            """Make a book and store one page in it.
 
-            :param book_record: The project of the book.
+            :param book_record: The record of the book.
             :type book_record: BookRecord
             """
             await fx_uow().create_book(book_record)
@@ -938,7 +938,7 @@ class TestChangeWait:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.pages.update(evolve(repos.pages.get(page.id), manual_label=FIRST_LABEL))
@@ -948,7 +948,7 @@ class TestChangeWait:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.pages.update(evolve(repos.pages.get(page.id), notes=STAMP))

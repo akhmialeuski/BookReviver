@@ -28,7 +28,7 @@ export function progressSegments(progress: BookSchema['progress']): StageSegment
 /**
  * Give the stage a book goes to next with its status, which is the reason it is next.
  *
- * @param project The book.
+ * @param book The book.
  * @returns The next stage, or null when everything that can be done is done.
  */
 export function nextStageOf(

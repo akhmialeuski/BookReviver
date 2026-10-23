@@ -67,7 +67,7 @@ def _add_stage_record(repos: BookRepositories, _book_record: BookRecord, *, page
 
     :param repos: Repositories of the transaction.
     :type repos: BookRepositories
-    :param _book_record: Project of the book, which the work does not need.
+    :param _book_record: Record of the book, which the work does not need.
     :type _book_record: BookRecord
     :param page_id: The page.
     :type page_id: PageId
@@ -76,7 +76,7 @@ def _add_stage_record(repos: BookRepositories, _book_record: BookRecord, *, page
 
 
 async def _statements_of_list(uow: UnitOfWork, board: JobBoard, owner_id: AccountId, window: int, root: Path) -> int:
-    """List the owner's books through the project service and count the statements every engine sends meanwhile.
+    """List the owner's books through the books service and count the statements every engine sends meanwhile.
 
     The counter listens on the ``Engine`` class, so the statements of the catalogue and of the file of every book count.
 
@@ -114,7 +114,7 @@ async def _statements_of_list(uow: UnitOfWork, board: JobBoard, owner_id: Accoun
 
 
 class TestBookList:
-    """Tests for the statements ``ProjectService.list`` sends to SQLite."""
+    """Tests for the statements ``BooksService.list`` sends to SQLite."""
 
     async def test_every_book_of_a_window_adds_the_same_number_of_statements(
         self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, tmp_path: Path

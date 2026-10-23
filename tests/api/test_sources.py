@@ -134,7 +134,7 @@ def fx_extra_providers(fx_board: FakeJobBoard) -> Sequence[Provider]:
 
 
 async def _add_unimported(uow: UnitOfWork, book: Book, status_of: SourceStatus, name: str, *, minutes: int) -> Source:
-    """Commit a file of the book's project that the import rejected or skipped, which has no scan and no stored file.
+    """Commit a file of the book that the import rejected or skipped, which has no scan and no stored file.
 
     :param uow: Unit of work over the database of the test, which the application runs on.
     :type uow: UnitOfWork
@@ -164,7 +164,7 @@ async def _add_unimported(uow: UnitOfWork, book: Book, status_of: SourceStatus, 
 
 
 class TestListSources:
-    """Tests for GET /projects/{project_id}/sources."""
+    """Tests for GET /books/{book_id}/sources."""
 
     async def test_lists_the_sources_in_import_order_with_their_files(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -247,7 +247,7 @@ class TestListSources:
     async def test_another_accounts_book_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_strangers_book: Book
     ) -> None:
-        """Verify the sources of another account's project cannot be listed.
+        """Verify the sources of another account's book cannot be listed.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -260,7 +260,7 @@ class TestListSources:
 
 
 class TestGetSource:
-    """Tests for GET /projects/{project_id}/sources/{source_id}."""
+    """Tests for GET /books/{book_id}/sources/{source_id}."""
 
     async def test_returns_one_source(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
         """Verify a source is read by its identifier.
@@ -279,7 +279,7 @@ class TestGetSource:
     async def test_missing_source_and_a_strangers_source_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_strangers_book: Book
     ) -> None:
-        """Verify an identifier no source has and a source of another account's project both answer 404.
+        """Verify an identifier no source has and a source of another account's book both answer 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -300,7 +300,7 @@ class TestGetSource:
 
 
 class TestDeleteSource:
-    """Tests for DELETE /projects/{project_id}/sources/{source_id}."""
+    """Tests for DELETE /books/{book_id}/sources/{source_id}."""
 
     async def test_deletes_the_source_and_leaves_the_page_with_its_image(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_storage_root: Path
@@ -352,7 +352,7 @@ class TestDeleteSource:
     async def test_import_in_progress_is_a_conflict_and_removes_nothing(
         self, fx_client: httpx.AsyncClient, fx_board: FakeJobBoard, fx_book: Book, fx_storage_root: Path
     ) -> None:
-        """Verify a source cannot be deleted while the project imports, and keeps its files.
+        """Verify a source cannot be deleted while the book imports, and keeps its files.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -391,7 +391,7 @@ class TestDeleteSource:
 
 
 class TestDeleteUnimportedSources:
-    """Tests for DELETE /projects/{project_id}/sources/unimported."""
+    """Tests for DELETE /books/{book_id}/sources/unimported."""
 
     async def test_deletes_the_report_of_the_import_and_keeps_the_imported_sources(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_book: Book
@@ -450,7 +450,7 @@ class TestDeleteUnimportedSources:
     async def test_another_accounts_book_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_strangers_book: Book
     ) -> None:
-        """Verify the report of another account's project cannot be closed.
+        """Verify the report of another account's book cannot be closed.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -463,7 +463,7 @@ class TestDeleteUnimportedSources:
 
 
 class TestListScans:
-    """Tests for GET /projects/{project_id}/scans."""
+    """Tests for GET /books/{book_id}/scans."""
 
     async def test_lists_the_scans_of_the_book_with_paths_of_their_images(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -490,9 +490,9 @@ class TestListScans:
     async def test_full_image_path_has_the_extension_of_the_format_recorded_with_the_scan(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, full: Rendition
     ) -> None:
-        """Verify the path of the full image names the format its scan was stored in, whatever the project's policy.
+        """Verify the path of the full image names the format its scan was stored in, whatever the book's policy.
 
-        The project's policy is the opposite of what the scan records, as after a change of the policy.
+        The book's policy is the opposite of what the scan records, as after a change of the policy.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -562,7 +562,7 @@ class TestListScans:
     async def test_unknown_source_and_another_accounts_book_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_strangers_book: Book
     ) -> None:
-        """Verify a source filter that names no source of the project, and a stranger's project, both answer 404.
+        """Verify a source filter that names no source of the book, and a stranger's book, both answer 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient

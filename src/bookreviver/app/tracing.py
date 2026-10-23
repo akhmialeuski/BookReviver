@@ -2,7 +2,7 @@
 
 The middleware is installed only when the measurements are on, so an application without them runs no code of it. It
 sits outside the CSRF middleware, so a refusal of that one is timed too. The span carries the method, the status of the
-answer and the template of the route that served the request, such as ``/api/projects/{project_id}``, never the
+answer and the template of the route that served the request, such as ``/api/v1/books/{book_id}``, never the
 concrete path, so the requests of a run group by the route and not by the identifiers.
 
 The module also holds the probe of the event-loop lag. The durations that the spans of the database take are read on the

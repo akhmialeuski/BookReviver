@@ -50,7 +50,7 @@ class BookFreshness:
         :type book_id: BookId
         :returns: The version of the book.
         :rtype: int
-        :raises NotFoundError: If the actor has no such project.
+        :raises NotFoundError: If the actor has no such book.
         """
         await self._library.open(actor, book_id)
         return await self._uow.book_version(book_id)
@@ -64,7 +64,7 @@ class BookFreshness:
         :type book_id: BookId
         :returns: The version of the book and the mark of its jobs.
         :rtype: str
-        :raises NotFoundError: If the actor has no such project.
+        :raises NotFoundError: If the actor has no such book.
         """
         version = await self.version(actor, book_id)
         return f'{version}{MARK_SEPARATOR}{self._board.revision(book_id)}'

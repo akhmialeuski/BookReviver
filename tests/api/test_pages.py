@@ -46,7 +46,7 @@ class Book(NamedTuple):
     placeholder without a version, and the page with the key ``a1`` is kept out of the book and has a base version
     whose images are not cut yet.
 
-    :ivar book_record: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar pages: The pages in the order they were stored.
     :ivar versions: The base versions of the first and the last page.
     """
@@ -57,7 +57,7 @@ class Book(NamedTuple):
 
     @property
     def path(self) -> str:
-        """The path of the project's page manifest."""
+        """The path of the book's page manifest."""
         return f'{BOOKS_PATH}/{self.book_record.id}/pages'
 
 
@@ -104,7 +104,7 @@ async def _list_pages(client: httpx.AsyncClient, path: str, **params: int) -> ht
 
 
 class TestListPages:
-    """Tests for GET /projects/{project_id}/pages."""
+    """Tests for GET /books/{book_id}/pages."""
 
     async def test_lists_the_pages_in_book_order_without_their_order_keys(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -175,9 +175,9 @@ class TestListPages:
     async def test_full_image_path_has_the_extension_of_the_format_recorded_with_the_version(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, full: Rendition
     ) -> None:
-        """Verify the path of the full image names the format its version was stored in, whatever the project's policy.
+        """Verify the path of the full image names the format its version was stored in, whatever the book's policy.
 
-        The project's policy is the opposite of what the version records, as after a change of the policy.
+        The book's policy is the opposite of what the version records, as after a change of the policy.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -242,7 +242,7 @@ class TestListPages:
     async def test_another_accounts_book_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify the pages of another account's project cannot be listed.
+        """Verify the pages of another account's book cannot be listed.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -260,7 +260,7 @@ class TestListPages:
 
 
 class TestGetPage:
-    """Tests for GET /projects/{project_id}/pages/{page_id}."""
+    """Tests for GET /books/{book_id}/pages/{page_id}."""
 
     async def test_returns_the_page_with_its_position_and_images(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -303,7 +303,7 @@ class TestGetPage:
     async def test_missing_page_and_page_of_another_book_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_book: Book, fx_actor: Actor
     ) -> None:
-        """Verify an identifier no page has, and a page of another project of the account, both answer 404.
+        """Verify an identifier no page has, and a page of another book of the account, both answer 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -325,7 +325,7 @@ class TestGetPage:
     async def test_page_of_another_accounts_book_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify a page of another account's project answers exactly like a missing one.
+        """Verify a page of another account's book answers exactly like a missing one.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient

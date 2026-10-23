@@ -46,7 +46,7 @@ async def landmark_on(kit: ProcessingKit, book_record: BookRecord, version: Page
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_record: Project owning the version's page.
+    :param book_record: Record of the book owning the version's page.
     :type book_record: BookRecord
     :param version: A ready version that has its files.
     :type version: PageVersion
@@ -67,7 +67,7 @@ async def split_marked_spread(kit: ProcessingKit) -> tuple[Actor, BookRecord, Pa
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The actor, the project, and the left and the right page.
+    :returns: The actor, the book, and the left and the right page.
     :rtype: tuple[Actor, BookRecord, Page, Page]
     """
     scan = spread(PAGE_WIDTH_PX, HEIGHT_PX, tilt=TILT_DEGREES)

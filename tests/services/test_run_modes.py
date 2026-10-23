@@ -39,7 +39,7 @@ async def worked_book(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[Page]
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The actor, the project, the pages and the key of the geometry step on each of them.
+    :returns: The actor, the book, the pages and the key of the geometry step on each of them.
     :rtype: tuple[Actor, BookRecord, list[Page], list[PageStepKey]]
     """
     actor, book_record = await kit.seed_record()
@@ -60,7 +60,7 @@ async def head_of(kit: ProcessingKit, book_id: BookId, page: Page) -> PageVersio
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
@@ -79,7 +79,7 @@ async def state_of(kit: ProcessingKit, book_id: BookId, key: PageStepKey) -> Pag
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book holds the pages.
+    :param book_id: Book that holds the pages.
     :type book_id: BookId
     :param key: The page, the stage and the step.
     :type key: PageStepKey
@@ -94,7 +94,7 @@ async def states_of(kit: ProcessingKit, book_id: BookId, keys: Sequence[PageStep
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book holds the pages.
+    :param book_id: Book that holds the pages.
     :type book_id: BookId
     :param keys: The pages, the stages and the steps.
     :type keys: Sequence[PageStepKey]
@@ -109,7 +109,7 @@ async def histories(kit: ProcessingKit, book_id: BookId, pages: Sequence[Page]) 
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param pages: The pages.
     :type pages: Sequence[Page]
@@ -182,7 +182,7 @@ class TestRunImpact:
         assert_expectations()
 
     async def test_a_stranger_is_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Verify the count of a project of another account is refused like a missing project.
+        """Verify the count of a book of another account is refused like a missing book.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit

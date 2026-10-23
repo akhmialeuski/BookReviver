@@ -54,7 +54,7 @@ async def opened_asset(
     :type pages: PageService
     :returns: Iterator yielding once the path of the file, and closing the file afterwards.
     :rtype: AsyncIterator[pathlib.Path]
-    :raises NotFoundError: If the key is not under the ``assets/`` of one of the actor's projects, no file is stored
+    :raises NotFoundError: If the key is not under the ``assets/`` of one of the actor's books, no file is stored
                            there, or the key names a directory.
     """
     # try/finally rather than a context manager around the yield, because FastAPI drives this generator

@@ -98,7 +98,7 @@ export interface VersionsFilter {
 /**
  * Query options of the full results a stage made on one page, earliest first.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param pageId The page.
  * @param stage The stage.
  * @param filter The step to read, or nothing for the results of every step.
@@ -226,7 +226,7 @@ export function useMeasureBook(bookId: string) {
  * The query is on only while the dialog that shows it is open, and a run or a mark, which changes the count, reads it
  * again through the `book-changed` event of the versions.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param enabled Whether the question is being asked.
  */
 export function useCollectionReport(bookId: string, enabled: boolean) {
@@ -328,7 +328,7 @@ export function useRemoveValue(bookId: string) {
  * What it did is handed over by the mutation itself and not by the call that sent it, so a reader who moves to another
  * page while it is on its way, which takes the menu that sent it away, still sees the result and its undo.
  *
- * @param projectId The book whose pages the shape is carried over.
+ * @param bookId The book whose pages the shape is carried over.
  * @param stage The stage of the step.
  * @param onCarried Called with what the carry-over did.
  */
@@ -351,7 +351,7 @@ export function useRunImpact() {
  * Count how many pages of a run have work of their own, which is read again each time it is asked for, since a setting
  * or an edit of a page changes it without the run changing.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param stage The stage.
  * @param body The run that keeps the work, or null when nothing is asked, such as while the menu of the run is shut.
  */

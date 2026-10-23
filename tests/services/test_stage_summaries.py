@@ -62,11 +62,11 @@ FAR_STRENGTH: int = 5
 
 
 async def seed_book(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[Page]]:
-    """Seed a project of three pages, each with its ready base version and its record of the page split.
+    """Seed a book of three pages, each with its ready base version and its record of the page split.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The actor, the project and the pages in book order.
+    :returns: The actor, the book and the pages in book order.
     :rtype: tuple[Actor, BookRecord, list[Page]]
     """
     actor, book_record = await kit.seed_record()
@@ -96,7 +96,7 @@ async def seed_geometry(kit: ProcessingKit, book_id: BookId, page: Page, seed: G
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
@@ -118,7 +118,7 @@ async def seed_geometry(kit: ProcessingKit, book_id: BookId, page: Page, seed: G
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: The project of the page, which the change does not read.
+        :param _book_record: The record of the book, which the change does not read.
         :type _book_record: BookRecord
         """
         repos.page_versions.add(version)
@@ -133,7 +133,7 @@ async def mark_version(kit: ProcessingKit, book_id: BookId, version: PageVersion
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book holds the version.
+    :param book_id: Book that holds the version.
     :type book_id: BookId
     :param version: The version.
     :type version: PageVersion
@@ -152,7 +152,7 @@ async def seed_marked_chain(kit: ProcessingKit, book_id: BookId, page: Page, *, 
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
@@ -169,7 +169,7 @@ async def seed_marked_chain(kit: ProcessingKit, book_id: BookId, page: Page, *, 
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: The project of the page, which the change does not read.
+        :param _book_record: The record of the book, which the change does not read.
         :type _book_record: BookRecord
         """
         previous = first
@@ -192,11 +192,11 @@ async def seed_marked_chain(kit: ProcessingKit, book_id: BookId, page: Page, *, 
 
 
 async def summaries_of(kit: ProcessingKit, book_record: BookRecord) -> dict[Stage, StageSummary]:
-    """Sum the stages of a project, by stage.
+    """Sum the stages of a book, by stage.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_record: The project.
+    :param book_record: The record of the book.
     :type book_record: BookRecord
     :returns: The summary of each stage.
     :rtype: dict[Stage, StageSummary]
@@ -316,7 +316,7 @@ class TestOfBook:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project, which the change does not read.
+            :param _book_record: The record of the book, which the change does not read.
             :type _book_record: BookRecord
             """
             repos.pages.update(evolve(pages[1], kind=PageKind.PLATE))
@@ -516,13 +516,13 @@ class TestWithProgress:
 
 
 async def seed_text_and_leaf(kit: ProcessingKit) -> tuple[Actor, BookRecord, Page, Page]:
-    """Seed a project of a text page and a blank leaf the program drew, each with its base version, and save a recipe.
+    """Seed a book of a text page and a blank leaf the program drew, each with its base version, and save a recipe.
 
     The recipe of text pages has two steps, which the text page passes through and the leaf passes unchanged.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The actor, the project, the text page and the leaf.
+    :returns: The actor, the book, the text page and the leaf.
     :rtype: tuple[Actor, BookRecord, Page, Page]
     """
     actor, book_record = await kit.seed_record()
@@ -545,7 +545,7 @@ async def step_ids_of(kit: ProcessingKit, book_record: BookRecord) -> list[StepI
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_record: The project.
+    :param book_record: The record of the book.
     :type book_record: BookRecord
     :returns: The identifiers of the steps.
     :rtype: list[StepId]
@@ -713,7 +713,7 @@ async def seed_measured_book(kit: ProcessingKit) -> tuple[BookRecord, StepId]:
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The project and the step.
+    :returns: The book and the step.
     :rtype: tuple[BookRecord, StepId]
     """
     actor, book_record = await kit.seed_record()

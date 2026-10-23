@@ -11,10 +11,10 @@ to one database, which runs it in a thread of its own on a session of a transact
   by the guards the database puts on the sessions of its readers.
 - ``change`` and ``change_book`` run on the one connection of the writer of the catalogue or of the book, after the wait
   for its write queue, from ``BEGIN IMMEDIATE`` to the commit that follows the work. When the work raises, the
-  transaction is rolled back and the exception goes on. ``change_book`` reads the project row first, so the work sees
-  the project as the previous change committed it. Every file has a writer of its own, so a change of one book never
-  waits for a change of another book or of the catalogue.
-- A change of a book that wrote a part of the book a reader asks for raises the version on the row of its project, in
+  transaction is rolled back and the exception goes on. ``change_book`` reads the record of the book first, so the work
+  sees the record as the previous change committed it. Every file has a writer of its own, so a change of one book
+  never waits for a change of another book or of the catalogue.
+- A change of a book that wrote a part of the book a reader asks for raises the version on the record of its book, in
   its own transaction, and is announced as ``BookChanged`` with the new version and the parts it wrote once it has
   committed. The parts are found from the tables the transaction wrote, by
   :class:`~bookreviver.adapters.persistence.sqlalchemy.changes.WrittenParts`.
@@ -126,7 +126,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     async def read_book[T](self, book_id: BookId, work: Callable[[BookRepositories], T]) -> T:
         """Run ``work`` on a transaction of the book that only reads, in a thread of the book.
 
-        :param book_id: Project whose book is read.
+        :param book_id: Identifier of the book to read.
         :type book_id: BookId
         :param work: Function over the repositories of the transaction.
         :type work: Callable[[BookRepositories], T]
@@ -141,11 +141,11 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
 
     @override
     async def change_book[T](self, book_id: BookId, work: Callable[[BookRepositories, BookRecord], T]) -> T:
-        """Run ``work`` on a transaction of the book that writes, with the project as the previous change committed it.
+        """Run ``work`` on a transaction of the book that writes, with its record as the previous change committed it.
 
-        :param book_id: Project whose book is changed.
+        :param book_id: Identifier of the book to change.
         :type book_id: BookId
-        :param work: Function over the repositories of the transaction and the project read at its start.
+        :param work: Function over the repositories of the transaction and the record of the book read at its start.
         :type work: Callable[[BookRepositories, BookRecord], T]
         :returns: What the work returns.
         :rtype: T
@@ -167,13 +167,13 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
 
     @override
     async def create_book(self, book_record: BookRecord) -> BookRecord:
-        """Make the file of a new book and store its project in it.
+        """Make the file of a new book and store the record of the book in it.
 
         A failure after the file was made leaves a file the library does not list, which the start removes.
 
-        :param book_record: The project of the new book.
+        :param book_record: The record of the new book.
         :type book_record: BookRecord
-        :returns: The project as stored.
+        :returns: The record of the book as stored.
         :rtype: BookRecord
         :raises ConflictError: If a book with this identifier is stored.
         """
@@ -190,7 +190,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     async def delete_book(self, book_id: BookId) -> None:
         """Remove the file of a book once the units of work using it have ended.
 
-        :param book_id: Project whose book is removed.
+        :param book_id: Identifier of the book to remove.
         :type book_id: BookId
         """
         await self._books.remove(book_id)
@@ -213,7 +213,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     async def snapshot_book(self, book_id: BookId) -> bytes:
         """Copy the database of a book through SQLite's backup, in one transaction of a reader of the book.
 
-        :param book_id: Project whose book is copied.
+        :param book_id: Identifier of the book to copy.
         :type book_id: BookId
         :returns: The database file as SQLite writes it, of the state committed when the copy began.
         :rtype: bytes
@@ -225,15 +225,15 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
 
     @override
     async def adopt_book(self, book_id: BookId) -> BookRecord:
-        """Open the file an archive placed for a new book, which brings it to the head revision, and rename its project.
+        """Open the file an archive placed for a new book, which brings it to the head revision, and rename its record.
 
         :param book_id: Identifier of the new book, whose file the archive placed.
         :type book_id: BookId
-        :returns: The project of the new book.
+        :returns: The record of the new book.
         :rtype: BookRecord
         :raises NotFoundError: If no file was placed for the book.
         :raises BookTooNewError: If the file is at a revision this code does not ship.
-        :raises InvalidArchiveError: If the file is not an SQLite database, or does not hold exactly one project.
+        :raises InvalidArchiveError: If the file is not an SQLite database, or does not hold exactly one record.
         """
         try:
             async with self._books.use(book_id) as database:
@@ -259,20 +259,20 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     def _work_on_book[T](
         book_id: BookId, work: Callable[[BookRepositories, BookRecord], T], session: Session
     ) -> tuple[T, BookChanged | None]:
-        """Read the project of a book on the session of a change, hand it with the repositories to the work, then prune.
+        """Read the record of a book on the session of a change, hand it with the repositories to the work, then prune.
 
         A group of pages is made by the first row that names it, so once the work is done the groups no row names any
         longer are removed in the same transaction.
 
-        :param book_id: Project whose book is changed.
+        :param book_id: Identifier of the book to change.
         :type book_id: BookId
-        :param work: Function over the repositories of the transaction and the project.
+        :param work: Function over the repositories of the transaction and the record of the book.
         :type work: Callable[[BookRepositories, BookRecord], T]
         :param session: Session of the transaction, which has begun.
         :type session: Session
         :returns: What the work returns.
         :rtype: T
-        :raises NotFoundError: If the project is not stored.
+        :raises NotFoundError: If the book is not stored.
         """
         repositories = SqlAlchemyBookRepositories(session)
         written = WrittenParts(session)
@@ -332,17 +332,17 @@ def _copy_of_database(session: Session) -> bytes:
 
 
 def _rename_the_record(book_id: BookId, session: Session) -> BookRecord:
-    """Give the one project of a book file the identifier of the book it now is.
+    """Give the one record of a book file the identifier of the book it now is.
 
-    No other table of a book names the project, so the row of the project is all that changes.
+    No other table of a book names the book, so only the row of its record changes.
 
     :param book_id: Identifier of the new book.
     :type book_id: BookId
     :param session: Session of the transaction of the change.
     :type session: Session
-    :returns: The project under its new identifier.
+    :returns: The record under its new identifier.
     :rtype: BookRecord
-    :raises InvalidArchiveError: If the file does not hold exactly one project.
+    :raises InvalidArchiveError: If the file does not hold exactly one record of a book.
     """
     if session.scalar(select(func.count()).select_from(BookRecordRow)) != 1:
         raise InvalidArchiveError(NOT_ONE_RECORD)

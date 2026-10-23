@@ -44,7 +44,7 @@ CROP_KEY: str = 'geometry.crop'
 NORMALIZE_KEY: str = 'geometry.normalize'
 VERSION_ID_DIGITS: int = 16
 FIRST_KEY: str = 'a0'
-BUSY_MESSAGE: str = 'project is busy'
+BUSY_MESSAGE: str = 'book is busy'
 # The line height a user types into the form while the book is measured
 HAND_LINE_HEIGHT: float = 40.0
 # The pages of the first test: a block and a line height each, the block being the same size when the lines are brought
@@ -98,7 +98,7 @@ async def placed_page(
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_record: Project owning the page.
+    :param book_record: Record of the book owning the page.
     :type book_record: BookRecord
     :param recipe: Recipe of text pages of the Geometry stage, which the page was processed by.
     :type recipe: Recipe
@@ -124,7 +124,7 @@ async def placed_page(
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: Project of the book, which the work does not need.
+        :param _book_record: Record of the book, which the work does not need.
         :type _book_record: BookRecord
         """
         repos.page_versions.add(normalize)
@@ -167,9 +167,9 @@ async def measure(kit: ProcessingKit, actor: Actor, book_record: BookRecord) -> 
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: Project to measure.
+    :param book_record: Record of the book to measure.
     :type book_record: BookRecord
     :returns: The job as it stands when the board is done.
     :rtype: Job
@@ -184,7 +184,7 @@ async def geometry_record(kit: ProcessingKit, book_id: BookId, page: Page) -> Pa
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
@@ -203,9 +203,9 @@ async def normalize_params(
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: The project.
+    :param book_record: The record of the book.
     :type book_record: BookRecord
     :param kind: The kind of page, text unless given.
     :type kind: RecipeKind
@@ -228,9 +228,9 @@ async def set_normalize_params(
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: The project.
+    :param book_record: The record of the book.
     :type book_record: BookRecord
     :param changes: The parameters to set.
     :type changes: dict[str, object]
@@ -434,7 +434,7 @@ class TestMeasureBook:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_stages.save(
@@ -529,7 +529,7 @@ class TestMeasureBook:
         assert_expectations()
 
     async def test_a_book_of_an_account_is_not_measured_by_another(self, fx_cv_kit: ProcessingKit) -> None:
-        """Verify the request is refused for a project that is not the actor's, as every request of a project is.
+        """Verify the request is refused for a book that is not the actor's, as every request of a book is.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
@@ -617,7 +617,7 @@ class TestMarginsSource:
 
 
 class TestMeasureIsProcessing:
-    """Tests for the measure of the book being one of the jobs a project runs one at a time."""
+    """Tests for the measure of the book being one of the jobs that run one at a time."""
 
     async def test_a_run_is_refused_while_a_measure_is_queued(self, fx_cv_kit: ProcessingKit) -> None:
         """Verify a run cannot start while a measure is queued, since the measure rewrites the parameters it reads.
@@ -697,9 +697,9 @@ class TestMeasureApplyStep:
 
             :param uow: The unit of work that changes the book.
             :type uow: SqlAlchemyUnitOfWork
-            :param book_id: Project whose book is changed.
+            :param book_id: Book that is changed.
             :type book_id: BookId
-            :param work: Function over the repositories of the transaction and the project.
+            :param work: Function over the repositories of the transaction and the record of the book.
             :type work: Callable[[BookRepositories, BookRecord], T]
             :returns: What the work returns.
             :rtype: T

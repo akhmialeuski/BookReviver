@@ -106,14 +106,14 @@ SOURCE_DETAIL: str = 'The file type is not accepted as a source.'
 
 
 class TestBookRecordMapper:
-    """Tests for ProjectMapper."""
+    """Tests for BookRecordMapper."""
 
     async def test_every_field_survives_the_database(self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId) -> None:
-        """Verify a project with a full description, and a lossless policy reads back unchanged.
+        """Verify a book with a full description, and a lossless policy reads back unchanged.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
         book_record = make_record()
@@ -146,7 +146,7 @@ class TestPageMapper:
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
         book_record = make_record()
@@ -181,7 +181,7 @@ class TestPageVersionMapper:
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param renditions: Renditions state of the version, None for a step without an image.
         :type renditions: Renditions | None
@@ -221,7 +221,7 @@ class TestPageVersionMapper:
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param transform: Transform of the version.
         :type transform: Transform
@@ -244,7 +244,7 @@ class TestSourceMapper:
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
         book_record = make_record()
@@ -281,7 +281,7 @@ class TestSourceMapper:
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param status: Whether the file was rejected or skipped.
         :type status: SourceStatus
@@ -311,7 +311,7 @@ class TestScanMapper:
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
         book_record = make_record()

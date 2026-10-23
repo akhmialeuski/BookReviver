@@ -1,4 +1,4 @@
-"""Tests for the SQLAlchemy tables: the file of a book ties its rows to its project, and the library ties it to an owner."""
+"""Tests for the SQLAlchemy tables: the file of a book ties its rows to it, and the library ties the book to an owner."""
 
 from typing import TYPE_CHECKING
 
@@ -61,18 +61,18 @@ def count_rows(session: Session, table: type[PageRow | BookRecordRow | ScanRow |
 
 
 class TestBookRecordRow:
-    """Tests for ProjectRow together with the foreign keys and relationships of its pages."""
+    """Tests for BookRecordRow together with the foreign keys and relationships of its pages."""
 
     async def test_update_keeps_pages(
         self, fx_uow: UnitOfWorkFactory, fx_book_sessions: BookSessions, fx_owner_id: AccountId
     ) -> None:
-        """Verify updating a project leaves its pages, which the relationships must not merge away.
+        """Verify updating a book leaves its pages, which the relationships must not merge away.
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_book_sessions: Sessions of the files of the books of the test.
         :type fx_book_sessions: BookSessions
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
         book_record = make_record()
@@ -97,7 +97,7 @@ class TestStepChangeRow:
         :type fx_uow: UnitOfWorkFactory
         :param fx_book_sessions: Sessions of the files of the books of the test.
         :type fx_book_sessions: BookSessions
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
         book_record, deleted, kept = make_record(), make_page(order_key='a0'), make_page(order_key='b0')
@@ -153,7 +153,7 @@ class TestLibraryRow:
 
 
 class TestSourceRow:
-    """Tests for the partial unique index that keeps the digest of an imported source unique in its project."""
+    """Tests for the partial unique index that keeps the digest of an imported source unique in its book."""
 
     async def test_database_refuses_a_second_imported_source_with_one_digest(
         self, fx_uow: UnitOfWorkFactory, fx_book_sessions: BookSessions, fx_owner_id: AccountId
@@ -164,7 +164,7 @@ class TestSourceRow:
         :type fx_uow: UnitOfWorkFactory
         :param fx_book_sessions: Sessions of the files of the books of the test.
         :type fx_book_sessions: BookSessions
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
         book_record = make_record()
@@ -194,7 +194,7 @@ class TestSourceRow:
         :type fx_uow: UnitOfWorkFactory
         :param fx_book_sessions: Sessions of the files of the books of the test.
         :type fx_book_sessions: BookSessions
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
         book_record = make_record()

@@ -47,9 +47,9 @@ def _canvas(zoom: float, centre_x: float = 0.0, centre_y: float = 0.0) -> dict[s
 
 
 def _path(book_record: BookRecord) -> str:
-    """Return the path of the place of a project.
+    """Return the path of the place of a book.
 
-    :param book_record: The project.
+    :param book_record: The book.
     :type book_record: BookRecord
     :returns: The path of its place.
     :rtype: str
@@ -83,7 +83,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> BookRecord:
     :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
-    :returns: The stored project.
+    :returns: The stored book.
     :rtype: BookRecord
     """
     book_record = make_record()
@@ -92,7 +92,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> BookRecord:
 
 
 class TestGetPlace:
-    """Tests for GET /projects/{id}/place."""
+    """Tests for GET /books/{id}/place."""
 
     async def test_a_book_not_worked_on_answers_no_content(
         self, fx_client: httpx.AsyncClient, fx_book: BookRecord
@@ -147,7 +147,7 @@ class TestGetPlace:
 
 
 class TestPutPlace:
-    """Tests for PUT /projects/{id}/place."""
+    """Tests for PUT /books/{id}/place."""
 
     async def test_put_replaces_the_place(self, fx_client: httpx.AsyncClient, fx_book: BookRecord) -> None:
         """Verify a second PUT replaces the first, and a field left out takes its default.

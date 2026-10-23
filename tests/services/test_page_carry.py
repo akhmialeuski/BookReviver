@@ -51,7 +51,7 @@ async def carry_book(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[Page],
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The actor, the project, the pages and the key of the geometry step on each of them.
+    :returns: The actor, the book, the pages and the key of the geometry step on each of them.
     :rtype: tuple[Actor, BookRecord, list[Page], list[PageStepKey]]
     """
     actor, book_record = await kit.seed_record()
@@ -66,7 +66,7 @@ async def strength_of(kit: ProcessingKit, book_id: BookId, key: PageStepKey) -> 
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book holds the page.
+    :param book_id: Book that holds the page.
     :type book_id: BookId
     :param key: The page, the stage and the step.
     :type key: PageStepKey
@@ -82,7 +82,7 @@ async def angle_of(kit: ProcessingKit, book_id: BookId, key: PageStepKey) -> flo
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book holds the page.
+    :param book_id: Book that holds the page.
     :type book_id: BookId
     :param key: The page, the stage and the step.
     :type key: PageStepKey
@@ -288,7 +288,7 @@ class TestSelected:
             await carry_over(fx_kit).carry(actor, book_record.id, shape_of(keys[SOURCE_INDEX], CarryScope.SELECTED))
 
     async def test_a_page_of_another_book_is_not_found_and_nothing_is_written(self, fx_kit: ProcessingKit) -> None:
-        """Verify a selected page the project does not have is refused before any page takes the shape.
+        """Verify a selected page the book does not have is refused before any page takes the shape.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -309,7 +309,7 @@ class TestRefusals:
     """Tests for the requests a carry-over refuses."""
 
     async def test_a_stranger_and_a_step_no_recipe_has_are_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Verify the project of another account and a step of no recipe are refused, and nothing is written.
+        """Verify the book of another account and a step of no recipe are refused, and nothing is written.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit

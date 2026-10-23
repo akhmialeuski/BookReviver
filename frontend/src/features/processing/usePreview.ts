@@ -30,7 +30,7 @@ import { HttpStatus } from '@/shared/http/status';
  * in the background and announces the version it made with the `page-version-ready` event, which `events.ts` leaves in
  * the cache; the version is read and shown if it answers the ask. An ask for what is shown already starts nothing.
  *
- * A project runs one job at a time, so an ask that is made while another is under way waits for it, and one that
+ * A book runs one job at a time, so an ask that is made while another is under way waits for it, and one that
  * changes while its predecessor is still being made is made when that has ended, with the newest form. A job that
  * ends without an event, as one answered from the cache of the server does, is looked up among the previews of the page.
  */
@@ -141,7 +141,7 @@ export interface PreviewResult {
 /**
  * Keep a preview of a request up to date while it is on.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param stage The stage of the steps.
  * @param request The steps of the form and the page, or null when there is nothing to preview.
  * @param on Whether the reader asked for the preview.
@@ -271,7 +271,7 @@ export function usePreview(
     if (inflight === null) {
       return;
     }
-    // A run or a measure of the book takes the project from a preview by cancelling it, which is no failure of the preview,
+    // A run or a measure of the book cancels a preview to take its place, which is no failure of the preview,
     // so the hook says nothing and asks again once that job has ended. A job that is gone ended the same way
     if (jobState === 'cancelled' || jobGone) {
       dispatch({ type: 'cancelled' });

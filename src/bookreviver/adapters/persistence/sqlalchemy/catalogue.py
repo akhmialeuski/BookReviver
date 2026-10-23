@@ -7,7 +7,7 @@ metadata of the tables of a book, and are declared in the same style as those.
 
 The library keeps the rule that an account is deleted only after its books: its key to ``user`` carries
 ``ON DELETE RESTRICT``, because a cascade would remove the entries of the account's books but not the books, whose
-files only ``ProjectService`` removes.
+files only ``BooksService`` removes.
 """
 
 from datetime import datetime

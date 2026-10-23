@@ -11,7 +11,7 @@
           "books"
         ],
         "summary": "List Books",
-        "description": "List the projects of the signed-in account, the latest added first.",
+        "description": "List the books of the signed-in account, the latest added first.",
         "operationId": "list_books_api_v1_books_get",
         "parameters": [
           {
@@ -98,7 +98,7 @@
           "books"
         ],
         "summary": "Create Book",
-        "description": "Create a project from the description of its book, and point to it in the ``Location`` header.",
+        "description": "Create a book from its description, and point to it in the ``Location`` header.",
         "operationId": "create_book_api_v1_books_post",
         "requestBody": {
           "required": true,
@@ -172,7 +172,7 @@
           "books"
         ],
         "summary": "Book",
-        "description": "Return one project of the signed-in account.",
+        "description": "Return one book of the signed-in account.",
         "operationId": "book_api_v1_books__book_id__get",
         "parameters": [
           {
@@ -248,7 +248,7 @@
           "books"
         ],
         "summary": "Update Book",
-        "description": "Merge the body into the project, as JSON Merge Patch (RFC 7396) defines.\n\nA field left out keeps its value and a field sent as null is cleared to the value a new project has for it; the\ntitle cannot be cleared, and the cover must be a page of the project.",
+        "description": "Merge the body into the book, as JSON Merge Patch (RFC 7396) defines.\n\nA field left out keeps its value and a field sent as null is cleared to the value a new book has for it; the\ntitle cannot be cleared, and the cover must be a page of the book.",
         "operationId": "update_book_api_v1_books__book_id__patch",
         "parameters": [
           {
@@ -334,7 +334,7 @@
           "books"
         ],
         "summary": "Delete Book",
-        "description": "Delete a project with its pages, jobs and files.",
+        "description": "Delete a book with its pages, jobs and files.",
         "operationId": "delete_book_api_v1_books__book_id__delete",
         "parameters": [
           {
@@ -479,7 +479,7 @@
           "books"
         ],
         "summary": "Import Book",
-        "description": "Import the archive of a book as a new project of the signed-in account, and point to it in ``Location``.\n\nThe book keeps its pages, versions, history, recipes and settings, and gets a new identifier, so the same archive\ncan be imported twice. An archive that is not the archive of a book is refused, and so is one exported by a newer\nrelease.",
+        "description": "Import the archive of a book as a new book of the signed-in account, and point to it in ``Location``.\n\nThe book keeps its pages, versions, history, recipes and settings, and gets a new identifier, so the same archive\ncan be imported twice. An archive that is not the archive of a book is refused, and so is one exported by a newer\nrelease.",
         "operationId": "import_book_api_v1_books_archive_post",
         "requestBody": {
           "content": {
@@ -557,7 +557,7 @@
           "sources"
         ],
         "summary": "List Sources",
-        "description": "List the sources of a project in the order they were recorded, the imported ones unless ``status`` says more.\n\nThe rejected and skipped files are the report of an import: the files no check let through, with their reasons, and\nthe files a cancelled import never reached.",
+        "description": "List the sources of a book in the order they were recorded, the imported ones unless ``status`` says more.\n\nThe rejected and skipped files are the report of an import: the files no check let through, with their reasons, and\nthe files a cancelled import never reached.",
         "operationId": "list_sources_api_v1_books__book_id__sources_get",
         "parameters": [
           {
@@ -674,7 +674,7 @@
           "imports"
         ],
         "summary": "Upload Sources",
-        "description": "Receive the files of an upload and import them in the background, each one as a source of the project.\n\nThe response is the queued job. Every file of the upload becomes a source of the project, and the ones the import\nrejected, with the reason, or skipped when it was cancelled, are listed by the sources of the project until the\nreader closes the report. A project imports one upload at a time.",
+        "description": "Receive the files of an upload and import them in the background, each one as a source of the book.\n\nThe response is the queued job. Every file of the upload becomes a source of the book, and the ones the import\nrejected, with the reason, or skipped when it was cancelled, are listed by the sources of the book until the\nreader closes the report. A book imports one upload at a time.",
         "operationId": "upload_sources_api_v1_books__book_id__sources_post",
         "parameters": [
           {
@@ -780,7 +780,7 @@
           "sources"
         ],
         "summary": "Delete Unimported Sources",
-        "description": "Delete the rejected and skipped files of a project, which is closing the report of an import.\n\nThe imported sources stay. The project answers 409 while it imports.",
+        "description": "Delete the rejected and skipped files of a book, which is closing the report of an import.\n\nThe imported sources stay. The book answers 409 while it imports.",
         "operationId": "delete_unimported_sources_api_v1_books__book_id__sources_unimported_delete",
         "parameters": [
           {
@@ -851,7 +851,7 @@
           "sources"
         ],
         "summary": "Get Source",
-        "description": "Return one source of a project.",
+        "description": "Return one source of a book.",
         "operationId": "get_source_api_v1_books__book_id__sources__source_id__get",
         "parameters": [
           {
@@ -939,7 +939,7 @@
           "sources"
         ],
         "summary": "Delete Source",
-        "description": "Delete a source with its files and its scans, leaving the pages of the book with their own images.\n\nThe pages made from the source lose only the reference to their scan. The project answers 409 while it imports.",
+        "description": "Delete a source with its files and its scans, leaving the pages of the book with their own images.\n\nThe pages made from the source lose only the reference to their scan. The book answers 409 while it imports.",
         "operationId": "delete_source_api_v1_books__book_id__sources__source_id__delete",
         "parameters": [
           {
@@ -1022,7 +1022,7 @@
           "sources"
         ],
         "summary": "List Scans",
-        "description": "List the scans of a project source by source, or of one source, with the paths of their images once cut.",
+        "description": "List the scans of a book source by source, or of one source, with the paths of their images once cut.",
         "operationId": "list_scans_api_v1_books__book_id__scans_get",
         "parameters": [
           {
@@ -1233,7 +1233,7 @@
           "pages"
         ],
         "summary": "List Pages",
-        "description": "List the pages of a project in book order, up to a thousand at once, with the paths of their images.",
+        "description": "List the pages of a book in book order, up to a thousand at once, with the paths of their images.",
         "operationId": "list_pages_api_v1_books__book_id__pages_get",
         "parameters": [
           {
@@ -1430,7 +1430,7 @@
           "pages"
         ],
         "summary": "Page",
-        "description": "Return one page of a project.",
+        "description": "Return one page of a book.",
         "operationId": "page_api_v1_books__book_id__pages__page_id__get",
         "parameters": [
           {
@@ -1961,7 +1961,7 @@
           "pages"
         ],
         "summary": "Detect Content Types",
-        "description": "Detect what pages show in the background, and answer with the queued job.\n\nThe job reads the preview of the image of each page, tells text from a picture and a picture in colour from one in\nblack and white, and writes the answer into the page as its content type. Without ``page_ids`` it goes over the\npages of the book that have no content type yet, which a job queued by the end of the preparation of the images\ndoes too, and it leaves the pages the user set by hand and the covers, the endpapers and the blank pages alone. With\n``page_ids`` it goes over those pages whatever they have, and gives the ones the user set by hand back to the\ndetection. The answer is 409 while the content of the pages of the project is being detected. The change reaches the\nbrowser as a ``book-changed`` event.",
+        "description": "Detect what pages show in the background, and answer with the queued job.\n\nThe job reads the preview of the image of each page, tells text from a picture and a picture in colour from one in\nblack and white, and writes the answer into the page as its content type. Without ``page_ids`` it goes over the\npages of the book that have no content type yet, which a job queued by the end of the preparation of the images\ndoes too, and it leaves the pages the user set by hand and the covers, the endpapers and the blank pages alone. With\n``page_ids`` it goes over those pages whatever they have, and gives the ones the user set by hand back to the\ndetection. The answer is 409 while the content of the pages of the book is being detected. The change reaches the\nbrowser as a ``book-changed`` event.",
         "operationId": "detect_content_types_api_v1_books__book_id__pages_content_types_detect_post",
         "parameters": [
           {
@@ -2320,7 +2320,7 @@
           "pages"
         ],
         "summary": "Attach Scan",
-        "description": "Bind a scan to a placeholder, which becomes a page of that scan once a job has copied its image.\n\nThe answer is 409 for a page that is not a placeholder, a scan that is not cut yet, and a scan another page shows,\nunless ``take_over`` is set, which deletes that page. A scan of another project is a 404.",
+        "description": "Bind a scan to a placeholder, which becomes a page of that scan once a job has copied its image.\n\nThe answer is 409 for a page that is not a placeholder, a scan that is not cut yet, and a scan another page shows,\nunless ``take_over`` is set, which deletes that page. A scan of another book is a 404.",
         "operationId": "attach_scan_api_v1_books__book_id__pages__page_id__scan_put",
         "parameters": [
           {
@@ -2420,7 +2420,7 @@
           "pagination"
         ],
         "summary": "List Pagination Sections",
-        "description": "List the pagination sections of a project in book order, which is the order of the pages they start at.",
+        "description": "List the pagination sections of a book in book order, which is the order of the pages they start at.",
         "operationId": "list_pagination_sections_api_v1_books__book_id__pagination_sections_get",
         "parameters": [
           {
@@ -2519,7 +2519,7 @@
           "pagination"
         ],
         "summary": "Create Pagination Section",
-        "description": "Make a section that starts at a page, and renumber the pages it takes.\n\nThe answer is 404 when the page is not a page of the project, and 409 when another section that takes the same\npages starts at that page already, or when a number does not fit the style, such as 4000 in Roman numerals.",
+        "description": "Make a section that starts at a page, and renumber the pages it takes.\n\nThe answer is 404 when the page is not a page of the book, and 409 when another section that takes the same\npages starts at that page already, or when a number does not fit the style, such as 4000 in Roman numerals.",
         "operationId": "create_pagination_section_api_v1_books__book_id__pagination_sections_post",
         "parameters": [
           {
@@ -2607,7 +2607,7 @@
           "pagination"
         ],
         "summary": "Put Pagination Section",
-        "description": "Replace the first page and the rule of a section, and renumber the pages.\n\nThe answer is 404 when the section or the page is not of the project, and 409 when another section that takes the\nsame pages starts at that page, or when a number does not fit the style.",
+        "description": "Replace the first page and the rule of a section, and renumber the pages.\n\nThe answer is 404 when the section or the page is not of the book, and 409 when another section that takes the\nsame pages starts at that page, or when a number does not fit the style.",
         "operationId": "put_pagination_section_api_v1_books__book_id__pagination_sections__section_id__put",
         "parameters": [
           {
@@ -3186,7 +3186,7 @@
           "processing"
         ],
         "summary": "List Recipes",
-        "description": "List the recipes of a stage, one for each kind of page, which a project creates the first time it is asked.",
+        "description": "List the recipes of a stage, one for each kind of page, which a book creates the first time it is asked.",
         "operationId": "list_recipes_api_v1_books__book_id__stages__stage__recipes_get",
         "parameters": [
           {
@@ -3507,7 +3507,7 @@
           "processing"
         ],
         "summary": "Run Stage",
-        "description": "Run a stage over some pages, each by the recipe of its kind, in the background, and answer with the queued job.\n\nThe job makes a version for every step on every page and reports one step of progress for each page. A project runs\none stage at a time, and another run while one is queued or running answers 409. A run keeps the settings the pages\nchanged for its steps and the manual edits they read. A mode that takes the edits or the settings away answers 409\nuntil the body confirms it, when it would take them from any page.",
+        "description": "Run a stage over some pages, each by the recipe of its kind, in the background, and answer with the queued job.\n\nThe job makes a version for every step on every page and reports one step of progress for each page. A book runs\none stage at a time, and another run while one is queued or running answers 409. A run keeps the settings the pages\nchanged for its steps and the manual edits they read. A mode that takes the edits or the settings away answers 409\nuntil the body confirms it, when it would take them from any page.",
         "operationId": "run_stage_api_v1_books__book_id__stages__stage__run_post",
         "parameters": [
           {
@@ -3801,7 +3801,7 @@
           "processing"
         ],
         "summary": "Measure Book",
-        "description": "Measure the book in the background, and answer with the queued job.\n\nThe job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and\nwrites the median line height and a page size of the median block with its margins into the parameters of the\n``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A preview of the\nproject is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.",
+        "description": "Measure the book in the background, and answer with the queued job.\n\nThe job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and\nwrites the median line height and a page size of the median block with its margins into the parameters of the\n``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A preview of the\nbook is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.",
         "operationId": "measure_book_api_v1_books__book_id__stages_geometry_measure_post",
         "parameters": [
           {
@@ -4484,7 +4484,7 @@
           "processing"
         ],
         "summary": "Collectable Versions",
-        "description": "Count the versions a collection would delete now and the space their files take, and change nothing.\n\nThe versions are the ones ``POST /projects/{project_id}/versions/collect`` deletes, chosen by the same rule.",
+        "description": "Count the versions a collection would delete now and the space their files take, and change nothing.\n\nThe versions are the ones ``POST /books/{book_id}/versions/collect`` deletes, chosen by the same rule.",
         "operationId": "collectable_versions_api_v1_books__book_id__versions_collectable_get",
         "parameters": [
           {
@@ -5559,7 +5559,7 @@
           "profiles"
         ],
         "summary": "Put Recipe Profile",
-        "description": "Record which profile a recipe of a book was made from, so the book can tell how its steps differ from it.\n\nThe steps do not change and no page goes stale. A profile of another account answers 404, and so does a recipe the\nproject does not have, and a profile of another stage answers 422.",
+        "description": "Record which profile a recipe of a book was made from, so the book can tell how its steps differ from it.\n\nThe steps do not change and no page goes stale. A profile of another account answers 404, and so does a recipe the\nbook does not have, and a profile of another stage answers 422.",
         "operationId": "put_recipe_profile_api_v1_books__book_id__stages__stage__recipes__recipe_id__profile_put",
         "parameters": [
           {
@@ -6668,7 +6668,7 @@
           "page-history"
         ],
         "summary": "Clear History",
-        "description": "Return a step to its initial state on a page: delete its history, its settings, its edit and its results.\n\nThe results are the versions the step made on the page and the versions that read them, with their files and their\nmarks. The stage of the page stands on the version the step read, marked stale, and has no current version when the\nstep is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The\nchanges of a batch on other pages stay. A preview of the project, queued or running, is cancelled first. The answer\nis 409 while a run, a measure of the book, a tile cutting or a collection of the project is queued or running, and\n404 when no recipe of the stage has the step.",
+        "description": "Return a step to its initial state on a page: delete its history, its settings, its edit and its results.\n\nThe results are the versions the step made on the page and the versions that read them, with their files and their\nmarks. The stage of the page stands on the version the step read, marked stale, and has no current version when the\nstep is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The\nchanges of a batch on other pages stay. A preview of the book, queued or running, is cancelled first. The answer\nis 409 while a run, a measure of the book, a tile cutting or a collection of the book is queued or running, and\n404 when no recipe of the stage has the step.",
         "operationId": "clear_history_api_v1_books__book_id__pages__page_id__history__stage___step_id__delete",
         "parameters": [
           {
@@ -7257,7 +7257,7 @@
           "jobs"
         ],
         "summary": "List Book Jobs",
-        "description": "List the jobs of a project, the newest first, or only the ones queued or running with ``active=true``.",
+        "description": "List the jobs of a book, the newest first, or only the ones queued or running with ``active=true``.",
         "operationId": "list_book_jobs_api_v1_books__book_id__jobs_get",
         "parameters": [
           {
@@ -7368,7 +7368,7 @@
           "jobs"
         ],
         "summary": "Book-Events",
-        "description": "Stream the project's events as they happen: the committed changes of the book, its jobs and its ready versions.\n\nA committed change of the book is a ``book-changed`` event whose id is the new version of the book. A browser that\nconnects is first sent ``book-version`` with the version now, so it knows which version it holds. The stream keeps\nno changes, so a browser that comes back with the id of another version is sent ``book-reset`` instead, and one that\ncomes back with the id of the version now is sent nothing.",
+        "description": "Stream the book's events as they happen: the committed changes of the book, its jobs and its ready versions.\n\nA committed change of the book is a ``book-changed`` event whose id is the new version of the book. A browser that\nconnects is first sent ``book-version`` with the version now, so it knows which version it holds. The stream keeps\nno changes, so a browser that comes back with the id of another version is sent ``book-reset`` instead, and one that\ncomes back with the id of the version now is sent nothing.",
         "operationId": "book_events_api_v1_books__book_id__events_get",
         "parameters": [
           {
@@ -9626,7 +9626,7 @@
           "updated_at"
         ],
         "title": "BookSchema",
-        "description": "A book being digitised.\n\n:ivar id: Identifier of the project.\n:ivar details: Bibliographic description of the book.\n:ivar image_policy: How the images of the project's scans and page versions are stored.\n:ivar cover_page_id: Page the library shows as the cover, the first page of the kind ``cover`` or else the first\n                     page of the book, or None for a book without pages.\n:ivar page_count: Number of pages of the book, without the pages kept out of it.\n:ivar source_count: Number of sources the book was assembled from.\n:ivar scan_count: Number of scans in all the sources.\n:ivar progress: The status of every stage of the book, in the order of the pipeline.\n:ivar next_stage: The first available stage with work to do or being worked, or None when there is none.\n:ivar created_at: When the project was created.\n:ivar updated_at: When the project was last changed."
+        "description": "A book being digitised.\n\n:ivar id: Identifier of the book.\n:ivar details: Bibliographic description of the book.\n:ivar image_policy: How the images of the book's scans and page versions are stored.\n:ivar cover_page_id: Page the library shows as the cover, the first page of the kind ``cover`` or else the first\n                     page of the book, or None for a book without pages.\n:ivar page_count: Number of pages of the book, without the pages kept out of it.\n:ivar source_count: Number of sources the book was assembled from.\n:ivar scan_count: Number of scans in all the sources.\n:ivar progress: The status of every stage of the book, in the order of the pipeline.\n:ivar next_stage: The first available stage with work to do or being worked, or None when there is none.\n:ivar created_at: When the book was created.\n:ivar updated_at: When the book was last changed."
       },
       "BookUpdate": {
         "properties": {
@@ -10491,7 +10491,7 @@
           "lossless"
         ],
         "title": "ImagePolicy",
-        "description": "How a project stores the ``full`` image of its scans and page versions.\n\nA bilevel image is a lossless PNG under either policy. The policy decides only gray and colour images, and a change\napplies to images written afterwards, so nothing stored is encoded again."
+        "description": "How a book stores the ``full`` image of its scans and page versions.\n\nA bilevel image is a lossless PNG under either policy. The policy decides only gray and colour images, and a change\napplies to images written afterwards, so nothing stored is encoded again."
       },
       "JobKind": {
         "type": "string",
@@ -10587,7 +10587,7 @@
           "finished_at"
         ],
         "title": "JobSchema",
-        "description": "A background job, its state and its progress; also the data of a ``job-changed`` event.\n\nA job lives in the memory of the API process, so a job the process does not hold, such as one that ended before the\nprocess started, is answered as not found.\n\n:ivar id: Identifier of the job.\n:ivar book_id: Project the job works on.\n:ivar kind: What the job does.\n:ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.\n:ivar state: Where the job is in its life cycle.\n:ivar progress: How many of its tasks are done; for an import the files dealt with and the scans cut.\n:ivar error: Why the job failed, shown to the user, or empty.\n:ivar created_at: When the job was queued.\n:ivar started_at: When its book began to run the job, or None while it is queued.\n:ivar finished_at: When the job reached a final state, or None before."
+        "description": "A background job, its state and its progress; also the data of a ``job-changed`` event.\n\nA job lives in the memory of the API process, so a job the process does not hold, such as one that ended before the\nprocess started, is answered as not found.\n\n:ivar id: Identifier of the job.\n:ivar book_id: Book the job works on.\n:ivar kind: What the job does.\n:ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.\n:ivar state: Where the job is in its life cycle.\n:ivar progress: How many of its tasks are done; for an import the files dealt with and the scans cut.\n:ivar error: Why the job failed, shown to the user, or empty.\n:ivar created_at: When the job was queued.\n:ivar started_at: When its book began to run the job, or None while it is queued.\n:ivar finished_at: When the job reached a final state, or None before."
       },
       "JobState": {
         "type": "string",
@@ -12482,7 +12482,7 @@
           "style"
         ],
         "title": "PaginationSectionBody",
-        "description": "A section to make, or the whole new state of a section that exists.\n\n:ivar first_page_id: The page the section starts at, which must be a page of the project.\n:ivar name: Name the user sees.\n:ivar style: How the numbers are written.\n:ivar start: Number of the first counted page, from 1, and at most 3999 in a Roman style.\n:ivar prefix: Text written before every number, such as ``Plate ``; it keeps its spaces.\n:ivar display: Whether the pages count, and whether their numbers are printed or only implied.\n:ivar kinds: Kinds of page a series by kind takes, each at most once; leave out for a section of the main flow."
+        "description": "A section to make, or the whole new state of a section that exists.\n\n:ivar first_page_id: The page the section starts at, which must be a page of the book.\n:ivar name: Name the user sees.\n:ivar style: How the numbers are written.\n:ivar start: Number of the first counted page, from 1, and at most 3999 in a Roman style.\n:ivar prefix: Text written before every number, such as ``Plate ``; it keeps its spaces.\n:ivar display: Whether the pages count, and whether their numbers are printed or only implied.\n:ivar kinds: Kinds of page a series by kind takes, each at most once; leave out for a section of the main flow."
       },
       "PaginationSectionSchema": {
         "properties": {
@@ -13267,7 +13267,7 @@
           "scan_id"
         ],
         "title": "ScanAttach",
-        "description": "The scan to bind to a placeholder.\n\n:ivar scan_id: Scan to bind, which must be a scan of the project.\n:ivar take_over: Whether to take the scan from the pages that show it already, such as the page the import made of\n                 it, which deletes them."
+        "description": "The scan to bind to a placeholder.\n\n:ivar scan_id: Scan to bind, which must be a scan of the book.\n:ivar take_over: Whether to take the scan from the pages that show it already, such as the page the import made of\n                 it, which deletes them."
       },
       "ScanFactsSchema": {
         "properties": {
@@ -13577,7 +13577,7 @@
           "imported_at"
         ],
         "title": "SourceSchema",
-        "description": "An uploaded file of a book, or the files of one indirect DjVu document, never changed after its import.\n\n:ivar id: Identifier of the source.\n:ivar kind: Kind of the source, which selects the format that reads it, or None for a rejected or skipped file of an\n            unknown type.\n:ivar file_type: Exact format of the main file, or None for a rejected or skipped file of an unknown type.\n:ivar file_name: Name the browser sent for the main file.\n:ivar files: Stored files, the main file first; more than one only for an indirect DjVu document.\n:ivar size_bytes: Total size of the files in bytes.\n:ivar sha256: SHA-256 digest of the main file.\n:ivar scan_count: Number of scans the source holds.\n:ivar metadata: Technical metadata of the format, whose keys depend on the kind of source.\n:ivar suggestion: Values of the book description found in the file.\n:ivar status: Whether the file was imported, rejected by the import, or skipped by a cancelled one.\n:ivar rejection: Why a rejected file was refused, or None for a file that was not.\n:ivar detail: Text that says more than the reason, such as the name of the source a duplicate repeats, or empty.\n:ivar imported_at: When the file was recorded, which for an imported source is when it became part of the project."
+        "description": "An uploaded file of a book, or the files of one indirect DjVu document, never changed after its import.\n\n:ivar id: Identifier of the source.\n:ivar kind: Kind of the source, which selects the format that reads it, or None for a rejected or skipped file of an\n            unknown type.\n:ivar file_type: Exact format of the main file, or None for a rejected or skipped file of an unknown type.\n:ivar file_name: Name the browser sent for the main file.\n:ivar files: Stored files, the main file first; more than one only for an indirect DjVu document.\n:ivar size_bytes: Total size of the files in bytes.\n:ivar sha256: SHA-256 digest of the main file.\n:ivar scan_count: Number of scans the source holds.\n:ivar metadata: Technical metadata of the format, whose keys depend on the kind of source.\n:ivar suggestion: Values of the book description found in the file.\n:ivar status: Whether the file was imported, rejected by the import, or skipped by a cancelled one.\n:ivar rejection: Why a rejected file was refused, or None for a file that was not.\n:ivar detail: Text that says more than the reason, such as the name of the source a duplicate repeats, or empty.\n:ivar imported_at: When the file was recorded, which for an imported source is when it became part of the book."
       },
       "SourceStatus": {
         "type": "string",

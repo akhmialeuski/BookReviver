@@ -30,7 +30,7 @@ def _book(*kinds: PageKind) -> list[Page]:
 
     :param kinds: Kind of each page, in book order.
     :type kinds: PageKind
-    :returns: Pages of one project, included, without labels.
+    :returns: Pages of one book, included, without labels.
     :rtype: list[Page]
     """
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(kinds))

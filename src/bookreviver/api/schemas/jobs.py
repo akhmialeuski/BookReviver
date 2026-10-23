@@ -47,7 +47,7 @@ class JobSchema(ResponseModel):
     process started, is answered as not found.
 
     :ivar id: Identifier of the job.
-    :ivar book_id: Project the job works on.
+    :ivar book_id: Book the job works on.
     :ivar kind: What the job does.
     :ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.
     :ivar state: Where the job is in its life cycle.
@@ -71,7 +71,7 @@ class JobSchema(ResponseModel):
 
 
 class JobQuery(Params):
-    """The query of the list of jobs of a project: the page parameters, and whether to list running jobs alone.
+    """The query of the list of jobs of a book: the page parameters, and whether to list running jobs alone.
 
     :ivar page: Number of the page of the list, from one.
     :ivar size: Number of jobs in one page of the list.
@@ -84,7 +84,7 @@ class JobQuery(Params):
 class BookChangedSchema(ResponseModel):
     """A committed change of a book; the data of a ``book-changed`` event, whose id is the version.
 
-    :ivar book_id: Identifier of the project whose reads to repeat.
+    :ivar book_id: Identifier of the book whose reads to repeat.
     :ivar version: The version of the book after the change.
     :ivar resources: The parts of the book the change wrote, whose reads are the ones to repeat.
     """
@@ -101,7 +101,7 @@ class BookVersionSchema(ResponseModel):
     that comes back that the book changed while it was not listening, and since the stream keeps no changes, every read
     of the book is to be repeated.
 
-    :ivar book_id: Identifier of the project.
+    :ivar book_id: Identifier of the book.
     :ivar version: The version of the book now.
     """
 
@@ -112,7 +112,7 @@ class BookVersionSchema(ResponseModel):
 class PageVersionReadySchema(ResponseModel):
     """A page version with its result; the data of a ``page-version-ready`` event.
 
-    :ivar book_id: Identifier of the project owning the page.
+    :ivar book_id: Identifier of the book owning the page.
     :ivar page_id: Identifier of the page.
     :ivar version_id: Identifier of the ready version to read again.
     """

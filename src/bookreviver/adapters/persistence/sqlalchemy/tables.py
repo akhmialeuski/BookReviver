@@ -14,8 +14,8 @@ database.
 Rows never leave the adapter. The mappers in :mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turn them into
 frozen domain entities, so nothing outside this package depends on the shape of a table.
 
-The file of a book holds one project. A project owns its sources, scans, pages and recipes, a source owns its scans,
-and a page owns its versions, its stage records, its step states and its history. The foreign keys carry
+The file of a book holds the record of the book. The book owns its sources, scans, pages and recipes, a source owns
+its scans, and a page owns its versions, its stage records, its step states and its history. The foreign keys carry
 ``ON DELETE CASCADE``, so the database removes them with their owner. An optional reference carries
 ``ON DELETE SET NULL`` instead: a page keeps its row when its scan is deleted, a version when its input version is,
 and a stage record when its head version or its recipe is, because a page of the book holds its own copy of its
@@ -141,10 +141,10 @@ class BookRecordRow(BookTable):
     """Row of the book of the file, the only row of its table: its description and the settings of the work on it.
 
     The description is a value object in the domain and columns here: a column per text field, and a JSON column per
-    list, because the items of a list have no identity, are always read and written with their project, and the
-    project list shows only the title and the first author. The sources of the book are rows of their own table.
+    list, because the items of a list have no identity, are always read and written with the record of the book, and the
+    list of books shows only the title and the first author. The sources of the book are rows of their own table.
 
-    :ivar id: Project identifier, assigned by the domain.
+    :ivar id: Identifier of the book, assigned by the domain.
     :ivar title: Title of the book.
     :ivar subtitle: Words of the title page that explain the title.
     :ivar parallel_titles: Titles in other languages, as a JSON list of strings.
@@ -172,8 +172,8 @@ class BookRecordRow(BookTable):
     :ivar copy_holder: Owner of the scanned copy.
     :ivar copy_notes: Marks of the scanned copy.
     :ivar notes: Free-form notes of the owner.
-    :ivar image_policy: How the images of the project's scans and page versions are stored, stored by value.
-    :ivar created_at: Time the project was created.
+    :ivar image_policy: How the images of the book's scans and page versions are stored, stored by value.
+    :ivar created_at: Time the book was created.
     :ivar updated_at: Time of the last change, set by the domain through its ``Clock``.
     :ivar version: Number of the changes of the book committed so far, which only the unit of work raises, by one for
                    every change that wrote a part of the book a reader asks for.
@@ -216,10 +216,10 @@ class BookRecordRow(BookTable):
 
 
 class SourceRow(BookTable):
-    """Row of one uploaded file of a project: an imported source, or a file the import rejected or skipped.
+    """Row of one uploaded file of a book: an imported source, or a file the import rejected or skipped.
 
     The stored files and the description values the source suggests are value objects in the domain and JSON here,
-    since no query looks inside them. An imported source is unique within the project by the digest of its main file,
+    since no query looks inside them. An imported source is unique within the book by the digest of its main file,
     which a partial unique index keeps, so a rejected or skipped file may repeat a digest, as a duplicate does.
 
     :ivar id: Source identifier, assigned by the domain.
@@ -235,7 +235,7 @@ class SourceRow(BookTable):
     :ivar status: Whether the file was imported, rejected or skipped, stored by value.
     :ivar rejection: Why a rejected file was refused, stored by value, or null.
     :ivar detail: Text for the reader that says more than the reason, or empty.
-    :ivar imported_at: Time the file was recorded, which for an imported source is when it became part of the project.
+    :ivar imported_at: Time the file was recorded, which for an imported source is when it became part of the book.
     :ivar scans: Scans of the source, never loaded implicitly.
     """
 
@@ -269,8 +269,8 @@ class SourceRow(BookTable):
 class ScanRow(BookTable):
     """Row of one scan of a source, unique within the source by its number.
 
-    The project is stored beside the source, so the scans of a book are counted and listed without a join and removed
-    with the project by their own foreign key.
+    The record of the book is stored beside the source, so the scans of a book are counted and listed without a join
+    and removed with the book by their own foreign key.
 
     :ivar id: Scan identifier, assigned by the domain.
     :ivar source_id: Source holding the scan.
@@ -411,7 +411,7 @@ class PageRow(BookTable):
 class PaginationSectionRow(BookTable):
     """Row of one pagination section of a book, which numbers the pages from the page it starts at.
 
-    A project owns its sections, and so does the page a section starts at, so the database removes a section with
+    A book owns its sections, and so does the page a section starts at, so the database removes a section with
     either. The kinds of a series by kind are a JSON list of the values of the kinds, empty for a section of the main
     flow, and no query looks inside it.
 
@@ -722,7 +722,7 @@ class BookPlaceRow(BookTable):
 
 
 class RecipeRow(BookTable):
-    """Row of one recipe of a stage of a project, of which there is one for each kind of page.
+    """Row of one recipe of a stage of a book, of which there is one for each kind of page.
 
     The steps are a JSON list of ``{processor_key, params, enabled, step_id}`` objects, since no query looks inside
     them.

@@ -18,9 +18,9 @@ if TYPE_CHECKING:
 
 @frozen(kw_only=True)
 class DomainEvent:
-    """Something that happened within one project.
+    """Something that happened within one book.
 
-    :ivar book_id: Project the event belongs to, whose subscribers receive it.
+    :ivar book_id: Book the event belongs to, whose subscribers receive it.
     """
 
     book_id: BookId

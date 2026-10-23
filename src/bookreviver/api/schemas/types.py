@@ -18,7 +18,7 @@ IDENTIFIER_MAX_LENGTH: int = 2_048
 LANGUAGE_CODE_PATTERN: str = r'^[a-z]{3}$'
 HEIGHT_CM_MIN: int = 1
 HEIGHT_CM_MAX: int = 200
-# Longest lists a description accepts, so one request cannot turn the row of a project into megabytes of JSON
+# Longest lists a description accepts, so one request cannot turn the record of a book into megabytes of JSON
 CONTRIBUTORS_MAX_LENGTH: int = 50
 IDENTIFIERS_MAX_LENGTH: int = 20
 LANGUAGES_MAX_LENGTH: int = 10

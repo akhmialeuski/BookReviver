@@ -128,7 +128,7 @@ class RunBasis:
 
 @frozen(kw_only=True)
 class StageRuntime:
-    """What a run of a stage works with, apart from the project and the unit of work of the job.
+    """What a run of a stage works with, apart from the book and the unit of work of the job.
 
     :ivar runner: Runner of processors and writer of their files.
     :ivar catalogue: The processors the application can run.
@@ -154,7 +154,7 @@ class StageWork:
     def __init__(self, *, book_record: BookRecord, uow: UnitOfWork, runtime: StageRuntime, control: JobControl) -> None:
         """Work over the ports of one job.
 
-        :param book_record: Project owning the pages, whose image policy chooses the format of a version's ``full``.
+        :param book_record: Record of the book, whose image policy chooses the format of a version's ``full``.
         :type book_record: BookRecord
         :param uow: Unit of work, whose transactions are opened for each version and never held while a step runs.
         :type uow: UnitOfWork
@@ -603,7 +603,7 @@ class StageWork:
 
                 :param repos: Repositories of the transaction.
                 :type repos: BookRepositories
-                :param _book_record: The project as the change finds it, which the marking does not read.
+                :param _book_record: The record of the book as the change finds it, which the marking does not read.
                 :type _book_record: BookRecord
                 :returns: The version, and whether it was found ready, in which case it is stored as it was.
                 :rtype: tuple[PageVersion, bool]
@@ -656,7 +656,7 @@ class StageWork:
 
                 :param repos: Repositories of the transaction.
                 :type repos: BookRepositories
-                :param _book_record: The project as the change finds it, which the storing does not read.
+                :param _book_record: The record of the book as the change finds it, which the storing does not read.
                 :type _book_record: BookRecord
                 :raises NotFoundError: If the page or the version was deleted.
                 """
@@ -691,7 +691,7 @@ class RecipeRun(StageWork):
     ) -> None:
         """Work over the ports of one job.
 
-        :param book_record: Project owning the pages.
+        :param book_record: Record of the book owning the pages.
         :type book_record: BookRecord
         :param uow: Unit of work, whose transactions are opened for each version and never held while a step runs.
         :type uow: UnitOfWork
@@ -699,7 +699,7 @@ class RecipeRun(StageWork):
         :type runtime: StageRuntime
         :param control: What the job reports through: every step of a page is a task, and the job stops between two.
         :type control: JobControl
-        :param parts: The recipes of the project, which an earlier stage that is stale is run again by, and the writer
+        :param parts: The recipes of the book, which an earlier stage that is stale is run again by, and the writer
                       of the stage records.
         :type parts: ProcessingParts
         """
@@ -895,7 +895,7 @@ class RecipeRun(StageWork):
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the run does not read.
+            :param _book_record: The record of the book as the change finds it, which the run does not read.
             :type _book_record: BookRecord
             :returns: Whether the version was made current, which it is not when what the run went by changed and
                       nothing was written, and what the undoing deleted, or None.
@@ -1036,7 +1036,7 @@ class RecipeRun(StageWork):
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the record does not read.
+            :param _book_record: The record of the book as the change finds it, which the record does not read.
             :type _book_record: BookRecord
             :raises NotFoundError: If the page was deleted.
             """

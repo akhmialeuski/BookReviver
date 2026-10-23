@@ -27,7 +27,7 @@ export function gridStorageKey(bookId: string): string {
 /**
  * Read the choice a book kept.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param storage Where the choices are kept.
  * @returns Whether the grid is on, or null when the reader has not chosen.
  */
@@ -51,7 +51,7 @@ export function writeGrid(
 /**
  * Read whether the grid is shown over the page, and switch it.
  *
- * @param projectId The book, whose choice is kept.
+ * @param bookId The book, whose choice is kept.
  * @returns Whether the grid is on, which it is not until the reader has chosen, and the function that switches it and
  * keeps the choice.
  */

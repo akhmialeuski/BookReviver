@@ -24,10 +24,10 @@ RENDITION_ARG: str = 'rendition'
 
 
 class TestPrefix:
-    """Tests for ProjectKeys.prefix."""
+    """Tests for BookKeys.prefix."""
 
     def test_every_built_key_lies_under_the_prefix(self) -> None:
-        """Verify every area, source, scan and page key of the project starts with its prefix."""
+        """Verify every area, source, scan and page key of the book starts with its prefix."""
         source = make_source()
         keys = [
             KEYS.incoming_area,
@@ -65,7 +65,7 @@ class TestAreas:
 
 
 class TestScanRendition:
-    """Tests for ProjectKeys.scan_rendition()."""
+    """Tests for BookKeys.scan_rendition()."""
 
     @pytest.mark.parametrize(RENDITION_ARG, list(Rendition))
     def test_key_follows_the_layout(self, rendition: Rendition) -> None:
@@ -88,7 +88,7 @@ class TestScanRendition:
 
 
 class TestScanDirectory:
-    """Tests for ProjectKeys.scan_directory()."""
+    """Tests for BookKeys.scan_directory()."""
 
     def test_directory_holds_every_rendition_of_the_scan(self) -> None:
         """Verify the directory of a scan's renditions is the parent of each rendition's key, so one prefix removes them."""
@@ -100,7 +100,7 @@ class TestScanDirectory:
 
 
 class TestVersionDirectory:
-    """Tests for ProjectKeys.version_directory()."""
+    """Tests for BookKeys.version_directory()."""
 
     def test_directory_holds_every_rendition_of_the_version(self) -> None:
         """Verify the directory of a version is the parent of each rendition's key, so one prefix removes them."""
@@ -112,7 +112,7 @@ class TestVersionDirectory:
 
 
 class TestVersionRendition:
-    """Tests for ProjectKeys.version_rendition()."""
+    """Tests for BookKeys.version_rendition()."""
 
     def test_key_follows_the_layout(self) -> None:
         """Verify a version's rendition lies under its page, stage, processor and identifier, not under a position."""
@@ -133,7 +133,7 @@ class TestVersionRendition:
 
 
 class TestPageEdits:
-    """Tests for ProjectKeys.page_edits()."""
+    """Tests for BookKeys.page_edits()."""
 
     def test_edits_lie_beside_the_versions_of_the_page(self) -> None:
         """Verify the edits of a page are removed with the page's directory."""
@@ -145,11 +145,11 @@ class TestPageEdits:
 
 
 class TestOwning:
-    """Tests for ProjectKeys.owning()."""
+    """Tests for BookKeys.owning()."""
 
     @pytest.mark.parametrize(RENDITION_ARG, list(Rendition))
     def test_built_key_belongs_to_its_book(self, rendition: Rendition) -> None:
-        """Verify the key of every rendition of a scan is recognised as the project's.
+        """Verify the key of every rendition of a scan is recognised as the book's.
 
         :param rendition: Derived file of the scan.
         :type rendition: Rendition
@@ -189,9 +189,9 @@ class TestOwning:
         ],
     )
     def test_malformed_key_belongs_to_no_book(self, key: str) -> None:
-        """Verify a key that is not safely inside a project's derived files is not attributed to any project.
+        """Verify a key that is not safely inside a book's derived files is not attributed to any book.
 
-        A source file and a staged upload lie inside the project but belong to the source store, so they are refused
+        A source file and a staged upload lie inside the book but belong to the source store, so they are refused
         like a key that climbs out of it.
 
         :param key: Key that is not a well-formed key of a derived file.

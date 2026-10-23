@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { redirectToDefaultStep } from '@/features/workspace/defaultStep';
 
 /**
- * A stage of one book with no step in the address, `/projects/<id>/stages/<stage>?...`.
+ * A stage of one book with no step in the address, `/books/<id>/stages/<stage>?...`.
  *
  * A stage with a step bar always has a step open, so its loader sends this address to the step the stage opens on, with the
  * search params kept and in place of the address, which Back does not return to. The redirect belongs to the router and

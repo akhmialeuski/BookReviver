@@ -24,7 +24,7 @@ PREVIEW_TAKES_NO_MARK: str = 'The version {version_id} is a preview, which takes
 
 
 class ResultMarksService:
-    """Sets the marks and comments of the results of the acting account's projects."""
+    """Sets the marks and comments of the results of the acting account's books."""
 
     def __init__(self, *, uow: UnitOfWork, library: Library) -> None:
         """Work over the ports of one request.
@@ -49,7 +49,7 @@ class ResultMarksService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_id: Identifier of the page.
         :type page_id: PageId
@@ -59,7 +59,7 @@ class ResultMarksService:
         :type note: ResultNote
         :returns: The version with its new mark and comment, which is the stored one when nothing changed.
         :rtype: PageVersion
-        :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no such
+        :raises NotFoundError: If the actor has no such book, the book has no such page, or the page has no such
                                version.
         :raises ConflictError: If the version is a preview.
         """
@@ -70,11 +70,12 @@ class ResultMarksService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the lookup of the version reads again.
+            :param _book_record: The record of the book as the change finds it, which the lookup of the version reads
+                                 again.
             :type _book_record: BookRecord
             :returns: The version with its new mark and comment, which is the stored one when nothing changed.
             :rtype: PageVersion
-            :raises NotFoundError: If the project has no such page, or the page has no such version.
+            :raises NotFoundError: If the book has no such page, or the page has no such version.
             :raises ConflictError: If the version is a preview.
             """
             version = self._version(repos, page_id, version_id)
@@ -98,7 +99,7 @@ class ResultMarksService:
         :type version_id: PageVersionId
         :returns: The version.
         :rtype: PageVersion
-        :raises NotFoundError: If the project has no such page, or the page has no such version.
+        :raises NotFoundError: If the book has no such page, or the page has no such version.
         """
         repos.pages.get(page_id)
         version = repos.page_versions.get(version_id)

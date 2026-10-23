@@ -8,7 +8,7 @@ in a thread or in a pool of processes, so the work stays off the event loop of t
 executor the paths the asset store gives, and stores what the processor writes.
 
 A processor writes its image without loss, in a PNG, or leaves an image the service may read as it is, such as the file
-the page was already stored in. The format a version stores is chosen later by the service from the project's image
+the page was already stored in. The format a version stores is chosen later by the service from the book's image
 policy, so a processor knows nothing of that setting. It never deletes a file it was not given, and the work directory
 it writes into is removed after its files are stored.
 """

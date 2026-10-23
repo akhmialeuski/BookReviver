@@ -72,11 +72,11 @@ def _default_path(profile_id: object) -> str:
 
 
 async def _text_recipe(client: httpx.AsyncClient, book_record: BookRecord) -> RecipeSchema:
-    """Read the recipe of text pages of the geometry stage of a project, which a book creates when it is first asked.
+    """Read the recipe of text pages of the geometry stage of a book, which a book creates when it is first asked.
 
     :param client: Client of the running application.
     :type client: httpx.AsyncClient
-    :param book_record: The project.
+    :param book_record: The book.
     :type book_record: BookRecord
     :returns: The recipe.
     :rtype: RecipeSchema
@@ -123,7 +123,7 @@ def _body(name: str = PROFILE_NAME) -> dict[str, object]:
 def _link_path(book_record: BookRecord, recipe_id: object) -> str:
     """Return the path that records the profile a recipe of the geometry stage was made from.
 
-    :param book_record: The project.
+    :param book_record: The book.
     :type book_record: BookRecord
     :param recipe_id: Identifier of the recipe.
     :type recipe_id: object
@@ -134,9 +134,9 @@ def _link_path(book_record: BookRecord, recipe_id: object) -> str:
 
 
 def _apply_path(book_record: BookRecord, profile_id: object) -> str:
-    """Return the path that applies a profile to a project.
+    """Return the path that applies a profile to a book.
 
-    :param book_record: The project.
+    :param book_record: The book.
     :type book_record: BookRecord
     :param profile_id: Identifier of the profile.
     :type profile_id: object
@@ -164,7 +164,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> BookRecord:
     :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
-    :returns: The stored project.
+    :returns: The stored book.
     :rtype: BookRecord
     """
     book_record = make_record()

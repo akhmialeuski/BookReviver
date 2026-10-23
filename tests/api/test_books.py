@@ -1,4 +1,4 @@
-"""Tests for the project endpoints, on the SQLite file and the local stores under the test's data directory."""
+"""Tests for the book endpoints, on the SQLite file and the local stores under the test's data directory."""
 
 import json
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -129,44 +129,44 @@ INVALID_UPDATE_IDS: list[str] = ['blank-title', 'null-title', 'unknown-field', '
 
 
 def _book_path(book_id: object) -> str:
-    """Return the path of one project.
+    """Return the path of one book.
 
-    :param book_id: Identifier of the project, or any text standing in for one.
+    :param book_id: Identifier of the book, or any text standing in for one.
     :type book_id: object
-    :returns: Path of the project resource.
+    :returns: Path of the book resource.
     :rtype: str
     """
     return f'{BOOKS_PATH}/{book_id}'
 
 
 async def _read_book(client: httpx.AsyncClient, book_id: object) -> BookSchema:
-    """Read one project through the API.
+    """Read one book through the API.
 
     :param client: Client of the running application.
     :type client: httpx.AsyncClient
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: object
-    :returns: The project resource.
+    :returns: The book resource.
     :rtype: BookSchema
     """
     return BookSchema.model_validate_json((await client.get(_book_path(book_id))).content)
 
 
 async def _list_books(client: httpx.AsyncClient, params: dict[str, int]) -> Page[BookSchema]:
-    """Read one page of the project list through the API.
+    """Read one page of the book list through the API.
 
     :param client: Client of the running application.
     :type client: httpx.AsyncClient
     :param params: Page number and size to ask for.
     :type params: dict[str, int]
-    :returns: The page of projects.
+    :returns: The page of books.
     :rtype: Page[BookSchema]
     """
     return Page[BookSchema].model_validate_json((await client.get(BOOKS_PATH, params=params)).content)
 
 
 class TestSchemas:
-    """Tests for the project schemas against the domain description."""
+    """Tests for the book schemas against the domain description."""
 
     @pytest.mark.parametrize(
         (SCHEMA_ARG, EXTRAS_ARG),
@@ -182,14 +182,14 @@ class TestSchemas:
 
         :param schema: Schema of a description in a request or a response.
         :type schema: type[BaseModel]
-        :param extras: Fields of the schema beyond the description, such as the project settings a patch changes.
+        :param extras: Fields of the schema beyond the description, such as the book settings a patch changes.
         :type extras: frozenset[str]
         """
         assert schema.model_fields.keys() == attrs.fields_dict(BookDetails).keys() | extras
 
 
 class TestListBooks:
-    """Tests for GET /projects."""
+    """Tests for GET /books."""
 
     async def test_pages_through_own_books_newest_first(
         self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_actor: Actor
@@ -222,7 +222,7 @@ class TestListBooks:
     async def test_counts_the_book_of_each_book(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify every listed project carries the numbers of its pages, sources and scans.
+        """Verify every listed book carries the numbers of its pages, sources and scans.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -244,10 +244,10 @@ class TestListBooks:
 
 
 class TestCreateBook:
-    """Tests for POST /projects."""
+    """Tests for POST /books."""
 
     async def test_creates_and_points_to_the_new_book(self, fx_client: httpx.AsyncClient) -> None:
-        """Verify the answer is 201 with the stored project, trimmed input and a Location that reads it back.
+        """Verify the answer is 201 with the stored book, trimmed input and a Location that reads it back.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -336,13 +336,13 @@ class TestCreateBook:
 
 
 class TestGetBook:
-    """Tests for GET /projects/{project_id}."""
+    """Tests for GET /books/{book_id}."""
 
     @pytest.mark.parametrize('owned_by_other', [True, False], ids=['other-account', 'unknown'])
     async def test_invisible_book_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, *, owned_by_other: bool
     ) -> None:
-        """Verify another account's project answers exactly like a project that does not exist.
+        """Verify another account's book answers exactly like a book that does not exist.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -350,7 +350,7 @@ class TestGetBook:
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param owned_by_other: Whether the project is stored for another account, rather than not stored at all.
+        :param owned_by_other: Whether the book is stored for another account, rather than not stored at all.
         :type owned_by_other: bool
         """
         book_record = make_record()
@@ -375,7 +375,7 @@ class TestGetBook:
 
 
 class TestUpdateBook:
-    """Tests for PATCH /projects/{project_id}."""
+    """Tests for PATCH /books/{book_id}."""
 
     async def test_changes_only_the_fields_sent(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
@@ -498,7 +498,7 @@ class TestUpdateBook:
     async def test_sets_the_image_policy_and_null_restores_the_default(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify the image policy changes, and null restores the policy a new project has.
+        """Verify the image policy changes, and null restores the policy a new book has.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -523,7 +523,7 @@ class TestUpdateBook:
     async def test_the_cover_is_the_first_page_of_the_kind_cover_and_is_not_chosen_by_hand(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify the project names its first page of the kind cover as the cover, and a request cannot choose one.
+        """Verify the book names its first page of the kind cover as the cover, and a request cannot choose one.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -547,7 +547,7 @@ class TestUpdateBook:
     async def test_invalid_body_is_a_problem_and_changes_nothing(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, case: InvalidBody
     ) -> None:
-        """Verify the title cannot be emptied or cleared, unknown fields are refused, and the project stays.
+        """Verify the title cannot be emptied or cleared, unknown fields are refused, and the book stays.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -572,7 +572,7 @@ class TestUpdateBook:
     async def test_another_accounts_book_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify another account's project cannot be changed.
+        """Verify another account's book cannot be changed.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -590,12 +590,12 @@ class TestUpdateBook:
 
 
 class TestDeleteBook:
-    """Tests for DELETE /projects/{project_id}."""
+    """Tests for DELETE /books/{book_id}."""
 
     async def test_deletes_the_book_and_its_files(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_files: BookFiles, fx_actor: Actor
     ) -> None:
-        """Verify the answer is 204, the project is gone, and nothing of it is left on disk.
+        """Verify the answer is 204, the book is gone, and nothing of it is left on disk.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -621,7 +621,7 @@ class TestDeleteBook:
     async def test_another_accounts_book_is_not_found_and_kept(
         self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_files: BookFiles
     ) -> None:
-        """Verify another account's project and files survive a delete request.
+        """Verify another account's book and files survive a delete request.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -645,12 +645,12 @@ class TestDeleteBook:
 
 
 class TestArchive:
-    """Tests for GET /projects/{project_id}/archive and POST /projects/archive, the export and the import of a book."""
+    """Tests for GET /books/{book_id}/archive and POST /books/archive, the export and the import of a book."""
 
     async def test_an_exported_book_is_imported_as_a_new_book(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_files: BookFiles, fx_actor: Actor
     ) -> None:
-        """Verify the export is a ZIP file named after the title, and its import is a new project with the same files.
+        """Verify the export is a ZIP file named after the title, and its import is a new book with the same files.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -682,7 +682,7 @@ class TestArchive:
         assert_expectations()
 
     async def test_a_file_that_is_not_an_archive_is_a_problem(self, fx_client: httpx.AsyncClient) -> None:
-        """Verify a file that is not a ZIP archive is refused with 400 and no project is made.
+        """Verify a file that is not a ZIP archive is refused with 400 and no book is made.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient

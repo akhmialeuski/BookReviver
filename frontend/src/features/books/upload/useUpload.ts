@@ -15,7 +15,7 @@ import { buildUploadForm } from '@/features/books/upload/upload-form';
  * query unless an event of it got there first, and the jobs of the book are marked stale, so the import shows in the
  * list of files at once and follows the events from there.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param onSent Called when the server has accepted the upload.
  * @returns The request, for its pending and failed states, and `send`, which uploads files in the order given.
  */

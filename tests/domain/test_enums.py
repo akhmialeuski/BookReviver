@@ -121,7 +121,7 @@ class TestImagePolicy:
     def test_full_format(self, policy: ImagePolicy, color_mode: ColorMode, expected: Rendition) -> None:
         """Verify a bilevel page is a PNG under both policies and any other page follows the policy.
 
-        :param policy: Image policy of the project.
+        :param policy: Image policy of the book.
         :type policy: ImagePolicy
         :param color_mode: Colour mode of the page.
         :type color_mode: ColorMode

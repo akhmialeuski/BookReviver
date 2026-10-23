@@ -11,7 +11,7 @@ import { parseViewerSearch } from '@/features/viewer/params';
 import { ViewerPage } from '@/features/viewer/ViewerPage';
 
 /**
- * The page viewer of one book, `/projects/<id>/viewer?page=<page id>&spread=true`. The page and the spread are in
+ * The page viewer of one book, `/books/<id>/viewer?page=<page id>&spread=true`. The page and the spread are in
  * the address, so any view can be linked and reloaded, and every page turn is a navigation that the back button undoes.
  * The screen keeps the place of the reader in the book as they read, so the book opens here again. The place also holds
  * the stage the reader came from, which the way back leads to.

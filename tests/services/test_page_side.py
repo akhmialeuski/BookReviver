@@ -79,7 +79,7 @@ async def head_of(kit: ProcessingKit, book_id: BookId, page: Page) -> PageVersio
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page

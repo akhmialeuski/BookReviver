@@ -55,7 +55,7 @@ NO_STEP_TO_RUN_THROUGH: str = (
 
 
 class ProcessingService:
-    """Recipes, runs, previews and page versions of the acting account's projects."""
+    """Recipes, runs, previews and page versions of the acting account's books."""
 
     def __init__(
         self,
@@ -101,7 +101,7 @@ class ProcessingService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param stage: The stage.
         :type stage: Stage
@@ -109,7 +109,7 @@ class ProcessingService:
         :type request: SliceRequest
         :returns: The recipes of the window in the order of the kinds, and the number of all the stage's recipes.
         :rtype: Slice[Recipe]
-        :raises NotFoundError: If the actor has no such project, or the stage has no recipe.
+        :raises NotFoundError: If the actor has no such book, or the stage has no recipe.
         """
         await self._library.open(actor, book_id)
         recipes = await self._recipes.recipes(book_id, stage)
@@ -123,7 +123,7 @@ class ProcessingService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param key: The stage the request names and the identifier of the recipe, which must belong to that stage.
         :type key: RecipeKey
@@ -131,7 +131,7 @@ class ProcessingService:
         :type draft: RecipeDraft
         :returns: The recipe as stored.
         :rtype: Recipe
-        :raises NotFoundError: If the actor has no such project, or the project has no such recipe of the stage.
+        :raises NotFoundError: If the actor has no such book, or the book has no such recipe of the stage.
         :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
                                         usual order.
         """
@@ -142,11 +142,11 @@ class ProcessingService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it.
+            :param _book_record: The record of the book as the change finds it.
             :type _book_record: BookRecord
             :returns: The recipe as stored.
             :rtype: Recipe
-            :raises NotFoundError: If the project has no such recipe of the stage.
+            :raises NotFoundError: If the book has no such recipe of the stage.
             :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
                                             usual order.
             """
@@ -162,16 +162,16 @@ class ProcessingService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param stage: The stage.
         :type stage: Stage
         :param run: The pages and the mode, with the stage the request names.
         :type run: StageRun
-        :returns: The queued job; a preview of the project that is queued or running is cancelled for it.
+        :returns: The queued job; a preview of the book that is queued or running is cancelled for it.
         :rtype: Job
-        :raises NotFoundError: If the actor has no such project or page, or the stage has no recipe.
-        :raises ConflictError: If a run or a measure of the project is queued or running, or the run goes through a
+        :raises NotFoundError: If the actor has no such book or page, or the stage has no recipe.
+        :raises ConflictError: If a run or a measure of the book is queued or running, or the run goes through a
                                step that the recipe of a page has no such step for, or whose steps up to it are all
                                switched off, or its mode takes the work of pages away and it is not confirmed.
         """
@@ -204,7 +204,7 @@ class ProcessingService:
     def _plan(self, book_id: BookId, run: StageRun) -> RunPlan:
         """Plan a run over the unit of work of the request.
 
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param run: The run.
         :type run: StageRun
@@ -218,12 +218,12 @@ class ProcessingService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
-        :returns: The queued job; a preview of the project that is queued or running is cancelled for it.
+        :returns: The queued job; a preview of the book that is queued or running is cancelled for it.
         :rtype: Job
-        :raises NotFoundError: If the actor has no such project, or the Geometry stage has no recipe.
-        :raises ConflictError: If a run or a measure of the project is queued or running, which may be writing the
+        :raises NotFoundError: If the actor has no such book, or the Geometry stage has no recipe.
+        :raises ConflictError: If a run or a measure of the book is queued or running, which may be writing the
                                versions that are measured or the recipe.
         """
         await self._library.open(actor, book_id)
@@ -235,15 +235,15 @@ class ProcessingService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param preview: The page, the stage, the steps of the form and the step the result is wanted of.
         :type preview: StepPreview
         :returns: The queued job.
         :rtype: Job
-        :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        :raises NotFoundError: If the actor has no such book, or the book has no such page.
         :raises InvalidParametersError: If a step does not fit its processor.
-        :raises ConflictError: If a run, a preview, a tile cutting, a collection or a measure of the project is queued
+        :raises ConflictError: If a run, a preview, a tile cutting, a collection or a measure of the book is queued
                                or running.
         """
         await self._library.open(actor, book_id)
@@ -264,7 +264,7 @@ class ProcessingService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_id: Identifier of the page.
         :type page_id: PageId
@@ -272,7 +272,7 @@ class ProcessingService:
         :type request: SliceRequest
         :returns: The records of the window and the number of all the page's records.
         :rtype: Slice[PageStage]
-        :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        :raises NotFoundError: If the actor has no such book, or the book has no such page.
         """
         await self._library.open(actor, book_id)
 
@@ -283,7 +283,7 @@ class ProcessingService:
             :type repos: BookRepositories
             :returns: Every record of the page.
             :rtype: Sequence[PageStage]
-            :raises NotFoundError: If the project has no such page.
+            :raises NotFoundError: If the book has no such page.
             """
             repos.pages.get(page_id)
             return repos.page_stages.list_for_page(page_id)
@@ -299,7 +299,7 @@ class ProcessingService:
         The version must be ready, made by a full run of this page in this stage. If its tile pyramid is not cut yet, a
         job is queued to cut it, since the viewer opens the current version.
 
-        A preview of the project, queued or running, is cancelled first, since the reader asked for the choice and a
+        A preview of the book, queued or running, is cancelled first, since the reader asked for the choice and a
         preview is disposable: the editor of a step asks for one by itself, so a choice made a moment later would
         otherwise be refused by a job the reader never started. A request for a version that cannot be chosen is
         refused before any preview is cancelled. The version is checked again inside the transaction that makes it
@@ -308,7 +308,7 @@ class ProcessingService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_id: Identifier of the page.
         :type page_id: PageId
@@ -318,10 +318,10 @@ class ProcessingService:
         :type version_id: PageVersionId
         :returns: The record of the stage in its new state.
         :rtype: PageStage
-        :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no such
+        :raises NotFoundError: If the actor has no such book, the book has no such page, or the page has no such
                                version.
         :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage, or a run, a
-                               measure of the book, a tile cutting or a collection of the project is queued or
+                               measure of the book, a tile cutting or a collection of the book is queued or
                                running, which may be reading or deleting the versions the choice depends on.
         """
         await self._library.open(actor, book_id)
@@ -337,11 +337,12 @@ class ProcessingService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the check of the version reads again.
+            :param _book_record: The record of the book as the change finds it, which the check of the version reads
+                                 again.
             :type _book_record: BookRecord
             :returns: The version, and the record of the stage in its new state.
             :rtype: tuple[PageVersion, PageStage]
-            :raises NotFoundError: If the project has no such page, or the page has no
+            :raises NotFoundError: If the book has no such page, or the page has no
                                    such version.
             :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage.
             """
@@ -373,7 +374,7 @@ class ProcessingService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_id: Identifier of the page.
         :type page_id: PageId
@@ -383,7 +384,7 @@ class ProcessingService:
         :type request: SliceRequest
         :returns: The versions of the window and the number of all that match.
         :rtype: Slice[PageVersion]
-        :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the
+        :raises NotFoundError: If the actor has no such book, the book has no such page, or no recipe of the
                                stage has the step.
         :raises InvalidParametersError: If a step is asked for without its stage.
         """
@@ -396,7 +397,7 @@ class ProcessingService:
             :type repos: BookRepositories
             :returns: The versions of the window and the number of all that match.
             :rtype: Slice[PageVersion]
-            :raises NotFoundError: If the project has no such page, or no recipe of the
+            :raises NotFoundError: If the book has no such page, or no recipe of the
                                    stage has the step.
             :raises InvalidParametersError: If a step is asked for without its stage.
             """
@@ -429,7 +430,7 @@ class ProcessingService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_id: Identifier of the page.
         :type page_id: PageId
@@ -437,7 +438,7 @@ class ProcessingService:
         :type version_id: PageVersionId
         :returns: The version.
         :rtype: PageVersion
-        :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no such
+        :raises NotFoundError: If the actor has no such book, the book has no such page, or the page has no such
                                version.
         """
         await self._library.open(actor, book_id)
@@ -449,7 +450,7 @@ class ProcessingService:
             :type repos: BookRepositories
             :returns: The version.
             :rtype: PageVersion
-            :raises NotFoundError: If the project has no such page, or the page has no
+            :raises NotFoundError: If the book has no such page, or the page has no
                                    such version.
             """
             repos.pages.get(page_id)
@@ -462,7 +463,7 @@ class ProcessingService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_id: Identifier of the page.
         :type page_id: PageId
@@ -470,10 +471,10 @@ class ProcessingService:
         :type version_id: PageVersionId
         :returns: The queued job.
         :rtype: Job
-        :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no such
+        :raises NotFoundError: If the actor has no such book, the book has no such page, or the page has no such
                                version.
         :raises ConflictError: If the version is not ready, has no image, or is a preview, or a run, a preview, a tile
-                               cutting or a collection of the project is queued or running.
+                               cutting or a collection of the book is queued or running.
         """
         version = await self.version(actor, book_id, page_id, version_id)
         if version.renditions is None:
@@ -487,11 +488,11 @@ class ProcessingService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :returns: The number of versions and the bytes their files take.
         :rtype: CollectionReport
-        :raises NotFoundError: If the actor has no such project.
+        :raises NotFoundError: If the actor has no such book.
         """
         await self._library.open(actor, book_id)
         collection = self._starter.collection()
@@ -503,7 +504,7 @@ class ProcessingService:
             :type repos: BookRepositories
             :returns: The versions nothing needs.
             :rtype: Sequence[PageVersion]
-            :raises NotFoundError: If the actor has no such project.
+            :raises NotFoundError: If the actor has no such book.
             """
             return repos.page_versions.collectable(collection.previews_older_than)
 
@@ -517,12 +518,12 @@ class ProcessingService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :returns: The queued job, or the collection that is queued or running already.
         :rtype: Job
-        :raises NotFoundError: If the actor has no such project.
-        :raises ConflictError: If a run, a measure of the book or a tile cutting of the project is queued or running.
+        :raises NotFoundError: If the actor has no such book.
+        :raises ConflictError: If a run, a measure of the book or a tile cutting of the book is queued or running.
         """
         await self._library.open(actor, book_id)
         if (job := await self._starter.enqueue_collection(book_id)) is None:
@@ -544,7 +545,7 @@ class ProcessingService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_id: Identifier of the page.
         :type page_id: PageId
@@ -554,7 +555,7 @@ class ProcessingService:
         :type points: Sequence[Point]
         :returns: The points in the pixels of the scan, in the same order.
         :rtype: Sequence[Point]
-        :raises NotFoundError: If the actor has no such project, the project has no such page, the page has no such
+        :raises NotFoundError: If the actor has no such book, the book has no such page, the page has no such
                                version, or a version of the chain was deleted.
         :raises UnsupportedTransformError: If a version of the chain follows a mesh.
         """
@@ -567,7 +568,7 @@ class ProcessingService:
             :type repos: BookRepositories
             :returns: The points in the pixels of the scan.
             :rtype: Sequence[Point]
-            :raises NotFoundError: If the project has no such page, the page has no such
+            :raises NotFoundError: If the book has no such page, the page has no such
                                    version, or a version of the chain was deleted.
             :raises UnsupportedTransformError: If a version of the chain follows a mesh.
             """
@@ -590,7 +591,7 @@ class ProcessingService:
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param page: Page of the actor's project, which the version must belong to.
+        :param page: Page of the actor's book, which the version must belong to.
         :type page: Page
         :param stage: The stage.
         :type stage: Stage

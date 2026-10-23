@@ -36,7 +36,7 @@ PAGE_COUNT: int = 4
 class Book(NamedTuple):
     """A book of four pages of the signed-in account.
 
-    :ivar book_record: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar pages: The pages in book order.
     """
 
@@ -94,7 +94,7 @@ async def _labels(client: httpx.AsyncClient, book: Book) -> list[str]:
 
 
 class TestCreateSection:
-    """Tests for POST /projects/{project_id}/pagination-sections."""
+    """Tests for POST /books/{book_id}/pagination-sections."""
 
     async def test_makes_a_section_that_numbers_the_pages_and_answers_it(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -216,7 +216,7 @@ class TestCreateSection:
     async def test_page_of_another_book_and_book_of_another_account_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify a first page that is another project's, and a project of another account, both answer 404.
+        """Verify a first page that is another book's, and a book of another account, both answer 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -245,7 +245,7 @@ class TestCreateSection:
 
 
 class TestListSections:
-    """Tests for GET /projects/{project_id}/pagination-sections."""
+    """Tests for GET /books/{book_id}/pagination-sections."""
 
     async def test_lists_the_sections_in_book_order(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
         """Verify the sections come in the order of the pages they start at, whatever order they were made in.
@@ -268,7 +268,7 @@ class TestListSections:
     async def test_a_book_of_another_account_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify the sections of another account's project are answered not found.
+        """Verify the sections of another account's book are answered not found.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -286,7 +286,7 @@ class TestListSections:
 
 
 class TestChangeSections:
-    """Tests for PUT and DELETE /projects/{project_id}/pagination-sections/{section_id}."""
+    """Tests for PUT and DELETE /books/{book_id}/pagination-sections/{section_id}."""
 
     async def test_put_replaces_the_section_and_renumbers_the_pages(
         self, fx_client: httpx.AsyncClient, fx_book: Book

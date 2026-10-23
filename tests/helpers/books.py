@@ -27,9 +27,9 @@ MAX_UPLOAD_BYTES: int = 1024
 
 
 class Book(NamedTuple):
-    """A project with two sources, each with scans, and a page cut from a scan of the first source.
+    """A book with two sources, each with scans, and a page cut from a scan of the first source.
 
-    :ivar book_record: The project.
+    :ivar book_record: The record of the book.
     :ivar first: The source that the tests delete.
     :ivar second: The source that has to stay.
     :ivar scans: The scans of the first source, then those of the second, each with its renditions ready.
@@ -48,7 +48,7 @@ class Book(NamedTuple):
 async def commit_book(
     database: SqlDatabase, uow: UnitOfWork, sources: SourceStore, assets: AssetStore, owner: Actor | None
 ) -> Book:
-    """Commit and store a project of two sources with scans, and one page cut from a scan of the first source.
+    """Commit and store a book of two sources with scans, and one page cut from a scan of the first source.
 
     Every source has its file in the source store, and every scan and the page have their full image in the asset store.
 
@@ -60,7 +60,7 @@ async def commit_book(
     :type sources: SourceStore
     :param assets: Asset store receiving the renditions of the scans and the image of the page.
     :type assets: AssetStore
-    :param owner: The actor owning the project, or None for an account that acts nowhere else.
+    :param owner: The actor owning the book, or None for an account that acts nowhere else.
     :type owner: Actor | None
     :returns: The stored book.
     :rtype: Book

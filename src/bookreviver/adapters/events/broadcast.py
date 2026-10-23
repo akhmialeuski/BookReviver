@@ -1,4 +1,4 @@
-"""In-process event bus: every subscriber of a project gets its own bounded queue.
+"""In-process event bus: every subscriber of a book gets its own bounded queue.
 
 Progress events of an import reach the browser over SSE, and a browser that stops reading must not stall the job
 publishing them. Each subscriber therefore has a queue of ``queue_size`` events, and a full queue drops its oldest
@@ -36,9 +36,9 @@ class InProcessEventBus(EventPublisher, EventStream):
 
     @override
     async def publish(self, event: DomainEvent) -> None:
-        """Put the event into the queue of every subscriber of its project, dropping the oldest from a full queue.
+        """Put the event into the queue of every subscriber of its book, dropping the oldest from a full queue.
 
-        :param event: Event to deliver, carrying the project it belongs to.
+        :param event: Event to deliver, carrying the book it belongs to.
         :type event: DomainEvent
         """
         for queue in self._subscribers[event.book_id]:
@@ -49,9 +49,9 @@ class InProcessEventBus(EventPublisher, EventStream):
     @override
     @asynccontextmanager
     async def subscribe(self, book_id: BookId) -> AsyncGenerator[AsyncIterator[DomainEvent]]:
-        """Register a new queue for the project on entry, and remove it on exit.
+        """Register a new queue for the book on entry, and remove it on exit.
 
-        :param book_id: Project whose events are delivered.
+        :param book_id: Book whose events are delivered.
         :type book_id: BookId
         :returns: Generator yielding once the reader of the new queue, which holds every event published since entry.
         :rtype: AsyncGenerator[AsyncIterator[DomainEvent]]

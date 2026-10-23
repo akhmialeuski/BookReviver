@@ -108,7 +108,7 @@ class TestRequestSpan:
     async def test_request_is_timed_under_the_template_of_its_route_not_its_path(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_tracer: RecordingTracer
     ) -> None:
-        """Verify the span names the route with its parameter in braces, though the path holds the project's identifier.
+        """Verify the span names the route with its parameter in braces, though the path holds the book's identifier.
 
         :param fx_client: Client talking to the application with tracing on.
         :type fx_client: httpx.AsyncClient

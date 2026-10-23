@@ -34,8 +34,8 @@ class Uploads:
     """The uploads and the source the test left on disk before the application started.
 
     :ivar store: Source store over the storage root of the application.
-    :ivar interrupted: The projects with an upload an interrupted import left staged, each with the job it belonged to.
-    :ivar kept: The project and the source whose files an earlier import had promoted.
+    :ivar interrupted: The books with an upload an interrupted import left staged, each with the job it belonged to.
+    :ivar kept: The book and the source whose files an earlier import had promoted.
     """
 
     def __init__(self, store: LocalSourceStore) -> None:
@@ -49,7 +49,7 @@ class Uploads:
         self.kept: tuple[BookId, SourceId] | None = None
 
     async def leave(self) -> None:
-        """Stage an upload in each of two projects, and promote the files of a source in a third."""
+        """Stage an upload in each of two books, and promote the files of a source in a third."""
         for _ in range(2):
             book_id, job_id = BookId(uuid4()), JobId(uuid4())
             await self.store.stage(book_id, job_id, [upload(UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
@@ -135,7 +135,7 @@ class TestStart:
 
     @pytest.mark.usefixtures('fx_app')
     async def test_removes_the_staged_uploads_and_keeps_the_sources(self, fx_uploads: Uploads) -> None:
-        """Verify the upload an interrupted import left in each project is gone, and a promoted source stays.
+        """Verify the upload an interrupted import left in each book is gone, and a promoted source stays.
 
         The running application is only started, and no request is made, so the removal can only come from the start.
 

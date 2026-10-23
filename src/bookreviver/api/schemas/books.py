@@ -1,7 +1,7 @@
-"""Schemas of projects: the book description sent by clients and the project resource returned to them.
+"""Schemas of books: the description sent by clients and the book resource returned to them.
 
-``ProjectUpdate`` is a JSON Merge Patch (RFC 7396) of the description and of the project's own settings: a field left
-out keeps its value, and a field sent as null is cleared to the value a new project has for it, an empty string, an
+``BookUpdate`` is a JSON Merge Patch (RFC 7396) of the description and of the book's own settings: a field left
+out keeps its value, and a field sent as null is cleared to the value a new book has for it, an empty string, an
 empty list, no height, an unknown orthography, script or rights status, or the compact image policy. A
 list is replaced as a whole, because a merge patch cannot change an array item by item.
 The title can be replaced but never cleared, so it is left out of the null variants of the OpenAPI schema and a null
@@ -13,8 +13,8 @@ The rule of an identifier lives in the domain, where the suggestions read from f
 contributors and identifiers are nested schemas, so their list types are declared here beside them and not with the
 other constrained types.
 
-The project resource describes the book and counts it: its included pages, its sources and their scans. The sources
-themselves are resources of their own, so the project carries no field naming a source.
+The resource of a book describes it and counts it: its included pages, its sources and their scans. The sources
+themselves are resources of their own, so the resource carries no field naming a source.
 """
 
 from datetime import datetime
@@ -364,9 +364,9 @@ class BookDetailsSchema(ResponseModel):
 class BookSchema(ResponseModel):
     """A book being digitised.
 
-    :ivar id: Identifier of the project.
+    :ivar id: Identifier of the book.
     :ivar details: Bibliographic description of the book.
-    :ivar image_policy: How the images of the project's scans and page versions are stored.
+    :ivar image_policy: How the images of the book's scans and page versions are stored.
     :ivar cover_page_id: Page the library shows as the cover, the first page of the kind ``cover`` or else the first
                          page of the book, or None for a book without pages.
     :ivar page_count: Number of pages of the book, without the pages kept out of it.
@@ -374,8 +374,8 @@ class BookSchema(ResponseModel):
     :ivar scan_count: Number of scans in all the sources.
     :ivar progress: The status of every stage of the book, in the order of the pipeline.
     :ivar next_stage: The first available stage with work to do or being worked, or None when there is none.
-    :ivar created_at: When the project was created.
-    :ivar updated_at: When the project was last changed.
+    :ivar created_at: When the book was created.
+    :ivar updated_at: When the book was last changed.
     """
 
     id: BookId
@@ -392,11 +392,11 @@ class BookSchema(ResponseModel):
 
     @classmethod
     def from_overview(cls, overview: BookOverview) -> Self:
-        """Build the schema of a project and the counts of its book.
+        """Build the schema of a book and its counts.
 
-        :param overview: The project with the counts of its book.
+        :param overview: The record of the book with its counts.
         :type overview: BookOverview
-        :returns: The project resource.
+        :returns: The book resource.
         :rtype: Self
         """
         book_record = overview.book_record

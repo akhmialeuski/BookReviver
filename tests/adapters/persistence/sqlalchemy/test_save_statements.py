@@ -51,7 +51,7 @@ async def fx_stored_book(fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId) -> t
     :type fx_uow: UnitOfWorkFactory
     :param fx_owner_id: Committed account owning the book.
     :type fx_owner_id: AccountId
-    :returns: The project and its pages.
+    :returns: The book and its pages.
     :rtype: tuple[BookRecord, list[Page]]
     """
     book_record = make_record()
@@ -72,7 +72,7 @@ async def _statements_of(
     :type uow: UnitOfWork
     :param books: Registry of the books, whose engine of the writer of the book is listened to.
     :type books: BookDatabases
-    :param book_record: Project whose book the change holds.
+    :param book_record: Book whose book the change holds.
     :type book_record: BookRecord
     :param calls: Functions over the repositories of the change.
     :type calls: Sequence[Callable[[BookRepositories], object]]
@@ -87,7 +87,7 @@ async def _statements_of(
 
                 :param repos: BookRepositories of the transaction.
                 :type repos: BookRepositories
-                :param _book_record: Project of the book, which the work does not need.
+                :param _book_record: Record of the book, which the work does not need.
                 :type _book_record: BookRecord
                 :returns: The number of statements of each call.
                 :rtype: list[int]
@@ -122,7 +122,7 @@ class TestKeyedSave:
         :type fx_uow: UnitOfWorkFactory
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookDatabases
-        :param fx_stored_book: The committed project and its pages.
+        :param fx_stored_book: The committed book and its pages.
         :type fx_stored_book: tuple[BookRecord, list[Page]]
         :param save: Function that saves an entity of the page in the repository under test.
         :type save: Callable[[BookRepositories, Page], object]
@@ -144,7 +144,7 @@ class TestKeyedSave:
         :type fx_uow: UnitOfWorkFactory
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookDatabases
-        :param fx_stored_book: The committed project and its pages.
+        :param fx_stored_book: The committed book and its pages.
         :type fx_stored_book: tuple[BookRecord, list[Page]]
         """
         book_record, pages = fx_stored_book
@@ -169,7 +169,7 @@ class TestUpdateMany:
         :type fx_uow: UnitOfWorkFactory
         :param fx_books: Registry of the books of the test.
         :type fx_books: BookDatabases
-        :param fx_stored_book: The committed project and its pages.
+        :param fx_stored_book: The committed book and its pages.
         :type fx_stored_book: tuple[BookRecord, list[Page]]
         """
         book_record, pages = fx_stored_book

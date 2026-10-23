@@ -104,9 +104,9 @@ class PageLabels:
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param sections: Every section of the project.
+        :param sections: Every section of the book.
         :type sections: Sequence[PaginationSection]
-        :param pages: Every page of the project in book order.
+        :param pages: Every page of the book in book order.
         :type pages: Sequence[Page]
         :param leaving: Pages about to be deleted.
         :type leaving: Collection[PageId]

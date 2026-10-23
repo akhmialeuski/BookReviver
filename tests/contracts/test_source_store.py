@@ -64,7 +64,7 @@ async def _stage(
     :type job_id: JobId
     :param files: Uploaded files.
     :type files: UploadFile
-    :param book_id: Project receiving the upload.
+    :param book_id: Book receiving the upload.
     :type book_id: BookId
     :returns: The staged files as the store reports them.
     :rtype: Sequence[SourceFile]
@@ -81,7 +81,7 @@ async def _import(store: SourceStore, source_id: SourceId, *files: UploadFile, b
     :type source_id: SourceId
     :param files: Uploaded files.
     :type files: UploadFile
-    :param book_id: Project receiving the source.
+    :param book_id: Book receiving the source.
     :type book_id: BookId
     """
     job_id = JobId(uuid4())
@@ -96,7 +96,7 @@ async def _staged(store: SourceStore, job_id: JobId, *, book_id: BookId = BOOK_I
     :type store: SourceStore
     :param job_id: Import job whose upload is read.
     :type job_id: JobId
-    :param book_id: Project owning the upload.
+    :param book_id: Book owning the upload.
     :type book_id: BookId
     :returns: Content of every staged file, by relative name.
     :rtype: dict[str, bytes]
@@ -113,7 +113,7 @@ async def _source(store: SourceStore, source_id: SourceId, *, book_id: BookId = 
     :type store: SourceStore
     :param source_id: Source whose files are read.
     :type source_id: SourceId
-    :param book_id: Project owning the source.
+    :param book_id: Book owning the source.
     :type book_id: BookId
     :returns: Content of every file of the source, by file name.
     :rtype: dict[str, bytes]
@@ -203,7 +203,7 @@ class TestStage:
         assert_expectations()
 
     async def test_accepts_upload_to_book_with_sources(self, fx_source_store: SourceStore) -> None:
-        """Verify a project with a source takes another upload, and the source stays as it was.
+        """Verify a book with a source takes another upload, and the source stays as it was.
 
         :param fx_source_store: Source store of the storage backend under test.
         :type fx_source_store: SourceStore
@@ -496,7 +496,7 @@ class TestDiscardAllStaged:
     async def test_removes_every_staged_upload_of_every_book_and_keeps_the_sources(
         self, fx_source_store: SourceStore
     ) -> None:
-        """Verify the uploads of several jobs in several projects are gone and the promoted sources are untouched.
+        """Verify the uploads of several jobs in several books are gone and the promoted sources are untouched.
 
         :param fx_source_store: Source store of the storage backend under test.
         :type fx_source_store: SourceStore
@@ -551,7 +551,7 @@ class TestDeleteSource:
     """Contract of SourceStore.delete_source()."""
 
     async def test_removes_that_source_only(self, fx_source_store: SourceStore) -> None:
-        """Verify the deleted source's files are gone and another source of the project keeps its own.
+        """Verify the deleted source's files are gone and another source of the book keeps its own.
 
         :param fx_source_store: Source store of the storage backend under test.
         :type fx_source_store: SourceStore
@@ -584,7 +584,7 @@ class TestDeleteBook:
     """Contract of SourceStore.delete_project()."""
 
     async def test_removes_sources_and_uploads_of_that_book_only(self, fx_source_store: SourceStore) -> None:
-        """Verify the project's sources and staged upload are gone and another project keeps its source.
+        """Verify the book's sources and staged upload are gone and another book keeps its source.
 
         :param fx_source_store: Source store of the storage backend under test.
         :type fx_source_store: SourceStore
@@ -602,7 +602,7 @@ class TestDeleteBook:
             await _staged(fx_source_store, JOB_ID)
 
     async def test_book_without_files_is_not_an_error(self, fx_source_store: SourceStore) -> None:
-        """Verify deleting a project that never received an upload succeeds.
+        """Verify deleting a book that never received an upload succeeds.
 
         :param fx_source_store: Source store of the storage backend under test.
         :type fx_source_store: SourceStore

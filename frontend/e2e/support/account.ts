@@ -273,7 +273,7 @@ export async function writeScansFolder(wideScans: number): Promise<string> {
 
 /** Return the identifier of the book open in the page, read from its address. */
 export function openBookId(page: Page): string {
-  const id = new URL(page.url()).pathname.match(/\/projects\/([^/]+)/)?.[1];
+  const id = new URL(page.url()).pathname.match(/\/books\/([^/]+)/)?.[1];
   if (id === undefined) {
     throw new Error(`No book is open at ${page.url()}.`);
   }
@@ -485,7 +485,7 @@ export async function snap(page: Page, name: string): Promise<void> {
 /** Open the Import stage of the open book, which shows its files and their scans, or the drop area of an empty book. */
 export async function openImportStage(page: Page): Promise<void> {
   await page.getByTestId('stage-import').click();
-  await expect(page).toHaveURL(/\/projects\/[^/]+\/stages\/import(\?|$)/);
+  await expect(page).toHaveURL(/\/books\/[^/]+\/stages\/import(\?|$)/);
   await expect(page.getByTestId('stage-screen')).toHaveAttribute('data-stage', 'import');
   await expect(page.getByTestId('stage-title')).toHaveText('Import');
 }
@@ -493,7 +493,7 @@ export async function openImportStage(page: Page): Promise<void> {
 /** Open the Order stage of the open book, which shows its pages as a grid. */
 export async function openOrderStage(page: Page): Promise<void> {
   await page.getByTestId('stage-page-order').click();
-  await expect(page).toHaveURL(/\/projects\/[^/]+\/stages\/page-order(\?|$)/);
+  await expect(page).toHaveURL(/\/books\/[^/]+\/stages\/page-order(\?|$)/);
   await expect(page.getByTestId('order-grid')).toBeVisible();
 }
 

@@ -149,7 +149,7 @@ async def fx_database(fx_settings: Settings, fx_schema_template: Path, fx_actor:
     :type fx_settings: Settings
     :param fx_schema_template: File with every table at the head revision.
     :type fx_schema_template: Path
-    :param fx_actor: Actor whose account owns the projects the test stores.
+    :param fx_actor: Actor whose account owns the books the test stores.
     :type fx_actor: Actor
     :returns: Iterator yielding the database, with the job wait limit of the settings, and disposing of it afterwards.
     :rtype: AsyncIterator[SqlDatabase]

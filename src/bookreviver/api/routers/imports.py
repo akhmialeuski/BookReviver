@@ -1,12 +1,12 @@
 """Upload of the files of a book and start of their import.
 
-``POST /projects/{project_id}/sources`` takes any number of files, whether chosen one by one or as a whole directory,
+``POST /books/{book_id}/sources`` takes any number of files, whether chosen one by one or as a whole directory,
 puts an import job on the board and answers 202 with it at once. The files are imported in the background, and the job
-and the events of the project tell the browser how it goes.
+and the events of the book tell the browser how it goes.
 
 FastAPI parses a declared body before it runs any dependency, so a route with a ``File()`` parameter would spool the
-upload to disk before the caller is known to be signed in, to own the project or to be allowed another import. The
-route therefore declares no body. A dependency reads the form after the actor and the project have been checked, and
+upload to disk before the caller is known to be signed in, to own the book or to be allowed another import. The
+route therefore declares no body. A dependency reads the form after the actor and the book have been checked, and
 the schema of the body is given to OpenAPI by ``openapi_extra``. Starlette's parser stops at 1000 files and answers a
 400 of its own, so it is given no ceiling. The one limit is then ``max_upload_files``, which
 ``ImportService.start_import`` enforces and answers with its 413 problem for any number of files past it.
@@ -40,13 +40,13 @@ async def read_upload(
     actor: ActorDep,
     imports: FromDishka[ImportService],
 ) -> AsyncIterator[list[UploadFile]]:
-    """Read the uploaded files of the request, once the caller may import into the project.
+    """Read the uploaded files of the request, once the caller may import into the book.
 
     The form is closed when the response has been sent, which removes the temporary files it spooled.
 
     :param request: The request, whose multipart body holds the files.
     :type request: Request
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
@@ -87,14 +87,14 @@ async def upload_sources(
     actor: ActorDep,
     imports: FromDishka[ImportService],
 ) -> JobSchema:
-    """Receive the files of an upload and import them in the background, each one as a source of the project.
+    """Receive the files of an upload and import them in the background, each one as a source of the book.
 
-    The response is the queued job. Every file of the upload becomes a source of the project, and the ones the import
-    rejected, with the reason, or skipped when it was cancelled, are listed by the sources of the project until the
-    reader closes the report. A project imports one upload at a time.
+    The response is the queued job. Every file of the upload becomes a source of the book, and the ones the import
+    rejected, with the reason, or skipped when it was cancelled, are listed by the sources of the book until the
+    reader closes the report. A book imports one upload at a time.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param files: The uploaded files, read once the caller was checked.
     :type files: list[UploadFile]

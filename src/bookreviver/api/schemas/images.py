@@ -5,7 +5,7 @@ hand. It has no scheme or host because the browser resolves it against the origi
 address kept by a client or written into a pyramid then survives a change of domain, port or device address.
 
 The ``full`` image is a JPEG or a PNG, and its address names the format recorded with the scan or the page version when
-the image was written, never one worked out from the project's image policy as it is now, since a later change of the
+the image was written, never one worked out from the book's image policy as it is now, since a later change of the
 policy does not change the files already stored.
 """
 

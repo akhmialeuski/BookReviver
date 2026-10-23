@@ -44,7 +44,7 @@ export const listBooksApiV1BooksGetQueryKey = (options?: Options<ListBooksApiV1B
 /**
  * List Books
  *
- * List the projects of the signed-in account, the latest added first.
+ * List the books of the signed-in account, the latest added first.
  */
 export const listBooksApiV1BooksGetOptions = (options?: Options<ListBooksApiV1BooksGetData>) => queryOptions<ListBooksApiV1BooksGetResponse, ListBooksApiV1BooksGetError, ListBooksApiV1BooksGetResponse, ReturnType<typeof listBooksApiV1BooksGetQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -93,7 +93,7 @@ export const listBooksApiV1BooksGetInfiniteQueryKey = (options?: Options<ListBoo
 /**
  * List Books
  *
- * List the projects of the signed-in account, the latest added first.
+ * List the books of the signed-in account, the latest added first.
  */
 export const listBooksApiV1BooksGetInfiniteOptions = (options?: Options<ListBooksApiV1BooksGetData>) => {
     const opts = infiniteQueryOptions<ListBooksApiV1BooksGetResponse, ListBooksApiV1BooksGetError, InfiniteData<ListBooksApiV1BooksGetResponse>, QueryKey<Options<ListBooksApiV1BooksGetData>>, number | Pick<QueryKey<Options<ListBooksApiV1BooksGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
@@ -123,7 +123,7 @@ export const listBooksApiV1BooksGetInfiniteOptions = (options?: Options<ListBook
 /**
  * Create Book
  *
- * Create a project from the description of its book, and point to it in the ``Location`` header.
+ * Create a book from its description, and point to it in the ``Location`` header.
  */
 export const createBookApiV1BooksPostMutation = (options?: Partial<Options<CreateBookApiV1BooksPostData>>): UseMutationOptions<CreateBookApiV1BooksPostResponse, CreateBookApiV1BooksPostError, Options<CreateBookApiV1BooksPostData>> => {
     const mutationOptions: UseMutationOptions<CreateBookApiV1BooksPostResponse, CreateBookApiV1BooksPostError, Options<CreateBookApiV1BooksPostData>> = {
@@ -142,7 +142,7 @@ export const createBookApiV1BooksPostMutation = (options?: Partial<Options<Creat
 /**
  * Delete Book
  *
- * Delete a project with its pages, jobs and files.
+ * Delete a book with its pages, jobs and files.
  */
 export const deleteBookApiV1BooksBookIdDeleteMutation = (options?: Partial<Options<DeleteBookApiV1BooksBookIdDeleteData>>): UseMutationOptions<DeleteBookApiV1BooksBookIdDeleteResponse, DeleteBookApiV1BooksBookIdDeleteError, Options<DeleteBookApiV1BooksBookIdDeleteData>> => {
     const mutationOptions: UseMutationOptions<DeleteBookApiV1BooksBookIdDeleteResponse, DeleteBookApiV1BooksBookIdDeleteError, Options<DeleteBookApiV1BooksBookIdDeleteData>> = {
@@ -163,7 +163,7 @@ export const bookApiV1BooksBookIdGetQueryKey = (options: Options<BookApiV1BooksB
 /**
  * Book
  *
- * Return one project of the signed-in account.
+ * Return one book of the signed-in account.
  */
 export const bookApiV1BooksBookIdGetOptions = (options: Options<BookApiV1BooksBookIdGetData>) => queryOptions<BookApiV1BooksBookIdGetResponse, BookApiV1BooksBookIdGetError, BookApiV1BooksBookIdGetResponse, ReturnType<typeof bookApiV1BooksBookIdGetQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -181,10 +181,10 @@ export const bookApiV1BooksBookIdGetOptions = (options: Options<BookApiV1BooksBo
 /**
  * Update Book
  *
- * Merge the body into the project, as JSON Merge Patch (RFC 7396) defines.
+ * Merge the body into the book, as JSON Merge Patch (RFC 7396) defines.
  *
- * A field left out keeps its value and a field sent as null is cleared to the value a new project has for it; the
- * title cannot be cleared, and the cover must be a page of the project.
+ * A field left out keeps its value and a field sent as null is cleared to the value a new book has for it; the
+ * title cannot be cleared, and the cover must be a page of the book.
  */
 export const updateBookApiV1BooksBookIdPatchMutation = (options?: Partial<Options<UpdateBookApiV1BooksBookIdPatchData>>): UseMutationOptions<UpdateBookApiV1BooksBookIdPatchResponse, UpdateBookApiV1BooksBookIdPatchError, Options<UpdateBookApiV1BooksBookIdPatchData>> => {
     const mutationOptions: UseMutationOptions<UpdateBookApiV1BooksBookIdPatchResponse, UpdateBookApiV1BooksBookIdPatchError, Options<UpdateBookApiV1BooksBookIdPatchData>> = {
@@ -226,7 +226,7 @@ export const exportBookApiV1BooksBookIdArchiveGetOptions = (options: Options<Exp
 /**
  * Import Book
  *
- * Import the archive of a book as a new project of the signed-in account, and point to it in ``Location``.
+ * Import the archive of a book as a new book of the signed-in account, and point to it in ``Location``.
  *
  * The book keeps its pages, versions, history, recipes and settings, and gets a new identifier, so the same archive
  * can be imported twice. An archive that is not the archive of a book is refused, and so is one exported by a newer
@@ -251,7 +251,7 @@ export const listSourcesApiV1BooksBookIdSourcesGetQueryKey = (options: Options<L
 /**
  * List Sources
  *
- * List the sources of a project in the order they were recorded, the imported ones unless ``status`` says more.
+ * List the sources of a book in the order they were recorded, the imported ones unless ``status`` says more.
  *
  * The rejected and skipped files are the report of an import: the files no check let through, with their reasons, and
  * the files a cancelled import never reached.
@@ -274,7 +274,7 @@ export const listSourcesApiV1BooksBookIdSourcesGetInfiniteQueryKey = (options: O
 /**
  * List Sources
  *
- * List the sources of a project in the order they were recorded, the imported ones unless ``status`` says more.
+ * List the sources of a book in the order they were recorded, the imported ones unless ``status`` says more.
  *
  * The rejected and skipped files are the report of an import: the files no check let through, with their reasons, and
  * the files a cancelled import never reached.
@@ -307,11 +307,11 @@ export const listSourcesApiV1BooksBookIdSourcesGetInfiniteOptions = (options: Op
 /**
  * Upload Sources
  *
- * Receive the files of an upload and import them in the background, each one as a source of the project.
+ * Receive the files of an upload and import them in the background, each one as a source of the book.
  *
- * The response is the queued job. Every file of the upload becomes a source of the project, and the ones the import
- * rejected, with the reason, or skipped when it was cancelled, are listed by the sources of the project until the
- * reader closes the report. A project imports one upload at a time.
+ * The response is the queued job. Every file of the upload becomes a source of the book, and the ones the import
+ * rejected, with the reason, or skipped when it was cancelled, are listed by the sources of the book until the
+ * reader closes the report. A book imports one upload at a time.
  */
 export const uploadSourcesApiV1BooksBookIdSourcesPostMutation = (options?: Partial<Options<UploadSourcesApiV1BooksBookIdSourcesPostData>>): UseMutationOptions<UploadSourcesApiV1BooksBookIdSourcesPostResponse, UploadSourcesApiV1BooksBookIdSourcesPostError, Options<UploadSourcesApiV1BooksBookIdSourcesPostData>> => {
     const mutationOptions: UseMutationOptions<UploadSourcesApiV1BooksBookIdSourcesPostResponse, UploadSourcesApiV1BooksBookIdSourcesPostError, Options<UploadSourcesApiV1BooksBookIdSourcesPostData>> = {
@@ -330,9 +330,9 @@ export const uploadSourcesApiV1BooksBookIdSourcesPostMutation = (options?: Parti
 /**
  * Delete Unimported Sources
  *
- * Delete the rejected and skipped files of a project, which is closing the report of an import.
+ * Delete the rejected and skipped files of a book, which is closing the report of an import.
  *
- * The imported sources stay. The project answers 409 while it imports.
+ * The imported sources stay. The book answers 409 while it imports.
  */
 export const deleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteMutation = (options?: Partial<Options<DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteData>>): UseMutationOptions<DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteResponse, DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteError, Options<DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteData>> => {
     const mutationOptions: UseMutationOptions<DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteResponse, DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteError, Options<DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteData>> = {
@@ -353,7 +353,7 @@ export const deleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteMutat
  *
  * Delete a source with its files and its scans, leaving the pages of the book with their own images.
  *
- * The pages made from the source lose only the reference to their scan. The project answers 409 while it imports.
+ * The pages made from the source lose only the reference to their scan. The book answers 409 while it imports.
  */
 export const deleteSourceApiV1BooksBookIdSourcesSourceIdDeleteMutation = (options?: Partial<Options<DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteData>>): UseMutationOptions<DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteResponse, DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteError, Options<DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteData>> => {
     const mutationOptions: UseMutationOptions<DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteResponse, DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteError, Options<DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteData>> = {
@@ -374,7 +374,7 @@ export const getSourceApiV1BooksBookIdSourcesSourceIdGetQueryKey = (options: Opt
 /**
  * Get Source
  *
- * Return one source of a project.
+ * Return one source of a book.
  */
 export const getSourceApiV1BooksBookIdSourcesSourceIdGetOptions = (options: Options<GetSourceApiV1BooksBookIdSourcesSourceIdGetData>) => queryOptions<GetSourceApiV1BooksBookIdSourcesSourceIdGetResponse, GetSourceApiV1BooksBookIdSourcesSourceIdGetError, GetSourceApiV1BooksBookIdSourcesSourceIdGetResponse, ReturnType<typeof getSourceApiV1BooksBookIdSourcesSourceIdGetQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -394,7 +394,7 @@ export const listScansApiV1BooksBookIdScansGetQueryKey = (options: Options<ListS
 /**
  * List Scans
  *
- * List the scans of a project source by source, or of one source, with the paths of their images once cut.
+ * List the scans of a book source by source, or of one source, with the paths of their images once cut.
  */
 export const listScansApiV1BooksBookIdScansGetOptions = (options: Options<ListScansApiV1BooksBookIdScansGetData>) => queryOptions<ListScansApiV1BooksBookIdScansGetResponse, ListScansApiV1BooksBookIdScansGetError, ListScansApiV1BooksBookIdScansGetResponse, ReturnType<typeof listScansApiV1BooksBookIdScansGetQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -414,7 +414,7 @@ export const listScansApiV1BooksBookIdScansGetInfiniteQueryKey = (options: Optio
 /**
  * List Scans
  *
- * List the scans of a project source by source, or of one source, with the paths of their images once cut.
+ * List the scans of a book source by source, or of one source, with the paths of their images once cut.
  */
 export const listScansApiV1BooksBookIdScansGetInfiniteOptions = (options: Options<ListScansApiV1BooksBookIdScansGetData>) => {
     const opts = infiniteQueryOptions<ListScansApiV1BooksBookIdScansGetResponse, ListScansApiV1BooksBookIdScansGetError, InfiniteData<ListScansApiV1BooksBookIdScansGetResponse>, QueryKey<Options<ListScansApiV1BooksBookIdScansGetData>>, number | Pick<QueryKey<Options<ListScansApiV1BooksBookIdScansGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
@@ -468,7 +468,7 @@ export const listPagesApiV1BooksBookIdPagesGetQueryKey = (options: Options<ListP
 /**
  * List Pages
  *
- * List the pages of a project in book order, up to a thousand at once, with the paths of their images.
+ * List the pages of a book in book order, up to a thousand at once, with the paths of their images.
  */
 export const listPagesApiV1BooksBookIdPagesGetOptions = (options: Options<ListPagesApiV1BooksBookIdPagesGetData>) => queryOptions<ListPagesApiV1BooksBookIdPagesGetResponse, ListPagesApiV1BooksBookIdPagesGetError, ListPagesApiV1BooksBookIdPagesGetResponse, ReturnType<typeof listPagesApiV1BooksBookIdPagesGetQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -488,7 +488,7 @@ export const listPagesApiV1BooksBookIdPagesGetInfiniteQueryKey = (options: Optio
 /**
  * List Pages
  *
- * List the pages of a project in book order, up to a thousand at once, with the paths of their images.
+ * List the pages of a book in book order, up to a thousand at once, with the paths of their images.
  */
 export const listPagesApiV1BooksBookIdPagesGetInfiniteOptions = (options: Options<ListPagesApiV1BooksBookIdPagesGetData>) => {
     const opts = infiniteQueryOptions<ListPagesApiV1BooksBookIdPagesGetResponse, ListPagesApiV1BooksBookIdPagesGetError, InfiniteData<ListPagesApiV1BooksBookIdPagesGetResponse>, QueryKey<Options<ListPagesApiV1BooksBookIdPagesGetData>>, number | Pick<QueryKey<Options<ListPagesApiV1BooksBookIdPagesGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
@@ -562,7 +562,7 @@ export const pageApiV1BooksBookIdPagesPageIdGetQueryKey = (options: Options<Page
 /**
  * Page
  *
- * Return one page of a project.
+ * Return one page of a book.
  */
 export const pageApiV1BooksBookIdPagesPageIdGetOptions = (options: Options<PageApiV1BooksBookIdPagesPageIdGetData>) => queryOptions<PageApiV1BooksBookIdPagesPageIdGetResponse, PageApiV1BooksBookIdPagesPageIdGetError, PageApiV1BooksBookIdPagesPageIdGetResponse, ReturnType<typeof pageApiV1BooksBookIdPagesPageIdGetQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -680,7 +680,7 @@ export const fillBlankPagesApiV1BooksBookIdPagesBlankFillPostMutation = (options
  * pages of the book that have no content type yet, which a job queued by the end of the preparation of the images
  * does too, and it leaves the pages the user set by hand and the covers, the endpapers and the blank pages alone. With
  * ``page_ids`` it goes over those pages whatever they have, and gives the ones the user set by hand back to the
- * detection. The answer is 409 while the content of the pages of the project is being detected. The change reaches the
+ * detection. The answer is 409 while the content of the pages of the book is being detected. The change reaches the
  * browser as a ``book-changed`` event.
  */
 export const detectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostMutation = (options?: Partial<Options<DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostData>>): UseMutationOptions<DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostResponse, DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostError, Options<DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostData>> => {
@@ -775,7 +775,7 @@ export const createPagesApiV1BooksBookIdPagesBatchPostMutation = (options?: Part
  * Bind a scan to a placeholder, which becomes a page of that scan once a job has copied its image.
  *
  * The answer is 409 for a page that is not a placeholder, a scan that is not cut yet, and a scan another page shows,
- * unless ``take_over`` is set, which deletes that page. A scan of another project is a 404.
+ * unless ``take_over`` is set, which deletes that page. A scan of another book is a 404.
  */
 export const attachScanApiV1BooksBookIdPagesPageIdScanPutMutation = (options?: Partial<Options<AttachScanApiV1BooksBookIdPagesPageIdScanPutData>>): UseMutationOptions<AttachScanApiV1BooksBookIdPagesPageIdScanPutResponse, AttachScanApiV1BooksBookIdPagesPageIdScanPutError, Options<AttachScanApiV1BooksBookIdPagesPageIdScanPutData>> => {
     const mutationOptions: UseMutationOptions<AttachScanApiV1BooksBookIdPagesPageIdScanPutResponse, AttachScanApiV1BooksBookIdPagesPageIdScanPutError, Options<AttachScanApiV1BooksBookIdPagesPageIdScanPutData>> = {
@@ -796,7 +796,7 @@ export const listPaginationSectionsApiV1BooksBookIdPaginationSectionsGetQueryKey
 /**
  * List Pagination Sections
  *
- * List the pagination sections of a project in book order, which is the order of the pages they start at.
+ * List the pagination sections of a book in book order, which is the order of the pages they start at.
  */
 export const listPaginationSectionsApiV1BooksBookIdPaginationSectionsGetOptions = (options: Options<ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetData>) => queryOptions<ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetResponse, ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetError, ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetResponse, ReturnType<typeof listPaginationSectionsApiV1BooksBookIdPaginationSectionsGetQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -816,7 +816,7 @@ export const listPaginationSectionsApiV1BooksBookIdPaginationSectionsGetInfinite
 /**
  * List Pagination Sections
  *
- * List the pagination sections of a project in book order, which is the order of the pages they start at.
+ * List the pagination sections of a book in book order, which is the order of the pages they start at.
  */
 export const listPaginationSectionsApiV1BooksBookIdPaginationSectionsGetInfiniteOptions = (options: Options<ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetData>) => {
     const opts = infiniteQueryOptions<ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetResponse, ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetError, InfiniteData<ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetResponse>, QueryKey<Options<ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetData>>, number | Pick<QueryKey<Options<ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
@@ -848,7 +848,7 @@ export const listPaginationSectionsApiV1BooksBookIdPaginationSectionsGetInfinite
  *
  * Make a section that starts at a page, and renumber the pages it takes.
  *
- * The answer is 404 when the page is not a page of the project, and 409 when another section that takes the same
+ * The answer is 404 when the page is not a page of the book, and 409 when another section that takes the same
  * pages starts at that page already, or when a number does not fit the style, such as 4000 in Roman numerals.
  */
 export const createPaginationSectionApiV1BooksBookIdPaginationSectionsPostMutation = (options?: Partial<Options<CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostData>>): UseMutationOptions<CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostResponse, CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostError, Options<CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostData>> => {
@@ -889,7 +889,7 @@ export const deletePaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdD
  *
  * Replace the first page and the rule of a section, and renumber the pages.
  *
- * The answer is 404 when the section or the page is not of the project, and 409 when another section that takes the
+ * The answer is 404 when the section or the page is not of the book, and 409 when another section that takes the
  * same pages starts at that page, or when a number does not fit the style.
  */
 export const putPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutMutation = (options?: Partial<Options<PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutData>>): UseMutationOptions<PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutResponse, PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutError, Options<PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutData>> => {
@@ -1074,7 +1074,7 @@ export const listRecipesApiV1BooksBookIdStagesStageRecipesGetQueryKey = (options
 /**
  * List Recipes
  *
- * List the recipes of a stage, one for each kind of page, which a project creates the first time it is asked.
+ * List the recipes of a stage, one for each kind of page, which a book creates the first time it is asked.
  */
 export const listRecipesApiV1BooksBookIdStagesStageRecipesGetOptions = (options: Options<ListRecipesApiV1BooksBookIdStagesStageRecipesGetData>) => queryOptions<ListRecipesApiV1BooksBookIdStagesStageRecipesGetResponse, ListRecipesApiV1BooksBookIdStagesStageRecipesGetError, ListRecipesApiV1BooksBookIdStagesStageRecipesGetResponse, ReturnType<typeof listRecipesApiV1BooksBookIdStagesStageRecipesGetQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -1094,7 +1094,7 @@ export const listRecipesApiV1BooksBookIdStagesStageRecipesGetInfiniteQueryKey = 
 /**
  * List Recipes
  *
- * List the recipes of a stage, one for each kind of page, which a project creates the first time it is asked.
+ * List the recipes of a stage, one for each kind of page, which a book creates the first time it is asked.
  */
 export const listRecipesApiV1BooksBookIdStagesStageRecipesGetInfiniteOptions = (options: Options<ListRecipesApiV1BooksBookIdStagesStageRecipesGetData>) => {
     const opts = infiniteQueryOptions<ListRecipesApiV1BooksBookIdStagesStageRecipesGetResponse, ListRecipesApiV1BooksBookIdStagesStageRecipesGetError, InfiniteData<ListRecipesApiV1BooksBookIdStagesStageRecipesGetResponse>, QueryKey<Options<ListRecipesApiV1BooksBookIdStagesStageRecipesGetData>>, number | Pick<QueryKey<Options<ListRecipesApiV1BooksBookIdStagesStageRecipesGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(
@@ -1173,7 +1173,7 @@ export const resetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPostMutat
  *
  * Run a stage over some pages, each by the recipe of its kind, in the background, and answer with the queued job.
  *
- * The job makes a version for every step on every page and reports one step of progress for each page. A project runs
+ * The job makes a version for every step on every page and reports one step of progress for each page. A book runs
  * one stage at a time, and another run while one is queued or running answers 409. A run keeps the settings the pages
  * changed for its steps and the manual edits they read. A mode that takes the edits or the settings away answers 409
  * until the body confirms it, when it would take them from any page.
@@ -1245,7 +1245,7 @@ export const previewStepApiV1BooksBookIdStagesStagePreviewPostMutation = (option
  * The job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and
  * writes the median line height and a page size of the median block with its margins into the parameters of the
  * ``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A preview of the
- * project is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.
+ * book is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.
  */
 export const measureBookApiV1BooksBookIdStagesGeometryMeasurePostMutation = (options?: Partial<Options<MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostData>>): UseMutationOptions<MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostResponse, MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostError, Options<MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostData>> => {
     const mutationOptions: UseMutationOptions<MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostResponse, MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostError, Options<MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostData>> = {
@@ -1438,7 +1438,7 @@ export const collectableVersionsApiV1BooksBookIdVersionsCollectableGetQueryKey =
  *
  * Count the versions a collection would delete now and the space their files take, and change nothing.
  *
- * The versions are the ones ``POST /projects/{project_id}/versions/collect`` deletes, chosen by the same rule.
+ * The versions are the ones ``POST /books/{book_id}/versions/collect`` deletes, chosen by the same rule.
  */
 export const collectableVersionsApiV1BooksBookIdVersionsCollectableGetOptions = (options: Options<CollectableVersionsApiV1BooksBookIdVersionsCollectableGetData>) => queryOptions<CollectableVersionsApiV1BooksBookIdVersionsCollectableGetResponse, CollectableVersionsApiV1BooksBookIdVersionsCollectableGetError, CollectableVersionsApiV1BooksBookIdVersionsCollectableGetResponse, ReturnType<typeof collectableVersionsApiV1BooksBookIdVersionsCollectableGetQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -1747,7 +1747,7 @@ export const applyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostMutatio
  * Record which profile a recipe of a book was made from, so the book can tell how its steps differ from it.
  *
  * The steps do not change and no page goes stale. A profile of another account answers 404, and so does a recipe the
- * project does not have, and a profile of another stage answers 422.
+ * book does not have, and a profile of another stage answers 422.
  */
 export const putRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutMutation = (options?: Partial<Options<PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutData>>): UseMutationOptions<PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutResponse, PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutError, Options<PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutData>> => {
     const mutationOptions: UseMutationOptions<PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutResponse, PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutError, Options<PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutData>> = {
@@ -1994,8 +1994,8 @@ export const putValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePutMutation
  * The results are the versions the step made on the page and the versions that read them, with their files and their
  * marks. The stage of the page stands on the version the step read, marked stale, and has no current version when the
  * step is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The
- * changes of a batch on other pages stay. A preview of the project, queued or running, is cancelled first. The answer
- * is 409 while a run, a measure of the book, a tile cutting or a collection of the project is queued or running, and
+ * changes of a batch on other pages stay. A preview of the book, queued or running, is cancelled first. The answer
+ * is 409 while a run, a measure of the book, a tile cutting or a collection of the book is queued or running, and
  * 404 when no recipe of the stage has the step.
  */
 export const clearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteMutation = (options?: Partial<Options<ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteData>>): UseMutationOptions<ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteResponse, ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteError, Options<ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteData>> => {
@@ -2205,7 +2205,7 @@ export const listBookJobsApiV1BooksBookIdJobsGetQueryKey = (options: Options<Lis
 /**
  * List Book Jobs
  *
- * List the jobs of a project, the newest first, or only the ones queued or running with ``active=true``.
+ * List the jobs of a book, the newest first, or only the ones queued or running with ``active=true``.
  */
 export const listBookJobsApiV1BooksBookIdJobsGetOptions = (options: Options<ListBookJobsApiV1BooksBookIdJobsGetData>) => queryOptions<ListBookJobsApiV1BooksBookIdJobsGetResponse, ListBookJobsApiV1BooksBookIdJobsGetError, ListBookJobsApiV1BooksBookIdJobsGetResponse, ReturnType<typeof listBookJobsApiV1BooksBookIdJobsGetQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -2225,7 +2225,7 @@ export const listBookJobsApiV1BooksBookIdJobsGetInfiniteQueryKey = (options: Opt
 /**
  * List Book Jobs
  *
- * List the jobs of a project, the newest first, or only the ones queued or running with ``active=true``.
+ * List the jobs of a book, the newest first, or only the ones queued or running with ``active=true``.
  */
 export const listBookJobsApiV1BooksBookIdJobsGetInfiniteOptions = (options: Options<ListBookJobsApiV1BooksBookIdJobsGetData>) => {
     const opts = infiniteQueryOptions<ListBookJobsApiV1BooksBookIdJobsGetResponse, ListBookJobsApiV1BooksBookIdJobsGetError, InfiniteData<ListBookJobsApiV1BooksBookIdJobsGetResponse>, QueryKey<Options<ListBookJobsApiV1BooksBookIdJobsGetData>>, number | Pick<QueryKey<Options<ListBookJobsApiV1BooksBookIdJobsGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(

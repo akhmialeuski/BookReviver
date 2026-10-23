@@ -57,7 +57,7 @@ MASK_EDITORS: frozenset[EditorKind] = frozenset({EditorKind.BRUSH_MASK})
 
 
 class EditService:
-    """Saves, lists and deletes the manual edits of the pages of the acting account's projects.
+    """Saves, lists and deletes the manual edits of the pages of the acting account's books.
 
     :ivar UPLOAD_CHUNK_BYTES: Bytes of a mask read from an upload at a time.
     """
@@ -101,7 +101,7 @@ class EditService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param key: The page, the stage and the step that reads the edit.
         :type key: PageStepKey
@@ -111,7 +111,7 @@ class EditService:
         :type mask: IncomingFile | None
         :returns: The edit as stored, with its hash.
         :rtype: PageEdit
-        :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the stage
+        :raises NotFoundError: If the actor has no such book, the book has no such page, or no recipe of the stage
                                has such a step.
         :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its shape
                                         or its mask or has one it should not.
@@ -119,11 +119,11 @@ class EditService:
         await self._library.open(actor, book_id)
 
         def check(repos: BookRepositories) -> None:
-            """Require the project, the page and the edit to be as the request says.
+            """Require the book, the page and the edit to be as the request says.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :raises NotFoundError: If the project has no such page, or no recipe of the
+            :raises NotFoundError: If the book has no such page, or no recipe of the
                                    stage has such a step.
             :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its
                                             shape or its mask or has one it should not.
@@ -158,9 +158,9 @@ class EditService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it.
+            :param _book_record: The record of the book as the change finds it.
             :type _book_record: BookRecord
-            :raises NotFoundError: If the project has no such page, or no recipe of the
+            :raises NotFoundError: If the book has no such page, or no recipe of the
                                    stage has such a step.
             :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its
                                             shape or its mask or has one it should not.
@@ -182,7 +182,7 @@ class EditService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_id: Identifier of the page.
         :type page_id: PageId
@@ -190,7 +190,7 @@ class EditService:
         :type stage: Stage
         :returns: The edits of the stage.
         :rtype: Sequence[PageEdit]
-        :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        :raises NotFoundError: If the actor has no such book, or the book has no such page.
         """
         await self._library.open(actor, book_id)
 
@@ -201,7 +201,7 @@ class EditService:
             :type repos: BookRepositories
             :returns: The edits of the stage.
             :rtype: list[PageEdit]
-            :raises NotFoundError: If the project has no such page.
+            :raises NotFoundError: If the book has no such page.
             """
             repos.pages.get(page_id)
             states = repos.page_step_states.list_for_page(page_id, stage)
@@ -216,11 +216,11 @@ class EditService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param key: The page, the stage and the step that reads the edit.
         :type key: PageStepKey
-        :raises NotFoundError: If the actor has no such project, the project has no such page, or the step has no edit
+        :raises NotFoundError: If the actor has no such book, the book has no such page, or the step has no edit
                                there.
         """
         await self._library.open(actor, book_id)
@@ -230,9 +230,9 @@ class EditService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it.
+            :param _book_record: The record of the book as the change finds it.
             :type _book_record: BookRecord
-            :raises NotFoundError: If the project has no such page, or the step has no
+            :raises NotFoundError: If the book has no such page, or the step has no
                                    edit there.
             """
             repos.pages.get(key.page_id)
@@ -310,7 +310,7 @@ class EditService:
     async def _receive(self, keys: BookKeys, key: PageStepKey, mask: IncomingFile) -> tuple[str, StorageKey]:
         """Write an uploaded mask to a scratch key, and work out its digest while it streams in.
 
-        :param keys: Keys of the project.
+        :param keys: Keys of the book.
         :type keys: BookKeys
         :param key: The page, the stage and the step that reads the edit.
         :type key: PageStepKey

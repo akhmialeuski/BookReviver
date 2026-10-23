@@ -2,7 +2,7 @@ import { createFileRoute, redirect } from '@tanstack/react-router';
 import { openBook } from '@/features/place/open';
 
 /**
- * The address of one book, `/projects/<id>`, which shows nothing of its own and sends the reader to where the book was
+ * The address of one book, `/books/<id>`, which shows nothing of its own and sends the reader to where the book was
  * left.
  *
  * The server keeps the place of the account in the book, so the book opens on the same stage, page, layout and filter,

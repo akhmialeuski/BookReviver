@@ -60,13 +60,13 @@ def fx_extra_providers(fx_fakes: JobFakes) -> Sequence[Provider]:
 
 @pytest.fixture
 async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> BookRecord:
-    """Store a project of the signed-in account with no sources.
+    """Store a book of the signed-in account with no sources.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
-    :returns: The stored project.
+    :returns: The stored book.
     :rtype: BookRecord
     """
     book_record = make_record()

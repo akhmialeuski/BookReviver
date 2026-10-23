@@ -1,4 +1,4 @@
-"""Tests for POST /projects/{project_id}/sources, from an upload to the sources, pages and events of the book."""
+"""Tests for POST /books/{book_id}/sources, from an upload to the sources, pages and events of the book."""
 
 from contextlib import asynccontextmanager
 from http import HTTPStatus
@@ -76,22 +76,22 @@ type EventListener = Callable[[BookId, int], AbstractAsyncContextManager[EventSt
 
 @pytest.fixture
 def fx_listen(fx_app: FastAPI, fx_fakes: JobFakes) -> EventListener:
-    """Return a function that listens to the events of a project as a browser tab does, with the subscription in place.
+    """Return a function that listens to the events of a book as a browser tab does, with the subscription in place.
 
     :param fx_app: The running application.
     :type fx_app: FastAPI
     :param fx_fakes: Adapters the application runs on, whose event bus announces the subscription.
     :type fx_fakes: JobFakes
-    :returns: Function taking the project and the number of events to collect, and returning a context manager whose
+    :returns: Function taking the book and the number of events to collect, and returning a context manager whose
               block runs while the stream is open and which ends when the events have arrived.
     :rtype: EventListener
     """
 
     @asynccontextmanager
     async def listen(book_id: BookId, count: int) -> AsyncGenerator[EventStreamReader]:
-        """Open the stream of a project, and wait at the end of the block until ``count`` events have arrived.
+        """Open the stream of a book, and wait at the end of the block until ``count`` events have arrived.
 
-        :param book_id: Project whose events are listened to.
+        :param book_id: Book whose events are listened to.
         :type book_id: BookId
         :param count: Number of events to collect before the stream is closed.
         :type count: int
@@ -140,7 +140,7 @@ class TestUploadSources:
         :type fx_import: ImportWatch
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
@@ -188,11 +188,11 @@ class TestUploadSources:
         One change stores the source with its pages, and the next the scan with the result of its page. There is no
         event per page, since the parts a change names are read again whole.
 
-        :param fx_listen: Function listening to the events of a project, as a browser tab does.
+        :param fx_listen: Function listening to the events of a book, as a browser tab does.
         :type fx_listen: EventListener
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
@@ -222,7 +222,7 @@ class TestUploadSources:
         :type fx_client: httpx.AsyncClient
         :param fx_import: Reader of the imports the application runs.
         :type fx_import: ImportWatch
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
@@ -264,7 +264,7 @@ class TestUploadSources:
         :type fx_import: ImportWatch
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
@@ -292,7 +292,7 @@ class TestUploadSources:
     async def test_book_of_another_account_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, tmp_path: Path
     ) -> None:
-        """Verify an upload to a project of another account answers 404, as if the project did not exist.
+        """Verify an upload to a book of another account answers 404, as if the book did not exist.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
@@ -319,7 +319,7 @@ class TestUploadSources:
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         """
         response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book.id), data={'other': 'value'})
@@ -366,7 +366,7 @@ class TestUploadSources:
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         """
         response = await fx_client.post(
@@ -423,13 +423,13 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
     async def test_book_that_is_importing_is_refused_unread(
         self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_book: BookRecord, tmp_path: Path
     ) -> None:
-        """Verify an upload to a project that already imports gets a 409 problem without its files being read.
+        """Verify an upload to a book that already imports gets a 409 problem without its files being read.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
@@ -453,7 +453,7 @@ class TestUploadIsRefusedBeforeItsBodyIsRead:
         :type fx_app: FastAPI
         :param fx_client: Client without a session.
         :type fx_client: httpx.AsyncClient
-        :param fx_book: Project of the account the test otherwise signs in as.
+        :param fx_book: Book of the account the test otherwise signs in as.
         :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path

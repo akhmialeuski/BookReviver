@@ -13,8 +13,8 @@ import { StageScreen } from '@/features/workspace/StageScreen';
 import { MESSAGES } from '@/shared/messages';
 
 /**
- * One stage of one book, `/projects/<id>/stages/<stage>?page=&scan=&source=&view=&compare=&filter=`, and with a step
- * open `/projects/<id>/stages/<stage>/steps/<step>?...`.
+ * One stage of one book, `/books/<id>/stages/<stage>?page=&scan=&source=&view=&compare=&filter=`, and with a step
+ * open `/books/<id>/stages/<stage>/steps/<step>?...`.
  *
  * The stage is a segment of the path, the step a child segment, and the rest of the view is in the search params, so any
  * view can be linked and reloaded. The child routes draw nothing, so moving between steps leaves this screen mounted, and

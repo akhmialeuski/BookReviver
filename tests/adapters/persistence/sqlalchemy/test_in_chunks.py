@@ -82,7 +82,7 @@ async def _seed_book(uow: UnitOfWork, owner_id: AccountId) -> tuple[BookRecord, 
     :type uow: UnitOfWork
     :param owner_id: Account owning the book.
     :type owner_id: AccountId
-    :returns: The project, the pages in book order and the versions in the order they were created.
+    :returns: The book, the pages in book order and the versions in the order they were created.
     :rtype: tuple[BookRecord, list[Page], list[PageVersion]]
     """
     book_record = make_record()
@@ -95,7 +95,7 @@ async def _seed_book(uow: UnitOfWork, owner_id: AccountId) -> tuple[BookRecord, 
 
         :param repos: BookRepositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: Project of the book, which the work does not need.
+        :param _book_record: Record of the book, which the work does not need.
         :type _book_record: BookRecord
         """
         for page in pages:
@@ -128,7 +128,7 @@ class TestListsLongerThanAChunk:
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Account that may own projects.
+        :param fx_owner_id: Account that may own books.
         :type fx_owner_id: AccountId
         """
         uow = fx_uow()
@@ -155,7 +155,7 @@ class TestListsLongerThanAChunk:
         :type fx_uow: UnitOfWorkFactory
         :param fx_books: Registry of the books of the test, whose engines of the book are listened to.
         :type fx_books: BookDatabases
-        :param fx_owner_id: Account that may own projects.
+        :param fx_owner_id: Account that may own books.
         :type fx_owner_id: AccountId
         """
         uow = fx_uow()
@@ -179,11 +179,11 @@ class TestListsLongerThanAChunk:
         def delete_versions(repos: BookRepositories, _book_record: BookRecord) -> Statements:
             """Delete the versions by their identifiers, and count the statements that took.
 
-            Only the deletion is counted, not the statements that begin the transaction or read the project.
+            Only the deletion is counted, not the statements that begin the transaction or read the book.
 
             :param repos: BookRepositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             :returns: The counter of the statements the deletion sent.
             :rtype: Statements

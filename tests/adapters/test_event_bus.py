@@ -15,7 +15,7 @@ class TestSubscribe:
     """Tests for InProcessEventBus.subscribe()."""
 
     async def test_subscription_keeps_only_its_book_events_from_entry(self) -> None:
-        """Verify a subscription keeps its project's events published before the first read, and no other project's."""
+        """Verify a subscription keeps its book's events published before the first read, and no other book's."""
         bus = InProcessEventBus(queue_size=QUEUE_SIZE)
         mine, other = make_record(), make_record()
         async with bus.subscribe(mine.id) as events:

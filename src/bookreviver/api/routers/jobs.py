@@ -1,12 +1,12 @@
-"""Background job state, cancellation and the event stream of a project.
+"""Background job state, cancellation and the event stream of a book.
 
-The job routes live under ``/jobs`` and the event stream under ``/projects/{project_id}/events``, so the module holds
+The job routes live under ``/jobs`` and the event stream under ``/books/{book_id}/events``, so the module holds
 one router per prefix and joins them under the ``jobs`` tag. The jobs live in the memory of the API process, so a job
 the process does not hold, such as one that ended before the process started, is answered with 404.
 
 The subscription is held by a dependency with ``yield`` rather than inside the endpoint. FastAPI sends the response
 headers as soon as a streaming endpoint starts, so a refusal raised inside it could no longer become a problem
-response. Raised in the dependency, a project of another account is still answered with 404 before any event is sent.
+response. Raised in the dependency, a book of another account is still answered with 404 before any event is sent.
 The dependency subscribes before the endpoint runs, so events published while the headers go out are kept, and FastAPI
 leaves it only after the stream ends, which unsubscribes at once. Domain events without a browser event are skipped.
 """
@@ -88,10 +88,10 @@ async def list_book_jobs(
     actor: ActorDep,
     service: JobServiceDep,
 ) -> Page[JobSchema]:
-    """List the jobs of a project, the newest first, or only the ones queued or running with ``active=true``.
+    """List the jobs of a book, the newest first, or only the ones queued or running with ``active=true``.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param query: Page number and size, and whether to list running jobs alone.
     :type query: JobQuery
@@ -99,7 +99,7 @@ async def list_book_jobs(
     :type actor: Actor
     :param service: Job service of the request.
     :type service: JobService
-    :returns: One page of the project's jobs.
+    :returns: One page of the book's jobs.
     :rtype: Page[JobSchema]
     """
     pager = Pager[Job, JobSchema](query, JobSchema.model_validate)
@@ -108,15 +108,15 @@ async def list_book_jobs(
 
 @inject
 async def open_event_stream(book_id: BookIdPath, actor: ActorDep, service: JobServiceDep) -> AsyncIterator[BookEvents]:
-    """Subscribe to the project's events for as long as the response streams, or refuse before it starts.
+    """Subscribe to the book's events for as long as the response streams, or refuse before it starts.
 
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
     :param service: Job service of the request.
     :type service: JobService
-    :returns: Iterator yielding once the project's events published since subscribing, and unsubscribing afterwards.
+    :returns: Iterator yielding once the book's events published since subscribing, and unsubscribing afterwards.
     :rtype: AsyncIterator[BookEvents]
     """
     subscription = AsyncExitStack()
@@ -136,7 +136,7 @@ async def stream_book_events(
     freshness: FromDishka[BookFreshness],
     last_event_id: Annotated[str | None, Header()] = None,
 ) -> AsyncIterator[ServerSentEvent]:
-    """Stream the project's events as they happen: the committed changes of the book, its jobs and its ready versions.
+    """Stream the book's events as they happen: the committed changes of the book, its jobs and its ready versions.
 
     A committed change of the book is a ``book-changed`` event whose id is the new version of the book. A browser that
     connects is first sent ``book-version`` with the version now, so it knows which version it holds. The stream keeps
@@ -144,9 +144,9 @@ async def stream_book_events(
     comes back with the id of the version now is sent nothing.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
-    :param events: The project's events, subscribed to by ``open_event_stream`` before the version is read.
+    :param events: The book's events, subscribed to by ``open_event_stream`` before the version is read.
     :type events: BookEvents
     :param actor: The signed-in account.
     :type actor: Actor

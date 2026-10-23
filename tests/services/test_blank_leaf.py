@@ -102,7 +102,7 @@ def leaf_params(width_px: int, height_px: int) -> dict[str, object]:
 class LeafBook(NamedTuple):
     """A book of pages cut from scans whose images are stored.
 
-    :ivar book_record: The project.
+    :ivar book_record: The record of the book.
     :ivar pages: The pages in book order, with the kinds the book was committed with.
     :ivar versions: The ready base versions of the pages, in the same order.
     """
@@ -197,7 +197,7 @@ class LeafDesk:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             """
             for page, version in zip(pages, versions, strict=True):
@@ -280,7 +280,7 @@ class LeafDesk:
     async def page(self, book_id: BookId, page: Page) -> Page:
         """Read the committed state of a page.
 
-        :param book_id: Identifier of the project of the page.
+        :param book_id: Identifier of the book of the page.
 
         :type book_id: BookId
 
@@ -294,7 +294,7 @@ class LeafDesk:
     async def versions(self, book_id: BookId, page: Page) -> list[PageVersion]:
         """Read every committed version of a page, the earliest first.
 
-        :param book_id: Identifier of the project of the page.
+        :param book_id: Identifier of the book of the page.
 
         :type book_id: BookId
 
@@ -308,7 +308,7 @@ class LeafDesk:
     async def leaves(self, book_id: BookId, page: Page) -> list[PageVersion]:
         """Read the committed versions of a page that ``pages.blank`` made, the earliest first.
 
-        :param book_id: Identifier of the project of the page.
+        :param book_id: Identifier of the book of the page.
 
         :type book_id: BookId
 
@@ -323,7 +323,7 @@ class LeafDesk:
     async def heads(self, book_id: BookId, page: Page) -> dict[Stage, PageStage]:
         """Read the committed records of the stages of a page.
 
-        :param book_id: Identifier of the project of the page.
+        :param book_id: Identifier of the book of the page.
 
         :type book_id: BookId
 
@@ -600,7 +600,7 @@ class TestGetTheScanBack:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_versions.add(geometry)
@@ -755,7 +755,7 @@ class TestRemakeOutdatedLeaves:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_versions.add(old)
@@ -895,7 +895,7 @@ class TestRefusals:
     async def test_a_page_the_book_lacks_is_not_found_and_so_is_a_book_of_another_account(
         self, fx_desk: LeafDesk
     ) -> None:
-        """Verify an unknown page, a page of another project, and a project of another account answer not found.
+        """Verify an unknown page, a page of another book, and a book of another account answer not found.
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
@@ -995,7 +995,7 @@ class TestJobsReCheckWhatTheyApply:
         async def read_then_take_the_scan_back[T](book_id: BookId, work: Callable[[BookRepositories], T]) -> T:
             """Read as the unit of work does, then choose the scan for the page in a change of another one, once.
 
-            :param book_id: Project whose book is read.
+            :param book_id: Book that is read.
             :type book_id: BookId
             :param work: Function over the repositories of the transaction.
             :type work: Callable[[BookRepositories], T]

@@ -50,13 +50,13 @@ async def list_stages(
     are zero.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param params: Page number and size from the query; the ten stages fit one page of the default size.
     :type params: Params
     :param actor: The signed-in account.
     :type actor: Actor
-    :param books: Project service of the request.
+    :param books: Books service of the request.
     :type books: BooksService
     :returns: One page of the stages.
     :rtype: Page[StageSummarySchema]
@@ -83,13 +83,13 @@ async def list_stage_pages(
     without ``step`` the current version of the stage, else what the stage reads. A strip and a canvas draw it alike.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project and the stage, and the request.
+    :param address: Identifiers of the book and the stage, and the request.
     :type address: StageRowsPath
     :param params: Page number and size from the query, the size up to a thousand.
     :type params: ManifestParams
     :param actor: The signed-in account.
     :type actor: Actor
-    :param books: Project service of the request.
+    :param books: Books service of the request.
     :type books: BooksService
     :param step: The step to place every page at, or None for the rows of the stage alone.
     :type step: StepId | None

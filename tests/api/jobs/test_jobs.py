@@ -1,4 +1,4 @@
-"""Tests for the job routes and the server-sent event stream of a project."""
+"""Tests for the job routes and the server-sent event stream of a book."""
 
 from http import HTTPStatus
 from typing import TYPE_CHECKING
@@ -49,7 +49,7 @@ JOBS_PATH: str = '/api/v1/books/{book_id}/jobs'
 ACTIVE_PARAMETER: str = 'active'
 CONTENT_TYPE_HEADER: str = 'content-type'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
-# Fields of the job, the page of jobs and project-changed schemas in a JSON body
+# Fields of the job, the page of jobs and book-changed schemas in a JSON body
 JOB_ID_FIELD: str = 'id'
 JOB_STATE_FIELD: str = 'state'
 BOOK_ID_FIELD: str = 'book_id'
@@ -66,7 +66,7 @@ ITEMS_FIELD: str = 'items'
 
 @pytest.fixture
 async def fx_queued_job(fx_fakes: JobFakes, fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Job:
-    """Store a project of the signed-in account with a queued job that nothing runs.
+    """Store a book of the signed-in account with a queued job that nothing runs.
 
     :param fx_fakes: Adapters the application runs on.
     :type fx_fakes: JobFakes
@@ -84,7 +84,7 @@ async def fx_queued_job(fx_fakes: JobFakes, fx_uow: UnitOfWorkFactory, fx_actor:
 
 @pytest.fixture
 async def fx_strangers_job(fx_fakes: JobFakes, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory) -> Job:
-    """Store a project of another account with a queued job.
+    """Store a book of another account with a queued job.
 
     :param fx_fakes: Adapters the application runs on.
     :type fx_fakes: JobFakes
@@ -153,7 +153,7 @@ class TestReadJob:
     async def test_job_of_another_account_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_strangers_job: Job
     ) -> None:
-        """Verify a job of another account's project answers 404.
+        """Verify a job of another account's book answers 404.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
@@ -176,12 +176,12 @@ class TestReadJob:
 
 
 class TestListJobs:
-    """Tests for GET /projects/{project_id}/jobs."""
+    """Tests for GET /books/{book_id}/jobs."""
 
     async def test_lists_the_jobs_of_the_book_newest_first_and_the_active_ones_alone(
         self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_queued_job: Job
     ) -> None:
-        """Verify the list answers the jobs of the project the board holds, newest first, and ``active`` drops the ended.
+        """Verify the list answers the jobs of the book the board holds, newest first, and ``active`` drops the ended.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
@@ -233,7 +233,7 @@ class TestCancelJob:
     async def test_job_of_another_account_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_strangers_job: Job
     ) -> None:
-        """Verify cancelling a job of another account's project answers 404 and leaves the job queued.
+        """Verify cancelling a job of another account's book answers 404 and leaves the job queued.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
@@ -249,7 +249,7 @@ class TestCancelJob:
 
 
 class TestStreamBookEvents:
-    """Tests for GET /projects/{project_id}/events."""
+    """Tests for GET /books/{book_id}/events."""
 
     async def test_stream_delivers_job_and_book_changes(
         self, fx_app: FastAPI, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_queued_job: Job
@@ -295,7 +295,7 @@ class TestStreamBookEvents:
         :type fx_client: httpx.AsyncClient
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
-        :param fx_queued_job: Queued job of the signed-in account, whose project is changed.
+        :param fx_queued_job: Queued job of the signed-in account, whose book is changed.
         :type fx_queued_job: Job
         """
         book_id = fx_queued_job.book_id
@@ -316,7 +316,7 @@ class TestStreamBookEvents:
 
         :param fx_app: The running application.
         :type fx_app: FastAPI
-        :param fx_queued_job: Queued job of the signed-in account, whose project is listened to.
+        :param fx_queued_job: Queued job of the signed-in account, whose book is listened to.
         :type fx_queued_job: Job
         """
         reader = EventStreamReader(count=0)
@@ -336,7 +336,7 @@ class TestStreamBookEvents:
 
         :param fx_app: The running application.
         :type fx_app: FastAPI
-        :param fx_queued_job: Queued job of the signed-in account, whose project is listened to.
+        :param fx_queued_job: Queued job of the signed-in account, whose book is listened to.
         :type fx_queued_job: Job
         """
         book_id = fx_queued_job.book_id
@@ -439,7 +439,7 @@ class TestStreamBookEvents:
         :type fx_app: FastAPI
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
-        :param fx_queued_job: Queued job of the signed-in account, whose project the event belongs to.
+        :param fx_queued_job: Queued job of the signed-in account, whose book the event belongs to.
         :type fx_queued_job: Job
         """
         book_id = fx_queued_job.book_id
@@ -460,7 +460,7 @@ class TestStreamBookEvents:
     async def test_book_of_another_account_is_not_found(
         self, fx_app: FastAPI, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_strangers_job: Job
     ) -> None:
-        """Verify listening to another account's project answers 404 before any stream starts.
+        """Verify listening to another account's book answers 404 before any stream starts.
 
         :param fx_app: The running application.
         :type fx_app: FastAPI
@@ -468,7 +468,7 @@ class TestStreamBookEvents:
         :type fx_client: httpx.AsyncClient
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
-        :param fx_strangers_job: Job of another account, whose project is listened to.
+        :param fx_strangers_job: Job of another account, whose book is listened to.
         :type fx_strangers_job: Job
         """
         path = fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=fx_strangers_job.book_id)

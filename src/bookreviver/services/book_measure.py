@@ -436,7 +436,7 @@ class BookMeasure:
         :param uow: Unit of work, whose ``read_book`` holds the reading of the boxes and whose ``change_book`` holds the
                     writing of the measures once the job has them.
         :type uow: UnitOfWork
-        :param recipes: The recipes of the project, which supply the Geometry recipes and rewrite them.
+        :param recipes: The recipes of the book, which supply the Geometry recipes and rewrite them.
         :type recipes: RecipeBook
         :param records: Writer of the stage records, which marks the stage of the pages stale.
         :type records: StageRecords
@@ -458,7 +458,7 @@ class BookMeasure:
         one short ``change_book`` that reads the recipes again. A recipe that was changed meanwhile, which a user may
         have done by hand while the pages were measured, is left as it is and nothing is written.
 
-        :param book_id: Project whose pages are measured.
+        :param book_id: Book whose pages are measured.
         :type book_id: BookId
         :returns: The number of pages that were measured.
         :rtype: int
@@ -492,7 +492,7 @@ class BookMeasure:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the writing does not read.
+            :param _book_record: The record of the book as the change finds it, which the writing does not read.
             :type _book_record: BookRecord
             :raises ConflictError: If a recipe was changed or deleted while the pages were measured.
             :raises InvalidParametersError: If the measured page does not fit the bounds of the step.

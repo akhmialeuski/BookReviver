@@ -129,9 +129,9 @@ class OutdatedResults:
         on another version, is left as it is, and the others are written by one statement. The method opens its
         transaction, so it is called only outside one.
 
-        :param book_id: Project owning the records.
+        :param book_id: Book owning the records.
         :type book_id: BookId
-        :param outdated: The records found outdated, which belong to the pages of the project.
+        :param outdated: The records found outdated, which belong to the pages of the book.
         :type outdated: Sequence[PageStage]
         :returns: The records that became stale.
         :rtype: list[PageStage]
@@ -143,7 +143,7 @@ class OutdatedResults:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the marking does not read.
+            :param _book_record: The record of the book as the change finds it, which the marking does not read.
             :type _book_record: BookRecord
             :returns: The records that became stale.
             :rtype: list[PageStage]

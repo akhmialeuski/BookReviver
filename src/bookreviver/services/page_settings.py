@@ -90,7 +90,7 @@ class _Scene:
         :type moment: datetime
         :returns: The scene.
         :rtype: Self
-        :raises NotFoundError: If no recipe of the stage has the step, a page is not one of the project, or no page
+        :raises NotFoundError: If no recipe of the stage has the step, a page is not one of the book, or no page
                                the target reaches is processed by the step.
         """
         step_id, target = field.step_id, field.target
@@ -199,7 +199,7 @@ class _Scene:
 
 
 class PageSettingsService:
-    """Lists, sets and takes back the values of the steps for parts of the pages of the acting account's projects."""
+    """Lists, sets and takes back the values of the steps for parts of the pages of the acting account's books."""
 
     def __init__(
         self, *, uow: UnitOfWork, library: Library, catalogue: ProcessorCatalog, records: StageRecords, clock: Clock
@@ -228,7 +228,7 @@ class PageSettingsService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_id: Identifier of the page.
         :type page_id: PageId
@@ -237,7 +237,7 @@ class PageSettingsService:
         :returns: The steps of the recipe of the page that have a value of the page or a value of any part of the pages,
                   in the order of the recipe, each with the parameters it runs with on the page.
         :rtype: Sequence[PageStepSettings]
-        :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        :raises NotFoundError: If the actor has no such book, or the book has no such page.
         """
         await self._library.open(actor, book_id)
 
@@ -248,7 +248,7 @@ class PageSettingsService:
             :type repos: BookRepositories
             :returns: The steps of the recipe of the page that have a value of the page or of a part of the pages.
             :rtype: Sequence[PageStepSettings]
-            :raises NotFoundError: If the project has no such page.
+            :raises NotFoundError: If the book has no such page.
             """
             page = repos.pages.get(page_id)
             recipes = repos.recipes.list_for_stage(stage)
@@ -286,7 +286,7 @@ class PageSettingsService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param field: The field and the pages, the odd pages, the even pages or the group the value is for.
         :type field: ValueField
@@ -295,7 +295,7 @@ class PageSettingsService:
         :returns: The batch and the changes written, one on each page whose parameters change, which are none when the
                   value is the one they have.
         :rtype: ValueChanges
-        :raises NotFoundError: If the actor has no such project, a page is not one of the project, no recipe of the
+        :raises NotFoundError: If the actor has no such book, a page is not one of the book, no recipe of the
                                stage has the step, or no page the target names is processed by it.
         :raises InvalidParametersError: If the processor has no such field, or the value is out of its range on a page
                                         it reaches.
@@ -307,11 +307,11 @@ class PageSettingsService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             :returns: The batch and the changes written.
             :rtype: ValueChanges
-            :raises NotFoundError: If a page is not one of the project, no recipe of the
+            :raises NotFoundError: If a page is not one of the book, no recipe of the
                                    stage has the step, or no page the target names is processed by it.
             :raises InvalidParametersError: If the processor has no such field, or the value is out of its range on a
                                             page it reaches.
@@ -349,13 +349,13 @@ class PageSettingsService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param field: The field and the pages, the odd pages, the even pages or the group the value was set for.
         :type field: ValueField
         :returns: The batch and the changes written, one on each page whose parameters change.
         :rtype: ValueChanges
-        :raises NotFoundError: If the actor has no such project, a page is not one of the project, no recipe of the
+        :raises NotFoundError: If the actor has no such book, a page is not one of the book, no recipe of the
                                stage has the step, or none of the pages the target names has a value for the field.
         """
         await self._library.open(actor, book_id)
@@ -365,11 +365,11 @@ class PageSettingsService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             :returns: The batch and the changes written.
             :rtype: ValueChanges
-            :raises NotFoundError: If a page is not one of the project, no recipe of the
+            :raises NotFoundError: If a page is not one of the book, no recipe of the
                                    stage has the step, or none of the pages the target names has a value for the
                                    field.
             """

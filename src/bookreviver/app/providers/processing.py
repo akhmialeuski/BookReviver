@@ -248,7 +248,7 @@ class ProcessingProvider(Provider):
         order_keys: OrderKeys,
         config: ProcessingConfig,
     ) -> StageRuntime:
-        """Gather what a run of a stage works with, apart from the project and the unit of work.
+        """Gather what a run of a stage works with, apart from the book and the unit of work.
 
         :param runner: Runner of processors.
         :type runner: StepRunner

@@ -32,7 +32,7 @@ async def put_mark(
     A body equal to what is stored writes nothing. The answer is 409 for a preview.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page and the version.
+    :param address: Identifiers of the book, the page and the version.
     :type address: VersionPath
     :param form: The mark and the comment.
     :type form: ResultMarkForm

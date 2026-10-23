@@ -62,7 +62,7 @@ async def width_of(kit: ProcessingKit, book_record: BookRecord, version: PageVer
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_record: Project owning the version's page.
+    :param book_record: Record of the book owning the version's page.
     :type book_record: BookRecord
     :param version: A ready version that has its files.
     :type version: PageVersion
@@ -82,7 +82,7 @@ async def versions_of(kit: ProcessingKit, book_id: BookId, page: Page) -> list[P
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
@@ -97,7 +97,7 @@ async def give_odd_pages_a_value(kit: ProcessingKit, book_record: BookRecord, pa
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_record: Project owning the page.
+    :param book_record: Record of the book owning the page.
     :type book_record: BookRecord
     :param page: The page that has been through the geometry stage.
     :type page: Page
@@ -108,7 +108,7 @@ async def give_odd_pages_a_value(kit: ProcessingKit, book_record: BookRecord, pa
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: The project as the change finds it, which the work does not need.
+        :param _book_record: The record of the book as the change finds it, which the work does not need.
         :type _book_record: BookRecord
         """
         repos.step_values.save(make_step_values(scope=ValueScope.ODD))
@@ -321,11 +321,11 @@ class TestUnsplit:
 
     @staticmethod
     async def split_then_use_whole_scan(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[Page]]:
-        """Split the only spread of a project, and make the recipe of the stage ``split.none`` again.
+        """Split the only spread of a book, and make the recipe of the stage ``split.none`` again.
 
         :param kit: The processing kit with the OpenCV plugins.
         :type kit: ProcessingKit
-        :returns: The actor, the project and the two pages the split made, in book order.
+        :returns: The actor, the book and the two pages the split made, in book order.
         :rtype: tuple[Actor, BookRecord, list[Page]]
         """
         actor, book_record, _ = await seed_spreads(kit)
@@ -410,10 +410,10 @@ class TestUnsplit:
 
 
 class SplitBook(NamedTuple):
-    """The account, the project and the page of a scan of a spread, on which a change is made while a split runs.
+    """The account, the book and the page of a scan of a spread, on which a change is made while a split runs.
 
-    :ivar actor: Account owning the project.
-    :ivar book_record: The project.
+    :ivar actor: Account owning the book.
+    :ivar book_record: The record of the book.
     :ivar page: The page that shows the scan whole.
     """
 
@@ -427,7 +427,7 @@ async def delete_the_spread(kit: ProcessingKit, book: SplitBook) -> None:
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book: The project and the page.
+    :param book: The record of the book and the page.
     :type book: SplitBook
     """
     await kit.uow().change_book(book.book_record.id, lambda repos, _book_record: repos.pages.delete(book.page.id))
@@ -438,7 +438,7 @@ async def split_the_scan_elsewhere(kit: ProcessingKit, book: SplitBook) -> None:
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book: The project and the page.
+    :param book: The record of the book and the page.
     :type book: SplitBook
     """
     right = evolve(book.page, id=PageId(uuid4()), order_key=RIGHT_HALF_ORDER_KEY, slot=Page.RIGHT_HALF)
@@ -450,7 +450,7 @@ async def draw_the_cut_line(kit: ProcessingKit, book: SplitBook) -> None:
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book: The account, the project and the page.
+    :param book: The account, the record of the book and the page.
     :type book: SplitBook
     """
     key = await kit.edit_key(book.book_record.id, book.page, Stage.PAGE_SPLIT, SPLIT_SPREAD)
@@ -464,7 +464,7 @@ async def save_the_split_recipe(kit: ProcessingKit, book: SplitBook) -> None:
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book: The account and the project owning the recipe.
+    :param book: The account and the record of the book owning the recipe.
     :type book: SplitBook
     """
     kit.clock.moment = EPOCH + timedelta(hours=1)
