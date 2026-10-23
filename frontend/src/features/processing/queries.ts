@@ -1,5 +1,4 @@
 import {
-  type QueryClient,
   queryOptions,
   type UseQueryResult,
   useIsMutating,
@@ -23,11 +22,8 @@ import {
   chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation,
   collectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetOptions,
   collectVersionsApiV1ProjectsProjectIdVersionsCollectPostMutation,
-  deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteMutation,
   deleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteMutation,
   detectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostMutation,
-  listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetOptions,
-  listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey,
   listProcessorsApiV1ProcessorsGetOptions,
   listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetOptions,
   listScansApiV1ProjectsProjectIdScansGetQueryKey,
@@ -35,7 +31,6 @@ import {
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
   measureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostMutation,
   previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation,
-  putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutMutation,
   putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutMutation,
   putRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutMutation,
   putValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutMutation,
@@ -277,52 +272,6 @@ export function usePreviewStep(projectId: string) {
   return useMutation({
     ...previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation(),
     onSettled: () => invalidateJobs(queryClient, projectId),
-  });
-}
-
-/** Read the manual edits one stage holds on a page, by processor. */
-export function useEdits(projectId: string, pageId: string | undefined, stage: Stage) {
-  return useQuery({
-    ...listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetOptions({
-      path: { project_id: projectId, page_id: pageId ?? '', stage },
-      query: { size: LIST_SIZE },
-    }),
-    select: (page) => page.items,
-    enabled: pageId !== undefined,
-  });
-}
-
-/** Read again the edits of a page in a stage, which the editor that changed them shows. */
-function refreshEdits(
-  queryClient: QueryClient,
-  projectId: string,
-  stage: Stage,
-  pageId: string,
-): Promise<void> {
-  return queryClient.invalidateQueries({
-    queryKey: listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey({
-      path: { project_id: projectId, page_id: pageId, stage },
-    }),
-  });
-}
-
-/** Save the edit a step of a recipe reads on a page, which marks the stage of the page out of date. */
-export function useSaveEdit(projectId: string, stage: Stage) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutMutation(),
-    onSettled: (_data, _error, variables) =>
-      refreshEdits(queryClient, projectId, stage, variables.path.page_id),
-  });
-}
-
-/** Delete the edit a step of a recipe reads on a page, which marks the stage of the page out of date. */
-export function useDeleteEdit(projectId: string, stage: Stage) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteMutation(),
-    onSettled: (_data, _error, variables) =>
-      refreshEdits(queryClient, projectId, stage, variables.path.page_id),
   });
 }
 

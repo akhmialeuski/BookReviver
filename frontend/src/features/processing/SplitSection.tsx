@@ -1,13 +1,8 @@
 import { WandSparklesIcon } from 'lucide-react';
 import { useState } from 'react';
+import { useEditChanges, useEdits } from '@/features/editors/queries';
 import { SegmentedRadio } from '@/features/pages/SegmentedRadio';
-import {
-  useDeleteEdit,
-  useEdits,
-  useRunInFlight,
-  useRunStage,
-  useSaveEdit,
-} from '@/features/processing/queries';
+import { useRunInFlight, useRunStage } from '@/features/processing/queries';
 import {
   autoRecipeOf,
   choiceForm,
@@ -52,8 +47,7 @@ export function SplitSection({
 }): React.JSX.Element | null {
   const { projectId, stage } = processing;
   const run = useRunStage(projectId);
-  const saveEdit = useSaveEdit(projectId, stage);
-  const deleteEdit = useDeleteEdit(projectId, stage);
+  const { save: saveEdit, remove: deleteEdit } = useEditChanges(projectId);
   const activeJobs = useActiveJobs(projectId);
   const runInFlight = useRunInFlight(projectId);
   const [asking, setAsking] = useState<UnsplitQuestion | null>(null);
