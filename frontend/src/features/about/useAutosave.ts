@@ -55,7 +55,7 @@ export interface Autosave {
 /**
  * Keep the form state of a book and save it as it changes.
  *
- * @param project The book as the server holds it.
+ * @param book The book as the server holds it.
  * @returns The fields to show, the state of the saving and the calls that change them.
  */
 export function useAutosave(book: BookSchema): Autosave {

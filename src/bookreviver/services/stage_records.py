@@ -174,7 +174,7 @@ class StageRecords:
 
     @staticmethod
     def side_stages(repos: BookRepositories) -> set[Stage]:
-        """Find the stages in which the odd pages or the even pages of a project have values for a step.
+        """Find the stages in which the odd pages or the even pages of a book have values for a step.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
@@ -317,7 +317,7 @@ class SideWatch:
             self._records.mark_sides_stale(self._repos, pages_changing_side(self._before, self._order()))
 
     def _order(self) -> list[PageId]:
-        """Read the pages of the project in book order, the placeholders and the pages kept out of the book included.
+        """Read the pages of the book in book order, the placeholders and the pages kept out of the book included.
 
         :returns: The identifiers of the pages, by place.
         :rtype: list[PageId]

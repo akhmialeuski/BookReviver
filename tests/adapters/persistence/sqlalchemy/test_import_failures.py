@@ -40,7 +40,7 @@ class TestFailedImportOnSqlAlchemy:
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_import_rig: Function building the import rig whose board runs an import on the database.
         :type fx_import_rig: Callable[..., ImportRig]

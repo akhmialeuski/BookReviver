@@ -30,13 +30,13 @@ PAGE_ORDER_KEYS: tuple[str, ...] = ('a0', 'a1', 'a2')
 
 
 async def store_records(uow: UnitOfWork, book_record: BookRecord, recipe: Recipe, records: Sequence[PageStage]) -> None:
-    """Store a recipe and the stage records of the pages of a project that exists already.
+    """Store a recipe and the stage records of the pages of a book that exists already.
 
     :param uow: Unit of work that commits the recipe and the records.
     :type uow: UnitOfWork
-    :param book_record: Project owning the pages the records belong to.
+    :param book_record: Record of the book owning the pages the records belong to.
     :type book_record: BookRecord
-    :param recipe: Recipe of the project, which the records may name.
+    :param recipe: Recipe of the book, which the records may name.
     :type recipe: Recipe
     :param records: Records to store in one batch.
     :type records: Sequence[PageStage]
@@ -47,7 +47,7 @@ async def store_records(uow: UnitOfWork, book_record: BookRecord, recipe: Recipe
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: Project of the book, which the work does not need.
+        :param _book_record: Record of the book, which the work does not need.
         :type _book_record: BookRecord
         """
         repos.recipes.add(recipe)
@@ -64,7 +64,7 @@ class TestMarkRecipeStale:
     ) -> None:
         """Verify the fresh records of the recipe are stamped stale together, and a failed one or one of no recipe stays.
 
-        :param fx_database: Database of the test, holding no project yet.
+        :param fx_database: Database of the test, holding no book yet.
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -108,7 +108,7 @@ class TestMarkRecipeStale:
         The end state of the records is the same when each one is written on its own, so only a record of the calls
         tells a batch of one statement from a statement for each record.
 
-        :param fx_database: Database of the test, holding no project yet.
+        :param fx_database: Database of the test, holding no book yet.
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory

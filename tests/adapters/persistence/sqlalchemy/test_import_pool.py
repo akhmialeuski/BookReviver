@@ -130,7 +130,7 @@ class TestRunImportConnections:
         :type fx_uow: UnitOfWorkFactory
         :param fx_books: Registry of the books of the test, which gives the database of the book whose pool is counted.
         :type fx_books: BookDatabases
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_import_rig: Function building the import rig whose board runs an import on the database.
         :type fx_import_rig: Callable[..., ImportRig]

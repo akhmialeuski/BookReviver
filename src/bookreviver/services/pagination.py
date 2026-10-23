@@ -74,7 +74,7 @@ class NumberingPlan:
 
 
 class PaginationService:
-    """Lists, makes, changes and removes the pagination sections of the acting account's projects."""
+    """Lists, makes, changes and removes the pagination sections of the acting account's books."""
 
     def __init__(self, *, uow: UnitOfWork, library: Library, clock: Clock) -> None:
         """Work over the ports of one request.
@@ -92,18 +92,18 @@ class PaginationService:
         self._labels = PageLabels(clock=clock)
 
     async def sections(self, actor: Actor, book_id: BookId, request: SliceRequest) -> Slice[PaginationSection]:
-        """List the sections of a project in book order, the order of the pages they start at.
+        """List the sections of a book in book order, the order of the pages they start at.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param request: Offset and limit of the window.
         :type request: SliceRequest
         :returns: The sections of the window, those of the main flow before the series that start at the same page,
-                  and the number of all the sections of the project.
+                  and the number of all the sections of the book.
         :rtype: Slice[PaginationSection]
-        :raises NotFoundError: If the actor has no such project.
+        :raises NotFoundError: If the actor has no such book.
         """
         await self._library.open(actor, book_id)
 
@@ -112,9 +112,9 @@ class PaginationService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :returns: The sections of the window, and the number of all the sections of the project.
+            :returns: The sections of the window, and the number of all the sections of the book.
             :rtype: Slice[PaginationSection]
-            :raises NotFoundError: If the actor has no such project.
+            :raises NotFoundError: If the actor has no such book.
             """
             sections = repos.pagination_sections.list_all()
             starts = repos.pages.list_by_ids({section.first_page_id for section in sections})
@@ -129,13 +129,13 @@ class PaginationService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param draft: The page the section starts at, and its name, style, first number, prefix, display and kinds.
         :type draft: PaginationSectionDraft
         :returns: The section as stored.
         :rtype: PaginationSection
-        :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        :raises NotFoundError: If the actor has no such book, or the book has no such page.
         :raises ConflictError: If another section that takes the same pages starts at the page, or a number does not
                                fit the style.
         """
@@ -153,11 +153,11 @@ class PaginationService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it.
+            :param _book_record: The record of the book as the change finds it.
             :type _book_record: BookRecord
             :returns: The section as stored.
             :rtype: PaginationSection
-            :raises NotFoundError: If the project has no such page.
+            :raises NotFoundError: If the book has no such page.
             :raises ConflictError: If another section that takes the same pages starts at the page, or a number does
                                    not fit the style.
             """
@@ -176,7 +176,7 @@ class PaginationService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param section_id: Identifier of the section.
         :type section_id: PaginationSectionId
@@ -184,7 +184,7 @@ class PaginationService:
         :type draft: PaginationSectionDraft
         :returns: The section as stored.
         :rtype: PaginationSection
-        :raises NotFoundError: If the actor has no such project, or the project has no such section or page.
+        :raises NotFoundError: If the actor has no such book, or the book has no such section or page.
         :raises ConflictError: If another section that takes the same pages starts at the page, or a number does not
                                fit the style.
         """
@@ -195,11 +195,11 @@ class PaginationService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it.
+            :param _book_record: The record of the book as the change finds it.
             :type _book_record: BookRecord
             :returns: The section as stored.
             :rtype: PaginationSection
-            :raises NotFoundError: If the project has no such section or page.
+            :raises NotFoundError: If the book has no such section or page.
             :raises ConflictError: If another section that takes the same pages starts at the page, or a number does
                                    not fit the style.
             """
@@ -221,11 +221,11 @@ class PaginationService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param section_id: Identifier of the section.
         :type section_id: PaginationSectionId
-        :raises NotFoundError: If the actor has no such project, or the project has no such section.
+        :raises NotFoundError: If the actor has no such book, or the book has no such section.
         :raises ConflictError: If the section before cannot write the numbers of the pages that fall to it.
         """
         await self._library.open(actor, book_id)
@@ -235,9 +235,9 @@ class PaginationService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it.
+            :param _book_record: The record of the book as the change finds it.
             :type _book_record: BookRecord
-            :raises NotFoundError: If the project has no such section.
+            :raises NotFoundError: If the book has no such section.
             :raises ConflictError: If the section before cannot write the numbers of the pages that fall to it.
             """
             section = repos.pagination_sections.get(section_id)
@@ -251,11 +251,11 @@ class PaginationService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param numbering: The range, the style and the first number.
         :type numbering: PageNumbering
-        :raises NotFoundError: If the actor has no such project, or the project lacks the first or the last page.
+        :raises NotFoundError: If the actor has no such book, or the book lacks the first or the last page.
         :raises ReversedRangeError: If the range runs backwards.
         :raises ConflictError: If a number does not fit the style, such as 4000 in Roman numerals.
         """
@@ -266,9 +266,9 @@ class PaginationService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it.
+            :param _book_record: The record of the book as the change finds it.
             :type _book_record: BookRecord
-            :raises NotFoundError: If the project lacks the first or the last page.
+            :raises NotFoundError: If the book lacks the first or the last page.
             :raises ReversedRangeError: If the range runs backwards.
             :raises ConflictError: If a number does not fit the style, such as 4000 in Roman numerals.
             """
@@ -289,13 +289,13 @@ class PaginationService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param numbering: The range, the style and the first number.
         :type numbering: PageNumbering
         :returns: One entry for each page of the range that takes a number, in book order, with the label it would get.
         :rtype: list[NumberedPage]
-        :raises NotFoundError: If the actor has no such project, or the project lacks the first or the last page.
+        :raises NotFoundError: If the actor has no such book, or the book lacks the first or the last page.
         :raises ReversedRangeError: If the range runs backwards.
         :raises ConflictError: If a number does not fit the style.
         """
@@ -308,7 +308,7 @@ class PaginationService:
             :type repos: BookRepositories
             :returns: The plan, with nothing written.
             :rtype: NumberingPlan
-            :raises NotFoundError: If the project lacks the first or the last page.
+            :raises NotFoundError: If the book lacks the first or the last page.
             :raises ReversedRangeError: If the range runs backwards.
             """
             return self._plan(repos, numbering)
@@ -326,7 +326,7 @@ class PaginationService:
         :type numbering: PageNumbering
         :returns: The plan, with nothing written.
         :rtype: NumberingPlan
-        :raises NotFoundError: If the project lacks the first or the last page.
+        :raises NotFoundError: If the book lacks the first or the last page.
         :raises ReversedRangeError: If the range runs backwards.
         """
         pages = book_pages(repos.pages)
@@ -397,7 +397,7 @@ class PaginationService:
 
     @staticmethod
     def _require_no_clash(repos: BookRepositories, section: PaginationSection) -> None:
-        """Require that no other section of the project takes the same pages from the same page.
+        """Require that no other section of the book takes the same pages from the same page.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories

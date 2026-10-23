@@ -1,7 +1,7 @@
 """Mappers between table rows and frozen domain entities, one per aggregate.
 
 A domain entity and a table row have different shapes, and neither can stand in for the other. The entity is a frozen
-``attrs`` class with nested value objects: a :class:`~bookreviver.domain.entities.Project` holds a
+``attrs`` class with nested value objects: a :class:`~bookreviver.domain.entities.BookRecord` holds a
 :class:`~bookreviver.domain.values.BookDetails`, and a :class:`~bookreviver.domain.entities.PageVersion` a
 :class:`~bookreviver.domain.values.ProcessorRef` and a :class:`~bookreviver.domain.geometry.Transform`. The row is a
 flat, mutable class instrumented by SQLAlchemy, which assigns its attributes on load and tracks their changes. The
@@ -189,13 +189,13 @@ class LibraryEntryMapper(RowMapper[LibraryEntry, LibraryRow]):
 
 
 class BookRecordMapper(RowMapper[BookRecord, BookRecordRow]):
-    """Translation of a project, whose description is flattened into project columns."""
+    """Translation of the record of a book, whose description is flattened into columns."""
 
     @override
     def to_entity(self, row: BookRecordRow) -> BookRecord:
-        """Build the project stored in ``row``.
+        """Build the record of the book stored in ``row``.
 
-        :param row: Project row loaded from the database.
+        :param row: Row of the record of the book, loaded from the database.
         :type row: BookRecordRow
         :returns: BookRecord with its description and settings.
         :rtype: BookRecord
@@ -241,9 +241,9 @@ class BookRecordMapper(RowMapper[BookRecord, BookRecordRow]):
     def to_row(self, entity: BookRecord) -> BookRecordRow:
         """Build the row of ``entity``.
 
-        :param entity: Project to store.
+        :param entity: Record of the book to store.
         :type entity: BookRecord
-        :returns: Transient project row.
+        :returns: Transient row of the record of the book.
         :rtype: BookRecordRow
         """
         details = entity.details

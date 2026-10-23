@@ -1,6 +1,6 @@
 """The recipe profiles of the signed-in account: saving the steps of a recipe, applying them to a book, the default.
 
-A profile is the account's, so these routes take no project except the ones that apply a profile to a book and that
+A profile is the account's, so these routes take no book except the ones that apply a profile to a book and that
 record which profile a recipe of a book was made from. A profile of another account answers 404 like a missing one.
 Applying a profile to a book runs nothing and processes no page; it only puts the steps into the recipe of one kind of
 page, which marks the pages the recipe processed stale. A profile leaves the account and enters another as a
@@ -53,9 +53,9 @@ ProfilePath = Annotated[RecipeProfileId, Path(description=PROFILE_ID_DESCRIPTION
 
 @dataclass(frozen=True)
 class AppliedPath:
-    """The identifiers in the address of a profile applied to a project.
+    """The identifiers in the address of a profile applied to a book.
 
-    :ivar book_id: Identifier of the project.
+    :ivar book_id: Identifier of the book.
     :ivar profile_id: Identifier of the profile.
     """
 
@@ -289,7 +289,7 @@ async def apply_profile(
     profile, and the pages it processed become stale.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project and the profile.
+    :param address: Identifiers of the book and the profile.
     :type address: AppliedPath
     :param body: The kind of page whose recipe takes the steps.
     :type body: ApplyProfileBody
@@ -320,10 +320,10 @@ async def put_recipe_profile(
     """Record which profile a recipe of a book was made from, so the book can tell how its steps differ from it.
 
     The steps do not change and no page goes stale. A profile of another account answers 404, and so does a recipe the
-    project does not have, and a profile of another stage answers 422.
+    book does not have, and a profile of another stage answers 422.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the stage and the recipe.
+    :param address: Identifiers of the book, the stage and the recipe.
     :type address: RecipePath
     :param body: The profile, or null to unlink the recipe.
     :type body: ProfileLinkBody

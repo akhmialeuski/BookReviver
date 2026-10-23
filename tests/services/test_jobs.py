@@ -1,4 +1,4 @@
-"""Tests for the job service: reading and cancelling jobs on the board, and the event stream of a project."""
+"""Tests for the job service: reading and cancelling jobs on the board, and the event stream of a book."""
 
 from typing import TYPE_CHECKING
 
@@ -75,7 +75,7 @@ def fx_job_service(fx_fakes: JobFakes, fx_uow: UnitOfWorkFactory, fx_sources: Lo
 
 @pytest.fixture
 def fx_owner() -> Actor:
-    """Build the account that owns the project.
+    """Build the account that owns the book.
 
     :returns: Actor with a fresh account identifier.
     :rtype: Actor
@@ -95,15 +95,15 @@ def fx_stranger() -> Actor:
 
 @pytest.fixture
 async def fx_book(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_owner: Actor) -> BookRecord:
-    """Store a project of ``fx_owner``, and the account of the owner.
+    """Store a book of ``fx_owner``, and the account of the owner.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
-    :param fx_owner: Account owning the project.
+    :param fx_owner: Account owning the book.
     :type fx_owner: Actor
-    :returns: The stored project.
+    :returns: The stored book.
     :rtype: BookRecord
     """
     book_record = make_record()
@@ -117,15 +117,15 @@ class TestGet:
     async def test_owner_reads_job(
         self, fx_fakes: JobFakes, fx_job_service: JobService, fx_owner: Actor, fx_book: BookRecord
     ) -> None:
-        """Verify the owner of the project reads its job as the board holds it.
+        """Verify the owner of the book reads its job as the board holds it.
 
         :param fx_fakes: Adapters of the service.
         :type fx_fakes: JobFakes
         :param fx_job_service: Job service of the request.
         :type fx_job_service: JobService
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.RUN_STAGE))
@@ -134,7 +134,7 @@ class TestGet:
     async def test_job_of_another_account_is_not_found(
         self, fx_fakes: JobFakes, fx_job_service: JobService, fx_stranger: Actor, fx_book: BookRecord
     ) -> None:
-        """Verify an account cannot read, or learn about, a job of a project it does not own.
+        """Verify an account cannot read, or learn about, a job of a book it does not own.
 
         :param fx_fakes: Adapters of the service.
         :type fx_fakes: JobFakes
@@ -142,7 +142,7 @@ class TestGet:
         :type fx_job_service: JobService
         :param fx_stranger: Account owning nothing.
         :type fx_stranger: Actor
-        :param fx_book: Project of another account.
+        :param fx_book: Book of another account.
         :type fx_book: BookRecord
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id))
@@ -162,20 +162,20 @@ class TestGet:
 
 
 class TestList:
-    """Tests for JobService.list_for_project()."""
+    """Tests for JobService.list_for_book()."""
 
     async def test_lists_the_jobs_of_the_book_newest_first_and_the_active_ones_alone(
         self, fx_fakes: JobFakes, fx_job_service: JobService, fx_owner: Actor, fx_book: BookRecord
     ) -> None:
-        """Verify the list holds the jobs of the project, newest first, and ``active`` leaves the ended ones out.
+        """Verify the list holds the jobs of the book, newest first, and ``active`` leaves the ended ones out.
 
         :param fx_fakes: Adapters of the service.
         :type fx_fakes: JobFakes
         :param fx_job_service: Job service of the request.
         :type fx_job_service: JobService
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         """
         ended = fx_fakes.board.put(make_job(book_id=fx_book.id, minutes=0))
@@ -193,13 +193,13 @@ class TestList:
     async def test_book_of_another_account_is_not_found(
         self, fx_job_service: JobService, fx_stranger: Actor, fx_book: BookRecord
     ) -> None:
-        """Verify an account cannot list the jobs of a project it does not own.
+        """Verify an account cannot list the jobs of a book it does not own.
 
         :param fx_job_service: Job service of the request.
         :type fx_job_service: JobService
         :param fx_stranger: Account owning nothing.
         :type fx_stranger: Actor
-        :param fx_book: Project of another account.
+        :param fx_book: Book of another account.
         :type fx_book: BookRecord
         """
         with pytest.raises(NotFoundError):
@@ -218,9 +218,9 @@ class TestCancel:
         :type fx_fakes: JobFakes
         :param fx_job_service: Job service of the request.
         :type fx_job_service: JobService
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.RUN_STAGE))
@@ -241,9 +241,9 @@ class TestCancel:
         :type fx_fakes: JobFakes
         :param fx_job_service: Job service of the request.
         :type fx_job_service: JobService
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.RUN_STAGE))
@@ -277,9 +277,9 @@ class TestCancel:
         :type fx_job_service: JobService
         :param fx_sources: Store of the uploads.
         :type fx_sources: LocalSourceStore
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.IMPORT_SOURCE))
@@ -305,9 +305,9 @@ class TestCancel:
         :type fx_job_service: JobService
         :param fx_sources: Store of the uploads.
         :type fx_sources: LocalSourceStore
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.IMPORT_SOURCE))
@@ -332,9 +332,9 @@ class TestCancel:
         :type fx_fakes: JobFakes
         :param fx_job_service: Job service of the request.
         :type fx_job_service: JobService
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id))
@@ -349,7 +349,7 @@ class TestCancel:
     async def test_job_of_another_account_cannot_be_cancelled(
         self, fx_fakes: JobFakes, fx_job_service: JobService, fx_stranger: Actor, fx_book: BookRecord
     ) -> None:
-        """Verify an account cannot cancel a job of a project it does not own.
+        """Verify an account cannot cancel a job of a book it does not own.
 
         :param fx_fakes: Adapters of the service.
         :type fx_fakes: JobFakes
@@ -357,7 +357,7 @@ class TestCancel:
         :type fx_job_service: JobService
         :param fx_stranger: Account owning nothing.
         :type fx_stranger: Actor
-        :param fx_book: Project of another account.
+        :param fx_book: Book of another account.
         :type fx_book: BookRecord
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id))
@@ -372,15 +372,15 @@ class TestEvents:
     async def test_owner_receives_only_book_events(
         self, fx_fakes: JobFakes, fx_job_service: JobService, fx_owner: Actor, fx_book: BookRecord
     ) -> None:
-        """Verify a subscription keeps its project's events published before the first read, and none of another.
+        """Verify a subscription keeps its book's events published before the first read, and none of another.
 
         :param fx_fakes: Adapters of the service.
         :type fx_fakes: JobFakes
         :param fx_job_service: Job service of the request.
         :type fx_job_service: JobService
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         """
         other = make_record()
@@ -395,7 +395,7 @@ class TestEvents:
     async def test_book_of_another_account_is_not_found(
         self, fx_fakes: JobFakes, fx_job_service: JobService, fx_stranger: Actor, fx_book: BookRecord
     ) -> None:
-        """Verify an account cannot listen to a project it does not own, and that no subscription is made for it.
+        """Verify an account cannot listen to a book it does not own, and that no subscription is made for it.
 
         :param fx_fakes: Adapters of the service.
         :type fx_fakes: JobFakes
@@ -403,7 +403,7 @@ class TestEvents:
         :type fx_job_service: JobService
         :param fx_stranger: Account owning nothing.
         :type fx_stranger: Actor
-        :param fx_book: Project of another account.
+        :param fx_book: Book of another account.
         :type fx_book: BookRecord
         """
         with pytest.raises(NotFoundError):

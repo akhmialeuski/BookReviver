@@ -47,7 +47,7 @@ router = APIRouter(prefix='/books', tags=['pages'], route_class=DishkaRoute, dep
 class PagePath:
     """The two identifiers in the address of one page, read together so a route keeps to a few parameters.
 
-    :ivar book_id: Identifier of the project.
+    :ivar book_id: Identifier of the book.
     :ivar page_id: Identifier of the page.
     """
 
@@ -72,7 +72,7 @@ class PageLinks:
     def created(self, book_id: BookId, overview: PageOverview) -> PageSchema:
         """Point to a page just created in the ``Location`` header, and return its schema.
 
-        :param book_id: Identifier of the project the page was added to.
+        :param book_id: Identifier of the book the page was added to.
         :type book_id: BookId
         :param overview: The new page with its position.
         :type overview: PageOverview
@@ -92,10 +92,10 @@ async def list_pages(
     params: Annotated[PageQuery, Depends()],
     pages: FromDishka[PageService],
 ) -> ManifestPage[PageSchema]:
-    """List the pages of a project in book order, up to a thousand at once, with the paths of their images.
+    """List the pages of a book in book order, up to a thousand at once, with the paths of their images.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
@@ -121,10 +121,10 @@ async def get_page(
     request: Request,
     pages: FromDishka[PageService],
 ) -> PageSchema:
-    """Return one page of a project.
+    """Return one page of a book.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page_id: Identifier of the page.
     :type page_id: PageId
@@ -153,7 +153,7 @@ async def move_page(
     The answer is 409 when the anchor is the page itself, or another request took the new place first.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project and of the page to move.
+    :param address: Identifiers of the book and of the page to move.
     :type address: PagePath
     :param body: The page to put it next to, and the side.
     :type body: PageMove
@@ -183,7 +183,7 @@ async def move_pages(
     event, so the answer has no body.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param body: The pages to move, the page to put them next to, and the side.
     :type body: PagesMove
@@ -212,7 +212,7 @@ async def fill_blank_pages(
     browser as a ``book-changed`` event, so the answer has no body.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param body: The pages to change and the choice.
     :type body: BlankFillChange
@@ -238,11 +238,11 @@ async def detect_content_types(
     pages of the book that have no content type yet, which a job queued by the end of the preparation of the images
     does too, and it leaves the pages the user set by hand and the covers, the endpapers and the blank pages alone. With
     ``page_ids`` it goes over those pages whatever they have, and gives the ones the user set by hand back to the
-    detection. The answer is 409 while the content of the pages of the project is being detected. The change reaches the
+    detection. The answer is 409 while the content of the pages of the book is being detected. The change reaches the
     browser as a ``book-changed`` event.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param body: The pages to detect, or none for those that are not detected yet.
     :type body: ContentDetectionRequest
@@ -272,7 +272,7 @@ async def update_page(
     its scan again in place of a leaf.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project and of the page.
+    :param address: Identifiers of the book and of the page.
     :type address: PagePath
     :param body: Fields to change, with null for a label or notes to clear.
     :type body: PageUpdate
@@ -305,7 +305,7 @@ async def number_pages(
     reach the browser as a ``book-changed`` event.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param body: The range of pages, the style of the numbers, the first number and the kinds to skip.
     :type body: LabelRange
@@ -330,7 +330,7 @@ async def preview_page_numbers(
     answer is 409 when the range runs backwards.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param body: The range of pages, the style of the numbers, the first number and the kinds to skip.
     :type body: LabelRange
@@ -360,7 +360,7 @@ async def create_page(
     leaf without a size when no page of the book has an image to take the median of.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param body: The kind and origin of the page, its place, and the size of a blank leaf.
     :type body: PageCreate
@@ -393,7 +393,7 @@ async def create_pages(
     median of, with its index in the detail.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param body: The pages to add, in the order they stand in where they share a place.
     :type body: PageCreateList
@@ -415,7 +415,7 @@ async def delete_page(address: Annotated[PagePath, Depends()], actor: ActorDep, 
     """Delete a page with its versions and files, leaving its scan and the source of the scan.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project and of the page.
+    :param address: Identifiers of the book and of the page.
     :type address: PagePath
     :param actor: The signed-in account.
     :type actor: Actor
@@ -436,10 +436,10 @@ async def attach_scan(
     """Bind a scan to a placeholder, which becomes a page of that scan once a job has copied its image.
 
     The answer is 409 for a page that is not a placeholder, a scan that is not cut yet, and a scan another page shows,
-    unless ``take_over`` is set, which deletes that page. A scan of another project is a 404.
+    unless ``take_over`` is set, which deletes that page. A scan of another book is a 404.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project and of the placeholder.
+    :param address: Identifiers of the book and of the placeholder.
     :type address: PagePath
     :param body: The scan to bind, and whether to take it from the page that shows it.
     :type body: ScanAttach

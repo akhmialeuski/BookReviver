@@ -95,13 +95,13 @@ async def _commit_book(
 
     :param uow: Unit of work to commit through, over a database that stores the account of the owner.
     :type uow: UnitOfWork
-    :param owner: Account owning the project.
+    :param owner: Account owning the book.
     :type owner: Actor
     :param layout: Kind and inclusion of each page in book order.
     :type layout: tuple[PageKind, bool]
     :param label: Label every page gets as an exception, or empty for pages that are not labelled.
     :type label: str
-    :returns: The project and its pages in book order.
+    :returns: The book and its pages in book order.
     :rtype: tuple[BookRecord, list[Page]]
     """
     book_record = make_record()
@@ -135,7 +135,7 @@ async def _labels(uow: UnitOfWork, book_id: BookId, pages: list[Page]) -> list[s
 
     :param uow: Unit of work to read through.
     :type uow: UnitOfWork
-    :param book_id: Identifier of the project of the pages.
+    :param book_id: Identifier of the book of the pages.
     :type book_id: BookId
     :param pages: Pages to read the labels of.
     :type pages: list[Page]
@@ -159,13 +159,13 @@ async def _labels(uow: UnitOfWork, book_id: BookId, pages: list[Page]) -> list[s
 
 
 async def _sections(uow: UnitOfWork, book_record: BookRecord) -> list[PaginationSection]:
-    """Read the committed sections of a project in the order they were made.
+    """Read the committed sections of a book in the order they were made.
 
     :param uow: Unit of work to read through.
     :type uow: UnitOfWork
-    :param book_record: The project.
+    :param book_record: The record of the book.
     :type book_record: BookRecord
-    :returns: The sections of the project.
+    :returns: The sections of the book.
     :rtype: list[PaginationSection]
     """
     found = await uow.read_book(book_record.id, lambda repos: repos.pagination_sections.list_all())
@@ -420,7 +420,7 @@ class TestSections:
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
     ) -> None:
-        """Verify a page of another project and a project of another account are both answered not found.
+        """Verify a page of another book and a book of another account are both answered not found.
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
@@ -784,7 +784,7 @@ class TestNumberPages:
     async def test_page_of_another_book_is_not_found(
         self, fx_pagination: Callable[[], PaginationService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify a range whose last page belongs to another project is answered not found.
+        """Verify a range whose last page belongs to another book is answered not found.
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
@@ -882,7 +882,7 @@ class TestNumberPages:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.pages.update(evolve(repos.pages.get(pages[4].id), manual_label=HAND_WRITTEN))
@@ -917,13 +917,13 @@ class TestRecomputeInPageUseCases:
         :type pagination: Callable[[], PaginationService]
         :param uow: Unit of work to commit through, over a database that stores the account of the owner.
         :type uow: UnitOfWork
-        :param owner: Account owning the project.
+        :param owner: Account owning the book.
         :type owner: Actor
         :param count: Number of pages.
         :type count: int
         :param section: Fields of the draft of the section other than its first page.
         :type section: object
-        :returns: The project and its pages in book order, numbered.
+        :returns: The book and its pages in book order, numbered.
         :rtype: tuple[BookRecord, list[Page]]
         """
         book_record, pages = await _commit_book(uow, owner, *_text_book(count))

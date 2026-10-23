@@ -94,7 +94,7 @@ export function pageChangesInFlight(queryClient: QueryClient, bookId: string): n
  * the book ask for included, and the last change to end reads the pages and sees whatever the skipped reads would have.
  *
  * @param queryClient The client that holds the queries.
- * @param projectId The book whose pages to refresh.
+ * @param bookId The book whose pages to refresh.
  * @param settling How many of the changes in flight are the one that calls this, one for a change of the pages that
  * reads them as it ends and none for anything else.
  */

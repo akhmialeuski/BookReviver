@@ -37,7 +37,7 @@ ALWAYS_IDLE_SECONDS: float = 0.0
 # A revision the code does not ship, standing for a book saved by a newer release
 NEWER_REVISION: str = 'ffffffffffff'
 VERSION_TABLE: str = 'alembic_versions'
-# A directory under the projects root that no store makes, which is not a book
+# A directory under the ``projects`` directory of the storage that no store makes, which is not a book
 NOT_A_BOOK: str = 'not-a-book'
 
 

@@ -41,13 +41,13 @@ PROFILE_NAME: str = 'Own'
 
 
 async def seed_book(kit: ProcessingKit, kinds: list[PageKind]) -> tuple[Actor, BookRecord, list[PageId]]:
-    """Seed a project whose pages have the given kinds, each a scan page with the base version the stage reads.
+    """Seed a book whose pages have the given kinds, each a scan page with the base version the stage reads.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param kinds: Kind of each page in book order.
     :type kinds: list[PageKind]
-    :returns: The actor, the project and the identifiers of the pages in book order.
+    :returns: The actor, the book and the identifiers of the pages in book order.
     :rtype: tuple[Actor, BookRecord, list[PageId]]
     """
     actor, book_record = await kit.seed_record()
@@ -58,11 +58,11 @@ async def seed_book(kit: ProcessingKit, kinds: list[PageKind]) -> tuple[Actor, B
 
 
 async def add_page(kit: ProcessingKit, book_record: BookRecord, kind: PageKind, *, order_key: str) -> PageId:
-    """Add a scan page of a kind to a project, with the base version the stage reads.
+    """Add a scan page of a kind to a book, with the base version the stage reads.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_record: Project owning the page.
+    :param book_record: Record of the book owning the page.
     :type book_record: BookRecord
     :param kind: Role of the page in the book.
     :type kind: PageKind
@@ -82,9 +82,9 @@ async def tune_recipes(kit: ProcessingKit, actor: Actor, book_record: BookRecord
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: Project whose recipes are changed.
+    :param book_record: Record of the book whose recipes are changed.
     :type book_record: BookRecord
     :returns: The recipes as stored, by kind.
     :rtype: dict[RecipeKind, Recipe]
@@ -104,9 +104,9 @@ async def run_all(kit: ProcessingKit, actor: Actor, book_record: BookRecord, run
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: Project to run in.
+    :param book_record: Record of the book to run in.
     :type book_record: BookRecord
     :param run: What to run, or None for the whole book.
     :type run: StageRun | None
@@ -119,7 +119,7 @@ async def record_of(kit: ProcessingKit, book_id: BookId, page_id: PageId) -> Pag
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book holds the page.
+    :param book_id: Book that holds the page.
     :type book_id: BookId
     :param page_id: The page.
     :type page_id: PageId
@@ -243,7 +243,7 @@ class TestRecipeOfAPage:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project of the book, which the work does not use.
+            :param _book_record: Record of the book, which the work does not use.
             :type _book_record: BookRecord
             """
             for page_id, content in ((by_hand, ContentType.COLOR_PICTURE), (plate_as_text, ContentType.TEXT)):

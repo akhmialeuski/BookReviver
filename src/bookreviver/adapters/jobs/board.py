@@ -410,7 +410,7 @@ class InMemoryJobBoard(JobBoard):
     def jobs(self, book_id: BookId, *, active: bool) -> Sequence[Job]:
         """Return the jobs of a book, the newest first.
 
-        :param book_id: Project whose jobs are listed.
+        :param book_id: Book whose jobs are listed.
         :type book_id: BookId
         :param active: Whether to list only the jobs that are queued or running.
         :type active: bool
@@ -423,7 +423,7 @@ class InMemoryJobBoard(JobBoard):
     def jobs_of(self, book_ids: Collection[BookId], *, active: bool) -> Sequence[Job]:
         """Return the jobs of several books, the newest first.
 
-        :param book_ids: Projects whose jobs are listed.
+        :param book_ids: Books whose jobs are listed.
         :type book_ids: Collection[BookId]
         :param active: Whether to list only the jobs that are queued or running.
         :type active: bool

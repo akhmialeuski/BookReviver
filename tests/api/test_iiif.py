@@ -45,7 +45,7 @@ MAX_UPLOAD_BYTES: int = 1024
 class Book(NamedTuple):
     """A book of the signed-in account with one page whose base version has files in the asset store.
 
-    :ivar book_record: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar version: The base version of its page.
     """
 
@@ -59,13 +59,13 @@ class Book(NamedTuple):
 
 
 async def _store_book(uow: UnitOfWork, assets: AssetStore, owner: AccountId) -> Book:
-    """Store a project with a page whose pyramid holds an ``info.json`` and one tile, and whose thumbnail exists.
+    """Store a book with a page whose pyramid holds an ``info.json`` and one tile, and whose thumbnail exists.
 
     :param uow: Unit of work over the catalogue and the books of the test.
     :type uow: UnitOfWork
     :param assets: Asset store of the application.
     :type assets: AssetStore
-    :param owner: Committed account that owns the project.
+    :param owner: Committed account that owns the book.
     :type owner: AccountId
     :returns: The stored book.
     :rtype: Book
@@ -186,7 +186,7 @@ class TestIiifFile:
         fx_uow: UnitOfWorkFactory,
         fx_asset_store: AssetStore,
     ) -> None:
-        """Verify a stored file of another account's project answers exactly like a missing one.
+        """Verify a stored file of another account's book answers exactly like a missing one.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -206,7 +206,7 @@ class TestIiifFile:
     async def test_source_and_upload_files_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_source_store: SourceStore, fx_actor: Actor
     ) -> None:
-        """Verify a stored source file and a staged upload of the account's own project answer 404, not 500.
+        """Verify a stored source file and a staged upload of the account's own book answer 404, not 500.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient

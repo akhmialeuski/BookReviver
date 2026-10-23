@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
-# More projects than one window of the owner's project list, so a deletion has to page through them
+# More books than one window of the owner's book list, so a deletion has to page through them
 OWNED_BOOKS: int = 3
 
 
@@ -56,13 +56,13 @@ async def fx_container(
 
 
 async def _stored(container: AsyncContainer, book_record: BookRecord) -> bool:
-    """Return whether the project's book is still stored.
+    """Return whether the book is still stored.
 
     :param container: The application's container.
     :type container: AsyncContainer
-    :param book_record: Project to look up.
+    :param book_record: Record of the book to look up.
     :type book_record: BookRecord
-    :returns: True when a new unit of work still finds the project.
+    :returns: True when a new unit of work still finds the book.
     :rtype: bool
     """
     async with container() as scope:
@@ -81,9 +81,9 @@ class TestDelete:
     async def test_deleting_an_account_deletes_its_books_with_their_files(
         self, fx_container: AsyncContainer, fx_settings: Settings
     ) -> None:
-        """Verify the account's projects go with their rows and files, then the account, and another's stay.
+        """Verify the account's books go with their rows and files, then the account, and another's stay.
 
-        The owner key of a project refuses to delete an account that still owns one, so the projects go first.
+        The owner key of a book refuses to delete an account that still owns one, so the books go first.
 
         :param fx_container: The application's container.
         :type fx_container: AsyncContainer

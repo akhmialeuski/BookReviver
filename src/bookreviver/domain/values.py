@@ -219,7 +219,7 @@ class BookDetails:
         """Return the description with every empty field the suggestion has a value for filled in.
 
         A field that holds a value, even a wrong one, is never replaced, and the title is never touched, because it is
-        required when the project is created and a file can only guess it.
+        required when the book is created and a file can only guess it.
 
         :param suggestion: Description fields found in a source.
         :type suggestion: MetadataSuggestion
@@ -391,7 +391,7 @@ class Renditions:
     no cache serves a stale image. A page version is written once into the directory of its own identifier, so its
     renditions stay at the first version.
 
-    The format of ``full`` is chosen when the image is written, from its colour and the project's ``ImagePolicy``, and
+    The format of ``full`` is chosen when the image is written, from its colour and the book's ``ImagePolicy``, and
     kept here. It is not computed from the policy when read, because a later change of the policy must not change the
     storage key of an image already stored. A page version copies the format of the scan it is cut from.
 

@@ -39,7 +39,7 @@ OUTDATED_GEOMETRY = evolve(FakeProcessor.spec.ref, version='0')
 class Book(NamedTuple):
     """A book of one page whose geometry result was made by an older version of its processor.
 
-    :ivar book_record: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar source: The source the page was cut from.
     :ivar scan: The scan of the source the page shows.
     :ivar page: Its only page.
@@ -129,7 +129,7 @@ async def fx_extra_providers(
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: Project of the book, which the work does not need.
+        :param _book_record: Record of the book, which the work does not need.
         :type _book_record: BookRecord
         """
         for record in fx_book.records:

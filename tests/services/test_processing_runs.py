@@ -80,13 +80,13 @@ INTERRUPTED_BOOK_PAGES: int = 3
 
 
 async def prepared_page(kit: ProcessingKit, **book_options: ImagePolicy) -> tuple[Actor, BookRecord, Page]:
-    """Seed a project with one scan page whose base version is stored, the input of the geometry stage.
+    """Seed a book with one scan page whose base version is stored, the input of the geometry stage.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_options: Options of the project, such as its image policy.
+    :param book_options: Options of the book, such as its image policy.
     :type book_options: ImagePolicy
-    :returns: The actor, the project and the page.
+    :returns: The actor, the book and the page.
     :rtype: tuple[Actor, BookRecord, Page]
     """
     actor, book_record = await kit.seed_record(**book_options)
@@ -385,7 +385,7 @@ class TestRunStage:
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param policy: Image policy of the project.
+        :param policy: Image policy of the book.
         :type policy: ImagePolicy
         :param expected: Format of ``full`` the policy asks for a gray page.
         :type expected: Rendition
@@ -465,9 +465,9 @@ async def save_three_steps(kit: ProcessingKit, actor: Actor, book_record: BookRe
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: Project to save the recipe in.
+    :param book_record: Record of the book to save the recipe in.
     :type book_record: BookRecord
     """
     steps = [Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: strength}) for strength in range(1, 4)]
@@ -769,10 +769,10 @@ class TestPreviewStep:
 
 
 class SeededPage(NamedTuple):
-    """The account, the project and the page a change made while a job runs is made on.
+    """The account, the book and the page a change made while a job runs is made on.
 
-    :ivar actor: Account owning the project.
-    :ivar book_record: The project.
+    :ivar actor: Account owning the book.
+    :ivar book_record: The record of the book.
     :ivar page: The page the job runs.
     """
 
@@ -786,7 +786,7 @@ async def delete_the_page(kit: ProcessingKit, seeded: SeededPage) -> None:
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param seeded: The project and the page.
+    :param seeded: The record of the book and the page.
     :type seeded: SeededPage
     """
     await kit.uow().change_book(seeded.book_record.id, lambda repos, _book_record: repos.pages.delete(seeded.page.id))
@@ -797,7 +797,7 @@ async def set_a_setting_by_hand(kit: ProcessingKit, seeded: SeededPage) -> None:
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param seeded: The account, the project and the page.
+    :param seeded: The account, the record of the book and the page.
     :type seeded: SeededPage
     """
     key = await kit.edit_key(seeded.book_record.id, seeded.page, Stage.GEOMETRY, FAKE_KEY)
@@ -809,7 +809,7 @@ async def replace_the_input(kit: ProcessingKit, seeded: SeededPage) -> None:
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param seeded: The project and the page.
+    :param seeded: The record of the book and the page.
     :type seeded: SeededPage
     """
 
@@ -818,7 +818,7 @@ async def replace_the_input(kit: ProcessingKit, seeded: SeededPage) -> None:
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: Project of the book, which the work does not need.
+        :param _book_record: Record of the book, which the work does not need.
         :type _book_record: BookRecord
         """
         [base] = repos.page_versions.list_base_versions([seeded.page.id])
@@ -835,7 +835,7 @@ async def save_the_recipe(kit: ProcessingKit, seeded: SeededPage) -> None:
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param seeded: The account and the project owning the recipe.
+    :param seeded: The account and the record of the book owning the recipe.
     :type seeded: SeededPage
     """
     kit.clock.moment = EPOCH + timedelta(hours=1)
@@ -944,7 +944,7 @@ async def interrupted_book(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The actor, the project, the pages in book order, and the job as it was cancelled.
+    :returns: The actor, the book, the pages in book order, and the job as it was cancelled.
     :rtype: tuple[Actor, BookRecord, list[Page], Job]
     """
     actor, book_record = await kit.seed_record()

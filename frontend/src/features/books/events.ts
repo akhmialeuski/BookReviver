@@ -22,7 +22,7 @@ import { invalidateHistory, invalidatePageLayers } from '@/features/processing/h
 import { Coalescer } from '@/shared/lib/coalescer';
 
 /**
- * What the events of a project do to the cached queries.
+ * What the events of a book do to the cached queries.
  *
  * Every committed change of a book is one `book-changed` event, which carries the new version of the book and the
  * parts of it the change wrote, so the queries of those parts are read again and nothing else is. The stream opens

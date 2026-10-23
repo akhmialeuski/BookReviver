@@ -27,7 +27,7 @@ export function usePlaceWriter(): PlaceWriter | null {
  * return the canvas and the strip to where they were. Give a book its own screen with a `key`, because the writer
  * belongs to one book.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param address Where the reader is, or null while the screen has no address to write.
  */
 export function useBookPlaceWriter(bookId: string, address: PlaceAddress | null): PlaceWriter {

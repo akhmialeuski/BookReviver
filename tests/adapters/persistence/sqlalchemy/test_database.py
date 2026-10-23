@@ -46,7 +46,7 @@ COMMIT_STATEMENT: str = 'COMMIT'
 ROLLBACK_STATEMENT: str = 'ROLLBACK'
 # What a statement of SQLite that starts or ends a transaction begins with
 TRANSACTION_WORDS: tuple[str, ...] = (BEGIN_READ, COMMIT_STATEMENT, ROLLBACK_STATEMENT)
-# The title a test gives a stored project
+# The title a test gives a stored book
 NEW_TITLE: str = 'Renamed'
 # The pragma reading the journal mode, its answer for a database in the write-ahead log, and that of synchronous=NORMAL
 JOURNAL_MODE_PRAGMA: str = 'PRAGMA journal_mode'
@@ -123,14 +123,14 @@ class TestSqlDatabase:
     async def test_update_stores_the_updated_at_of_the_domain(
         self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId
     ) -> None:
-        """Verify a project updated with a new title keeps the ``updated_at`` the domain gave it, and no other.
+        """Verify a book updated with a new title keeps the ``updated_at`` the domain gave it, and no other.
 
         advanced-alchemy's touch listener, on by default, replaces an ``updated_at`` the flush does not change with
         the wall clock, which is not the ``Clock`` of the domain.
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
         book_record = make_record()
@@ -299,11 +299,11 @@ class TestSqliteTransactions:
     async def test_change_book_hands_the_work_the_book_as_the_last_change_committed_it(
         self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId
     ) -> None:
-        """Verify a ``change_book`` reads the project row at its start, so it sees the title another change stored.
+        """Verify a ``change_book`` reads the book's record at its start, so it sees the title another change stored.
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
         book_record = make_record()

@@ -34,7 +34,7 @@ async def seed_page(kit: ProcessingKit, book_record: BookRecord, order_key: str)
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_record: Project owning the page.
+    :param book_record: Record of the book owning the page.
     :type book_record: BookRecord
     :param order_key: Order key of the page.
     :type order_key: str
@@ -52,7 +52,7 @@ async def seed_loose_base(
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
@@ -79,7 +79,7 @@ async def inputs_of(
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book holds the pages.
+    :param book_id: Book that holds the pages.
     :type book_id: BookId
     :param page_ids: The pages.
     :type page_ids: Collection[PageId]

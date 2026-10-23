@@ -1,4 +1,4 @@
-"""Tests for the project use cases, against the database of the test and the local stores over a temporary directory."""
+"""Tests for the book use cases, against the database of the test and the local stores over a temporary directory."""
 
 import io
 import zipfile
@@ -48,7 +48,7 @@ DATABASE_NAME: str = 'book.db'
 
 
 def _service(uow: UnitOfWork, sources: LocalSourceStore, assets: LocalAssetStore, root: Path) -> BooksService:
-    """Build the project service for one request, over a unit of work, a catalogue with no processors and no jobs.
+    """Build the book service for one request, over a unit of work, a catalogue with no processors and no jobs.
 
     :param uow: Unit of work of the request.
     :type uow: UnitOfWork
@@ -101,7 +101,7 @@ class StoreFailedError(OSError):
 
 
 class SourceStoreFailingOnce(LocalSourceStore):
-    """The local source store, whose first project deletion fails before it removes anything."""
+    """The local source store, whose first book deletion fails before it removes anything."""
 
     def __init__(self, *, root: Path) -> None:
         """Keep the sources under ``root`` and fail the first deletion.
@@ -114,9 +114,9 @@ class SourceStoreFailingOnce(LocalSourceStore):
 
     @override
     async def delete_book(self, book_id: BookId) -> None:
-        """Fail on the first call, as a storage outage would, and remove the project's source on the later ones.
+        """Fail on the first call, as a storage outage would, and remove the book's source on the later ones.
 
-        :param book_id: Project whose source files are removed.
+        :param book_id: Book whose source files are removed.
         :type book_id: BookId
         :raises StoreFailedError: On the first call, with nothing removed.
         """
@@ -146,13 +146,13 @@ def fx_flaky_service(
 
 
 async def _stored(uow: UnitOfWork, book_record: BookRecord) -> BookRecord:
-    """Read the committed state of a project.
+    """Read the committed state of a book.
 
     :param uow: Unit of work to read through.
     :type uow: UnitOfWork
-    :param book_record: Project to read back.
+    :param book_record: Record of the book to read back.
     :type book_record: BookRecord
-    :returns: The project as committed.
+    :returns: The book as committed.
     :rtype: BookRecord
     """
     return await uow.read_book(book_record.id, lambda repos: repos.book_record.get(book_record.id))
@@ -184,7 +184,7 @@ class TestList:
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
     ) -> None:
-        """Verify another account's project is hidden and the actor's come most recently updated first.
+        """Verify another account's book is hidden and the actor's come most recently updated first.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
@@ -216,7 +216,7 @@ class TestCreate:
     async def test_creates_an_empty_book_owned_by_the_actor(
         self, fx_service: Callable[[], BooksService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify the project is committed with the actor as owner and the clock's time on both timestamps.
+        """Verify the book is committed with the actor as owner and the clock's time on both timestamps.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
@@ -245,7 +245,7 @@ class TestGet:
     async def test_returns_the_book_with_the_counts_of_its_book(
         self, fx_service: Callable[[], BooksService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify the overview counts the included pages, the sources and the scans of the project.
+        """Verify the overview counts the included pages, the sources and the scans of the book.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
@@ -285,7 +285,7 @@ class TestGet:
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
     ) -> None:
-        """Verify a project of another account is reported as missing, not as forbidden.
+        """Verify a book of another account is reported as missing, not as forbidden.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
@@ -309,7 +309,7 @@ class TestUpdate:
     async def test_sets_the_image_policy(
         self, fx_service: Callable[[], BooksService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify the image policy of the project changes.
+        """Verify the image policy of the book changes.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
@@ -360,7 +360,7 @@ class TestUpdate:
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
     ) -> None:
-        """Verify the actor cannot change another account's project.
+        """Verify the actor cannot change another account's book.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
@@ -425,7 +425,7 @@ class TestDelete:
         fx_files: BookFiles,
         fx_actor: Actor,
     ) -> None:
-        """Verify a deletion stopped by a storage failure keeps the project, and repeating it removes everything.
+        """Verify a deletion stopped by a storage failure keeps the book, and repeating it removes everything.
 
         :param fx_flaky_service: Function building the service over a source store whose first deletion fails.
         :type fx_flaky_service: Callable[[], BooksService]
@@ -460,7 +460,7 @@ class TestDelete:
         fx_files: BookFiles,
         fx_actor: Actor,
     ) -> None:
-        """Verify the actor cannot delete another account's project or its files.
+        """Verify the actor cannot delete another account's book or its files.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
@@ -497,7 +497,7 @@ class TestDeleteAll:
         fx_files: BookFiles,
         fx_actor: Actor,
     ) -> None:
-        """Verify every project of the actor goes with its files, and another account's project stays.
+        """Verify every book of the actor goes with its files, and another account's book stays.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
@@ -530,7 +530,7 @@ class TestDeleteAll:
     async def test_actor_without_books_is_not_an_error(
         self, fx_service: Callable[[], BooksService], fx_actor: Actor
     ) -> None:
-        """Verify deleting the projects of an account that has none succeeds, as for a fresh account.
+        """Verify deleting the books of an account that has none succeeds, as for a fresh account.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
@@ -543,7 +543,7 @@ class TestDeleteAll:
 async def _archive(service: BooksService, actor: Actor, book_id: BookId) -> io.BytesIO:
     """Read the whole archive of a book the actor owns, as the browser downloads it.
 
-    :param service: The project service of the request.
+    :param service: The book service of the request.
     :type service: BooksService
     :param actor: Account the service acts for.
     :type actor: Actor
@@ -711,9 +711,9 @@ class TestSweep:
 
 
 class SourceStoreWaiting(LocalSourceStore):
-    """The local source store, whose project deletion stops until the test lets it go.
+    """The local source store, whose book deletion stops until the test lets it go.
 
-    :ivar reached: Set when the deletion of the files of a project has begun.
+    :ivar reached: Set when the deletion of the files of a book has begun.
     :ivar proceed: Set by the test to let the deletion carry on.
     """
 
@@ -731,7 +731,7 @@ class SourceStoreWaiting(LocalSourceStore):
     async def delete_book(self, book_id: BookId) -> None:
         """Tell the test the deletion has begun, wait for it, and remove the files.
 
-        :param book_id: Project whose source files are removed.
+        :param book_id: Book whose source files are removed.
         :type book_id: BookId
         """
         self.reached.set()
@@ -740,7 +740,7 @@ class SourceStoreWaiting(LocalSourceStore):
 
 
 class TestDeleteHoldsNoTransactionOverTheFiles:
-    """Tests for the deletion of a project, whose files go outside any transaction and whose row goes in one."""
+    """Tests for the deletion of a book, whose files go outside any transaction and whose row goes in one."""
 
     async def test_a_change_of_the_book_opens_while_its_files_are_being_removed(
         self,
@@ -770,14 +770,14 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
 
             :param _repos: Repositories of the transaction, which the work does not use.
             :type _repos: BookRepositories
-            :param _book_record: The project of the book, which the work does not use.
+            :param _book_record: Record of the book, which the work does not use.
             :type _book_record: BookRecord
             """
             nonlocal opened
             opened = True
 
         async def open_a_change() -> None:
-            """Open and leave a change of the book of the project, which has to be granted at once."""
+            """Open and leave a change of the book, which has to be granted at once."""
             await fx_uow().change_book(book_record.id, mark_opened)
 
         async with anyio.create_task_group() as group:

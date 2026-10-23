@@ -56,7 +56,7 @@ SCAN: BlankFill = BlankFill.SCAN
 class Book(NamedTuple):
     """A book of the signed-in account: a page of text and two blank pages, each cut from a scan.
 
-    :ivar book_record: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar pages: The three pages in book order.
     """
 
@@ -65,7 +65,7 @@ class Book(NamedTuple):
 
     @property
     def pages_path(self) -> str:
-        """The path of the project's pages."""
+        """The path of the book's pages."""
         return f'{BOOKS_PATH}/{self.book_record.id}/pages'
 
     @property
@@ -138,7 +138,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: The project as the change finds it, which the work does not need.
+        :param _book_record: The record of the book as the change finds it, which the work does not need.
         :type _book_record: BookRecord
         """
         for page, version in zip(pages, versions, strict=True):
@@ -172,7 +172,7 @@ async def _page(client: httpx.AsyncClient, book: Book, index: int) -> PageSchema
 
 
 class TestFillBlankPages:
-    """Tests for POST /projects/{project_id}/pages/blank-fill."""
+    """Tests for POST /books/{book_id}/pages/blank-fill."""
 
     async def test_a_white_leaf_replaces_the_scan_once_the_job_has_drawn_it_and_the_scan_comes_back(
         self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
@@ -301,7 +301,7 @@ class TestFillBlankPages:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_a_page_of_another_book_is_not_found(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
-        """Verify an identifier that is no page of the project is answered 404, whatever it is.
+        """Verify an identifier that is no page of the book is answered 404, whatever it is.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient

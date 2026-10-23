@@ -1,7 +1,7 @@
 """Use cases of the pages of a book: its manifest, one page by identifier, moving pages, and the files of their images.
 
 A page is addressed by its ``PageId`` and never by its number, because its position changes when pages are moved. The
-position is not stored: the service computes it when it reads a page, from the order keys of the project, and returns
+position is not stored: the service computes it when it reads a page, from the order keys of the book, and returns
 it in a ``PageOverview`` together with the base version whose renditions show the page. The order key itself stays
 inside the persistence adapter's ordering, so no client ever sees it.
 
@@ -29,7 +29,7 @@ A page without a scan is added in a place of the book: a placeholder has no imag
 gets the base version ``pages.blank``, a white image of the median size of the book's pages. Binding a scan to a
 placeholder makes it a page of that scan with the base version ``split.none``. None of these writes an image in the
 request: the page and its pending base version are committed, and the ``prepare-pages`` job writes the files, which
-``prepare_images`` does for every pending or failed version of the project. A failed version keeps its reason in its
+``prepare_images`` does for every pending or failed version of the book. A failed version keeps its reason in its
 data, and the next job takes it with the new ones, so no route repeats it.
 
 A page shows its base version because no later version is recorded yet. When the processing stages write versions of
@@ -155,7 +155,7 @@ class PageImaging:
 
 
 class PageService:
-    """Pages of the acting account's projects, addressed by identifier, their order, and access to their files.
+    """Pages of the acting account's books, addressed by identifier, their order, and access to their files.
 
     :cvar MAX_PAGES_PER_BATCH: Most pages one call of ``add_many`` adds, which bounds the rows of one transaction.
     :cvar PAPER_KINDS: Kinds of page whose paper a leaf may take, which are the pages printed on the paper of the book.
@@ -200,7 +200,7 @@ class PageService:
     async def manifest(
         self, actor: Actor, book_id: BookId, request: SliceRequest, *, included_only: bool = False
     ) -> Slice[PageOverview]:
-        """Return a window of the project's pages in book order, every page with its position and base version.
+        """Return a window of the book's pages in book order, every page with its position and base version.
 
         Pages kept out of the book are listed too, and count in the positions, so the client can offer to bring them
         back. With ``included_only`` they are left out of the listing and of the numbering, so the positions are those
@@ -208,7 +208,7 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param request: Offset and limit of the window.
         :type request: SliceRequest
@@ -216,7 +216,7 @@ class PageService:
         :type included_only: bool
         :returns: The pages of the window and the number of the pages listed.
         :rtype: Slice[PageOverview]
-        :raises NotFoundError: If the actor has no such project.
+        :raises NotFoundError: If the actor has no such book.
         """
         await self._library.open(actor, book_id)
 
@@ -227,7 +227,7 @@ class PageService:
             :type repos: BookRepositories
             :returns: The pages of the window and the number of the pages listed.
             :rtype: Slice[PageOverview]
-            :raises NotFoundError: If the actor has no such project.
+            :raises NotFoundError: If the actor has no such book.
             """
             window = repos.pages.list_window(request, included_only=included_only)
             return Slice(items=self._overviews(repos, window.items, request.offset), total=window.total)
@@ -235,28 +235,28 @@ class PageService:
         return await self._uow.read_book(book_id, work)
 
     async def get(self, actor: Actor, book_id: BookId, page_id: PageId) -> PageOverview:
-        """Return one page of the project with its position and base version.
+        """Return one page of the book with its position and base version.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :returns: The page, its position in the book and its base version.
         :rtype: PageOverview
-        :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        :raises NotFoundError: If the actor has no such book, or the book has no such page.
         """
         await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories) -> PageOverview:
-            """Read the page of the actor's project with its position and base version.
+            """Read the page of the actor's book with its position and base version.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :returns: The page, its position in the book and its base version.
             :rtype: PageOverview
-            :raises NotFoundError: If the project has no such page.
+            :raises NotFoundError: If the book has no such page.
             """
             return self._overview(repos, repos.pages.get(page_id))
 
@@ -270,7 +270,7 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_id: Identifier of the page.
         :type page_id: PageId
@@ -278,7 +278,7 @@ class PageService:
         :type changes: PageChanges
         :returns: The changed page with its position.
         :rtype: PageOverview
-        :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        :raises NotFoundError: If the actor has no such book, or the book has no such page.
         """
         await self._library.open(actor, book_id)
 
@@ -287,11 +287,11 @@ class PageService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it.
+            :param _book_record: The record of the book as the change finds it.
             :type _book_record: BookRecord
             :returns: The changed page with its position.
             :rtype: PageOverview
-            :raises NotFoundError: If the project has no such page.
+            :raises NotFoundError: If the book has no such page.
             """
             before = repos.pages.get(page_id)
             page = changes.apply_to(before)
@@ -320,23 +320,23 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_ids: Pages to detect, or None for the pages that have no content type yet.
         :type page_ids: Sequence[PageId] | None
         :returns: The queued job.
         :rtype: Job
-        :raises NotFoundError: If the actor has no such project, or the project has no such page.
-        :raises ConflictError: If the content of the pages of the project is being detected already.
+        :raises NotFoundError: If the actor has no such book, or the book has no such page.
+        :raises ConflictError: If the content of the pages of the book is being detected already.
         """
         await self._library.open(actor, book_id)
 
         def check(repos: BookRepositories) -> None:
-            """Require the project to be the actor's and the pages to be its own.
+            """Require the book to be the actor's and the pages to be its own.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :raises NotFoundError: If the project has no such page.
+            :raises NotFoundError: If the book has no such page.
             """
             if page_ids is not None:
                 repos.pages.list_by_ids(page_ids)
@@ -350,9 +350,9 @@ class PageService:
     def detect_new_pages(self, book_id: BookId) -> None:
         """Queue the detection of the content of the pages that have none, which a job asks for when images are made.
 
-        Nothing is queued while a detection of the project is queued or running, which goes over the pages it finds.
+        Nothing is queued while a detection of the book is queued or running, which goes over the pages it finds.
 
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         """
         self._enqueue(book_id, JobKind.DETECT_CONTENT, ContentDetection().to_map())
@@ -369,13 +369,13 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param new_page: The page to add, with its place and for a blank leaf perhaps its size.
         :type new_page: NewPage
         :returns: The new page with its position.
         :rtype: PageOverview
-        :raises NotFoundError: If the actor has no such project, or the project has no such anchor.
+        :raises NotFoundError: If the actor has no such book, or the book has no such anchor.
         :raises ConflictError: If a blank leaf has no size given and no page of the book has one to take the median of.
         """
         await self._library.open(actor, book_id)
@@ -386,11 +386,11 @@ class PageService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param book_record: The project as the change finds it.
+            :param book_record: The record of the book as the change finds it.
             :type book_record: BookRecord
             :returns: The new page with its position.
             :rtype: PageOverview
-            :raises NotFoundError: If the project has no such anchor.
+            :raises NotFoundError: If the book has no such anchor.
             :raises ConflictError: If a blank leaf has no size given and no page of the book has one to take.
             """
             size = (new_page.size or self._leaf_size(repos)) if blank else None
@@ -421,15 +421,15 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param new_pages: The pages to add, in the order they are to stand in where they share a place.
         :type new_pages: Sequence[NewPage]
         :returns: The new pages with their positions, in the order listed.
         :rtype: list[PageOverview]
-        :raises NotFoundError: If the actor has no such project.
+        :raises NotFoundError: If the actor has no such book.
         :raises ConflictError: If there are more pages than ``MAX_PAGES_PER_BATCH``, if the anchor of a page is not a
-                               page of the project, or if a blank leaf has no size and no page of the book has one to
+                               page of the book, or if a blank leaf has no size and no page of the book has one to
                                take the median of. The message of the last two names the index of the page.
         """
         await self._library.open(actor, book_id)
@@ -441,12 +441,12 @@ class PageService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param book_record: The project as the change finds it.
+            :param book_record: The record of the book as the change finds it.
             :type book_record: BookRecord
             :returns: The new pages with their positions in the order listed, none when no page was given.
             :rtype: list[PageOverview]
-            :raises NotFoundError: If the actor has no such project.
-            :raises ConflictError: If the anchor of a page is not a page of the project, or a blank leaf has no size and
+            :raises NotFoundError: If the actor has no such book.
+            :raises ConflictError: If the anchor of a page is not a page of the book, or a blank leaf has no size and
                                    no page of the book has one to take the median of.
             """
             if not new_pages:
@@ -518,13 +518,13 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_ids: Pages to change, each at most once.
         :type page_ids: Collection[PageId]
         :param fill: What the image of the pages becomes.
         :type fill: BlankFill
-        :raises NotFoundError: If the actor has no such project, or the project lacks one of the pages.
+        :raises NotFoundError: If the actor has no such book, or the book lacks one of the pages.
         :raises ConflictError: If a page is not cut from a scan, or a leaf is chosen for a page that is not blank, or no
                                page of the book has a recorded size to give the leaf.
         """
@@ -535,12 +535,12 @@ class PageService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param book_record: The project as the change finds it.
+            :param book_record: The record of the book as the change finds it.
             :type book_record: BookRecord
             :returns: Whether a leaf waits for the ``prepare-pages`` job, which none does when every page has the
                       choice already.
             :rtype: bool
-            :raises NotFoundError: If the project lacks one of the pages.
+            :raises NotFoundError: If the book lacks one of the pages.
             :raises ConflictError: If a page is not cut from a scan, or a leaf is chosen for a page that is not blank,
                                    or no page of the book has a recorded size to give the leaf.
             """
@@ -597,7 +597,7 @@ class PageService:
             :type page_ids: Sequence[PageId]
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param book_record: The project as the change finds it.
+            :param book_record: The record of the book as the change finds it.
             :type book_record: BookRecord
             :raises ConflictError: If no page of the book has a recorded size to give a leaf.
             """
@@ -620,7 +620,7 @@ class PageService:
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param book_record: The project owning the pages.
+        :param book_record: The record of the book owning the pages.
         :type book_record: BookRecord
         :param pages: The pages, each with the choice to give effect to as its ``blank_fill``.
         :type pages: Sequence[Page]
@@ -658,11 +658,11 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_id: Identifier of the page.
         :type page_id: PageId
-        :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        :raises NotFoundError: If the actor has no such book, or the book has no such page.
         """
         await self._library.open(actor, book_id)
 
@@ -671,11 +671,11 @@ class PageService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it.
+            :param _book_record: The record of the book as the change finds it.
             :type _book_record: BookRecord
             :returns: The deleted page.
             :rtype: Page
-            :raises NotFoundError: If the project has no such page.
+            :raises NotFoundError: If the book has no such page.
             """
             page = repos.pages.get(page_id)
             self._labels.settle(repos, leaving=[page.id])
@@ -698,7 +698,7 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_id: Identifier of the placeholder.
         :type page_id: PageId
@@ -708,7 +708,7 @@ class PageService:
         :type take_over: bool
         :returns: The page, which now shows the scan.
         :rtype: PageOverview
-        :raises NotFoundError: If the actor has no such project, or the project has no such page or scan.
+        :raises NotFoundError: If the actor has no such book, or the book has no such page or scan.
         :raises NotAPlaceholderError: If the page is not a placeholder.
         :raises ScanAlreadyInBookError: If another page shows the scan and ``take_over`` is not set, the error naming
                                         those pages by their printed number or position.
@@ -721,11 +721,11 @@ class PageService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it.
+            :param _book_record: The record of the book as the change finds it.
             :type _book_record: BookRecord
             :returns: The page that shows the scan now, and the pages that were deleted for it.
             :rtype: tuple[PageOverview, Sequence[Page]]
-            :raises NotFoundError: If the project has no such page or scan.
+            :raises NotFoundError: If the book has no such page or scan.
             :raises NotAPlaceholderError: If the page is not a placeholder.
             :raises ScanAlreadyInBookError: If another page shows the scan and ``take_over`` is not set.
             :raises ConflictError: If the scan is not cut yet.
@@ -778,7 +778,7 @@ class PageService:
         The versions of the page split and the page order stages are read when the job starts, and each is written and
         stored on its own, so the viewer swaps an empty frame for the image of a page as soon as it is ready. A
         version that fails is stored as failed with its reason, the job goes on, and it ends failed if any version did,
-        which the next job of the project takes up again. A job that was cancelled stops before its next version.
+        which the next job of the book takes up again. A job that was cancelled stops before its next version.
 
         The job holds no transaction while it writes files, only a short ``change_book`` for each version, which reads
         the page again before it stores anything. When it has made images it queues the detection of the content of
@@ -815,7 +815,7 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_id: Identifier of the page to move.
         :type page_id: PageId
@@ -823,7 +823,7 @@ class PageService:
         :type anchor: PageAnchor
         :returns: The page at its new place.
         :rtype: PageOverview
-        :raises NotFoundError: If the actor has no such project, or the project has no such page or anchor.
+        :raises NotFoundError: If the actor has no such book, or the book has no such page or anchor.
         :raises ConflictError: If the anchor is the page itself.
         """
         await self._library.open(actor, book_id)
@@ -833,11 +833,11 @@ class PageService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it.
+            :param _book_record: The record of the book as the change finds it.
             :type _book_record: BookRecord
             :returns: The page at its new place.
             :rtype: PageOverview
-            :raises NotFoundError: If the project has no such page or anchor.
+            :raises NotFoundError: If the book has no such page or anchor.
             :raises ConflictError: If the anchor is the page itself.
             """
             with self._records.watching_sides(repos):
@@ -855,13 +855,13 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page_ids: Identifiers of the pages to move.
         :type page_ids: Collection[PageId]
         :param anchor: Page the run is put next to, and the side of it.
         :type anchor: PageAnchor
-        :raises NotFoundError: If the actor has no such project, or the project lacks a page or the anchor.
+        :raises NotFoundError: If the actor has no such book, or the book lacks a page or the anchor.
         :raises ConflictError: If the anchor is one of the pages.
         """
         await self._library.open(actor, book_id)
@@ -871,9 +871,9 @@ class PageService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it.
+            :param _book_record: The record of the book as the change finds it.
             :type _book_record: BookRecord
-            :raises NotFoundError: If the project lacks a page or the anchor.
+            :raises NotFoundError: If the book lacks a page or the anchor.
             :raises ConflictError: If the anchor is one of the pages.
             """
             self._move_run(repos, repos.pages.list_by_ids(page_ids), anchor)
@@ -887,13 +887,13 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param source_id: Identifier of the source whose pages are moved.
         :type source_id: SourceId
         :param anchor: Page the run is put next to, and the side of it.
         :type anchor: PageAnchor
-        :raises NotFoundError: If the actor has no such project, or the project has no such source or anchor.
+        :raises NotFoundError: If the actor has no such book, or the book has no such source or anchor.
         :raises ConflictError: If the anchor is a page of the source.
         """
         await self._library.open(actor, book_id)
@@ -903,9 +903,9 @@ class PageService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it.
+            :param _book_record: The record of the book as the change finds it.
             :type _book_record: BookRecord
-            :raises NotFoundError: If the project has no such source or anchor.
+            :raises NotFoundError: If the book has no such source or anchor.
             :raises ConflictError: If the anchor is a page of the source.
             """
             repos.sources.get(source_id)
@@ -917,8 +917,8 @@ class PageService:
     async def open_asset(self, actor: Actor, key: StorageKey) -> AsyncIterator[Path]:
         """Give a local path of the derived file at ``key`` for as long as the context is open.
 
-        The owner is checked before the store is asked for anything, so a key inside another account's project and a
-        key with no file behind it are told apart by nobody. A key under the project's ``incoming/`` or ``sources/``
+        The owner is checked before the store is asked for anything, so a key inside another account's book and a
+        key with no file behind it are told apart by nobody. A key under the book's ``incoming/`` or ``sources/``
         belongs to no derived file and is reported as not found without a look at the store.
 
         :param actor: Account acting in the current request.
@@ -927,7 +927,7 @@ class PageService:
         :type key: StorageKey
         :returns: Context manager yielding the path of the file, valid while the context is open.
         :rtype: AsyncIterator[Path]
-        :raises NotFoundError: If the key is not under the ``assets/`` of one of the actor's projects, or nothing is
+        :raises NotFoundError: If the key is not under the ``assets/`` of one of the actor's books, or nothing is
                                stored at it.
         """
         if (keys := BookKeys.owning(key)) is None:
@@ -948,7 +948,7 @@ class PageService:
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param pages: Pages of one project in book order, without a gap.
+        :param pages: Pages of one book in book order, without a gap.
         :type pages: Sequence[Page]
         :param first_position: Position of the first page in the book.
         :type first_position: int
@@ -985,7 +985,7 @@ class PageService:
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param pages: Pages of one project.
+        :param pages: Pages of one book.
         :type pages: Sequence[Page]
         :returns: The version to show by page identifier.
         :rtype: Mapping[PageId, PageVersion]
@@ -1006,7 +1006,7 @@ class PageService:
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param page: Stored page of a project.
+        :param page: Stored page of a book.
         :type page: Page
         :returns: The page with its place in the book.
         :rtype: PageOverview
@@ -1048,7 +1048,7 @@ class PageService:
         :type anchor: PageAnchor
         :returns: The pages with their new keys and their update time.
         :rtype: list[Page]
-        :raises NotFoundError: If the anchor is not a page of the project.
+        :raises NotFoundError: If the anchor is not a page of the book.
         :raises ConflictError: If the anchor is one of the pages, since the place is then not defined.
         """
         keys = self._keys_at(repos, anchor, count=len(pages), moving={page.id for page in pages})
@@ -1078,7 +1078,7 @@ class PageService:
         :type moving: Collection[PageId]
         :returns: The keys in ascending order.
         :rtype: Sequence[str]
-        :raises NotFoundError: If the anchor is not a page of the project.
+        :raises NotFoundError: If the anchor is not a page of the book.
         :raises ConflictError: If the anchor is one of the moving pages, since the place is then not defined.
         """
         if anchor is None:
@@ -1104,7 +1104,7 @@ class PageService:
         :type pages: Sequence[Page]
         :param anchor: Page the run is put next to, and the side of it.
         :type anchor: PageAnchor
-        :raises NotFoundError: If the anchor is not a page of the project.
+        :raises NotFoundError: If the anchor is not a page of the book.
         :raises ConflictError: If the anchor is one of the pages.
         """
         moved = self._place(repos, pages, anchor)
@@ -1117,7 +1117,7 @@ class PageService:
     async def _discard_files(self, book_id: BookId, pages: Sequence[Page]) -> None:
         """Remove every file of pages that were deleted, after the transaction that deleted them has ended.
 
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param pages: The deleted pages, whose directories under ``assets/pages`` are removed.
         :type pages: Sequence[Page]
@@ -1131,13 +1131,13 @@ class PageService:
     ) -> Job | None:
         """Put a ``prepare-pages`` or ``detect-content`` job on the board, unless one of its kind is active.
 
-        A project has one job of each of the kinds at a time, so two jobs never write the files of one version, or the
+        A book has one job of each of the kinds at a time, so two jobs never write the files of one version, or the
         content of one page, together. The check of the active jobs and the put of the new one are one step of the
         event loop, with no ``await`` between them, so two requests never pass the check together. A job that is
         running when a version is stored may have read its versions before it, which is why the job looks again when it
         ends, in ``_follow_up``.
 
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param kind: What the job does, ``prepare-pages`` or ``detect-content``.
         :type kind: JobKind
@@ -1263,7 +1263,7 @@ class PageService:
         removed and the job goes on. The files are written outside any transaction, and the result is stored by
         ``_store`` in a ``change_book`` of its own.
 
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param version: A pending or failed base version.
         :type version: PageVersion
@@ -1282,7 +1282,7 @@ class PageService:
 
                 :param repos: Repositories of the transaction.
                 :type repos: BookRepositories
-                :param _book_record: The project as the change finds it, which the work does not need.
+                :param _book_record: The record of the book as the change finds it, which the work does not need.
                 :type _book_record: BookRecord
                 """
                 if (current := self._found(repos, page.id)) is not None and self._outdated_leaf(version, current):
@@ -1312,7 +1312,7 @@ class PageService:
         as ``_prepare`` deletes such a leaf, since a leaf left pending would be taken by every job, and its files are
         removed after the transaction.
 
-        :param book_id: Identifier of the project of the page.
+        :param book_id: Identifier of the book of the page.
         :type book_id: BookId
         :param page: The page the version belongs to, as read before its files were written.
         :type page: Page
@@ -1329,7 +1329,7 @@ class PageService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             :returns: Whether the page is gone, and whether the leaf is outdated and was deleted.
             :rtype: tuple[bool, bool]
@@ -1393,7 +1393,7 @@ class PageService:
     async def _write_files(self, book_id: BookId, version: PageVersion, page: Page) -> PageVersion:
         """Run the processor of a base version and write its files: a copy of its scan, or a generated white leaf.
 
-        :param book_id: Identifier of the project of the page.
+        :param book_id: Identifier of the book of the page.
         :type book_id: BookId
         :param version: A pending or failed base version.
         :type version: PageVersion
@@ -1406,11 +1406,11 @@ class PageService:
         """
 
         def read(repos: BookRepositories) -> tuple[BookRecord, BookKeys, StepRun]:
-            """Read the project and what the processor of the version reads, in one snapshot.
+            """Read the record of the book and what the processor of the version reads, in one snapshot.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :returns: The project, its keys, and the run of the processor.
+            :returns: The record of the book, its keys, and the run of the processor.
             :rtype: tuple[BookRecord, BookKeys, StepRun]
             :raises ConflictError: If the scan to copy is deleted or not cut yet.
             :raises ValueError: If the version is neither ``split.none`` nor ``pages.blank``, or has no size to make.

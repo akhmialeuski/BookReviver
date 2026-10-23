@@ -32,7 +32,7 @@ async def hold_book_in_thread(uow: UnitOfWork, book_id: BookId | None = None) ->
 
     :param uow: Unit of work whose change holds the book.
     :type uow: UnitOfWork
-    :param book_id: Project whose book is held, or None for the catalogue.
+    :param book_id: Book that is held, or None for the catalogue.
     :type book_id: BookId | None
     :returns: Iterator yielding once the work of the change has started, and letting it commit when the block ends.
     :rtype: AsyncIterator[None]

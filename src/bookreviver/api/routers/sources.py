@@ -46,13 +46,13 @@ async def list_sources(
     sources: FromDishka[SourceService],
     status: Annotated[frozenset[SourceStatus], Query(description=STATUS_DESCRIPTION)] = IMPORTED_ONLY,
 ) -> Page[SourceSchema]:
-    """List the sources of a project in the order they were recorded, the imported ones unless ``status`` says more.
+    """List the sources of a book in the order they were recorded, the imported ones unless ``status`` says more.
 
     The rejected and skipped files are the report of an import: the files no check let through, with their reasons, and
     the files a cancelled import never reached.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
@@ -62,7 +62,7 @@ async def list_sources(
     :type sources: SourceService
     :param status: Statuses of the files to list.
     :type status: frozenset[SourceStatus]
-    :returns: One page of the project's files in the statuses.
+    :returns: One page of the book's files in the statuses.
     :rtype: Page[SourceSchema]
     """
     pager = Pager[Source, SourceSchema](params, SourceSchema.model_validate)
@@ -75,12 +75,12 @@ async def delete_unimported_sources(
     actor: ActorDep,
     sources: FromDishka[SourceService],
 ) -> None:
-    """Delete the rejected and skipped files of a project, which is closing the report of an import.
+    """Delete the rejected and skipped files of a book, which is closing the report of an import.
 
-    The imported sources stay. The project answers 409 while it imports.
+    The imported sources stay. The book answers 409 while it imports.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
@@ -97,10 +97,10 @@ async def get_source(
     actor: ActorDep,
     sources: FromDishka[SourceService],
 ) -> SourceSchema:
-    """Return one source of a project.
+    """Return one source of a book.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param source_id: Identifier of the source.
     :type source_id: SourceId
@@ -123,10 +123,10 @@ async def delete_source(
 ) -> None:
     """Delete a source with its files and its scans, leaving the pages of the book with their own images.
 
-    The pages made from the source lose only the reference to their scan. The project answers 409 while it imports.
+    The pages made from the source lose only the reference to their scan. The book answers 409 while it imports.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param source_id: Identifier of the source.
     :type source_id: SourceId
@@ -146,10 +146,10 @@ async def list_scans(
     query: Annotated[ScanQuery, Depends()],
     sources: FromDishka[SourceService],
 ) -> Page[ScanSchema]:
-    """List the scans of a project source by source, or of one source, with the paths of their images once cut.
+    """List the scans of a book source by source, or of one source, with the paths of their images once cut.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
@@ -180,7 +180,7 @@ async def move_source_pages(
     event, so the answer has no body.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param source_id: Identifier of the source whose pages are moved.
     :type source_id: SourceId

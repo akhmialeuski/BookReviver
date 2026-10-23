@@ -502,7 +502,7 @@ class PageVersionSchema(ResponseModel):
 
         :param version: The version.
         :type version: PageVersion
-        :param book_id: Project owning the page, whose keys place the files.
+        :param book_id: Book owning the page, whose keys place the files.
         :type book_id: BookId
         :param request: The request, whose application knows the route that serves the images.
         :type request: Request

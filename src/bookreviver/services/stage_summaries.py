@@ -2,12 +2,12 @@
 
 The stage bar of a book needs the state of every stage over all its pages, and the strip of a stage needs the state of
 each page, so asking page by page would take a request for each page. The counts here come from one grouped query of
-the page stage records of the book, and the number of pages that have an image comes with the project itself. A stage
+the page stage records of the book, and the number of pages that have an image comes with the book itself. A stage
 no page has a record of is counted as not run, since the records are written when a stage runs.
 
 A stage is available when it is done by hand or a processor of it is installed, so a stage turns from soon to
 available the day the first plugin of it is installed, with no change here. The class does not check who owns a
-project: the service of the projects does that through the library. Every method reads, synchronously, through the
+book: the books service does that through the library. Every method reads, synchronously, through the
 repositories of the book of the transaction its caller runs in, which is the work of ``UnitOfWork.read_book``.
 """
 

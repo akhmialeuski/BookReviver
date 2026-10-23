@@ -28,7 +28,7 @@ GROUP: str = 'Index'
 class Book(NamedTuple):
     """A book of four pages that all went through the geometry and the cleanup stage.
 
-    :ivar book_record: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar pages: The pages in book order.
     """
 
@@ -136,7 +136,7 @@ async def _commit_book(uow: UnitOfWork, actor: Actor, valued: tuple[ValueScope, 
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: The project as the change finds it, which the work does not need.
+        :param _book_record: The record of the book as the change finds it, which the work does not need.
         :type _book_record: BookRecord
         """
         for page in pages:

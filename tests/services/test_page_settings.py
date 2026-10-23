@@ -91,7 +91,7 @@ async def ran_book(kit: ProcessingKit, *, count: int = 4) -> tuple[Actor, BookRe
     :type kit: ProcessingKit
     :param count: How many pages to seed.
     :type count: int
-    :returns: The actor, the project, the pages and the identifier of the step of the geometry recipe.
+    :returns: The actor, the book, the pages and the identifier of the step of the geometry recipe.
     :rtype: tuple[Actor, BookRecord, list[Page], StepId]
     """
     actor, book_record = await kit.seed_record()
@@ -135,7 +135,7 @@ async def put_in_group(kit: ProcessingKit, book_id: BookId, page: Page, label: s
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
@@ -189,7 +189,7 @@ async def stages_of(kit: ProcessingKit, book_id: BookId, pages: list[Page]) -> l
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param pages: The pages.
     :type pages: list[Page]
@@ -326,7 +326,7 @@ class TestPageValues:
         assert_expectations()
 
     async def test_a_page_of_another_book_is_not_found_and_nothing_is_written(self, fx_kit: ProcessingKit) -> None:
-        """Verify a selected page the project does not have is refused before any page takes the value.
+        """Verify a selected page the book does not have is refused before any page takes the value.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit

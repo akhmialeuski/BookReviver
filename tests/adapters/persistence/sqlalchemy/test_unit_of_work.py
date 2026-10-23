@@ -48,7 +48,7 @@ GROUP: str = 'Engravings'
 MISSING_VERSION: PageVersion = make_page_version(page_id=PageId(uuid4()))
 WRITE_ARG: str = 'write'
 # A write of each form the repositories use, which a read refuses, by the name of the test case; each takes the
-# repositories and the stored project of the test
+# repositories and the stored book of the test
 WRITES: dict[str, Callable[[BookRepositories, BookRecord], object]] = {
     'insert-through-the-session': lambda repos, book_record: repos.pages.add(make_page()),
     'update-through-the-session': lambda repos, book_record: repos.book_record.update(
@@ -63,7 +63,7 @@ def count_pages(repos: BookRepositories, _book_record: BookRecord) -> int:
 
     :param repos: Repositories of the transaction.
     :type repos: BookRepositories
-    :param _book_record: The project of the book.
+    :param _book_record: The record of the book.
     :type _book_record: BookRecord
     :returns: How many pages the transaction sees.
     :rtype: int
@@ -85,7 +85,7 @@ class TestRead:
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param write: A write the work of the read attempts.
         :type write: Callable[[BookRepositories, BookRecord], object]
@@ -115,7 +115,7 @@ class TestRead:
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
         book_record = make_record()
@@ -176,7 +176,7 @@ class TestBookVersion:
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
         :type fx_book_changes: RecordingEventBus
@@ -204,7 +204,7 @@ class TestBookVersion:
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
         :type fx_book_changes: RecordingEventBus
@@ -229,7 +229,7 @@ class TestBookVersion:
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
         :type fx_book_changes: RecordingEventBus
@@ -261,7 +261,7 @@ class TestGroups:
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
         book_record, page = make_record(), make_page()

@@ -18,14 +18,14 @@ every page comes out of one size without a press of the button of the measure. T
 nearest earlier stage of a page, finds the versions it made before by their identifier, makes only what is new, and
 makes the last version the current one of the stage. A page that fails is recorded as failed and the job goes on to the
 next, and the job succeeds when it processed at least one page. When it ends well it queues a collection of the
-project's versions that are no longer current, behind itself, so their files go as soon as the run has replaced them,
+book's versions that are no longer current, behind itself, so their files go as soon as the run has replaced them,
 without the user asking. A run of the page split that made pages is followed by the detection of the content of the
 pages that have none.
 
 A measure of the book reads the content boxes the normalize step recorded on every page and writes the parameters of
 that step of every Geometry recipe, which marks the pages of those recipes stale.
 
-A project processes one thing at a time, so a collection never overlaps a run that may be reusing the versions it
+A book processes one thing at a time, so a collection never overlaps a run that may be reusing the versions it
 deletes. A collection chooses the versions and hands them in batches to ``VersionClearing``, readers first, which marks
 each batch failed, removes the directories and then deletes the rows with the log of their marks, in one commit. A row
 is never deleted before its files, and a version whose files could not be removed stays marked with the versions it
@@ -131,7 +131,7 @@ class ProcessingJobs:
         done, failed = outcomes.count(RunOutcome.DONE), outcomes.count(RunOutcome.FAILED)
         if failed and not done:
             return JobEnd(state=JobState.FAILED, error=NO_PAGE_PROCESSED)
-        # The collection is put behind this job, so the project is never free between the two
+        # The collection is put behind this job, so the book is never free between the two
         self._starter.queue_collection(job.book_id)
         if done and job.stage is Stage.PAGE_SPLIT:
             self._pages.detect_new_pages(job.book_id)
@@ -276,7 +276,7 @@ class ProcessingJobs:
         A page that fails on the way is left for the run to fail with its reason, and has no box. Every step of the
         pass is a task of the job, which the executor counts as it makes the versions.
 
-        :param executor: Runner of recipes of the project, which holds the size it works out for the pages of a recipe.
+        :param executor: Runner of recipes of the book, which holds the size it works out for the pages of a recipe.
         :type executor: RecipeRun
         :param pages: The pages whose recipe leaves a field of the normalize step to the book.
         :type pages: Sequence[Page]
@@ -306,9 +306,9 @@ class ProcessingJobs:
         A cancellation is no fault of the page: ``JobCancelledError`` is no ``Exception``, so it passes this handler and
         the page keeps the state it had.
 
-        :param book_id: Identifier of the project of the job.
+        :param book_id: Identifier of the book of the job.
         :type book_id: BookId
-        :param executor: Runner of recipes of the project.
+        :param executor: Runner of recipes of the book.
         :type executor: RecipeRun
         :param page: Page to process.
         :type page: Page
@@ -332,7 +332,7 @@ class ProcessingJobs:
 
                     :param repos: Repositories of the transaction.
                     :type repos: BookRepositories
-                    :param _book_record: The project as the change finds it, which the record does not read.
+                    :param _book_record: The record of the book as the change finds it, which the record does not read.
                     :type _book_record: BookRecord
                     """
                     try:
@@ -371,7 +371,7 @@ class ProcessingJobs:
         A version that is gone or has changed since it was read keeps no mark, and a pyramid left for a version that is
         gone is removed.
 
-        :param book_id: Project owning the version.
+        :param book_id: Book owning the version.
         :type book_id: BookId
         :param version_id: The version, which is passed by when it is gone, not ready, cut already or without an image.
         :type version_id: PageVersionId
@@ -392,7 +392,7 @@ class ProcessingJobs:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the marking does not read.
+            :param _book_record: The record of the book as the change finds it, which the marking does not read.
             :type _book_record: BookRecord
             :returns: Whether the version was stored, and the version as the transaction found it, which is None when
                       it is gone.

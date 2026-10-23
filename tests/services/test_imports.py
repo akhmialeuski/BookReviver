@@ -234,7 +234,7 @@ def fx_samples(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def fx_owner() -> Actor:
-    """Build the account that owns the project.
+    """Build the account that owns the book.
 
     :returns: Actor with a fresh account identifier.
     :rtype: Actor
@@ -244,13 +244,13 @@ def fx_owner() -> Actor:
 
 @pytest.fixture
 async def fx_book(fx_rig: ImportRig, fx_owner: Actor) -> BookRecord:
-    """Store a project of ``fx_owner`` with no sources.
+    """Store a book of ``fx_owner`` with no sources.
 
     :param fx_rig: Adapters of the import.
     :type fx_rig: ImportRig
-    :param fx_owner: Account owning the project.
+    :param fx_owner: Account owning the book.
     :type fx_owner: Actor
-    :returns: The stored project.
+    :returns: The stored book.
     :rtype: BookRecord
     """
     book_record = make_record()
@@ -334,7 +334,7 @@ async def _import(rig: ImportRig, actor: Actor, book_id: BookId, files: list[Upl
     :type rig: ImportRig
     :param actor: Account acting in the request.
     :type actor: Actor
-    :param book_id: Project to import into.
+    :param book_id: Book to import into.
     :type book_id: BookId
     :param files: The uploaded files.
     :type files: list[UploadFile]
@@ -354,7 +354,7 @@ async def _running_import(rig: ImportRig, actor: Actor, book_id: BookId, files: 
     :type rig: ImportRig
     :param actor: Account acting in the request.
     :type actor: Actor
-    :param book_id: Project to import into.
+    :param book_id: Book to import into.
     :type book_id: BookId
     :param files: The uploaded files.
     :type files: list[UploadFile]
@@ -381,11 +381,11 @@ async def _running_import(rig: ImportRig, actor: Actor, book_id: BookId, files: 
 
 
 async def _report(rig: ImportRig, book_id: BookId) -> list[Source]:
-    """Read the rejected and skipped files of a project as committed, which are the report of its imports.
+    """Read the rejected and skipped files of a book as committed, which are the report of its imports.
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
-    :param book_id: Project owning the files.
+    :param book_id: Book owning the files.
     :type book_id: BookId
     :returns: The files, in the order the imports recorded them.
     :rtype: list[Source]
@@ -394,11 +394,11 @@ async def _report(rig: ImportRig, book_id: BookId) -> list[Source]:
 
 
 async def _sources(rig: ImportRig, book_id: BookId) -> list[Source]:
-    """Read the sources of a project as committed, in import order.
+    """Read the sources of a book as committed, in import order.
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
-    :param book_id: Project owning the sources.
+    :param book_id: Book owning the sources.
     :type book_id: BookId
     :returns: The sources.
     :rtype: list[Source]
@@ -407,11 +407,11 @@ async def _sources(rig: ImportRig, book_id: BookId) -> list[Source]:
 
 
 async def _scans(rig: ImportRig, book_id: BookId) -> list[Scan]:
-    """Read the scans of a project as committed, source by source.
+    """Read the scans of a book as committed, source by source.
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
-    :param book_id: Project owning the scans.
+    :param book_id: Book owning the scans.
     :type book_id: BookId
     :returns: The scans.
     :rtype: list[Scan]
@@ -420,11 +420,11 @@ async def _scans(rig: ImportRig, book_id: BookId) -> list[Scan]:
 
 
 async def _pages(rig: ImportRig, book_id: BookId) -> list[Page]:
-    """Read the pages of a project as committed, in book order.
+    """Read the pages of a book as committed, in book order.
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
-    :param book_id: Project owning the pages.
+    :param book_id: Book owning the pages.
     :type book_id: BookId
     :returns: The pages.
     :rtype: list[Page]
@@ -433,11 +433,11 @@ async def _pages(rig: ImportRig, book_id: BookId) -> list[Page]:
 
 
 async def _labels(rig: ImportRig, book_id: BookId) -> list[str]:
-    """Read the labels the pages of a project show, in book order, as the sections committed give them.
+    """Read the labels the pages of a book show, in book order, as the sections committed give them.
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
-    :param book_id: Project owning the pages.
+    :param book_id: Book owning the pages.
     :type book_id: BookId
     :returns: The labels.
     :rtype: list[str]
@@ -446,11 +446,11 @@ async def _labels(rig: ImportRig, book_id: BookId) -> list[str]:
 
 
 async def _sections(rig: ImportRig, book_id: BookId) -> list[PaginationSection]:
-    """Read the pagination sections of a project as committed, in the order they were made.
+    """Read the pagination sections of a book as committed, in the order they were made.
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
-    :param book_id: Project owning the sections.
+    :param book_id: Book owning the sections.
     :type book_id: BookId
     :returns: The sections.
     :rtype: list[PaginationSection]
@@ -463,7 +463,7 @@ async def _versions(rig: ImportRig, book_id: BookId, page_ids: Collection[PageId
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
-    :param book_id: Project owning the pages.
+    :param book_id: Book owning the pages.
     :type book_id: BookId
     :param page_ids: Pages owning the versions.
     :type page_ids: Collection[PageId]
@@ -477,13 +477,13 @@ async def _versions(rig: ImportRig, book_id: BookId, page_ids: Collection[PageId
 
 
 async def _book_record(rig: ImportRig, book_id: BookId) -> BookRecord:
-    """Read a project as committed.
+    """Read a book as committed.
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
-    :returns: The project.
+    :returns: The book.
     :rtype: BookRecord
     """
     return await rig.open_uow().read_book(book_id, lambda repos: repos.book_record.get(book_id))
@@ -507,15 +507,15 @@ async def _is_stored(assets: AssetStore, key: StorageKey) -> bool:
 
 
 async def _record_with(rig: ImportRig, owner: Actor, policy: ImagePolicy) -> BookRecord:
-    """Store a project of the owner with no sources, under an image policy.
+    """Store a book of the owner with no sources, under an image policy.
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
-    :param owner: Account owning the project.
+    :param owner: Account owning the book.
     :type owner: Actor
-    :param policy: Image policy of the project.
+    :param policy: Image policy of the book.
     :type policy: ImagePolicy
-    :returns: The stored project.
+    :returns: The stored book.
     :rtype: BookRecord
     """
     book_record = evolve(make_record(), image_policy=policy)
@@ -604,7 +604,7 @@ REFUSED_IDS: list[str] = [
 class FullFormatCase(NamedTuple):
     """A page image imported under an image policy, and the ``full`` image it must be stored as.
 
-    :ivar policy: Image policy of the project.
+    :ivar policy: Image policy of the book.
     :ivar mode: Pillow mode of the uploaded page image.
     :ivar name: Name of the uploaded file, whose suffix selects its format.
     :ivar expected: Format the ``full`` image must be recorded and stored in.
@@ -668,9 +668,9 @@ class TestStartImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_book_files: A book of two PDF parts and a cover, uploaded out of order.
         :type fx_book_files: list[UploadFile]
@@ -698,11 +698,11 @@ class TestStartImport:
     async def test_book_of_another_account_is_not_found(
         self, fx_rig: ImportRig, fx_book: BookRecord, fx_samples: Path
     ) -> None:
-        """Verify an account cannot import into, or learn about, a project it does not own.
+        """Verify an account cannot import into, or learn about, a book it does not own.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_book: Project of another account.
+        :param fx_book: Book of another account.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -719,9 +719,9 @@ class TestStartImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -744,9 +744,9 @@ class TestStartImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -766,13 +766,13 @@ class TestStartImport:
     async def test_finished_import_does_not_keep_the_book_from_importing_again(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path
     ) -> None:
-        """Verify a project whose last import ended accepts a new upload.
+        """Verify a book whose last import ended accepts a new upload.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -795,9 +795,9 @@ class TestStartImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -826,13 +826,13 @@ class TestAuthorizeUpload:
     async def test_owner_of_an_idle_book_may_upload(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord
     ) -> None:
-        """Verify the owner of a project with no import running is allowed, and nothing is put on the board.
+        """Verify the owner of a book with no import running is allowed, and nothing is put on the board.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         """
         await fx_rig.service().authorize_upload(fx_owner, fx_book.id)
@@ -844,11 +844,11 @@ class TestAuthorizeUpload:
     async def test_another_account_is_told_the_book_does_not_exist(
         self, fx_rig: ImportRig, fx_book: BookRecord
     ) -> None:
-        """Verify an account that does not own the project learns nothing about it.
+        """Verify an account that does not own the book learns nothing about it.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_book: Project of another account.
+        :param fx_book: Book of another account.
         :type fx_book: BookRecord
         """
         with pytest.raises(NotFoundError):
@@ -857,13 +857,13 @@ class TestAuthorizeUpload:
     async def test_book_that_imports_is_a_conflict(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord
     ) -> None:
-        """Verify a project with an import on the board is refused with the conflict of the upload rule.
+        """Verify a book with an import on the board is refused with the conflict of the upload rule.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         """
         fx_rig.fakes.board.put(make_job(book_id=fx_book.id))
@@ -884,9 +884,9 @@ class TestRunImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_book_files: A book of two PDF parts and a cover, uploaded out of order.
         :type fx_book_files: list[UploadFile]
@@ -921,9 +921,9 @@ class TestRunImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -958,9 +958,9 @@ class TestRunImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -996,9 +996,9 @@ class TestRunImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1024,9 +1024,9 @@ class TestRunImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1052,9 +1052,9 @@ class TestRunImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1080,9 +1080,9 @@ class TestRunImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1107,9 +1107,9 @@ class TestRunImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1130,9 +1130,9 @@ class TestRunImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1162,9 +1162,9 @@ class TestRunImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_book_files: A book of two PDF parts and a cover, uploaded out of order.
         :type fx_book_files: list[UploadFile]
@@ -1209,9 +1209,9 @@ class TestRunImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1244,9 +1244,9 @@ class TestRunImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_book_files: A book of two PDF parts and a cover, uploaded out of order.
         :type fx_book_files: list[UploadFile]
@@ -1276,9 +1276,9 @@ class TestRunImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_book_files: A book of two PDF parts and a cover, uploaded out of order.
         :type fx_book_files: list[UploadFile]
@@ -1298,9 +1298,9 @@ class TestRunImport:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1338,11 +1338,11 @@ class TestRunImportFullFormat:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
-        :param case: Image policy of the project, the page image to import, and the format its ``full`` must have.
+        :param case: Image policy of the book, the page image to import, and the format its ``full`` must have.
         :type case: FullFormatCase
         """
         book_record = await _record_with(fx_rig, fx_owner, case.policy)
@@ -1366,14 +1366,14 @@ class TestRunImportFullFormat:
     async def test_later_change_of_the_policy_leaves_the_stored_images_and_their_paths_alone(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_samples: Path
     ) -> None:
-        """Verify a scan imported under ``compact`` stays a JPEG after the project turns ``lossless``.
+        """Verify a scan imported under ``compact`` stays a JPEG after the book turns ``lossless``.
 
         A scan imported afterwards follows the new policy, and the first keeps its recorded format, its key and its
         file, so no stored address changes.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1416,11 +1416,11 @@ class TestRunImportDjvu:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
-        :param policy: Image policy of the project.
+        :param policy: Image policy of the book.
         :type policy: ImagePolicy
         """
         book_record = await _record_with(fx_rig, fx_owner, policy)
@@ -1453,9 +1453,9 @@ class TestRunImportDjvu:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1486,9 +1486,9 @@ class TestRunImportDjvu:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1516,9 +1516,9 @@ class TestRunImportDjvu:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1541,9 +1541,9 @@ class TestRunImportDjvu:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1574,13 +1574,13 @@ class TestRunImportChecks:
         """Verify an upload of a broken file and a second copy of a file gives two rejected rows, and the rest imports.
 
         The copy is rejected under another name with the name of the source it repeats, and the broken file with the
-        message of the reader. Neither is a source of the project, and both are listed with the report of the import.
+        message of the reader. Neither is a source of the book, and both are listed with the report of the import.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1620,9 +1620,9 @@ class TestRunImportChecks:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1648,9 +1648,9 @@ class TestRunImportChecks:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1680,9 +1680,9 @@ class TestRunImportChecks:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         """
         job = await _import(
@@ -1710,9 +1710,9 @@ class TestRunImportChecks:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1748,9 +1748,9 @@ class TestRunImportChecks:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1781,7 +1781,7 @@ class TestRunImportChecks:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1819,9 +1819,9 @@ class TestRunImportLifecycle:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1853,9 +1853,9 @@ class TestRunImportLifecycle:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1897,9 +1897,9 @@ class TestRunImportLifecycle:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -1944,16 +1944,16 @@ class TestRunImportLifecycle:
         fx_samples: Path,
         fx_book_changes: RecordingEventBus,
     ) -> None:
-        """Verify scans left without renditions by a cancelled job are cut first by the project's next import.
+        """Verify scans left without renditions by a cancelled job are cut first by the book's next import.
 
         The cancelled job keeps its source and pages. The next job writes the directories the cancelled one left
         half written, since a stored file is never replaced, and counts those scans in its own progress.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -2006,9 +2006,9 @@ class TestRunImportLifecycle:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -2051,9 +2051,9 @@ class TestRunImportLifecycle:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -2077,13 +2077,13 @@ class TestRunImportLifecycle:
     async def test_unexpected_error_fails_the_job_without_leaking_its_message(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path
     ) -> None:
-        """Verify an error nobody foresaw ends the job as failed with a fixed message, so the project is not stuck.
+        """Verify an error nobody foresaw ends the job as failed with a fixed message, so the book is not stuck.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -2110,9 +2110,9 @@ class TestRunImportFailures:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -2138,9 +2138,9 @@ class TestRunImportFailures:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -2175,9 +2175,9 @@ class TestRunImportQueue:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -2234,9 +2234,9 @@ class TestRunImportQueue:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -2292,9 +2292,9 @@ class TestRunImportQueue:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -2387,9 +2387,9 @@ class TestRunImportSplit:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -2414,9 +2414,9 @@ class TestRunImportSplit:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -2436,9 +2436,9 @@ class TestRunImportSplit:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -2454,13 +2454,13 @@ class TestRunImportSplit:
     async def test_a_split_that_cannot_be_queued_does_not_fail_the_import(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path
     ) -> None:
-        """Verify a project that is processing something already still ends its import as succeeded.
+        """Verify a book that is processing something already still ends its import as succeeded.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -2478,11 +2478,11 @@ class TestRunImportSplit:
 
 
 async def delete_the_page(rig: ImportRig, book_record: BookRecord) -> None:
-    """Delete the only page of the project in a change of its own, as the user would while its scan is cut.
+    """Delete the only page of the book in a change of its own, as the user would while its scan is cut.
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
-    :param book_record: Project whose page is deleted.
+    :param book_record: Record of the book whose page is deleted.
     :type book_record: BookRecord
     """
     [page] = await _pages(rig, book_record.id)
@@ -2490,11 +2490,11 @@ async def delete_the_page(rig: ImportRig, book_record: BookRecord) -> None:
 
 
 async def delete_the_source(rig: ImportRig, book_record: BookRecord) -> None:
-    """Delete the only source of the project, with its scan, in a change of its own.
+    """Delete the only source of the book, with its scan, in a change of its own.
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
-    :param book_record: Project whose source is deleted.
+    :param book_record: Record of the book whose source is deleted.
     :type book_record: BookRecord
     """
     [source] = await _sources(rig, book_record.id)
@@ -2502,11 +2502,11 @@ async def delete_the_source(rig: ImportRig, book_record: BookRecord) -> None:
 
 
 async def make_the_scan_ready(rig: ImportRig, book_record: BookRecord) -> None:
-    """Mark the only scan of the project ready in a change of its own, as another run would have.
+    """Mark the only scan of the book ready in a change of its own, as another run would have.
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
-    :param book_record: Project whose scan is marked.
+    :param book_record: Record of the book whose scan is marked.
     :type book_record: BookRecord
     """
     [scan] = await _scans(rig, book_record.id)
@@ -2540,9 +2540,9 @@ class TestRunImportApplyStep:
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -2577,23 +2577,23 @@ class TestRunImportApplyStep:
 
 
 class TestStartImportConcurrently:
-    """Tests for two uploads of one project that meet at the check of the active import."""
+    """Tests for two uploads of one book that meet at the check of the active import."""
 
     async def test_two_uploads_that_pass_the_early_check_together_put_one_job_and_remove_the_other_upload(
         self, fx_rig: ImportRig, fx_owner: Actor, fx_book: BookRecord, fx_samples: Path, fx_storage_root: Path
     ) -> None:
         """Verify of two uploads that both passed the early check, one puts its job and the other is refused.
 
-        Both uploads pass the check of the project and receive their files before either puts its job, since the
+        Both uploads pass the check of the book and receive their files before either puts its job, since the
         store holds each of them until the other has received its files. Then the check is made again with no
         ``await`` before the put, so the first to run puts its job and the second finds it, and the files the second
         received are removed.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
@@ -2610,7 +2610,7 @@ class TestStartImportConcurrently:
         ) -> Sequence[SourceFile]:
             """Receive the files of an upload, then wait until the files of both uploads have been received.
 
-            :param book_id: Project receiving the upload.
+            :param book_id: Book receiving the upload.
             :type book_id: BookId
             :param job_id: Import job owning the upload.
             :type job_id: JobId
@@ -2680,7 +2680,7 @@ async def fx_files(fx_rig: ImportRig, fx_book: BookRecord) -> list[Source]:
 
     :param fx_rig: Adapters of the import.
     :type fx_rig: ImportRig
-    :param fx_book: Project of the owner.
+    :param fx_book: Book of the owner.
     :type fx_book: BookRecord
     :returns: The imported source, the rejected file and the skipped file.
     :rtype: list[Source]
@@ -2726,11 +2726,11 @@ class TestSourceReport:
 
         :param fx_sources: Service of the sources.
         :type fx_sources: SourceService
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
-        :param fx_files: An imported, a rejected and a skipped file of the project.
+        :param fx_files: An imported, a rejected and a skipped file of the book.
         :type fx_files: list[Source]
         """
         listed = await fx_sources.list(fx_owner, fx_book.id, BOOK_WINDOW)
@@ -2760,11 +2760,11 @@ class TestSourceReport:
 
         :param fx_sources: Service of the sources.
         :type fx_sources: SourceService
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
-        :param fx_files: An imported, a rejected and a skipped file of the project.
+        :param fx_files: An imported, a rejected and a skipped file of the book.
         :type fx_files: list[Source]
         :param case: The statuses asked for, and the files they must return.
         :type case: StatusCase
@@ -2784,11 +2784,11 @@ class TestSourceReport:
         :type fx_rig: ImportRig
         :param fx_sources: Service of the sources.
         :type fx_sources: SourceService
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
-        :param fx_files: An imported, a rejected and a skipped file of the project.
+        :param fx_files: An imported, a rejected and a skipped file of the book.
         :type fx_files: list[Source]
         """
         await fx_sources.delete_unimported(fx_owner, fx_book.id)
@@ -2806,11 +2806,11 @@ class TestSourceReport:
         :type fx_rig: ImportRig
         :param fx_sources: Service of the sources.
         :type fx_sources: SourceService
-        :param fx_owner: Account owning the project.
+        :param fx_owner: Account owning the book.
         :type fx_owner: Actor
-        :param fx_book: Project of ``fx_owner``.
+        :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
-        :param fx_files: An imported, a rejected and a skipped file of the project.
+        :param fx_files: An imported, a rejected and a skipped file of the book.
         :type fx_files: list[Source]
         """
         fx_rig.fakes.board.put(make_job(book_id=fx_book.id))
@@ -2823,15 +2823,15 @@ class TestSourceReport:
     async def test_deleting_the_report_of_a_book_of_another_account_is_not_found_and_keeps_it(
         self, fx_rig: ImportRig, fx_sources: SourceService, fx_book: BookRecord, fx_files: list[Source]
     ) -> None:
-        """Verify an account cannot close, or learn about, the report of a project it does not own.
+        """Verify an account cannot close, or learn about, the report of a book it does not own.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
         :param fx_sources: Service of the sources.
         :type fx_sources: SourceService
-        :param fx_book: Project of another account.
+        :param fx_book: Book of another account.
         :type fx_book: BookRecord
-        :param fx_files: An imported, a rejected and a skipped file of the project.
+        :param fx_files: An imported, a rejected and a skipped file of the book.
         :type fx_files: list[Source]
         """
         with pytest.raises(NotFoundError):

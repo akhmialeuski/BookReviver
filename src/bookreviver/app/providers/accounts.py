@@ -180,7 +180,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
     """fastapi-users' account rules, with mail sent through the ``Mailer`` port.
 
     No answer reveals whether an address is registered: registering a taken address answers like a new
-    registration and mails the owner instead. An account is deleted only after its projects, whose owner key refuses
+    registration and mails the owner instead. An account is deleted only after its books, whose owner key refuses
     to leave them without an owner.
 
     Hashing a password with argon2id takes tens of milliseconds, and the ``PasswordHelper`` protocol of fastapi-users is
@@ -212,7 +212,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
         :type hasher: PasswordHasher
         :param mailer: Port the verification, reset and already-registered messages go through.
         :type mailer: Mailer
-        :param books: Project service of the request, which deletes an account's projects with their files.
+        :param books: Books service of the request, which deletes an account's books with their files.
         :type books: BooksService
         :param settings: Application settings holding the token secret and the public URL of the web interface.
         :type settings: Settings
@@ -542,10 +542,10 @@ class UserManager(UUIDIDMixin, BaseUserManager[AccountTable, UUID]):
 
     @override
     async def on_before_delete(self, user: AccountTable, request: Request | None = None) -> None:
-        """Delete every project of the account with its files, so the account can be deleted after them.
+        """Delete every book of the account with its files, so the account can be deleted after them.
 
-        A database cascade from the account would remove the rows of its projects and leave their files behind, so
-        the owner key restricts, and the projects are deleted here through ``ProjectService``.
+        A database cascade from the account would remove the rows of its books and leave their files behind, so
+        the owner key restricts, and the books are deleted here through ``BooksService``.
 
         :param user: Account about to be deleted.
         :type user: AccountTable
@@ -629,7 +629,7 @@ class AccountsProvider(Provider):
         :type hasher: PasswordHasher
         :param mailer: Port the account messages go through.
         :type mailer: Mailer
-        :param books: Project service of the request, which deletes the projects of a deleted account.
+        :param books: Books service of the request, which deletes the books of a deleted account.
         :type books: BooksService
         :param settings: Application settings holding the secret and the public URL.
         :type settings: Settings

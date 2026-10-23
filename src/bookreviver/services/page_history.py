@@ -82,13 +82,13 @@ class PageHistoryService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param key: The page, the stage and the step.
         :type key: PageStepKey
         :returns: The changes of the step, oldest first, with which of them stand.
         :rtype: StepHistory
-        :raises NotFoundError: If the actor has no such project, or the project has no such page.
+        :raises NotFoundError: If the actor has no such book, or the book has no such page.
         """
         await self._library.open(actor, book_id)
         return await self._uow.read_book(book_id, lambda repos: self._history(repos, key))
@@ -102,7 +102,7 @@ class PageHistoryService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param key: The page, the stage and the step.
         :type key: PageStepKey
@@ -111,7 +111,7 @@ class PageHistoryService:
         :type change_id: PageHistoryEntryId | None
         :returns: The undos that were written, which are none when the step has no change to take back.
         :rtype: Sequence[PageHistoryEntry]
-        :raises NotFoundError: If the actor has no such project, the project has no such page, or the step has no
+        :raises NotFoundError: If the actor has no such book, the book has no such page, or the step has no
                                standing change with this identifier.
         :raises ConflictError: If a layer changed after the change that is taken back, which a later change of the
                                same page or of a page of the batch did.
@@ -123,11 +123,11 @@ class PageHistoryService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             :returns: The undos that were written.
             :rtype: Sequence[PageHistoryEntry]
-            :raises NotFoundError: If the project has no such page, or the step has no
+            :raises NotFoundError: If the book has no such page, or the step has no
                                    standing change with this identifier.
             :raises ConflictError: If a layer changed after the change that is taken back.
             """
@@ -186,10 +186,10 @@ class PageHistoryService:
 
         The version the stage stands on was made by a step in the middle of the recipe, which cuts no pyramid, and the
         page is shown by the pyramid of the current version of its stage. So the cutting of that pyramid is queued once
-        the transaction of the clear has ended, which a project busy with another tile cutting or collection leaves
+        the transaction of the clear has ended, which a book busy with another tile cutting or collection leaves
         undone.
 
-        A preview of the project, queued or running, is cancelled first, since the reader asked for the clear and a
+        A preview of the book, queued or running, is cancelled first, since the reader asked for the clear and a
         preview is disposable: the editor of a step asks for one by itself when the step is opened, so a clear a moment
         later would otherwise be refused by a job the reader never started. It writes versions of the preview scale
         only, and its last write finds the job cancelled and changes nothing, as for a run.
@@ -200,16 +200,16 @@ class PageHistoryService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param key: The page, the stage and the step.
         :type key: PageStepKey
         :returns: The number of changes deleted and the versions deleted, none of which when the step had nothing on the
                   page.
         :rtype: ClearedStep
-        :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the stage
+        :raises NotFoundError: If the actor has no such book, the book has no such page, or no recipe of the stage
                                has the step.
-        :raises ConflictError: If a run, a measure of the book, a tile cutting or a collection of the project is queued
+        :raises ConflictError: If a run, a measure of the book, a tile cutting or a collection of the book is queued
                                or running, which may be reading or deleting the versions the clear deletes.
         """
         await self._library.open(actor, book_id)
@@ -223,11 +223,11 @@ class PageHistoryService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             :returns: What was deleted, and the versions whose pyramid is not cut.
             :rtype: tuple[ClearedStep, list[PageVersionId]]
-            :raises NotFoundError: If the project has no such page, or no recipe of the
+            :raises NotFoundError: If the book has no such page, or no recipe of the
                                    stage has the step.
             """
             recipes = self._recipes_with_step(repos, key)
@@ -282,7 +282,7 @@ class PageHistoryService:
         :type key: PageStepKey
         :returns: The changes of the step, oldest first, with which of them stand.
         :rtype: StepHistory
-        :raises NotFoundError: If the project has no such page.
+        :raises NotFoundError: If the book has no such page.
         """
         repos.pages.get(key.page_id)
         changes = repos.page_history.list_for_page(key.page_id, key.stage)
@@ -301,7 +301,7 @@ class PageHistoryService:
         :type key: PageStepKey
         :returns: The recipes of the stage.
         :rtype: Sequence[Recipe]
-        :raises NotFoundError: If the project has no such page, or no recipe of the stage has the step.
+        :raises NotFoundError: If the book has no such page, or no recipe of the stage has the step.
         """
         repos.pages.get(key.page_id)
         recipes = repos.recipes.list_for_stage(key.stage)
@@ -396,7 +396,7 @@ class PageHistoryService:
         :type chosen: Sequence[PageHistoryEntry]
         :returns: The changes to take back, newest first within each page.
         :rtype: Sequence[PageHistoryEntry]
-        :raises NotFoundError: If a batch reaches a page that is not one of the project.
+        :raises NotFoundError: If a batch reaches a page that is not one of the book.
         """
         # A change of the values of a part of the pages is one entry for each page, under one identifier
         members = {(change.id, change.page_id): change for change in chosen}

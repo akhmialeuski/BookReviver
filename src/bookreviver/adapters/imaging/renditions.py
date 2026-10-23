@@ -1,6 +1,6 @@
 """The files of a page version, written by libvips from the image a processor made.
 
-A processor writes its image without loss, and this writer stores it the way the project's image policy asks. A bilevel
+A processor writes its image without loss, and this writer stores it the way the book's image policy asks. A bilevel
 image becomes a 1-bit PNG, a gray or colour image a JPEG or a PNG as asked, and an image that already is a file of the
 format asked for is copied byte for byte, so the base version of a page cut from a whole scan keeps the JPEG of its
 scan without encoding it a second time. The preview and the thumbnail come from ``Image.thumbnail`` on the file, which

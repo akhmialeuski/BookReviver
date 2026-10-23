@@ -40,11 +40,11 @@ class RunPlan:
 
         :param uow: Unit of work the pages and the states are read through and the work of the mode is written by.
         :type uow: UnitOfWork
-        :param recipes: The recipes of the project, which supply the recipe of each page.
+        :param recipes: The recipes of the book, which supply the recipe of each page.
         :type recipes: RecipeBook
         :param clock: Clock stamping the changes a mode writes.
         :type clock: Clock
-        :param book_id: Project owning the pages.
+        :param book_id: Book owning the pages.
         :type book_id: BookId
         :param run: What the run was asked to do.
         :type run: StageRun
@@ -71,7 +71,7 @@ class RunPlan:
 
         :returns: The pages in book order, without the placeholders, which have no image.
         :rtype: Sequence[Page]
-        :raises NotFoundError: If a page the run names is not one of the project.
+        :raises NotFoundError: If a page the run names is not one of the book.
         """
         if self._pages is None:
             found = await self._named()
@@ -129,7 +129,7 @@ class RunPlan:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the removal does not read.
+            :param _book_record: The record of the book as the change finds it, which the removal does not read.
             :type _book_record: BookRecord
             :returns: The changes written, one for each layer removed.
             :rtype: Sequence[PageHistoryEntry]
@@ -146,7 +146,7 @@ class RunPlan:
 
         :returns: The pages in book order, without the placeholders, which have no image.
         :rtype: Sequence[Page]
-        :raises NotFoundError: If a page the run names is not one of the project.
+        :raises NotFoundError: If a page the run names is not one of the book.
         """
         if self._named_pages is None:
 
@@ -157,7 +157,7 @@ class RunPlan:
                 :type repos: BookRepositories
                 :returns: The pages in book order.
                 :rtype: list[Page]
-                :raises NotFoundError: If a page the run names is not one of the project.
+                :raises NotFoundError: If a page the run names is not one of the book.
                 """
                 if self._run.page_ids is None:
                     return book_pages(repos.pages)
@@ -312,7 +312,7 @@ class RunImpactService:
         :type uow: UnitOfWork
         :param library: Library that opens the books of the acting account.
         :type library: Library
-        :param recipes: The recipes of the project.
+        :param recipes: The recipes of the book.
         :type recipes: RecipeBook
         :param clock: Clock the plan of the run is built with.
         :type clock: Clock
@@ -327,14 +327,14 @@ class RunImpactService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param run: The run, with its mode.
         :type run: StageRun
         :returns: How many pages the run goes over, how many of them have settings and edits on its steps, and how many
                   lose work to its mode.
         :rtype: RunImpact
-        :raises NotFoundError: If the actor has no such project or page, or the stage has no recipe.
+        :raises NotFoundError: If the actor has no such book or page, or the stage has no recipe.
         """
         await self._library.open(actor, book_id)
         plan = RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, book_id=book_id, run=run)

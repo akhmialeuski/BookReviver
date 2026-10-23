@@ -23,7 +23,7 @@ async def seed_head(
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project of the page.
+    :param book_id: Identifier of the book of the page.
     :type book_id: BookId
     :param key: The page and the stage the version and the record belong to.
     :type key: PageStageKey
@@ -47,7 +47,7 @@ async def seed_head(
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: Project of the book, which the work does not need.
+        :param _book_record: Record of the book, which the work does not need.
         :type _book_record: BookRecord
         """
         repos.page_versions.add(version)

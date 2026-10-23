@@ -42,7 +42,7 @@ async def untiled_version(kit: ProcessingKit) -> tuple[Actor, BookRecord, PageVe
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The actor, the project and the version.
+    :returns: The actor, the book and the version.
     :rtype: tuple[Actor, BookRecord, PageVersion]
     """
     actor, book_record = await kit.seed_record()
@@ -59,7 +59,7 @@ async def delete_the_version(kit: ProcessingKit, book_id: BookId, version: PageV
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book holds the version.
+    :param book_id: Book that holds the version.
     :type book_id: BookId
     :param version: The version to delete.
     :type version: PageVersion
@@ -72,7 +72,7 @@ async def fail_the_version(kit: ProcessingKit, book_id: BookId, version: PageVer
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book holds the version.
+    :param book_id: Book that holds the version.
     :type book_id: BookId
     :param version: The version to mark.
     :type version: PageVersion
@@ -85,7 +85,7 @@ async def cut_the_tiles_elsewhere(kit: ProcessingKit, book_id: BookId, version: 
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book holds the version.
+    :param book_id: Book that holds the version.
     :type book_id: BookId
     :param version: The version to mark.
     :type version: PageVersion
@@ -133,7 +133,7 @@ class TestCutTiles:
 
             :param self: The runner that cuts.
             :type self: StepRunner
-            :param keys: Keys of the project owning the page.
+            :param keys: Keys of the book owning the page.
             :type keys: BookKeys
             :param version: The version to cut.
             :type version: PageVersion
@@ -208,11 +208,11 @@ class TestRunPage:
 
 
 async def kit_with_page(kit: ProcessingKit) -> tuple[Actor, BookRecord]:
-    """Seed a project with one scan page whose base version is stored, the input of the geometry stage.
+    """Seed a book with one scan page whose base version is stored, the input of the geometry stage.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The actor and the project.
+    :returns: The actor and the book.
     :rtype: tuple[Actor, BookRecord]
     """
     actor, book_record = await kit.seed_record()

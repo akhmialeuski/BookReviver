@@ -1,4 +1,4 @@
-"""Project list, creation, book description, export, import and deletion.
+"""Book list, creation, description, export, import and deletion.
 
 FastAPI publishes a route's docstring as the description of its operation, up to a form feed. Each route docstring
 puts a form feed before its reST fields, so the parameter lists stay in the code and out of the OpenAPI schema.
@@ -71,16 +71,16 @@ router = APIRouter(prefix='/books', tags=['books'], route_class=DishkaRoute, dep
 async def list_books(
     actor: ActorDep, params: Annotated[Params, Depends()], books: FromDishka[BooksService]
 ) -> Page[BookSchema]:
-    """List the projects of the signed-in account, the latest added first.
+    """List the books of the signed-in account, the latest added first.
 
     \N{FORM FEED}
     :param actor: The signed-in account.
     :type actor: Actor
     :param params: Page number and size from the query.
     :type params: Params
-    :param books: Project service of the request.
+    :param books: Books service of the request.
     :type books: BooksService
-    :returns: One page of the account's projects.
+    :returns: One page of the account's books.
     :rtype: Page[BookSchema]
     """
     pager = Pager[BookOverview, BookSchema](params, BookSchema.from_overview)
@@ -95,20 +95,20 @@ async def create_book(
     response: Response,
     books: FromDishka[BooksService],
 ) -> BookSchema:
-    """Create a project from the description of its book, and point to it in the ``Location`` header.
+    """Create a book from its description, and point to it in the ``Location`` header.
 
     \N{FORM FEED}
     :param body: Description of the book.
     :type body: BookCreate
     :param actor: The signed-in account, which becomes the owner.
     :type actor: Actor
-    :param request: The request, whose URL the new project's address is built from.
+    :param request: The request, whose URL the new book's address is built from.
     :type request: Request
     :param response: The response, which receives the ``Location`` header.
     :type response: Response
-    :param books: Project service of the request.
+    :param books: Books service of the request.
     :type books: BooksService
-    :returns: The new project.
+    :returns: The new book.
     :rtype: BookSchema
     """
     overview = await books.create(actor, body.to_details())
@@ -122,16 +122,16 @@ async def get_book(
     actor: ActorDep,
     books: FromDishka[BooksService],
 ) -> BookSchema:
-    """Return one project of the signed-in account.
+    """Return one book of the signed-in account.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
-    :param books: Project service of the request.
+    :param books: Books service of the request.
     :type books: BooksService
-    :returns: The project.
+    :returns: The book.
     :rtype: BookSchema
     """
     return BookSchema.from_overview(await books.get(actor, book_id))
@@ -144,21 +144,21 @@ async def update_book(
     actor: ActorDep,
     books: FromDishka[BooksService],
 ) -> BookSchema:
-    """Merge the body into the project, as JSON Merge Patch (RFC 7396) defines.
+    """Merge the body into the book, as JSON Merge Patch (RFC 7396) defines.
 
-    A field left out keeps its value and a field sent as null is cleared to the value a new project has for it; the
-    title cannot be cleared, and the cover must be a page of the project.
+    A field left out keeps its value and a field sent as null is cleared to the value a new book has for it; the
+    title cannot be cleared, and the cover must be a page of the book.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param body: Fields to change, with null for a field to clear.
     :type body: BookUpdate
     :param actor: The signed-in account.
     :type actor: Actor
-    :param books: Project service of the request.
+    :param books: Books service of the request.
     :type books: BooksService
-    :returns: The changed project.
+    :returns: The changed book.
     :rtype: BookSchema
     """
     return BookSchema.from_overview(await books.update(actor, book_id, body.to_changes()))
@@ -180,11 +180,11 @@ async def export_book(
     it is written and named after the title of the book.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
-    :param books: Project service of the request.
+    :param books: Books service of the request.
     :type books: BooksService
     :returns: The stream of the archive.
     :rtype: StreamingResponse
@@ -213,7 +213,7 @@ async def import_book(
     response: Response,
     books: FromDishka[BooksService],
 ) -> BookSchema:
-    """Import the archive of a book as a new project of the signed-in account, and point to it in ``Location``.
+    """Import the archive of a book as a new book of the signed-in account, and point to it in ``Location``.
 
     The book keeps its pages, versions, history, recipes and settings, and gets a new identifier, so the same archive
     can be imported twice. An archive that is not the archive of a book is refused, and so is one exported by a newer
@@ -224,13 +224,13 @@ async def import_book(
     :type archive: UploadFile
     :param actor: The signed-in account, which becomes the owner.
     :type actor: Actor
-    :param request: The request, whose URL the new project's address is built from.
+    :param request: The request, whose URL the new book's address is built from.
     :type request: Request
     :param response: The response, which receives the ``Location`` header.
     :type response: Response
-    :param books: Project service of the request.
+    :param books: Books service of the request.
     :type books: BooksService
-    :returns: The new project.
+    :returns: The new book.
     :rtype: BookSchema
     """
     overview = await books.import_archive(actor, archive.file)
@@ -244,14 +244,14 @@ async def delete_book(
     actor: ActorDep,
     books: FromDishka[BooksService],
 ) -> None:
-    """Delete a project with its pages, jobs and files.
+    """Delete a book with its pages, jobs and files.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
-    :param books: Project service of the request.
+    :param books: Books service of the request.
     :type books: BooksService
     """
     await books.delete(actor, book_id)

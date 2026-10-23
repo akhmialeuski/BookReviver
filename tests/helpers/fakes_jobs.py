@@ -71,7 +71,7 @@ class RecordingEventBus(InProcessEventBus):
     async def publish(self, event: DomainEvent) -> None:
         """Record the event, deliver it as the in-process bus does, then run the hook.
 
-        :param event: Event to deliver, carrying the project it belongs to.
+        :param event: Event to deliver, carrying the book it belongs to.
         :type event: DomainEvent
         """
         self.published.append(event)
@@ -84,7 +84,7 @@ class RecordingEventBus(InProcessEventBus):
     async def subscribe(self, book_id: BookId) -> AsyncGenerator[AsyncIterator[DomainEvent]]:
         """Subscribe as the in-process bus does, announcing the subscription once it is in place and counting it.
 
-        :param book_id: Project whose events are delivered.
+        :param book_id: Book whose events are delivered.
         :type book_id: BookId
         :returns: Generator yielding once the reader of every event published since entry.
         :rtype: AsyncGenerator[AsyncIterator[DomainEvent]]

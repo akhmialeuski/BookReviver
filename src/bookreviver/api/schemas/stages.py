@@ -114,7 +114,7 @@ class StepPageSchema(ResponseModel):
 
         :param row: The row.
         :type row: StepRow
-        :param book_id: Project owning the page, whose keys place the files of the versions.
+        :param book_id: Book owning the page, whose keys place the files of the versions.
         :type book_id: BookId
         :param request: The request, whose application knows the route that serves the images.
         :type request: Request
@@ -174,7 +174,7 @@ class StagePageSchema(ResponseModel):
 
         :param row: The row.
         :type row: StageRow
-        :param book_id: Project owning the page, whose keys place the files of the version.
+        :param book_id: Book owning the page, whose keys place the files of the version.
         :type book_id: BookId
         :param request: The request, whose application knows the route that serves the images.
         :type request: Request

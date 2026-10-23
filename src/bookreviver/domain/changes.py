@@ -107,7 +107,7 @@ class BookDetailsChanges:
 
 @frozen(kw_only=True)
 class BookChanges:
-    """New values for some fields of a project; a field left as None keeps its current value.
+    """New values for some fields of a book; a field left as None keeps its current value.
 
     :ivar details: New values for some fields of the book description.
     :ivar image_policy: New way to store the images of new scans and page versions.
@@ -117,13 +117,13 @@ class BookChanges:
     image_policy: ImagePolicy | None = None
 
     def apply_to(self, book_record: BookRecord) -> BookRecord:
-        """Return ``project`` with every given field replaced, its description checked like a new one.
+        """Return ``book_record`` with every given field replaced, its description checked like a new one.
 
         The update time is left to the caller, which owns the clock.
 
-        :param book_record: Current state of the project.
+        :param book_record: Current record of the book.
         :type book_record: BookRecord
-        :returns: The project with the given fields replaced and the others kept.
+        :returns: The record of the book with the given fields replaced and the others kept.
         :rtype: BookRecord
         :raises ValueError: If the changed description breaks one of its rules, such as an empty title.
         """

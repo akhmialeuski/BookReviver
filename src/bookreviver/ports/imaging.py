@@ -3,7 +3,7 @@
 Import runs these ports in order. The ``SourceInspector`` first splits the staged files of an upload into sources,
 since which files make one source depends on the format, and then describes each source and its scans on its own,
 so one unreadable file never stops the others. The ``PageRasterizer`` writes each scan of a source as a JPEG or a PNG at
-its native resolution, in the format the caller chose from the scan's colour and the project's image policy, and the
+its native resolution, in the format the caller chose from the scan's colour and the book's image policy, and the
 ``Tiler`` cuts that image into the tile pyramid and the thumbnail the viewer shows. All three read and write local
 paths handed out by the storage ports.
 
@@ -67,7 +67,7 @@ class PageRasterizer(ABC):
     ) -> None:
         """Write scan ``number`` of the source at ``target`` in the format ``full``, without re-encoding when possible.
 
-        The caller chooses the format, because it knows the project's image policy, which no source knows. A JPEG
+        The caller chooses the format, because it knows the book's image policy, which no source knows. A JPEG
         that is already what the scan shows is copied byte for byte when ``full`` is a JPEG. A bilevel scan written as
         a PNG is a 1-bit PNG with exactly two values, and no format smooths its strokes.
 

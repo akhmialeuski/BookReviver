@@ -57,7 +57,7 @@ class CountingUnitOfWork(UnitOfWork):
     async def read_book[T](self, book_id: BookId, work: Callable[[BookRepositories], T]) -> T:
         """Count the read of the book and run it on the wrapped unit of work.
 
-        :param book_id: Project whose book is read.
+        :param book_id: Book that is read.
         :type book_id: BookId
         :param work: Function over the repositories of the transaction.
         :type work: Callable[[BookRepositories], T]
@@ -71,9 +71,9 @@ class CountingUnitOfWork(UnitOfWork):
     async def change_book[T](self, book_id: BookId, work: Callable[[BookRepositories, BookRecord], T]) -> T:
         """Run the change of the book on the wrapped unit of work.
 
-        :param book_id: Project whose book is changed.
+        :param book_id: Book that is changed.
         :type book_id: BookId
-        :param work: Function over the repositories of the transaction and the project read at its start.
+        :param work: Function over the repositories of the transaction and the record of the book read at its start.
         :type work: Callable[[BookRepositories, BookRecord], T]
         :returns: What the work returns.
         :rtype: T
@@ -84,9 +84,9 @@ class CountingUnitOfWork(UnitOfWork):
     async def create_book(self, book_record: BookRecord) -> BookRecord:
         """Make the store of a new book on the wrapped unit of work.
 
-        :param book_record: The project of the new book.
+        :param book_record: The record of the new book.
         :type book_record: BookRecord
-        :returns: The project as stored.
+        :returns: The record of the book as stored.
         :rtype: BookRecord
         """
         return await self._inner.create_book(book_record)
@@ -95,7 +95,7 @@ class CountingUnitOfWork(UnitOfWork):
     async def delete_book(self, book_id: BookId) -> None:
         """Remove the store of a book on the wrapped unit of work.
 
-        :param book_id: Project whose book is removed.
+        :param book_id: Book that is removed.
         :type book_id: BookId
         """
         await self._inner.delete_book(book_id)
@@ -115,7 +115,7 @@ class CountingUnitOfWork(UnitOfWork):
     async def snapshot_book(self, book_id: BookId) -> bytes:
         """Copy the store of a book on the wrapped unit of work.
 
-        :param book_id: Project whose book is copied.
+        :param book_id: Book that is copied.
         :type book_id: BookId
         :returns: The copy of the store.
         :rtype: bytes
@@ -128,7 +128,7 @@ class CountingUnitOfWork(UnitOfWork):
 
         :param book_id: Identifier of the new book.
         :type book_id: BookId
-        :returns: The project of the new book.
+        :returns: The record of the new book.
         :rtype: BookRecord
         """
         return await self._inner.adopt_book(book_id)

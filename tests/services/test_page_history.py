@@ -50,7 +50,7 @@ pytestmark = pytest.mark.anyio
 
 FAKE_KEY: str = FakeProcessor.spec.key
 STRONGER: int = 2
-BUSY_MESSAGE: str = 'project is busy'
+BUSY_MESSAGE: str = 'book is busy'
 STRONGEST: int = 3
 NOT_FAILING: bool = False
 OTHER_ORDER_KEY: str = 'a1'
@@ -67,7 +67,7 @@ async def step_key(kit: ProcessingKit, book_id: BookId, page: Page) -> PageStepK
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
@@ -101,7 +101,7 @@ async def stored_edit(kit: ProcessingKit, book_id: BookId, key: PageStepKey) -> 
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book holds the page.
+    :param book_id: Book that holds the page.
     :type book_id: BookId
     :param key: The page, the stage and the step.
     :type key: PageStepKey
@@ -151,7 +151,7 @@ async def store_carried_batch(
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: The project as the change finds it, which the work does not need.
+        :param _book_record: The record of the book as the change finds it, which the work does not need.
         :type _book_record: BookRecord
         """
         for at in keys:
@@ -318,7 +318,7 @@ class TestUndo:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             """
             record = repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
@@ -460,7 +460,7 @@ class TestUndoOfABatch:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             """
             for at, params in ((key, {STRENGTH_PARAMETER: STRONGER}), (other_key, {STRENGTH_PARAMETER: STRONGEST})):
@@ -578,7 +578,7 @@ class TestClear:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             """
             record = repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
@@ -827,7 +827,7 @@ class TestClear:
     async def test_a_preview_of_the_book_is_cancelled_and_the_clear_goes_on(
         self, fx_kit: ProcessingKit, state: JobState
     ) -> None:
-        """Verify a clear takes the project from a preview, queued or running, instead of being refused by it.
+        """Verify a clear takes the book from a preview, queued or running, instead of being refused by it.
 
         The editor of a step asks for a preview when the step is opened, so a clear a moment later finds one. The
         preview is cancelled and announced, as a run cancels it, and the clear deletes what it was asked to.
@@ -885,7 +885,7 @@ class TestClear:
         assert_expectations()
 
     async def test_a_step_that_is_in_no_recipe_does_not_cancel_the_preview(self, fx_kit: ProcessingKit) -> None:
-        """Reject a clear of an unknown step as not found before it takes the project from a preview.
+        """Reject a clear of an unknown step as not found before it takes the book from a preview.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit

@@ -80,13 +80,13 @@ class BookFiles:
         self._stored: dict[PageId, tuple[BookId, StorageKey, StorageKey]] = {}
 
     async def store(self, book_id: BookId, page: Page) -> None:
-        """Store a source for the page's project and the full image of the page's base version, as an import would.
+        """Store a source for the page's book and the full image of the page's base version, as an import would.
 
-        :param book_id: Identifier of the project of the page.
+        :param book_id: Identifier of the book of the page.
 
         :type book_id: BookId
 
-        :param page: Page whose project and image are stored.
+        :param page: Page whose book and image are stored.
         :type page: Page
         """
         keys = BookKeys(book_id)
@@ -99,7 +99,7 @@ class BookFiles:
         self._stored[page.id] = (book_id, keys.source(source_id), image)
 
     def kept(self, page: Page, *, book_id: BookId | None = None) -> bool:
-        """Return whether the source stored for the page's project and the page's full image are still on disk.
+        """Return whether the source stored for the page's book and the page's full image are still on disk.
 
         :param page: Page stored earlier with ``store``.
         :type page: Page
@@ -116,11 +116,11 @@ class BookFiles:
         return (self._root / source / SOURCE_NAME).is_file() and (self._root / image).read_bytes() == PAGE_IMAGE_CONTENT
 
     def gone(self, book_id: BookId) -> bool:
-        """Return whether nothing of the project, not even its directory, is left on disk.
+        """Return whether nothing of the book, not even its directory, is left on disk.
 
-        :param book_id: Project whose files were deleted.
+        :param book_id: Book whose files were deleted.
         :type book_id: BookId
-        :returns: True when the project's directory does not exist.
+        :returns: True when the book's directory does not exist.
         :rtype: bool
         """
         return not (self._root / BookKeys(book_id).prefix).exists()

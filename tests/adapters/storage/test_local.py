@@ -84,7 +84,7 @@ class TestLocalSourceStore:
         assert [path.name for path in sources_dir.iterdir()] == [str(SOURCE_ID)]
 
     async def test_discarding_all_staged_removes_the_directory_of_a_book_left_empty(self, tmp_path: Path) -> None:
-        """Verify a project with an upload only leaves no directory, and a project with a source keeps its sources.
+        """Verify a book with an upload only leaves no directory, and a book with a source keeps its sources.
 
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
@@ -159,11 +159,11 @@ class TestLocalAssetStore:
     async def test_both_stores_leave_no_book_directory(
         self, tmp_path: Path, store_types: tuple[type[LocalSourceStore | LocalAssetStore], ...]
     ) -> None:
-        """Verify deleting a project from both stores, in either order, leaves nothing of it on disk.
+        """Verify deleting a book from both stores, in either order, leaves nothing of it on disk.
 
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
-        :param store_types: The two local stores in the order they delete the project.
+        :param store_types: The two local stores in the order they delete the book.
         :type store_types: tuple[type[LocalSourceStore | LocalAssetStore], ...]
         """
         sources = LocalSourceStore(root=tmp_path)

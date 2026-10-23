@@ -21,14 +21,14 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 /**
  * List Books
  *
- * List the projects of the signed-in account, the latest added first.
+ * List the books of the signed-in account, the latest added first.
  */
 export const listBooksApiV1BooksGet = <ThrowOnError extends boolean = false>(options?: Options<ListBooksApiV1BooksGetData, ThrowOnError>): RequestResult<ListBooksApiV1BooksGetResponses, ListBooksApiV1BooksGetErrors, ThrowOnError> => (options?.client ?? client).get<ListBooksApiV1BooksGetResponses, ListBooksApiV1BooksGetErrors, ThrowOnError>({ url: '/api/v1/books', ...options });
 
 /**
  * Create Book
  *
- * Create a project from the description of its book, and point to it in the ``Location`` header.
+ * Create a book from its description, and point to it in the ``Location`` header.
  */
 export const createBookApiV1BooksPost = <ThrowOnError extends boolean = false>(options: Options<CreateBookApiV1BooksPostData, ThrowOnError>): RequestResult<CreateBookApiV1BooksPostResponses, CreateBookApiV1BooksPostErrors, ThrowOnError> => (options.client ?? client).post<CreateBookApiV1BooksPostResponses, CreateBookApiV1BooksPostErrors, ThrowOnError>({
     url: '/api/v1/books',
@@ -42,24 +42,24 @@ export const createBookApiV1BooksPost = <ThrowOnError extends boolean = false>(o
 /**
  * Delete Book
  *
- * Delete a project with its pages, jobs and files.
+ * Delete a book with its pages, jobs and files.
  */
 export const deleteBookApiV1BooksBookIdDelete = <ThrowOnError extends boolean = false>(options: Options<DeleteBookApiV1BooksBookIdDeleteData, ThrowOnError>): RequestResult<DeleteBookApiV1BooksBookIdDeleteResponses, DeleteBookApiV1BooksBookIdDeleteErrors, ThrowOnError> => (options.client ?? client).delete<DeleteBookApiV1BooksBookIdDeleteResponses, DeleteBookApiV1BooksBookIdDeleteErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}', ...options });
 
 /**
  * Book
  *
- * Return one project of the signed-in account.
+ * Return one book of the signed-in account.
  */
 export const bookApiV1BooksBookIdGet = <ThrowOnError extends boolean = false>(options: Options<BookApiV1BooksBookIdGetData, ThrowOnError>): RequestResult<BookApiV1BooksBookIdGetResponses, BookApiV1BooksBookIdGetErrors, ThrowOnError> => (options.client ?? client).get<BookApiV1BooksBookIdGetResponses, BookApiV1BooksBookIdGetErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}', ...options });
 
 /**
  * Update Book
  *
- * Merge the body into the project, as JSON Merge Patch (RFC 7396) defines.
+ * Merge the body into the book, as JSON Merge Patch (RFC 7396) defines.
  *
- * A field left out keeps its value and a field sent as null is cleared to the value a new project has for it; the
- * title cannot be cleared, and the cover must be a page of the project.
+ * A field left out keeps its value and a field sent as null is cleared to the value a new book has for it; the
+ * title cannot be cleared, and the cover must be a page of the book.
  */
 export const updateBookApiV1BooksBookIdPatch = <ThrowOnError extends boolean = false>(options: Options<UpdateBookApiV1BooksBookIdPatchData, ThrowOnError>): RequestResult<UpdateBookApiV1BooksBookIdPatchResponses, UpdateBookApiV1BooksBookIdPatchErrors, ThrowOnError> => (options.client ?? client).patch<UpdateBookApiV1BooksBookIdPatchResponses, UpdateBookApiV1BooksBookIdPatchErrors, ThrowOnError>({
     url: '/api/v1/books/{book_id}',
@@ -83,7 +83,7 @@ export const exportBookApiV1BooksBookIdArchiveGet = <ThrowOnError extends boolea
 /**
  * Import Book
  *
- * Import the archive of a book as a new project of the signed-in account, and point to it in ``Location``.
+ * Import the archive of a book as a new book of the signed-in account, and point to it in ``Location``.
  *
  * The book keeps its pages, versions, history, recipes and settings, and gets a new identifier, so the same archive
  * can be imported twice. An archive that is not the archive of a book is refused, and so is one exported by a newer
@@ -102,7 +102,7 @@ export const importBookApiV1BooksArchivePost = <ThrowOnError extends boolean = f
 /**
  * List Sources
  *
- * List the sources of a project in the order they were recorded, the imported ones unless ``status`` says more.
+ * List the sources of a book in the order they were recorded, the imported ones unless ``status`` says more.
  *
  * The rejected and skipped files are the report of an import: the files no check let through, with their reasons, and
  * the files a cancelled import never reached.
@@ -112,11 +112,11 @@ export const listSourcesApiV1BooksBookIdSourcesGet = <ThrowOnError extends boole
 /**
  * Upload Sources
  *
- * Receive the files of an upload and import them in the background, each one as a source of the project.
+ * Receive the files of an upload and import them in the background, each one as a source of the book.
  *
- * The response is the queued job. Every file of the upload becomes a source of the project, and the ones the import
- * rejected, with the reason, or skipped when it was cancelled, are listed by the sources of the project until the
- * reader closes the report. A project imports one upload at a time.
+ * The response is the queued job. Every file of the upload becomes a source of the book, and the ones the import
+ * rejected, with the reason, or skipped when it was cancelled, are listed by the sources of the book until the
+ * reader closes the report. A book imports one upload at a time.
  */
 export const uploadSourcesApiV1BooksBookIdSourcesPost = <ThrowOnError extends boolean = false>(options: Options<UploadSourcesApiV1BooksBookIdSourcesPostData, ThrowOnError>): RequestResult<UploadSourcesApiV1BooksBookIdSourcesPostResponses, UploadSourcesApiV1BooksBookIdSourcesPostErrors, ThrowOnError> => (options.client ?? client).post<UploadSourcesApiV1BooksBookIdSourcesPostResponses, UploadSourcesApiV1BooksBookIdSourcesPostErrors, ThrowOnError>({
     ...formDataBodySerializer,
@@ -131,9 +131,9 @@ export const uploadSourcesApiV1BooksBookIdSourcesPost = <ThrowOnError extends bo
 /**
  * Delete Unimported Sources
  *
- * Delete the rejected and skipped files of a project, which is closing the report of an import.
+ * Delete the rejected and skipped files of a book, which is closing the report of an import.
  *
- * The imported sources stay. The project answers 409 while it imports.
+ * The imported sources stay. The book answers 409 while it imports.
  */
 export const deleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDelete = <ThrowOnError extends boolean = false>(options: Options<DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteData, ThrowOnError>): RequestResult<DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteResponses, DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteErrors, ThrowOnError> => (options.client ?? client).delete<DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteResponses, DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}/sources/unimported', ...options });
 
@@ -142,21 +142,21 @@ export const deleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDelete = <T
  *
  * Delete a source with its files and its scans, leaving the pages of the book with their own images.
  *
- * The pages made from the source lose only the reference to their scan. The project answers 409 while it imports.
+ * The pages made from the source lose only the reference to their scan. The book answers 409 while it imports.
  */
 export const deleteSourceApiV1BooksBookIdSourcesSourceIdDelete = <ThrowOnError extends boolean = false>(options: Options<DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteData, ThrowOnError>): RequestResult<DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteResponses, DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteErrors, ThrowOnError> => (options.client ?? client).delete<DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteResponses, DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}/sources/{source_id}', ...options });
 
 /**
  * Get Source
  *
- * Return one source of a project.
+ * Return one source of a book.
  */
 export const getSourceApiV1BooksBookIdSourcesSourceIdGet = <ThrowOnError extends boolean = false>(options: Options<GetSourceApiV1BooksBookIdSourcesSourceIdGetData, ThrowOnError>): RequestResult<GetSourceApiV1BooksBookIdSourcesSourceIdGetResponses, GetSourceApiV1BooksBookIdSourcesSourceIdGetErrors, ThrowOnError> => (options.client ?? client).get<GetSourceApiV1BooksBookIdSourcesSourceIdGetResponses, GetSourceApiV1BooksBookIdSourcesSourceIdGetErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}/sources/{source_id}', ...options });
 
 /**
  * List Scans
  *
- * List the scans of a project source by source, or of one source, with the paths of their images once cut.
+ * List the scans of a book source by source, or of one source, with the paths of their images once cut.
  */
 export const listScansApiV1BooksBookIdScansGet = <ThrowOnError extends boolean = false>(options: Options<ListScansApiV1BooksBookIdScansGetData, ThrowOnError>): RequestResult<ListScansApiV1BooksBookIdScansGetResponses, ListScansApiV1BooksBookIdScansGetErrors, ThrowOnError> => (options.client ?? client).get<ListScansApiV1BooksBookIdScansGetResponses, ListScansApiV1BooksBookIdScansGetErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}/scans', ...options });
 
@@ -180,7 +180,7 @@ export const moveSourcePagesApiV1BooksBookIdSourcesSourceIdPagesMovePost = <Thro
 /**
  * List Pages
  *
- * List the pages of a project in book order, up to a thousand at once, with the paths of their images.
+ * List the pages of a book in book order, up to a thousand at once, with the paths of their images.
  */
 export const listPagesApiV1BooksBookIdPagesGet = <ThrowOnError extends boolean = false>(options: Options<ListPagesApiV1BooksBookIdPagesGetData, ThrowOnError>): RequestResult<ListPagesApiV1BooksBookIdPagesGetResponses, ListPagesApiV1BooksBookIdPagesGetErrors, ThrowOnError> => (options.client ?? client).get<ListPagesApiV1BooksBookIdPagesGetResponses, ListPagesApiV1BooksBookIdPagesGetErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}/pages', ...options });
 
@@ -212,7 +212,7 @@ export const deletePageApiV1BooksBookIdPagesPageIdDelete = <ThrowOnError extends
 /**
  * Page
  *
- * Return one page of a project.
+ * Return one page of a book.
  */
 export const pageApiV1BooksBookIdPagesPageIdGet = <ThrowOnError extends boolean = false>(options: Options<PageApiV1BooksBookIdPagesPageIdGetData, ThrowOnError>): RequestResult<PageApiV1BooksBookIdPagesPageIdGetResponses, PageApiV1BooksBookIdPagesPageIdGetErrors, ThrowOnError> => (options.client ?? client).get<PageApiV1BooksBookIdPagesPageIdGetResponses, PageApiV1BooksBookIdPagesPageIdGetErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}/pages/{page_id}', ...options });
 
@@ -299,7 +299,7 @@ export const fillBlankPagesApiV1BooksBookIdPagesBlankFillPost = <ThrowOnError ex
  * pages of the book that have no content type yet, which a job queued by the end of the preparation of the images
  * does too, and it leaves the pages the user set by hand and the covers, the endpapers and the blank pages alone. With
  * ``page_ids`` it goes over those pages whatever they have, and gives the ones the user set by hand back to the
- * detection. The answer is 409 while the content of the pages of the project is being detected. The change reaches the
+ * detection. The answer is 409 while the content of the pages of the book is being detected. The change reaches the
  * browser as a ``book-changed`` event.
  */
 export const detectContentTypesApiV1BooksBookIdPagesContentTypesDetectPost = <ThrowOnError extends boolean = false>(options: Options<DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostData, ThrowOnError>): RequestResult<DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostResponses, DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostErrors, ThrowOnError> => (options.client ?? client).post<DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostResponses, DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostErrors, ThrowOnError>({
@@ -374,7 +374,7 @@ export const createPagesApiV1BooksBookIdPagesBatchPost = <ThrowOnError extends b
  * Bind a scan to a placeholder, which becomes a page of that scan once a job has copied its image.
  *
  * The answer is 409 for a page that is not a placeholder, a scan that is not cut yet, and a scan another page shows,
- * unless ``take_over`` is set, which deletes that page. A scan of another project is a 404.
+ * unless ``take_over`` is set, which deletes that page. A scan of another book is a 404.
  */
 export const attachScanApiV1BooksBookIdPagesPageIdScanPut = <ThrowOnError extends boolean = false>(options: Options<AttachScanApiV1BooksBookIdPagesPageIdScanPutData, ThrowOnError>): RequestResult<AttachScanApiV1BooksBookIdPagesPageIdScanPutResponses, AttachScanApiV1BooksBookIdPagesPageIdScanPutErrors, ThrowOnError> => (options.client ?? client).put<AttachScanApiV1BooksBookIdPagesPageIdScanPutResponses, AttachScanApiV1BooksBookIdPagesPageIdScanPutErrors, ThrowOnError>({
     url: '/api/v1/books/{book_id}/pages/{page_id}/scan',
@@ -388,7 +388,7 @@ export const attachScanApiV1BooksBookIdPagesPageIdScanPut = <ThrowOnError extend
 /**
  * List Pagination Sections
  *
- * List the pagination sections of a project in book order, which is the order of the pages they start at.
+ * List the pagination sections of a book in book order, which is the order of the pages they start at.
  */
 export const listPaginationSectionsApiV1BooksBookIdPaginationSectionsGet = <ThrowOnError extends boolean = false>(options: Options<ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetData, ThrowOnError>): RequestResult<ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetResponses, ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetErrors, ThrowOnError> => (options.client ?? client).get<ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetResponses, ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}/pagination-sections', ...options });
 
@@ -397,7 +397,7 @@ export const listPaginationSectionsApiV1BooksBookIdPaginationSectionsGet = <Thro
  *
  * Make a section that starts at a page, and renumber the pages it takes.
  *
- * The answer is 404 when the page is not a page of the project, and 409 when another section that takes the same
+ * The answer is 404 when the page is not a page of the book, and 409 when another section that takes the same
  * pages starts at that page already, or when a number does not fit the style, such as 4000 in Roman numerals.
  */
 export const createPaginationSectionApiV1BooksBookIdPaginationSectionsPost = <ThrowOnError extends boolean = false>(options: Options<CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostData, ThrowOnError>): RequestResult<CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostResponses, CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostErrors, ThrowOnError> => (options.client ?? client).post<CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostResponses, CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostErrors, ThrowOnError>({
@@ -421,7 +421,7 @@ export const deletePaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdD
  *
  * Replace the first page and the rule of a section, and renumber the pages.
  *
- * The answer is 404 when the section or the page is not of the project, and 409 when another section that takes the
+ * The answer is 404 when the section or the page is not of the book, and 409 when another section that takes the
  * same pages starts at that page, or when a number does not fit the style.
  */
 export const putPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPut = <ThrowOnError extends boolean = false>(options: Options<PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutData, ThrowOnError>): RequestResult<PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutResponses, PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutErrors, ThrowOnError> => (options.client ?? client).put<PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutResponses, PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutErrors, ThrowOnError>({
@@ -481,7 +481,7 @@ export const putPlaceApiV1BooksBookIdPlacePut = <ThrowOnError extends boolean = 
 /**
  * List Recipes
  *
- * List the recipes of a stage, one for each kind of page, which a project creates the first time it is asked.
+ * List the recipes of a stage, one for each kind of page, which a book creates the first time it is asked.
  */
 export const listRecipesApiV1BooksBookIdStagesStageRecipesGet = <ThrowOnError extends boolean = false>(options: Options<ListRecipesApiV1BooksBookIdStagesStageRecipesGetData, ThrowOnError>): RequestResult<ListRecipesApiV1BooksBookIdStagesStageRecipesGetResponses, ListRecipesApiV1BooksBookIdStagesStageRecipesGetErrors, ThrowOnError> => (options.client ?? client).get<ListRecipesApiV1BooksBookIdStagesStageRecipesGetResponses, ListRecipesApiV1BooksBookIdStagesStageRecipesGetErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}/stages/{stage}/recipes', ...options });
 
@@ -520,7 +520,7 @@ export const resetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPost = <T
  *
  * Run a stage over some pages, each by the recipe of its kind, in the background, and answer with the queued job.
  *
- * The job makes a version for every step on every page and reports one step of progress for each page. A project runs
+ * The job makes a version for every step on every page and reports one step of progress for each page. A book runs
  * one stage at a time, and another run while one is queued or running answers 409. A run keeps the settings the pages
  * changed for its steps and the manual edits they read. A mode that takes the edits or the settings away answers 409
  * until the body confirms it, when it would take them from any page.
@@ -577,7 +577,7 @@ export const previewStepApiV1BooksBookIdStagesStagePreviewPost = <ThrowOnError e
  * The job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and
  * writes the median line height and a page size of the median block with its margins into the parameters of the
  * ``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A preview of the
- * project is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.
+ * book is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.
  */
 export const measureBookApiV1BooksBookIdStagesGeometryMeasurePost = <ThrowOnError extends boolean = false>(options: Options<MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostData, ThrowOnError>): RequestResult<MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostResponses, MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostErrors, ThrowOnError> => (options.client ?? client).post<MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostResponses, MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}/stages/geometry/measure', ...options });
 
@@ -633,7 +633,7 @@ export const cutVersionTilesApiV1BooksBookIdPagesPageIdVersionsVersionIdTilesPos
  *
  * Count the versions a collection would delete now and the space their files take, and change nothing.
  *
- * The versions are the ones ``POST /projects/{project_id}/versions/collect`` deletes, chosen by the same rule.
+ * The versions are the ones ``POST /books/{book_id}/versions/collect`` deletes, chosen by the same rule.
  */
 export const collectableVersionsApiV1BooksBookIdVersionsCollectableGet = <ThrowOnError extends boolean = false>(options: Options<CollectableVersionsApiV1BooksBookIdVersionsCollectableGetData, ThrowOnError>): RequestResult<CollectableVersionsApiV1BooksBookIdVersionsCollectableGetResponses, CollectableVersionsApiV1BooksBookIdVersionsCollectableGetErrors, ThrowOnError> => (options.client ?? client).get<CollectableVersionsApiV1BooksBookIdVersionsCollectableGetResponses, CollectableVersionsApiV1BooksBookIdVersionsCollectableGetErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}/versions/collectable', ...options });
 
@@ -786,7 +786,7 @@ export const applyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPost = <Thr
  * Record which profile a recipe of a book was made from, so the book can tell how its steps differ from it.
  *
  * The steps do not change and no page goes stale. A profile of another account answers 404, and so does a recipe the
- * project does not have, and a profile of another stage answers 422.
+ * book does not have, and a profile of another stage answers 422.
  */
 export const putRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePut = <ThrowOnError extends boolean = false>(options: Options<PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutData, ThrowOnError>): RequestResult<PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutResponses, PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutErrors, ThrowOnError> => (options.client ?? client).put<PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutResponses, PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutErrors, ThrowOnError>({
     url: '/api/v1/books/{book_id}/stages/{stage}/recipes/{recipe_id}/profile',
@@ -897,8 +897,8 @@ export const putValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePut = <Thro
  * The results are the versions the step made on the page and the versions that read them, with their files and their
  * marks. The stage of the page stands on the version the step read, marked stale, and has no current version when the
  * step is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The
- * changes of a batch on other pages stay. A preview of the project, queued or running, is cancelled first. The answer
- * is 409 while a run, a measure of the book, a tile cutting or a collection of the project is queued or running, and
+ * changes of a batch on other pages stay. A preview of the book, queued or running, is cancelled first. The answer
+ * is 409 while a run, a measure of the book, a tile cutting or a collection of the book is queued or running, and
  * 404 when no recipe of the stage has the step.
  */
 export const clearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDelete = <ThrowOnError extends boolean = false>(options: Options<ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteData, ThrowOnError>): RequestResult<ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteResponses, ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteErrors, ThrowOnError> => (options.client ?? client).delete<ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteResponses, ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}/pages/{page_id}/history/{stage}/{step_id}', ...options });
@@ -969,14 +969,14 @@ export const readJobApiV1JobsJobIdGet = <ThrowOnError extends boolean = false>(o
 /**
  * List Book Jobs
  *
- * List the jobs of a project, the newest first, or only the ones queued or running with ``active=true``.
+ * List the jobs of a book, the newest first, or only the ones queued or running with ``active=true``.
  */
 export const listBookJobsApiV1BooksBookIdJobsGet = <ThrowOnError extends boolean = false>(options: Options<ListBookJobsApiV1BooksBookIdJobsGetData, ThrowOnError>): RequestResult<ListBookJobsApiV1BooksBookIdJobsGetResponses, ListBookJobsApiV1BooksBookIdJobsGetErrors, ThrowOnError> => (options.client ?? client).get<ListBookJobsApiV1BooksBookIdJobsGetResponses, ListBookJobsApiV1BooksBookIdJobsGetErrors, ThrowOnError>({ url: '/api/v1/books/{book_id}/jobs', ...options });
 
 /**
  * Book-Events
  *
- * Stream the project's events as they happen: the committed changes of the book, its jobs and its ready versions.
+ * Stream the book's events as they happen: the committed changes of the book, its jobs and its ready versions.
  *
  * A committed change of the book is a ``book-changed`` event whose id is the new version of the book. A browser that
  * connects is first sent ``book-version`` with the version now, so it knows which version it holds. The stream keeps

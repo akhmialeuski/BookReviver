@@ -33,16 +33,16 @@ logger = logging.getLogger(__name__)
 
 
 class VersionClearing:
-    """Deletes batches of the versions of one project, and remembers the versions that must stay."""
+    """Deletes batches of the versions of one book, and remembers the versions that must stay."""
 
     def __init__(self, *, uow: UnitOfWork, assets: AssetStore, book_id: BookId) -> None:
-        """Work over the ports of one collection of one project.
+        """Work over the ports of one collection of one book.
 
         :param uow: Unit of work of the job, whose blocks write each batch.
         :type uow: UnitOfWork
         :param assets: Store of the derived files, from which the directories of the versions are removed.
         :type assets: AssetStore
-        :param book_id: Project owning the versions.
+        :param book_id: Book owning the versions.
         :type book_id: BookId
         """
         self._uow = uow
@@ -74,7 +74,7 @@ class VersionClearing:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the marking does not read.
+            :param _book_record: The record of the book as the change finds it, which the marking does not read.
             :type _book_record: BookRecord
             """
             for version in repos.page_versions.list_by_ids([version.id for version in going]):

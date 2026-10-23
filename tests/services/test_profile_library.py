@@ -55,13 +55,13 @@ async def save_profile(kit: ProcessingKit, actor: Actor, *, stage: Stage = Stage
 
 
 async def another_book(kit: ProcessingKit, actor: Actor) -> BookRecord:
-    """Commit another project of the same account.
+    """Commit another book of the same account.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :returns: The project.
+    :returns: The book.
     :rtype: BookRecord
     """
     book_record = make_record(title='Another book')

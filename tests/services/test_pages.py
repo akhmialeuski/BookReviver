@@ -64,7 +64,7 @@ async def _commit_book(
     :type database: SqlDatabase
     :param uow: Unit of work over the catalogue and the books of the test.
     :type uow: UnitOfWork
-    :param book_record: Project of the book.
+    :param book_record: The record of the book.
     :type book_record: BookRecord
     :param owner: Account owning the book.
     :type owner: AccountId
@@ -189,7 +189,7 @@ class TestManifest:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             """
             for version in (base, deskewed):
@@ -241,7 +241,7 @@ class TestManifest:
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
     ) -> None:
-        """Verify the pages of another account's project cannot be listed.
+        """Verify the pages of another account's book cannot be listed.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -343,7 +343,7 @@ class TestGet:
     async def test_page_of_another_book_of_the_actor_is_not_found(
         self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify a page is found only through the project that holds it, even for an owner of both projects.
+        """Verify a page is found only through the book that holds it, even for an owner of both books.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -367,7 +367,7 @@ class TestGet:
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
     ) -> None:
-        """Verify the actor cannot read a page through the project of another account.
+        """Verify the actor cannot read a page through the book of another account.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -442,7 +442,7 @@ class TestOpenAsset:
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
     ) -> None:
-        """Verify a stored file of another account's project is reported like a missing one.
+        """Verify a stored file of another account's book is reported like a missing one.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -471,7 +471,7 @@ class TestOpenAsset:
     async def test_key_outside_the_assets_is_not_found(
         self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor, area: str
     ) -> None:
-        """Verify a key in the project's source area, its uploads or any other area is not found, not an error.
+        """Verify a key in the book's source area, its uploads or any other area is not found, not an error.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -479,7 +479,7 @@ class TestOpenAsset:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param area: Directory of the project the key lies in.
+        :param area: Directory of the book the key lies in.
         :type area: str
         """
         book_record = make_record()
@@ -494,7 +494,7 @@ class TestOpenAsset:
     async def test_key_without_a_file_is_not_found(
         self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify a key of the actor's project with nothing stored behind it is not found.
+        """Verify a key of the actor's book with nothing stored behind it is not found.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]

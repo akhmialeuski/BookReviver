@@ -93,7 +93,7 @@ class TestApplyTo:
 
 
 class TestBookChangesApplyTo:
-    """Tests for ProjectChanges.apply_to()."""
+    """Tests for BookChanges.apply_to()."""
 
     def test_replaces_given_fields_and_keeps_the_rest(self) -> None:
         """Verify the description and the image policy change together, and nothing else does."""
@@ -104,11 +104,11 @@ class TestBookChangesApplyTo:
         )
 
     def test_empty_change_keeps_the_book(self) -> None:
-        """Verify a change that sets no field returns the project as it was."""
+        """Verify a change that sets no field returns the book as it was."""
         assert BookChanges().apply_to(BOOK) == BOOK
 
     def test_empty_title_is_rejected_like_a_new_description(self) -> None:
-        """Verify the result is validated, so a change cannot produce a project with an invalid description."""
+        """Verify the result is validated, so a change cannot produce a book with an invalid description."""
         with pytest.raises(ValueError, match='title'):
             BookChanges(details=BookDetailsChanges(title='')).apply_to(BOOK)
 

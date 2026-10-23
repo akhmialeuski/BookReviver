@@ -145,7 +145,7 @@ class SpreadSplit:
     ) -> None:
         """Work over the ports of one job.
 
-        :param book_record: Project owning the pages, whose image policy chooses the format of a version's ``full``.
+        :param book_record: Record of the book, whose image policy chooses the format of a version's ``full``.
         :type book_record: BookRecord
         :param uow: Unit of work, whose ``change_book`` stores a split once it is complete.
         :type uow: UnitOfWork
@@ -450,7 +450,7 @@ class SpreadSplit:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             :raises NotFoundError: If the page was deleted.
             """
@@ -505,7 +505,7 @@ class SpreadSplit:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             :returns: Whether the split was stored.
             :rtype: bool

@@ -34,7 +34,7 @@ async function attempt<ResultT>(request: () => Promise<ResultT>): Promise<Result
  * read is the same as none.
  *
  * @param queryClient The client whose cache the screens read.
- * @param projectId The book.
+ * @param bookId The book.
  */
 export async function loadPlace(queryClient: QueryClient, bookId: string): Promise<void> {
   await attempt(() => queryClient.ensureQueryData(placeOptions(bookId)));
@@ -44,7 +44,7 @@ export async function loadPlace(queryClient: QueryClient, bookId: string): Promi
  * Find the screen a book opens on.
  *
  * @param queryClient The client whose cache the screens read, which the requests fill.
- * @param projectId The book.
+ * @param bookId The book.
  */
 export async function openBook(queryClient: QueryClient, bookId: string): Promise<ResumeTarget> {
   const path = { book_id: bookId };

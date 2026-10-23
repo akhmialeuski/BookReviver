@@ -23,11 +23,11 @@ UNKNOWN_PARAMETER: str = 'unknown'
 
 
 async def seeded_pages(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[Page]]:
-    """Seed a project with two scan pages whose base versions are stored, the input of the geometry stage.
+    """Seed a book with two scan pages whose base versions are stored, the input of the geometry stage.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The actor, the project and its pages in order.
+    :returns: The actor, the book and its pages in order.
     :rtype: tuple[Actor, BookRecord, list[Page]]
     """
     actor, book_record = await kit.seed_record()

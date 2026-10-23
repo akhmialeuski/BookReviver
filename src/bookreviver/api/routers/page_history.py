@@ -30,7 +30,7 @@ router = APIRouter(prefix='/books', tags=['page-history'], route_class=DishkaRou
 class StepPath:
     """The identifiers in the address of the history of one step on one page.
 
-    :ivar book_id: Identifier of the project.
+    :ivar book_id: Identifier of the book.
     :ivar page_id: Identifier of the page.
     :ivar stage: Stage of the step.
     :ivar step_id: Identifier of the step of a recipe.
@@ -57,7 +57,7 @@ async def list_history(
     """List the changes of a step on a page, the newest first, with which of them were taken back.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page, the stage and the step.
+    :param address: Identifiers of the book, the page, the stage and the step.
     :type address: StepPath
     :param params: Page number and size from the query.
     :type params: Params
@@ -101,7 +101,7 @@ async def undo_change(
     back.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page, the stage and the step.
+    :param address: Identifiers of the book, the page, the stage and the step.
     :type address: StepPath
     :param form: The oldest change to take back, or none for the newest change alone.
     :type form: UndoForm
@@ -127,12 +127,12 @@ async def clear_history(
     The results are the versions the step made on the page and the versions that read them, with their files and their
     marks. The stage of the page stands on the version the step read, marked stale, and has no current version when the
     step is the first of its recipe. The clear writes nothing to the history, so nothing of it can be undone. The
-    changes of a batch on other pages stay. A preview of the project, queued or running, is cancelled first. The answer
-    is 409 while a run, a measure of the book, a tile cutting or a collection of the project is queued or running, and
+    changes of a batch on other pages stay. A preview of the book, queued or running, is cancelled first. The answer
+    is 409 while a run, a measure of the book, a tile cutting or a collection of the book is queued or running, and
     404 when no recipe of the stage has the step.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page, the stage and the step.
+    :param address: Identifiers of the book, the page, the stage and the step.
     :type address: StepPath
     :param actor: The signed-in account.
     :type actor: Actor
@@ -140,9 +140,9 @@ async def clear_history(
     :type history: PageHistoryService
     :returns: How many changes and how many versions were deleted.
     :rtype: ClearedSchema
-    :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the stage
+    :raises NotFoundError: If the actor has no such book, the book has no such page, or no recipe of the stage
                            has the step.
-    :raises ConflictError: If a run, a measure of the book, a tile cutting or a collection of the project is queued or
+    :raises ConflictError: If a run, a measure of the book, a tile cutting or a collection of the book is queued or
                            running.
     """
     cleared = await history.clear(actor, address.book_id, address.key)

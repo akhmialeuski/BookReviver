@@ -1,4 +1,4 @@
-"""Tests for the admission of the jobs of a project to the board: what it refuses, what it queues and what it cancels."""
+"""Tests for the admission of the jobs of a book to the board: what it refuses, what it queues and what it cancels."""
 
 from operator import attrgetter
 from typing import TYPE_CHECKING
@@ -31,7 +31,7 @@ pytestmark = pytest.mark.anyio
 REQUESTED_ARGUMENT: str = 'requested'
 ACTIVE_ARGUMENT: str = 'active'
 HOUSEKEEPING_ARGUMENT: str = 'housekeeping'
-BUSY_REASON: str = 'project is busy'
+BUSY_REASON: str = 'book is busy'
 # A tile cutting of a version that is not stored, which the job passes over
 NO_SUCH_VERSION: PageVersionId = PageVersionId(str(uuid4()))
 NO_SUCH_TILES: MetadataMap = TileCut(version_ids=(NO_SUCH_VERSION,)).to_map()
@@ -41,11 +41,11 @@ ASK_FOR_MEASURE = attrgetter('start_measure')
 
 
 async def prepared_page(kit: ProcessingKit) -> tuple[Actor, BookRecord, Page]:
-    """Seed a project with one scan page whose base version is stored, the input of the geometry stage.
+    """Seed a book with one scan page whose base version is stored, the input of the geometry stage.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The actor, the project and the page.
+    :returns: The actor, the book and the page.
     :rtype: tuple[Actor, BookRecord, Page]
     """
     actor, book_record = await kit.seed_record()
@@ -55,11 +55,11 @@ async def prepared_page(kit: ProcessingKit) -> tuple[Actor, BookRecord, Page]:
 
 
 def processing_kinds(kit: ProcessingKit, book_id: BookId) -> list[JobKind]:
-    """Read the kinds of the jobs that keep the project from starting another, as the board holds them.
+    """Read the kinds of the jobs that keep the book from starting another, as the board holds them.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose jobs are read.
+    :param book_id: Book whose jobs are read.
     :type book_id: BookId
     :returns: The kinds of the queued or running processing jobs, newest first.
     :rtype: list[JobKind]
@@ -121,12 +121,12 @@ def preview_of(page: Page) -> StepPreview:
 
 
 class TestRunFollowUp:
-    """Tests for the collection a run queues behind itself, and the jobs that wait for the project meanwhile."""
+    """Tests for the collection a run queues behind itself, and the jobs that wait for the book meanwhile."""
 
     async def test_book_is_never_free_between_the_run_and_its_collection(
         self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Verify the collection is put while the run is still active, so no request finds the project free between.
+        """Verify the collection is put while the run is still active, so no request finds the book free between.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -235,10 +235,10 @@ class TestCancelledRunHoldsTheBook:
 
 
 class TestRunHandOff:
-    """Tests for the jobs a project queues behind a run, and the run it is asked for while it waits."""
+    """Tests for the jobs a book queues behind a run, and the run it is asked for while it waits."""
 
     async def test_second_run_is_refused_while_a_run_is_active(self, fx_kit: ProcessingKit) -> None:
-        """Verify a run is refused with a readable reason while another run of the project is queued.
+        """Verify a run is refused with a readable reason while another run of the book is queued.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -291,7 +291,7 @@ class TestRunHandOff:
 
 
 class TestRunTakesTheBookFromAPreview:
-    """Tests for a run or a measure of the book that finds a preview of the project queued or running."""
+    """Tests for a run or a measure of the book that finds a preview of it queued or running."""
 
     @pytest.mark.parametrize(REQUESTED_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
     async def test_queued_preview_is_cancelled_and_the_request_is_queued(
@@ -395,7 +395,7 @@ class TestRunTakesTheBookFromAPreview:
     async def test_preview_is_refused_while_a_run_or_a_measure_is_active(
         self, fx_kit: ProcessingKit, active: JobKind
     ) -> None:
-        """Verify a preview does not take the project from a run or a measure that is queued.
+        """Verify a preview does not take the book from a run or a measure that is queued.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -446,7 +446,7 @@ class TestHousekeepingRequests:
         assert_expectations()
 
     async def test_collection_asked_for_during_a_collection_gets_the_active_one(self, fx_kit: ProcessingKit) -> None:
-        """Verify a project has one collection at a time, and a second request is given the one that is active.
+        """Verify a book has one collection at a time, and a second request is given the one that is active.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -489,7 +489,7 @@ class TestHousekeepingRequests:
     async def test_tile_cutting_is_left_out_while_another_housekeeping_job_is_active(
         self, fx_kit: ProcessingKit, housekeeping: JobKind
     ) -> None:
-        """Verify a project has one tile cutting or collection at a time, so a second request puts nothing.
+        """Verify a book has one tile cutting or collection at a time, so a second request puts nothing.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -506,7 +506,7 @@ class TestHousekeepingRequests:
 
 
 class TestConcurrentRequests:
-    """Tests for two requests of one project asked for at once, which meet at the check of the active jobs.
+    """Tests for two requests of one book asked for at once, which meet at the check of the active jobs.
 
     The check and the put of a request have no ``await`` between them, so the second request cannot split them and reads
     the job the first put. Both requests start in one task group, the first before the second.
@@ -515,7 +515,7 @@ class TestConcurrentRequests:
     async def ask_at_once(
         self, fx_kit: ProcessingKit, first: JobKind, second: JobKind
     ) -> tuple[BookRecord, list[Job | ConflictError | None]]:
-        """Ask for two jobs of one project at once, the first before the second, and give what each got.
+        """Ask for two jobs of one book at once, the first before the second, and give what each got.
 
         What they got is given by the order of the requests, since both may ask for the same kind of job.
 
@@ -525,7 +525,7 @@ class TestConcurrentRequests:
         :type first: JobKind
         :param second: The kind of job the second request asks for.
         :type second: JobKind
-        :returns: The project, and the job or the refusal of the first request and of the second, in that order.
+        :returns: The book, and the job or the refusal of the first request and of the second, in that order.
         :rtype: tuple[BookRecord, list[Job | ConflictError | None]]
         """
         _, book_record, _ = await prepared_page(fx_kit)

@@ -80,7 +80,7 @@ COLLECTABLE_PATH: str = '/versions/collectable'
 class Book(NamedTuple):
     """A book of the signed-in account with one page cut from a scan whose image is stored.
 
-    :ivar book_record: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar page: The page the import made of the scan.
     """
 
@@ -89,7 +89,7 @@ class Book(NamedTuple):
 
     @property
     def path(self) -> str:
-        """The path of the project."""
+        """The path of the book."""
         return f'{BOOKS_PATH}/{self.book_record.id}'
 
     @property
@@ -138,7 +138,7 @@ async def store_scan_images(asset_store: AssetStore, book_record: BookRecord, sc
 
     :param asset_store: Asset store of the application.
     :type asset_store: AssetStore
-    :param book_record: Project owning the scan.
+    :param book_record: Book owning the scan.
     :type book_record: BookRecord
     :param scan: The scan, whose renditions are ready.
     :type scan: Scan
@@ -352,7 +352,7 @@ class TestRecipes:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_book_of_another_account_is_not_found(self, fx_client: httpx.AsyncClient) -> None:
-        """Verify a project the account does not own is answered 404.
+        """Verify a book the account does not own is answered 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -454,7 +454,7 @@ class TestRunAndVersions:
     async def test_second_run_while_one_is_active_is_a_409_problem(
         self, fx_client: httpx.AsyncClient, fx_book: Book
     ) -> None:
-        """Verify a run answers 409 while another run of the project is queued.
+        """Verify a run answers 409 while another run of the book is queued.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -702,7 +702,7 @@ class TestRunAndVersions:
         assert_expectations()
 
     async def test_collectable_versions_of_another_account_are_a_404(self, fx_client: httpx.AsyncClient) -> None:
-        """Verify the report of a project that is not the account's is answered like one of a missing project.
+        """Verify the report of a book that is not the account's is answered like one of a missing book.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -727,7 +727,7 @@ class TestRunAndVersions:
     async def test_measuring_the_book_while_a_run_is_active_is_a_409_problem(
         self, fx_client: httpx.AsyncClient, fx_book: Book
     ) -> None:
-        """Verify the measure is refused while a run of the project is queued, which may be writing what it reads.
+        """Verify the measure is refused while a run of the book is queued, which may be writing what it reads.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -741,7 +741,7 @@ class TestRunAndVersions:
         assert_expectations()
 
     async def test_measuring_the_book_of_another_account_is_a_404(self, fx_client: httpx.AsyncClient) -> None:
-        """Verify a project that is not the account's is reported like a missing one.
+        """Verify a book that is not the account's is reported like a missing one.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -1013,7 +1013,7 @@ class TestPageHistory:
     async def test_clear_while_the_book_is_busy_is_a_409_and_deletes_nothing(
         self, fx_client: httpx.AsyncClient, fx_book: Book
     ) -> None:
-        """Verify a clear answers 409 while a run of the project is queued, which may read the versions, and keeps the step.
+        """Verify a clear answers 409 while a run of the book is queued, which may read the versions, and keeps a step.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -1037,7 +1037,7 @@ class TestPageHistory:
         """Verify a clear answers 200 while a preview is queued, which it cancels, and the step has no history left.
 
         The editor of a step asks for a preview when the step is opened, so a reader who clears the history a moment
-        later finds one that holds the project.
+        later finds one that holds the book.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -1107,7 +1107,7 @@ async def add_page(uow: UnitOfWork, book: Book, order_key: str, kind: PageKind =
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: Project of the book, which the work does not need.
+        :param _book_record: Record of the book, which the work does not need.
         :type _book_record: BookRecord
         """
         repos.sources.add(source)

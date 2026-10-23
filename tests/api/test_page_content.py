@@ -47,7 +47,7 @@ SAME_PAGE: str = str(uuid4())
 class Book(NamedTuple):
     """A book of three pages of the signed-in account: two of text, the second with a picture found on it, and a plate.
 
-    :ivar book_record: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar pages: The pages in book order.
     """
 
@@ -192,7 +192,7 @@ class TestPageContent:
 
 
 class TestDetectContent:
-    """Tests for POST /projects/{project_id}/pages/content-types/detect."""
+    """Tests for POST /books/{book_id}/pages/content-types/detect."""
 
     async def test_a_request_without_pages_queues_a_job_for_the_pages_not_detected(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -236,7 +236,7 @@ class TestDetectContent:
     async def test_a_second_request_while_the_job_is_queued_is_a_409_problem(
         self, fx_client: httpx.AsyncClient, fx_board: FakeJobBoard, fx_book: Book
     ) -> None:
-        """Verify one detection of the project at a time, which the request is told of while one is queued.
+        """Verify one detection of the book at a time, which the request is told of while one is queued.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -277,7 +277,7 @@ class TestDetectContent:
     async def test_a_page_that_is_not_in_the_book_and_a_book_of_another_account_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify a page that does not exist and a project that is not the account's answer 404 and queue nothing.
+        """Verify a page that does not exist and a book that is not the account's answer 404 and queue nothing.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient

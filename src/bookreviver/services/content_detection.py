@@ -109,7 +109,7 @@ class ContentDetector:
     async def _detect(self, book_id: BookId, page_id: PageId, base: PageVersion, *, forced: bool) -> bool | None:
         """Read what the base image of one page shows and write it into the page.
 
-        :param book_id: Project owning the page.
+        :param book_id: Book owning the page.
         :type book_id: BookId
         :param page_id: The page.
         :type page_id: PageId
@@ -130,7 +130,7 @@ class ContentDetector:
     async def _pages(self, book_id: BookId, detection: ContentDetection) -> Sequence[Page]:
         """Choose the pages a job goes over.
 
-        :param book_id: Project owning the pages.
+        :param book_id: Book owning the pages.
         :type book_id: BookId
         :param detection: What the job was asked to detect.
         :type detection: ContentDetection
@@ -172,7 +172,7 @@ class ContentDetector:
     async def _bases(self, book_id: BookId, pages: Sequence[Page]) -> dict[PageId, PageVersion]:
         """Read the base version of each page whose image is ready, which is the image a page starts from.
 
-        :param book_id: Project owning the pages.
+        :param book_id: Book owning the pages.
         :type book_id: BookId
         :param pages: Pages whose base versions are read in one query.
         :type pages: Sequence[Page]
@@ -192,7 +192,7 @@ class ContentDetector:
     async def _probe(self, book_id: BookId, base: PageVersion) -> ContentType:
         """Tell what the image of a base version shows, by the processor, on its preview.
 
-        :param book_id: Project owning the page.
+        :param book_id: Book owning the page.
         :type book_id: BookId
         :param base: The ready base version of the page.
         :type base: PageVersion
@@ -219,7 +219,7 @@ class ContentDetector:
         Nothing is written when the page is gone, when the user set its content by hand and did not ask for the page by
         name, or when the page already shows the content.
 
-        :param book_id: Project owning the page.
+        :param book_id: Book owning the page.
         :type book_id: BookId
         :param page_id: Page that was read.
         :type page_id: PageId
@@ -236,7 +236,7 @@ class ContentDetector:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the write does not read.
+            :param _book_record: The record of the book as the change finds it, which the write does not read.
             :type _book_record: BookRecord
             :returns: Whether the content type was written.
             :rtype: bool

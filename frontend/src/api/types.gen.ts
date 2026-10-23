@@ -583,9 +583,9 @@ export type BookPlaceSchema = {
  *
  * A book being digitised.
  *
- * :ivar id: Identifier of the project.
+ * :ivar id: Identifier of the book.
  * :ivar details: Bibliographic description of the book.
- * :ivar image_policy: How the images of the project's scans and page versions are stored.
+ * :ivar image_policy: How the images of the book's scans and page versions are stored.
  * :ivar cover_page_id: Page the library shows as the cover, the first page of the kind ``cover`` or else the first
  * page of the book, or None for a book without pages.
  * :ivar page_count: Number of pages of the book, without the pages kept out of it.
@@ -593,8 +593,8 @@ export type BookPlaceSchema = {
  * :ivar scan_count: Number of scans in all the sources.
  * :ivar progress: The status of every stage of the book, in the order of the pipeline.
  * :ivar next_stage: The first available stage with work to do or being worked, or None when there is none.
- * :ivar created_at: When the project was created.
- * :ivar updated_at: When the project was last changed.
+ * :ivar created_at: When the book was created.
+ * :ivar updated_at: When the book was last changed.
  */
 export type BookSchema = {
     /**
@@ -1135,7 +1135,7 @@ export type ImagePathsSchema = {
 /**
  * ImagePolicy
  *
- * How a project stores the ``full`` image of its scans and page versions.
+ * How a book stores the ``full`` image of its scans and page versions.
  *
  * A bilevel image is a lossless PNG under either policy. The policy decides only gray and colour images, and a change
  * applies to images written afterwards, so nothing stored is encoded again.
@@ -1158,7 +1158,7 @@ export type JobKind = 'import-source' | 'prepare-pages' | 'run-stage' | 'preview
  * process started, is answered as not found.
  *
  * :ivar id: Identifier of the job.
- * :ivar book_id: Project the job works on.
+ * :ivar book_id: Book the job works on.
  * :ivar kind: What the job does.
  * :ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.
  * :ivar state: Where the job is in its life cycle.
@@ -2452,7 +2452,7 @@ export type PagesMove = {
  *
  * A section to make, or the whole new state of a section that exists.
  *
- * :ivar first_page_id: The page the section starts at, which must be a page of the project.
+ * :ivar first_page_id: The page the section starts at, which must be a page of the book.
  * :ivar name: Name the user sees.
  * :ivar style: How the numbers are written.
  * :ivar start: Number of the first counted page, from 1, and at most 3999 in a Roman style.
@@ -3074,7 +3074,7 @@ export type RunMode = 'keep' | 'skip-own-work' | 'drop-own-work';
  *
  * The scan to bind to a placeholder.
  *
- * :ivar scan_id: Scan to bind, which must be a scan of the project.
+ * :ivar scan_id: Scan to bind, which must be a scan of the book.
  * :ivar take_over: Whether to take the scan from the pages that show it already, such as the page the import made of
  * it, which deletes them.
  */
@@ -3261,7 +3261,7 @@ export type SourceKind = 'pdf' | 'djvu' | 'image';
  * :ivar status: Whether the file was imported, rejected by the import, or skipped by a cancelled one.
  * :ivar rejection: Why a rejected file was refused, or None for a file that was not.
  * :ivar detail: Text that says more than the reason, such as the name of the source a duplicate repeats, or empty.
- * :ivar imported_at: When the file was recorded, which for an imported source is when it became part of the project.
+ * :ivar imported_at: When the file was recorded, which for an imported source is when it became part of the book.
  */
 export type SourceSchema = {
     /**

@@ -1,7 +1,7 @@
 """Schema of a page of the book: its place in the book, its kind and the images of its current version.
 
 A page is identified by its ``PageId`` and its place in the book is its ``position``, counted from zero over the pages
-of the project in book order. The fractional order key that keeps the order never leaves the server, so a client cannot
+of the book in book order. The fractional order key that keeps the order never leaves the server, so a client cannot
 build a page order from it. ``images`` shows the current version of the latest stage of the page that has an image,
 which is its base version until a processing stage writes a later one, and is empty for a page that has no image yet: a
 placeholder waiting for a scan, or a page whose images are still being cut.
@@ -218,7 +218,7 @@ PageCreateList = Annotated[
 class ScanAttach(RequestModel):
     """The scan to bind to a placeholder.
 
-    :ivar scan_id: Scan to bind, which must be a scan of the project.
+    :ivar scan_id: Scan to bind, which must be a scan of the book.
     :ivar take_over: Whether to take the scan from the pages that show it already, such as the page the import made of
                      it, which deletes them.
     """
@@ -399,7 +399,7 @@ class PageSchema(ResponseModel):
         :type overview: PageOverview
         :param request: The request, whose application knows the route that serves the images.
         :type request: Request
-        :param book_id: Identifier of the project of the page, whose files hold its images.
+        :param book_id: Identifier of the book of the page, whose files hold its images.
         :type book_id: BookId
         :returns: The page resource, with images once its base version has them cut.
         :rtype: Self

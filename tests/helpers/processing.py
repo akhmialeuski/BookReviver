@@ -212,11 +212,11 @@ class ProcessingKit:
     async def recipe_of(
         self, actor: Actor, book_record: BookRecord, stage: Stage, kind: RecipeKind = RecipeKind.TEXT
     ) -> Recipe:
-        """Read the recipe of one kind of a stage of a project, which the first read creates with the others.
+        """Read the recipe of one kind of a stage of a book, which the first read creates with the others.
 
-        :param actor: Account owning the project.
+        :param actor: Account owning the book.
         :type actor: Actor
-        :param book_record: Project whose recipe is read.
+        :param book_record: Record of the book whose recipe is read.
         :type book_record: BookRecord
         :param stage: The stage.
         :type stage: Stage
@@ -238,9 +238,9 @@ class ProcessingKit:
     ) -> Recipe:
         """Replace the steps of the recipe of one kind of a stage, which the first read of the stage creates.
 
-        :param actor: Account owning the project.
+        :param actor: Account owning the book.
         :type actor: Actor
-        :param book_record: Project whose recipe is changed.
+        :param book_record: Record of the book whose recipe is changed.
         :type book_record: BookRecord
         :param stage: The stage.
         :type stage: Stage
@@ -283,7 +283,7 @@ class ProcessingKit:
     async def work_queue(self) -> None:
         """Let the board run every job put on it that has not run, in the order they were put.
 
-        A project processes one thing at a time, so the jobs of a book run one after the other, and a job that a running
+        A book processes one thing at a time, so its jobs run one after the other, and a job that a running
         job puts, such as the collection a run queues when it ends, runs too.
         """
         await self.board.run_queued()
@@ -351,7 +351,7 @@ class ProcessingKit:
     async def edit_key(self, book_id: BookId, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
         """Give the key of the edit of a step of the recipe of the kind of a page in a stage, found by its processor.
 
-        :param book_id: Identifier of the project of the page.
+        :param book_id: Identifier of the book of the page.
 
         :type book_id: BookId
 
@@ -377,11 +377,11 @@ class ProcessingKit:
         return self._new_uow()
 
     async def seed_record(self, *, image_policy: ImagePolicy = ImagePolicy.COMPACT) -> tuple[Actor, BookRecord]:
-        """Commit a new account and a project of it.
+        """Commit a new account and a book owned by it.
 
-        :param image_policy: Image policy of the project.
+        :param image_policy: Image policy of the book.
         :type image_policy: ImagePolicy
-        :returns: The actor owning the project, and the project.
+        :returns: The actor owning the book, and the record of the book.
         :rtype: tuple[Actor, BookRecord]
         """
         owner = await commit_account(self.database)
@@ -399,7 +399,7 @@ class ProcessingKit:
     ) -> tuple[Page, Scan]:
         """Commit a scan whose images are stored and a page that shows it whole.
 
-        :param book_record: Project owning the page.
+        :param book_record: Record of the book owning the page.
         :type book_record: BookRecord
         :param order_key: Order key of the page.
         :type order_key: str
@@ -419,7 +419,7 @@ class ProcessingKit:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.sources.add(source)
@@ -436,7 +436,7 @@ class ProcessingKit:
     async def seed_base_version(self, book_id: BookId, page: Page, *, image: bytes = IMAGE_CONTENT) -> PageVersion:
         """Commit the ready base version of a page, with its files and its stage record.
 
-        :param book_id: Identifier of the project of the page.
+        :param book_id: Identifier of the book of the page.
 
         :type book_id: BookId
 
@@ -465,7 +465,7 @@ class ProcessingKit:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_versions.add(version)
@@ -483,11 +483,11 @@ class ProcessingKit:
         return version
 
     async def store_files(self, version: PageVersion, book_id: BookId) -> None:
-        """Write the three files of a version of a project's page, as a run would.
+        """Write the three files of a version of a book's page, as a run would.
 
         :param version: Version whose files are written.
         :type version: PageVersion
-        :param book_id: Project owning the page.
+        :param book_id: Book owning the page.
         :type book_id: BookId
         """
         keys = BookKeys(book_id)
@@ -498,7 +498,7 @@ class ProcessingKit:
     async def stored_version(self, book_id: BookId, version_id: PageVersionId) -> PageVersion:
         """Read a version back as committed.
 
-        :param book_id: Project whose book holds the version.
+        :param book_id: Book that holds the version.
         :type book_id: BookId
         :param version_id: Identifier of the version.
         :type version_id: PageVersionId
@@ -538,7 +538,7 @@ async def change_versions(kit: ProcessingKit, book_id: BookId, work: Callable[[P
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book is changed.
+    :param book_id: Book that is changed.
     :type book_id: BookId
     :param work: What is done to the version repository of the change.
     :type work: Callable[[PageVersionRepository], object]
@@ -551,7 +551,7 @@ async def found_version(kit: ProcessingKit, book_id: BookId, version_id: PageVer
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book is read.
+    :param book_id: Book that is read.
     :type book_id: BookId
     :param version_id: Identifier of the version.
     :type version_id: PageVersionId
@@ -566,7 +566,7 @@ async def found_stage(kit: ProcessingKit, book_id: BookId, page: Page, stage: St
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project of the page.
+    :param book_id: Identifier of the book of the page.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
@@ -583,7 +583,7 @@ async def stage_versions(kit: ProcessingKit, book_id: BookId, page: Page, stage:
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project of the page.
+    :param book_id: Identifier of the book of the page.
     :type book_id: BookId
     :param page: The page.
     :type page: Page

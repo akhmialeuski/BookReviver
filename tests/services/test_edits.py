@@ -32,11 +32,11 @@ MASK_NAME: str = 'mask.png'
 
 
 async def prepared(kit: ProcessingKit) -> tuple[Actor, BookRecord, Page]:
-    """Seed a project with a scan page whose geometry stage has been run once, which an edit makes stale.
+    """Seed a book with a scan page whose geometry stage has been run once, which an edit makes stale.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The actor, the project and the page.
+    :returns: The actor, the book and the page.
     :rtype: tuple[Actor, BookRecord, Page]
     """
     actor, book_record = await kit.seed_record()
@@ -230,7 +230,7 @@ class TestSave:
         assert first.edit_hash == second.edit_hash
 
     async def test_page_of_another_book_is_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Reject an edit of a page the project does not have.
+        """Reject an edit of a page the book does not have.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit

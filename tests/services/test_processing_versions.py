@@ -70,7 +70,7 @@ BATCH_ARG: str = 'batch_size'
 # The attribute of the jobs that holds how many versions a collection deletes before it commits
 BATCH_SIZE_ATTRIBUTE: str = 'COLLECTION_BATCH_SIZE'
 STATE_ARGUMENT: str = 'state'
-BUSY_REASON: str = 'project is busy'
+BUSY_REASON: str = 'book is busy'
 OTHER_STAGE_REASON: str = 'another stage'
 PREVIEW_REASON: str = 'preview'
 # A version of the geometry stage a test adds beside the one the run made, with a strength of its own
@@ -96,7 +96,7 @@ async def ran_geometry(kit: ProcessingKit) -> tuple[Actor, BookRecord, Page, Pag
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The actor, the project, the page and the version the run made.
+    :returns: The actor, the book, the page and the version the run made.
     :rtype: tuple[Actor, BookRecord, Page, PageVersion]
     """
     actor, book_record = await kit.seed_record()
@@ -117,7 +117,7 @@ async def ran_two_steps(
     :type kit: ProcessingKit
     :param first_on: Whether the first step is switched on.
     :type first_on: bool
-    :returns: The actor, the project, the page, the identifiers of the two steps, and the versions the run made in the
+    :returns: The actor, the book, the page, the identifiers of the two steps, and the versions the run made in the
               order of their steps.
     :rtype: tuple[Actor, BookRecord, Page, list[StepId], list[PageVersion]]
     """
@@ -145,7 +145,7 @@ async def mark_version(kit: ProcessingKit, book_id: BookId, version: PageVersion
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book holds the version.
+    :param book_id: Book that holds the version.
     :type book_id: BookId
     :param version: The version.
     :type version: PageVersion
@@ -165,9 +165,9 @@ async def previewed(
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: The project.
+    :param book_record: The record of the book.
     :type book_record: BookRecord
     :param page: The page to preview a geometry step on.
     :type page: Page
@@ -204,7 +204,7 @@ class TestChooseVersion:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_versions.add(second)
@@ -232,7 +232,7 @@ class TestChooseVersion:
     async def test_a_preview_of_the_book_is_cancelled_and_the_choice_goes_on(
         self, fx_kit: ProcessingKit, state: JobState
     ) -> None:
-        """Verify choosing a version takes the project from a preview, queued or running, instead of being refused.
+        """Verify choosing a version takes the book from a preview, queued or running, instead of being refused.
 
         The editor of a step asks for a preview by itself, so a choice made a moment later finds one.
 
@@ -277,7 +277,7 @@ class TestChooseVersion:
         assert_expectations()
 
     async def test_a_version_that_cannot_be_current_does_not_cancel_the_preview(self, fx_kit: ProcessingKit) -> None:
-        """Reject a version of another stage as it is refused when the project is free, and keep the preview queued.
+        """Reject a version of another stage as it is refused when the book is free, and keep the preview queued.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -539,7 +539,7 @@ class TestCollection:
 
         :param kit: What the processing services of the test share.
         :type kit: ProcessingKit
-        :returns: The actor, the project, the page, the current version and the old version.
+        :returns: The actor, the book, the page, the current version and the old version.
         :rtype: tuple[Actor, BookRecord, Page, PageVersion, PageVersion]
         """
         actor, book_record, page, current = await ran_geometry(kit)
@@ -559,7 +559,7 @@ class TestCollection:
     async def test_a_preview_of_the_book_is_cancelled_and_the_collection_is_queued(
         self, fx_kit: ProcessingKit, state: JobState
     ) -> None:
-        """Verify a collection takes the project from a preview, queued or running, instead of being refused by it.
+        """Verify a collection takes the book from a preview, queued or running, instead of being refused by it.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -589,7 +589,7 @@ class TestCollection:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_versions.update(evolve(old, mark=ResultMark.BAD))
@@ -693,7 +693,7 @@ class TestCollection:
         assert (await found_version(fx_kit, book_record.id, preview.id)) is not None
 
     async def test_a_second_request_while_one_is_active_gets_the_active_job(self, fx_kit: ProcessingKit) -> None:
-        """Verify a project has one collection at a time.
+        """Verify a book has one collection at a time.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -773,7 +773,7 @@ class TestCollection:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_versions.add(other)
@@ -868,7 +868,7 @@ class TestCollection:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_versions.update(good)
@@ -997,7 +997,7 @@ class TestCollection:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_versions.add(reader)
@@ -1041,7 +1041,7 @@ class TestMapToScan:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_versions.update(cropped)
@@ -1057,7 +1057,7 @@ async def fail_the_chosen_version(kit: ProcessingKit, book_id: BookId, version: 
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book holds the version.
+    :param book_id: Book that holds the version.
     :type book_id: BookId
     :param version: The version a user chose.
     :type version: PageVersion
@@ -1070,7 +1070,7 @@ async def delete_the_page_of_the_version(kit: ProcessingKit, book_id: BookId, ve
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Project whose book holds the version.
+    :param book_id: Book that holds the version.
     :type book_id: BookId
     :param version: The version a user chose, which goes with its page.
     :type version: PageVersion

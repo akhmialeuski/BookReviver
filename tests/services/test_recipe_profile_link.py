@@ -56,13 +56,13 @@ async def save_profile(
 
 
 async def another_book(kit: ProcessingKit, actor: Actor) -> BookRecord:
-    """Commit another project of the same account, which has opened no stage.
+    """Commit another book of the same account, which has opened no stage.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :returns: The project.
+    :returns: The book.
     :rtype: BookRecord
     """
     book_record = make_record(title='Another book')
@@ -75,7 +75,7 @@ async def stored_recipe(kit: ProcessingKit, book_id: BookId, recipe: Recipe) -> 
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param recipe: The recipe to read.
     :type recipe: Recipe

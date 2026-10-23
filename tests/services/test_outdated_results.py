@@ -43,7 +43,7 @@ class SeededPage:
     """A book of one page that has its base version, with the results the test commits on it.
 
     :ivar kit: What the processing services of the test share.
-    :ivar book_id: Identifier of the project of the book.
+    :ivar book_id: Identifier of the book.
     :ivar page: The page.
     """
 
@@ -52,7 +52,7 @@ class SeededPage:
 
         :param kit: What the processing services of the test share.
         :type kit: ProcessingKit
-        :param book_id: Identifier of the project of the book.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param page: The page.
         :type page: Page
@@ -112,7 +112,7 @@ class SeededPage:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_versions.add(version)
@@ -201,7 +201,7 @@ class TestMarkStale:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             if left is None:
@@ -212,7 +212,7 @@ class TestMarkStale:
         async def read_then_change[T](book_id: BookId, work: Callable[[BookRepositories], T]) -> T:
             """Read as the unit of work does, then let a request change the record in a change of its own, once.
 
-            :param book_id: Project whose book is read.
+            :param book_id: Book that is read.
             :type book_id: BookId
             :param work: Function over the repositories of the transaction.
             :type work: Callable[[BookRepositories], T]

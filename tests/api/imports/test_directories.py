@@ -58,7 +58,7 @@ PART_WIDTHS_PX: dict[str, int] = {'part10.pdf': 150, 'part2.pdf': 160, 'part1.pd
 
 
 class UnsafePathCase(NamedTuple):
-    """A file name a client sends that must not become a path inside the project, with the rule it breaks.
+    """A file name a client sends that must not become a path inside the book, with the rule it breaks.
 
     :ivar name: File name as sent in the multipart body.
     :ivar problem: Upload problem the answer must carry.
@@ -103,7 +103,7 @@ def _scan(number: int, *, image_format: str) -> bytes:
 
 
 class TestUploadDirectories:
-    """Tests for POST /projects/{project_id}/sources with the files of a directory or a hand-picked set."""
+    """Tests for POST /books/{book_id}/sources with the files of a directory or a hand-picked set."""
 
     async def test_directory_of_pdf_parts_becomes_sources_and_pages_in_the_order_of_the_list(
         self,
@@ -124,7 +124,7 @@ class TestUploadDirectories:
         :type fx_import: ImportWatch
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
@@ -180,7 +180,7 @@ class TestUploadDirectories:
         :type fx_import: ImportWatch
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         """
         suffixes = cycle(SCAN_FORMATS)
@@ -228,7 +228,7 @@ class TestUploadDirectories:
         :type fx_import: ImportWatch
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
@@ -261,7 +261,7 @@ class TestUploadDirectories:
         :type fx_import: ImportWatch
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
@@ -306,7 +306,7 @@ class TestUploadDirectories:
         :type fx_import: ImportWatch
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         """
         parts = [
@@ -345,7 +345,7 @@ class TestUploadDirectories:
         :type fx_client: httpx.AsyncClient
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param case: A file name the upload sends, and the problem it must be refused with.
         :type case: UnsafePathCase

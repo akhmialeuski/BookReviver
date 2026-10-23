@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-BookReviver digitises old printed books, mainly pre-reform Russian and Belarusian. One project is one book, moving
+BookReviver digitises old printed books, mainly pre-reform Russian and Belarusian. Each book moves
 through stages that stay viewable and re-runnable at any time. The rules below and the import-linter contracts in the
 gate describe the structure the code keeps, and the OpenAPI schema in `docs/openapi.json` describes the API.
 
@@ -39,7 +39,7 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 - FastAPI specifics: `Annotated` dependency aliases, prefix and tags on the `APIRouter`, return types instead of
   `response_model` where they match, `EventSourceResponse` for SSE, `app.frontend()` for the built frontend,
   `fastapi dev` and `fastapi run` with the `[tool.fastapi]` entrypoint.
-- A route annotates its parameters in place (`Annotated[ProjectId, Path()]`, `FromDishka[ProjectService]`), with no
+- A route annotates its parameters in place (`Annotated[BookId, Path()]`, `FromDishka[BooksService]`), with no
   module-level alias made only to keep an import at runtime. `ruff.toml` lists the `fastapi.APIRouter` methods and
   `dishka.integrations.fastapi.inject` under `runtime-evaluated-decorators`, and ruff resolves `@router.get` to
   them, so it keeps the imports those annotations need. A dependency shared by many routers, such as `ActorDep`,

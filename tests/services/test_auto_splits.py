@@ -28,11 +28,11 @@ WHOLE_BOOK_SLOTS: list[int] = [Page.LEFT_HALF, Page.RIGHT_HALF, Page.WHOLE_SCAN,
 
 
 async def seed_mixed_book(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[Page]]:
-    """Seed a project whose scans are a spread, a single page and a spread, each shown whole by one page.
+    """Seed a book whose scans are a spread, a single page and a spread, each shown whole by one page.
 
     :param kit: The processing kit with the OpenCV plugins.
     :type kit: ProcessingKit
-    :returns: The actor, the project and the three pages in book order.
+    :returns: The actor, the book and the three pages in book order.
     :rtype: tuple[Actor, BookRecord, list[Page]]
     """
     actor, book_record = await kit.seed_record()
@@ -49,9 +49,9 @@ async def choose(kit: ProcessingKit, actor: Actor, book_record: BookRecord, page
 
     :param kit: The processing kit with the OpenCV plugins.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: The project.
+    :param book_record: The record of the book.
     :type book_record: BookRecord
     :param page: The page that shows the scan whole, or its left half.
     :type page: Page
@@ -70,9 +70,9 @@ async def run_over_every_page(kit: ProcessingKit, actor: Actor, book_record: Boo
 
     :param kit: The processing kit with the OpenCV plugins.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: The project.
+    :param book_record: The record of the book.
     :type book_record: BookRecord
     """
     pages = await book_of(kit, book_record)
