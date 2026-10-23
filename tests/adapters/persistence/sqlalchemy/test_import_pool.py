@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine.interfaces import DBAPIConnection
     from sqlalchemy.pool import ConnectionPoolEntry, PoolProxiedConnection
 
-    from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+    from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.ids import AccountId
     from tests.helpers.database import UnitOfWorkFactory
@@ -112,7 +112,7 @@ class TestRunImportConnections:
     async def test_four_cutters_never_hold_more_than_one_pooled_connection(
         self,
         fx_uow: UnitOfWorkFactory,
-        fx_books: BookDatabases,
+        fx_books: BookRegistry,
         fx_owner_id: AccountId,
         fx_import_rig: Callable[..., ImportRig],
         tmp_path: Path,
@@ -129,7 +129,7 @@ class TestRunImportConnections:
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_books: Registry of the books of the test, which gives the database of the book whose pool is counted.
-        :type fx_books: BookDatabases
+        :type fx_books: BookRegistry
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_import_rig: Function building the import rig whose board runs an import on the database.

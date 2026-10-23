@@ -18,7 +18,7 @@ from collections.abc import AsyncIterator
 from dishka import Provider, Scope, alias, provide
 from sqlalchemy.orm import configure_mappers
 
-from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.app.settings import Settings
@@ -95,7 +95,7 @@ class DatabaseProvider(Provider):
             await database.dispose()
 
     @provide(scope=Scope.APP)
-    async def books(self, settings: Settings, tracer: Tracer) -> AsyncIterator[BookDatabases]:
+    async def books(self, settings: Settings, tracer: Tracer) -> AsyncIterator[BookRegistry]:
         """Open the registry of the databases of the books, and close every open book with the application.
 
         :param settings: Application settings, of which the storage root, the wait limit of a job and the idle limit of
@@ -104,9 +104,9 @@ class DatabaseProvider(Provider):
         :param tracer: Tracer the write blocks of the books are timed with.
         :type tracer: Tracer
         :returns: Iterator yielding the registry and closing its books afterwards.
-        :rtype: AsyncIterator[BookDatabases]
+        :rtype: AsyncIterator[BookRegistry]
         """
-        books = BookDatabases(
+        books = BookRegistry(
             settings.storage_root,
             tracer=tracer,
             wait_seconds=settings.change_wait.job_seconds,
@@ -121,7 +121,7 @@ class DatabaseProvider(Provider):
     def unit_of_work(
         self,
         database: SqlDatabase,
-        books: BookDatabases,
+        books: BookRegistry,
         publisher: EventPublisher,
         wait_seconds: ChangeWaitSeconds,
     ) -> SqlAlchemyUnitOfWork:
@@ -133,7 +133,7 @@ class DatabaseProvider(Provider):
         :param database: The catalogue, whose threads and connections the transactions of the catalogue use.
         :type database: SqlDatabase
         :param books: The registry of the databases of the books.
-        :type books: BookDatabases
+        :type books: BookRegistry
         :param publisher: Where a committed change of a book is announced.
         :type publisher: EventPublisher
         :param wait_seconds: How long a change of the unit of work waits for a writer, by the scope it lives in.

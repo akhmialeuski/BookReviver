@@ -1,7 +1,7 @@
 """The databases of the books: one SQLite file in the directory of each book, opened on first use and closed when idle.
 
 The file of a book is ``projects/<id>/book.db`` under the storage root, beside the directories of the files of the
-book, so the directory of a book holds the whole book. :class:`BookDatabases` opens a
+book, so the directory of a book holds the whole book. :class:`BookRegistry` opens a
 :class:`~bookreviver.adapters.persistence.sqlalchemy.database.SqlDatabase` of the book schema the first time a unit of
 work asks for the book, brings the file to the head revision of that schema when it is behind, and refuses a file at a
 revision this code does not ship with ``BookTooNewError``, leaving the file as it is for the newer code. Each open book
@@ -12,7 +12,7 @@ takes about a second, and copying a file a few milliseconds. The copy refuses to
 creations of one book cannot both succeed.
 
 A book that no unit of work has used for the idle limit is closed, which disposes of its engines and their
-connections, and the next use opens it again. :meth:`BookDatabases.keep_closing_idle` looks for such books ten times
+connections, and the next use opens it again. :meth:`BookRegistry.keep_closing_idle` looks for such books ten times
 within the limit, run by the application in a task group of its own. Removing a book waits until the units of work
 using it have ended, so no transaction is cut off, and then deletes the database, its write-ahead log and the
 directory of the book when nothing else is left in it.
@@ -64,7 +64,7 @@ class OpenBook:
     released: anyio.Event | None = None
 
 
-class BookDatabases:
+class BookRegistry:
     """The open databases of the books under one storage root.
 
     :ivar IDLE_CHECKS: How many times within the idle limit the registry looks for books to close.

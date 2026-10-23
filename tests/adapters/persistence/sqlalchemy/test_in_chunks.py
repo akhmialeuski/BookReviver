@@ -18,7 +18,7 @@ from tests.helpers.seeding import store_book
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+    from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.domain.entities import BookRecord, Page, PageVersion
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
@@ -147,14 +147,14 @@ class TestListsLongerThanAChunk:
         assert_expectations()
 
     async def test_no_statement_binds_more_values_than_a_chunk(
-        self, fx_uow: UnitOfWorkFactory, fx_books: BookDatabases, fx_owner_id: AccountId
+        self, fx_uow: UnitOfWorkFactory, fx_books: BookRegistry, fx_owner_id: AccountId
     ) -> None:
         """Verify a read of seven identifiers is three statements of at most three values, and so is a deletion.
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_books: Registry of the books of the test, whose engines of the book are listened to.
-        :type fx_books: BookDatabases
+        :type fx_books: BookRegistry
         :param fx_owner_id: Account that may own books.
         :type fx_owner_id: AccountId
         """

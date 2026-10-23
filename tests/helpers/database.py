@@ -19,7 +19,7 @@ from attrs import frozen
 from dishka import Provider, Scope, provide
 from sqlalchemy.engine import make_url
 
-from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.domain.enums import BlockKind
@@ -65,13 +65,13 @@ class SharedDatabaseProvider(Provider):
 
     scope = Scope.APP
 
-    def __init__(self, database: SqlDatabase, books: BookDatabases) -> None:
+    def __init__(self, database: SqlDatabase, books: BookRegistry) -> None:
         """Provide ``database`` and ``books`` in place of the ones the application would open.
 
         :param database: Catalogue of the test.
         :type database: SqlDatabase
         :param books: Registry of the books of the test.
-        :type books: BookDatabases
+        :type books: BookRegistry
         """
         super().__init__()
         self._database = database
@@ -87,11 +87,11 @@ class SharedDatabaseProvider(Provider):
         return self._database
 
     @provide(override=True)
-    def books(self) -> BookDatabases:
+    def books(self) -> BookRegistry:
         """Return the registry of the books of the test.
 
         :returns: The registry every request and job of the application opens books through.
-        :rtype: BookDatabases
+        :rtype: BookRegistry
         """
         return self._books
 
@@ -152,7 +152,7 @@ class BookSessions:
     :ivar books: Registry of the books of the test.
     """
 
-    books: BookDatabases
+    books: BookRegistry
 
     async def read[T](self, book_id: BookId, work: Callable[[Session], T]) -> T:
         """Run ``work`` on a transaction of the book that only reads.

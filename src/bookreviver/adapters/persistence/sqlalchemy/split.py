@@ -43,7 +43,7 @@ from bookreviver.domain.ids import BookId
 if TYPE_CHECKING:
     from sqlalchemy import Table
 
-    from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+    from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 
 # The last revision of the shared database, the only one the split reads
@@ -86,7 +86,7 @@ class SplitReport:
 class SharedDatabaseSplit:
     """Moves the rows of the shared database into the catalogue and the files of the books."""
 
-    def __init__(self, shared: Path, *, catalogue: SqlDatabase, books: BookDatabases) -> None:
+    def __init__(self, shared: Path, *, catalogue: SqlDatabase, books: BookRegistry) -> None:
         """Split ``shared`` into the given catalogue and books.
 
         :param shared: The shared database file of the earlier releases.
@@ -94,7 +94,7 @@ class SharedDatabaseSplit:
         :param catalogue: The database of the catalogue, which must hold no account yet.
         :type catalogue: SqlDatabase
         :param books: The registry of the databases of the books, which makes their files.
-        :type books: BookDatabases
+        :type books: BookRegistry
         """
         self._shared = shared
         self._catalogue = catalogue

@@ -23,7 +23,7 @@ from tests.helpers.statements import StatementLog
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+    from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.domain.entities import BookRecord, Page
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
@@ -62,7 +62,7 @@ async def fx_stored_book(fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId) -> t
 
 async def _statements_of(
     uow: UnitOfWork,
-    books: BookDatabases,
+    books: BookRegistry,
     book_record: BookRecord,
     calls: Sequence[Callable[[BookRepositories], object]],
 ) -> list[int]:
@@ -71,7 +71,7 @@ async def _statements_of(
     :param uow: Unit of work the change runs on.
     :type uow: UnitOfWork
     :param books: Registry of the books, whose engine of the writer of the book is listened to.
-    :type books: BookDatabases
+    :type books: BookRegistry
     :param book_record: Book whose book the change holds.
     :type book_record: BookRecord
     :param calls: Functions over the repositories of the change.
@@ -109,7 +109,7 @@ class TestKeyedSave:
     async def test_save_sends_one_statement_whether_the_key_is_new_or_stored(
         self,
         fx_uow: UnitOfWorkFactory,
-        fx_books: BookDatabases,
+        fx_books: BookRegistry,
         fx_stored_book: tuple[BookRecord, list[Page]],
         save: Callable[[BookRepositories, Page], object],
     ) -> None:
@@ -121,7 +121,7 @@ class TestKeyedSave:
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_books: Registry of the books of the test.
-        :type fx_books: BookDatabases
+        :type fx_books: BookRegistry
         :param fx_stored_book: The committed book and its pages.
         :type fx_stored_book: tuple[BookRecord, list[Page]]
         :param save: Function that saves an entity of the page in the repository under test.
@@ -136,14 +136,14 @@ class TestKeyedSave:
         assert counts == [1, 1]
 
     async def test_save_many_sends_one_statement_for_five_records(
-        self, fx_uow: UnitOfWorkFactory, fx_books: BookDatabases, fx_stored_book: tuple[BookRecord, list[Page]]
+        self, fx_uow: UnitOfWorkFactory, fx_books: BookRegistry, fx_stored_book: tuple[BookRecord, list[Page]]
     ) -> None:
         """Verify five records of five pages are stored by one statement, not one for each.
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_books: Registry of the books of the test.
-        :type fx_books: BookDatabases
+        :type fx_books: BookRegistry
         :param fx_stored_book: The committed book and its pages.
         :type fx_stored_book: tuple[BookRecord, list[Page]]
         """
@@ -161,14 +161,14 @@ class TestUpdateMany:
     """Tests for the statements ``update_many`` of the pages sends."""
 
     async def test_update_many_sends_one_read_and_one_update_for_five_pages(
-        self, fx_uow: UnitOfWorkFactory, fx_books: BookDatabases, fx_stored_book: tuple[BookRecord, list[Page]]
+        self, fx_uow: UnitOfWorkFactory, fx_books: BookRegistry, fx_stored_book: tuple[BookRecord, list[Page]]
     ) -> None:
         """Verify five pages are read by one statement and updated by one, not read and updated one at a time.
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_books: Registry of the books of the test.
-        :type fx_books: BookDatabases
+        :type fx_books: BookRegistry
         :param fx_stored_book: The committed book and its pages.
         :type fx_stored_book: tuple[BookRecord, list[Page]]
         """

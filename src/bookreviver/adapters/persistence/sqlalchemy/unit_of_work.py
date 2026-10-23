@@ -1,7 +1,7 @@
 """Unit of work that runs the work of a use case whole in a worker thread, on one SQLite transaction of one file.
 
 The unit of work holds the :class:`~bookreviver.adapters.persistence.sqlalchemy.database.SqlDatabase` of the catalogue,
-the :class:`~bookreviver.adapters.persistence.sqlalchemy.books.BookDatabases` of the books and a wait limit, and
+the :class:`~bookreviver.adapters.persistence.sqlalchemy.books.BookRegistry` of the books and a wait limit, and
 nothing else, so it keeps no state between calls and coroutines may share one. Each call hands a synchronous function
 to one database, which runs it in a thread of its own on a session of a transaction that the call opens and ends:
 
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
-    from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+    from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import BookId
@@ -75,7 +75,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     def __init__(
         self,
         catalogue: SqlDatabase,
-        books: BookDatabases,
+        books: BookRegistry,
         *,
         publisher: EventPublisher,
         wait_seconds: float = DEFAULT_CHANGE_WAIT_SECONDS,
@@ -85,7 +85,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         :param catalogue: The database of the catalogue, shared by every unit of work.
         :type catalogue: SqlDatabase
         :param books: The registry of the databases of the books, shared by every unit of work.
-        :type books: BookDatabases
+        :type books: BookRegistry
         :param publisher: Where a committed change of a book is announced.
         :type publisher: EventPublisher
         :param wait_seconds: How long a change waits for the writer of its file before it gives up with

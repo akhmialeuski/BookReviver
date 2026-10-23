@@ -23,7 +23,7 @@ import anyio
 from advanced_alchemy.cli import add_migration_commands
 from advanced_alchemy.utils.cli_tools import click, group
 
-from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.split import SharedDatabaseSplit
 from bookreviver.adapters.tracing.null import NullTracer
@@ -88,7 +88,7 @@ def split_shared_database() -> None:
     """
     settings = Settings()
     catalogue = open_catalogue(settings)
-    books = BookDatabases(
+    books = BookRegistry(
         settings.storage_root,
         tracer=NullTracer(),
         wait_seconds=settings.change_wait.job_seconds,
