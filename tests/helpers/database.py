@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import Schema
     from bookreviver.app.settings import Settings
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import BookDatabases, UnitOfWork
 
 NO_DATABASE_FILE: str = (
     'The settings name a catalogue without a file, so there is nowhere to copy the schema template to.'
@@ -52,6 +52,21 @@ class UnitOfWorkFactory(Protocol):
         :type wait_seconds: float | None
         :returns: A new unit of work.
         :rtype: UnitOfWork
+        """
+
+
+class BookDatabasesFactory(Protocol):
+    """A function opening a new opener of the databases of the books of the test."""
+
+    def __call__(self, *, wait_seconds: float | None = None) -> BookDatabases:
+        """Open the databases of the books of the test.
+
+        :param wait_seconds: How long a change of a book waits for its turn before it gives up with
+                             ``BookBusyError``, which a request gets shorter than a job. None for the limit of a job
+                             in the settings of the test.
+        :type wait_seconds: float | None
+        :returns: A new opener of the databases of the books.
+        :rtype: BookDatabases
         """
 
 

@@ -1,9 +1,10 @@
 """Fixtures giving the port contract tests every adapter of the port, built the way the application builds it.
 
-The persistence port has one adapter, so its contract tests run on the root ``fx_database`` and ``fx_uow``.
+The persistence port has one adapter, so its contract tests run on the root ``fx_database``, ``fx_uow`` and
+``fx_databases``.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 from dishka import make_async_container
@@ -12,8 +13,9 @@ from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.settings import Settings
 from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
+from tests.helpers.builders import make_record
 from tests.helpers.job_boards import BoardAdapter
-from tests.helpers.seeding import commit_account
+from tests.helpers.seeding import commit_account, store_book
 from tests.helpers.step_executors import StepExecutorAdapter
 from tests.helpers.tracers import TracerAdapter
 
@@ -23,8 +25,10 @@ if TYPE_CHECKING:
     from dishka import AsyncContainer
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.ordering import OrderKeys
+    from tests.helpers.database import UnitOfWorkFactory
 
 type OwnerFactory = Callable[[], Awaitable[AccountId]]
 
@@ -166,3 +170,57 @@ async def fx_asset_store(fx_storage: AsyncContainer) -> AssetStore:
     :rtype: AssetStore
     """
     return await fx_storage.get(AssetStore)
+
+
+class Book(NamedTuple):
+    """A stored book and the account that owns it.
+
+    :ivar book_record: The record of the book.
+    :ivar owner_id: The account that owns the book.
+    """
+
+    book_record: BookRecord
+    owner_id: AccountId
+
+
+async def _store_book(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory) -> Book:
+    """Store a book of a new account.
+
+    :param uow_factory: Function opening a new unit of work over the catalogue and the books of the test.
+    :type uow_factory: UnitOfWorkFactory
+    :param new_owner: Function creating an account the catalogue accepts as an owner.
+    :type new_owner: OwnerFactory
+    :returns: The stored book.
+    :rtype: Book
+    """
+    book_record, owner_id = make_record(), await new_owner()
+    await store_book(uow_factory(), book_record, owner=owner_id)
+    return Book(book_record=book_record, owner_id=owner_id)
+
+
+@pytest.fixture
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> Book:
+    """Store a book that the changes of the tests change.
+
+    :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
+    :type fx_uow: UnitOfWorkFactory
+    :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
+    :type fx_new_owner: OwnerFactory
+    :returns: The stored book.
+    :rtype: Book
+    """
+    return await _store_book(fx_uow, fx_new_owner)
+
+
+@pytest.fixture
+async def fx_other_book(fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> Book:
+    """Store a second book, which a change of the first book must not wait for.
+
+    :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
+    :type fx_uow: UnitOfWorkFactory
+    :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
+    :type fx_new_owner: OwnerFactory
+    :returns: The stored book.
+    :rtype: Book
+    """
+    return await _store_book(fx_uow, fx_new_owner)

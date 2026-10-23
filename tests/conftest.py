@@ -6,6 +6,7 @@ import httpx
 import pytest
 from starlette.requests import Request
 
+from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabases
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
@@ -29,8 +30,8 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from httpx_oauth.oauth2 import BaseOAuth2
 
-    from bookreviver.ports.persistence import UnitOfWork
-    from tests.helpers.database import UnitOfWorkFactory
+    from bookreviver.ports.persistence import BookDatabases, UnitOfWork
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 TEST_BASE_URL: str = 'http://testserver'
 TEST_SECRET: str = 'test-secret-that-is-long-enough-for-signing'
@@ -222,6 +223,36 @@ def fx_uow(
         return SqlAlchemyUnitOfWork(fx_database, fx_books, publisher=fx_book_changes, wait_seconds=seconds)
 
     return open_unit_of_work
+
+
+@pytest.fixture
+def fx_databases(
+    fx_books: BookRegistry, fx_settings: Settings, fx_book_changes: RecordingEventBus
+) -> BookDatabasesFactory:
+    """Return a function opening a new opener of the databases of the books of the test, as a request would get.
+
+    :param fx_books: Registry of the books of the test.
+    :type fx_books: BookRegistry
+    :param fx_settings: Settings of the test, whose job limit is the wait of an opener made with none.
+    :type fx_settings: Settings
+    :param fx_book_changes: Where the book databases announce the committed changes of the books.
+    :type fx_book_changes: RecordingEventBus
+    :returns: Function opening the databases of ``fx_books``.
+    :rtype: BookDatabasesFactory
+    """
+
+    def open_databases(*, wait_seconds: float | None = None) -> BookDatabases:
+        """Open the databases of the books of the test.
+
+        :param wait_seconds: How long a change waits for its turn, or None for the job limit of the settings.
+        :type wait_seconds: float | None
+        :returns: A new opener of the databases of the books.
+        :rtype: BookDatabases
+        """
+        seconds = fx_settings.change_wait.job_seconds if wait_seconds is None else wait_seconds
+        return SqlAlchemyBookDatabases(fx_books, publisher=fx_book_changes, wait_seconds=seconds)
+
+    return open_databases
 
 
 @pytest.fixture
