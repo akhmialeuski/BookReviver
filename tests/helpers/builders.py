@@ -10,15 +10,14 @@ from bookreviver.domain.entities import (
     Job,
     Page,
     PageEdit,
+    PageHistoryEntry,
     PageStage,
-    PageStepChange,
     PageStepState,
     PageVersion,
     PaginationSection,
     Project,
     Recipe,
     RecipeProfile,
-    ResultMarkChange,
     Scan,
     Source,
 )
@@ -39,7 +38,6 @@ from bookreviver.domain.enums import (
     PageOrigin,
     PlaceMode,
     RecipeKind,
-    ResultMark,
     RightsStatus,
     Script,
     SourceKind,
@@ -53,14 +51,13 @@ from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import (
     AccountId,
     JobId,
+    PageHistoryEntryId,
     PageId,
-    PageStepChangeId,
     PageVersionId,
     PaginationSectionId,
     ProjectId,
     RecipeId,
     RecipeProfileId,
-    ResultMarkChangeId,
     ScanId,
     SourceId,
     StepId,
@@ -515,14 +512,14 @@ def make_page_step_state(
     )
 
 
-def make_page_step_change(
+def make_page_history_entry(
     *,
     page_id: PageId,
     stage: Stage = Stage.GEOMETRY,
     created_at: datetime = EPOCH,
     before: MetadataMap | None = None,
     after: MetadataMap | None = None,
-) -> PageStepChange:
+) -> PageHistoryEntry:
     """Build a change of the settings of the deskew step of a page made by the user.
 
     :param page_id: Page the change was made on.
@@ -536,10 +533,10 @@ def make_page_step_change(
     :param after: The settings after the change, or None for none.
     :type after: MetadataMap | None
     :returns: A change with a new identifier.
-    :rtype: PageStepChange
+    :rtype: PageHistoryEntry
     """
-    return PageStepChange(
-        id=PageStepChangeId(uuid4()),
+    return PageHistoryEntry(
+        id=PageHistoryEntryId(uuid4()),
         page_id=page_id,
         stage=stage,
         step_id=DESKEW_STEP_ID,
@@ -578,38 +575,4 @@ def make_step_values(
         group_label=group_label,
         params={'max_angle_deg': 3} if params is None else params,
         updated_at=EPOCH,
-    )
-
-
-def make_result_mark_change(
-    *,
-    version_id: PageVersionId,
-    mark_before: ResultMark | None = None,
-    mark_after: ResultMark | None = ResultMark.GOOD,
-    comment_after: str = '',
-    created_at: datetime = EPOCH,
-) -> ResultMarkChange:
-    """Build a change of the mark and the comment of a result.
-
-    :param version_id: Version the change was made on.
-    :type version_id: PageVersionId
-    :param mark_before: The mark before the change.
-    :type mark_before: ResultMark | None
-    :param mark_after: The mark after the change.
-    :type mark_after: ResultMark | None
-    :param comment_after: The comment after the change.
-    :type comment_after: str
-    :param created_at: When the change was made.
-    :type created_at: datetime
-    :returns: A change with a new identifier.
-    :rtype: ResultMarkChange
-    """
-    return ResultMarkChange(
-        id=ResultMarkChangeId(uuid4()),
-        version_id=version_id,
-        mark_before=mark_before,
-        mark_after=mark_after,
-        comment_before='',
-        comment_after=comment_after,
-        created_at=created_at,
     )

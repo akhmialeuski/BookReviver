@@ -25,7 +25,6 @@ from bookreviver.api.schemas.processing import (
     RecipeSchema,
     StageRunBody,
 )
-from bookreviver.api.schemas.result_marks import ResultMarkChangeSchema
 from bookreviver.api.schemas.types import RECIPE_STEPS_MAX_LENGTH
 from bookreviver.domain.enums import (
     EditorKind,
@@ -1669,10 +1668,10 @@ class TestResultMarks:
         expect(answered.id == before.id)
         assert_expectations()
 
-    async def test_a_body_without_a_mark_takes_the_mark_off_and_the_log_lists_the_changes(
+    async def test_a_body_without_a_mark_takes_the_mark_off(
         self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
     ) -> None:
-        """Verify the log lists a set and a take-off, and a repeated body adds no entry.
+        """Verify a body that names no mark leaves the result without one, as the version reads back.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -1683,16 +1682,9 @@ class TestResultMarks:
         """
         path = await self.version_path(fx_client, fx_idle, fx_book)
         await fx_client.put(f'{path}/mark', json={'mark': 'good', 'comment': ''})
-        await fx_client.put(f'{path}/mark', json={'mark': 'good', 'comment': ''})
         await fx_client.put(f'{path}/mark', json={'mark': None})
-        listed = await fx_client.get(f'{path}/mark-changes')
-        log = [ResultMarkChangeSchema.model_validate(item) for item in listed.json()[ITEMS]]
-        expect(listed.json()['total'] == 2)
-        expect(
-            [(c.sequence, c.mark_before, c.mark_after) for c in log]
-            == [(1, None, ResultMark.GOOD), (2, ResultMark.GOOD, None)]
-        )
-        assert_expectations()
+        read = PageVersionSchema.model_validate_json((await fx_client.get(path)).content)
+        assert (read.mark, read.comment) == (None, '')
 
     async def test_a_mark_that_is_neither_good_nor_bad_is_a_422(
         self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
@@ -1714,7 +1706,7 @@ class TestResultMarks:
         assert_expectations()
 
     async def test_a_version_that_does_not_exist_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
-        """Verify PUT and GET of the log of an unknown version answer 404.
+        """Verify a PUT of the mark of an unknown version answers 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -1723,10 +1715,7 @@ class TestResultMarks:
         """
         path = f'{fx_book.page_path}/versions/{"0" * 16}'
         put = await fx_client.put(f'{path}/mark', json={'mark': 'good', 'comment': ''})
-        listed = await fx_client.get(f'{path}/mark-changes')
-        expect(put.status_code == status.HTTP_404_NOT_FOUND)
-        expect(listed.status_code == status.HTTP_404_NOT_FOUND)
-        assert_expectations()
+        assert put.status_code == status.HTTP_404_NOT_FOUND
 
 
 class TestResultsOfAStep:

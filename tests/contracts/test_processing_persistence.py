@@ -29,7 +29,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import Line, Point
-from bookreviver.domain.ids import ChangeBatchId, PageId, PageStepChangeId, PageVersionId, StepId
+from bookreviver.domain.ids import ChangeBatchId, PageHistoryEntryId, PageId, PageVersionId, StepId
 from bookreviver.domain.stage_summaries import StepTally
 from bookreviver.domain.values import PageStageKey, PageStepKey, ProcessorRef, SliceRequest, Step
 from tests.helpers.builders import (
@@ -37,8 +37,8 @@ from tests.helpers.builders import (
     EPOCH,
     make_page,
     make_page_edit,
+    make_page_history_entry,
     make_page_stage,
-    make_page_step_change,
     make_page_step_state,
     make_page_version,
     make_project,
@@ -51,7 +51,7 @@ from tests.helpers.seeding import store_project
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Page, PageStage, PageStepChange, PageVersion, Project
+    from bookreviver.domain.entities import Page, PageHistoryEntry, PageStage, PageVersion, Project
     from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.step_values import StepValues
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
@@ -830,7 +830,7 @@ class TestPageStageRepository:
             """
             repos.page_stages.save(make_page_stage(page_id=page_id))
             repos.page_step_states.save(make_page_step_state(page_id=page_id, edit=make_page_edit(page_id=page_id)))
-            repos.page_step_changes.add(make_page_step_change(page_id=page_id))
+            repos.page_history.add(make_page_history_entry(page_id=page_id))
 
         await fx_uow().change_book(project_id, add_records)
         await fx_uow().change_book(project_id, lambda repos, _project: repos.pages.delete(page_id))
@@ -839,7 +839,7 @@ class TestPageStageRepository:
             lambda repos: (
                 repos.page_stages.find(PageStageKey(page_id, Stage.GEOMETRY)),
                 repos.page_step_states.list_for_page(page_id),
-                repos.page_step_changes.list_for_page(page_id),
+                repos.page_history.list_for_page(page_id),
             ),
         )
         assert remaining == (None, [], [])
@@ -1284,7 +1284,7 @@ class TestStepValuesRepository:
             await fx_uow().read_book(project_id, lambda repos: repos.step_values.list_for_step(DESKEW_STEP_ID))
 
 
-class TestPageStepChangeRepository:
+class TestPageHistoryRepository:
     """Tests for the history of the layers of the steps of the pages."""
 
     async def test_change_survives_the_store(self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
@@ -1297,15 +1297,15 @@ class TestPageStepChangeRepository:
         """
         project_id, page_id = await _store_page(fx_uow, fx_new_owner)
         change = evolve(
-            make_page_step_change(page_id=page_id, before=None, after={METHOD: 'otsu'}),
+            make_page_history_entry(page_id=page_id, before=None, after={METHOD: 'otsu'}),
             scope=ValueScope.GROUP,
             group_label=INDEX_GROUP,
             source=ChangeSource.CARRY_OVER,
             batch_id=ChangeBatchId(uuid4()),
-            undoes=PageStepChangeId(uuid4()),
+            undoes=PageHistoryEntryId(uuid4()),
         )
-        stored = await fx_uow().change_book(project_id, lambda repos, _project: repos.page_step_changes.add(change))
-        read_back = await fx_uow().read_book(project_id, lambda repos: repos.page_step_changes.get(change.id))
+        stored = await fx_uow().change_book(project_id, lambda repos, _project: repos.page_history.add(change))
+        read_back = await fx_uow().read_book(project_id, lambda repos: repos.page_history.get(change.id))
         assert (read_back, stored) == (stored, evolve(change, sequence=1))
 
     async def test_changes_made_at_the_same_instant_list_in_the_order_they_were_written(
@@ -1319,7 +1319,7 @@ class TestPageStepChangeRepository:
         :type fx_new_owner: OwnerFactory
         """
         project_id, page_id = await _store_page(fx_uow, fx_new_owner)
-        written = [make_page_step_change(page_id=page_id, created_at=EPOCH) for _ in range(6)]
+        written = [make_page_history_entry(page_id=page_id, created_at=EPOCH) for _ in range(6)]
 
         def add_first_two(repos: BookRepositories, _project: Project) -> None:
             """Add the first two changes one by one.
@@ -1330,7 +1330,7 @@ class TestPageStepChangeRepository:
             :type _project: Project
             """
             for change in written[:2]:
-                repos.page_step_changes.add(change)
+                repos.page_history.add(change)
 
         def add_the_rest(repos: BookRepositories, _project: Project) -> None:
             """Add three changes at once and then the last one.
@@ -1340,12 +1340,12 @@ class TestPageStepChangeRepository:
             :param _project: Project of the book, which the work does not need.
             :type _project: Project
             """
-            repos.page_step_changes.add_many(written[2:5])
-            repos.page_step_changes.add(written[5])
+            repos.page_history.add_many(written[2:5])
+            repos.page_history.add(written[5])
 
         await fx_uow().change_book(project_id, add_first_two)
         await fx_uow().change_book(project_id, add_the_rest)
-        listed = await fx_uow().read_book(project_id, lambda repos: repos.page_step_changes.list_for_page(page_id))
+        listed = await fx_uow().read_book(project_id, lambda repos: repos.page_history.list_for_page(page_id))
         assert ([change.id for change in listed], [change.sequence for change in listed]) == (
             [change.id for change in written],
             [1, 2, 3, 4, 5, 6],
@@ -1362,18 +1362,18 @@ class TestPageStepChangeRepository:
         :type fx_new_owner: OwnerFactory
         """
         project_id, page_id = await _store_page(fx_uow, fx_new_owner)
-        later = make_page_step_change(page_id=page_id, created_at=EPOCH + RECENT)
-        earlier = make_page_step_change(page_id=page_id, created_at=EPOCH)
-        cleanup = make_page_step_change(page_id=page_id, stage=Stage.CLEANUP, created_at=EPOCH + OLD)
+        later = make_page_history_entry(page_id=page_id, created_at=EPOCH + RECENT)
+        earlier = make_page_history_entry(page_id=page_id, created_at=EPOCH)
+        cleanup = make_page_history_entry(page_id=page_id, stage=Stage.CLEANUP, created_at=EPOCH + OLD)
         uow = fx_uow()
         await uow.change_book(
-            project_id, lambda repos, _project: repos.page_step_changes.add_many([earlier, later, cleanup])
+            project_id, lambda repos, _project: repos.page_history.add_many([earlier, later, cleanup])
         )
         listed, in_stage = await uow.read_book(
             project_id,
             lambda repos: (
-                repos.page_step_changes.list_for_page(page_id),
-                repos.page_step_changes.list_for_page(page_id, Stage.GEOMETRY),
+                repos.page_history.list_for_page(page_id),
+                repos.page_history.list_for_page(page_id, Stage.GEOMETRY),
             ),
         )
         assert ([change.id for change in listed], [change.id for change in in_stage]) == (
@@ -1395,15 +1395,15 @@ class TestPageStepChangeRepository:
         second_page = make_page(order_key=SECOND_ORDER_KEY)
         batch = ChangeBatchId(uuid4())
         members = [
-            evolve(make_page_step_change(page_id=page_id), batch_id=batch)
+            evolve(make_page_history_entry(page_id=page_id), batch_id=batch)
             for page_id in (first_page, second_page.id, first_page)
         ]
         outside = [
-            make_page_step_change(page_id=first_page),
-            evolve(make_page_step_change(page_id=first_page), batch_id=ChangeBatchId(uuid4())),
+            make_page_history_entry(page_id=first_page),
+            evolve(make_page_history_entry(page_id=first_page), batch_id=ChangeBatchId(uuid4())),
         ]
 
-        def add_page_and_changes(repos: BookRepositories, _project: Project) -> list[PageStepChange]:
+        def add_page_and_changes(repos: BookRepositories, _project: Project) -> list[PageHistoryEntry]:
             """Add the second page and every change.
 
             :param repos: Repositories of the transaction.
@@ -1411,13 +1411,13 @@ class TestPageStepChangeRepository:
             :param _project: Project of the book, which the work does not need.
             :type _project: Project
             :returns: The changes as stored, with their sequence.
-            :rtype: list[PageStepChange]
+            :rtype: list[PageHistoryEntry]
             """
             repos.pages.add(second_page)
-            return list(repos.page_step_changes.add_many([*members, *outside]))
+            return list(repos.page_history.add_many([*members, *outside]))
 
         stored = await fx_uow().change_book(project_id, add_page_and_changes)
-        listed = await fx_uow().read_book(project_id, lambda repos: repos.page_step_changes.list_for_batch(batch))
+        listed = await fx_uow().read_book(project_id, lambda repos: repos.page_history.list_for_batch(batch))
         expected = sorted(stored[: len(members)], key=attrgetter(PAGE_ID, 'sequence'))
         assert listed == expected
 
@@ -1432,18 +1432,18 @@ class TestPageStepChangeRepository:
         :type fx_new_owner: OwnerFactory
         """
         project_id, page_id = await _store_page(fx_uow, fx_new_owner)
-        taken, standing, other = (make_page_step_change(page_id=page_id) for _ in range(3))
-        undo = evolve(make_page_step_change(page_id=page_id), source=ChangeSource.UNDO, undoes=taken.id)
-        unrelated = evolve(make_page_step_change(page_id=page_id), source=ChangeSource.UNDO, undoes=other.id)
+        taken, standing, other = (make_page_history_entry(page_id=page_id) for _ in range(3))
+        undo = evolve(make_page_history_entry(page_id=page_id), source=ChangeSource.UNDO, undoes=taken.id)
+        unrelated = evolve(make_page_history_entry(page_id=page_id), source=ChangeSource.UNDO, undoes=other.id)
         await fx_uow().change_book(
             project_id,
-            lambda repos, _project: repos.page_step_changes.add_many([taken, standing, other, undo, unrelated]),
+            lambda repos, _project: repos.page_history.add_many([taken, standing, other, undo, unrelated]),
         )
         found, nothing = await fx_uow().read_book(
             project_id,
             lambda repos: (
-                repos.page_step_changes.list_undoing([taken.id, standing.id]),
-                repos.page_step_changes.list_undoing([]),
+                repos.page_history.list_undoing([taken.id, standing.id]),
+                repos.page_history.list_undoing([]),
             ),
         )
         assert ([change.id for change in found], nothing) == ([undo.id], [])
@@ -1460,14 +1460,14 @@ class TestPageStepChangeRepository:
         """
         project_id, page_id = await _store_page(fx_uow, fx_new_owner)
         other_page = make_page(order_key=SECOND_ORDER_KEY)
-        doomed = [make_page_step_change(page_id=page_id) for _ in range(3)]
-        undo = evolve(make_page_step_change(page_id=page_id), source=ChangeSource.UNDO, undoes=doomed[0].id)
+        doomed = [make_page_history_entry(page_id=page_id) for _ in range(3)]
+        undo = evolve(make_page_history_entry(page_id=page_id), source=ChangeSource.UNDO, undoes=doomed[0].id)
         carried = evolve(
-            make_page_step_change(page_id=page_id), source=ChangeSource.CARRY_OVER, batch_id=ChangeBatchId(uuid4())
+            make_page_history_entry(page_id=page_id), source=ChangeSource.CARRY_OVER, batch_id=ChangeBatchId(uuid4())
         )
-        other_step = evolve(make_page_step_change(page_id=page_id), step_id=StepId(uuid4()))
-        other_stage = make_page_step_change(page_id=page_id, stage=Stage.CLEANUP)
-        elsewhere = make_page_step_change(page_id=other_page.id)
+        other_step = evolve(make_page_history_entry(page_id=page_id), step_id=StepId(uuid4()))
+        other_stage = make_page_history_entry(page_id=page_id, stage=Stage.CLEANUP)
+        elsewhere = make_page_history_entry(page_id=other_page.id)
 
         def add_page_and_changes(repos: BookRepositories, _project: Project) -> None:
             """Add the other page and every change.
@@ -1478,18 +1478,18 @@ class TestPageStepChangeRepository:
             :type _project: Project
             """
             repos.pages.add(other_page)
-            repos.page_step_changes.add_many([*doomed, undo, carried, other_step, other_stage, elsewhere])
+            repos.page_history.add_many([*doomed, undo, carried, other_step, other_stage, elsewhere])
 
         await fx_uow().change_book(project_id, add_page_and_changes)
         step = PageStepKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID)
         deleted = await fx_uow().change_book(
-            project_id, lambda repos, _project: repos.page_step_changes.delete_for_step(step)
+            project_id, lambda repos, _project: repos.page_history.delete_for_step(step)
         )
         left, left_elsewhere = await fx_uow().read_book(
             project_id,
             lambda repos: (
-                repos.page_step_changes.list_for_page(page_id),
-                repos.page_step_changes.list_for_page(other_page.id),
+                repos.page_history.list_for_page(page_id),
+                repos.page_history.list_for_page(other_page.id),
             ),
         )
         assert (deleted, [change.id for change in left], [change.id for change in left_elsewhere]) == (
@@ -1511,7 +1511,7 @@ class TestPageStepChangeRepository:
         project_id, page_id = await _store_page(fx_uow, fx_new_owner)
         step = PageStepKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID)
         deleted = await fx_uow().change_book(
-            project_id, lambda repos, _project: repos.page_step_changes.delete_for_step(step)
+            project_id, lambda repos, _project: repos.page_history.delete_for_step(step)
         )
         assert deleted == 0
 
@@ -1528,14 +1528,14 @@ class TestPageStepChangeRepository:
         project_id, page_id = await _store_page(fx_uow, fx_new_owner)
         other_step = StepId(uuid4())
         written = [
-            make_page_step_change(page_id=page_id),
-            evolve(make_page_step_change(page_id=page_id), step_id=other_step),
-            make_page_step_change(page_id=page_id),
+            make_page_history_entry(page_id=page_id),
+            evolve(make_page_history_entry(page_id=page_id), step_id=other_step),
+            make_page_history_entry(page_id=page_id),
         ]
         step = PageStepKey(page_id, Stage.GEOMETRY, DESKEW_STEP_ID)
-        await fx_uow().change_book(project_id, lambda repos, _project: repos.page_step_changes.add_many(written))
+        await fx_uow().change_book(project_id, lambda repos, _project: repos.page_history.add_many(written))
 
-        def delete_step_and_add(repos: BookRepositories, _project: Project) -> PageStepChange:
+        def delete_step_and_add(repos: BookRepositories, _project: Project) -> PageHistoryEntry:
             """Delete the changes of the first step and add another change.
 
             :param repos: Repositories of the transaction.
@@ -1543,13 +1543,13 @@ class TestPageStepChangeRepository:
             :param _project: Project of the book, which the work does not need.
             :type _project: Project
             :returns: The added change as stored.
-            :rtype: PageStepChange
+            :rtype: PageHistoryEntry
             """
-            repos.page_step_changes.delete_for_step(step)
-            return repos.page_step_changes.add(make_page_step_change(page_id=page_id))
+            repos.page_history.delete_for_step(step)
+            return repos.page_history.add(make_page_history_entry(page_id=page_id))
 
         added = await fx_uow().change_book(project_id, delete_step_and_add)
-        listed = await fx_uow().read_book(project_id, lambda repos: repos.page_step_changes.list_for_page(page_id))
+        listed = await fx_uow().read_book(project_id, lambda repos: repos.page_history.list_for_page(page_id))
         assert ([change.sequence for change in listed], added.sequence) == ([2, 3], 3)
 
     async def test_change_of_a_missing_page_is_not_found(
@@ -1563,9 +1563,9 @@ class TestPageStepChangeRepository:
         :type fx_new_owner: OwnerFactory
         """
         project_id, _ = await _store_page(fx_uow, fx_new_owner)
-        change = make_page_step_change(page_id=PageId(new_account_id()))
+        change = make_page_history_entry(page_id=PageId(new_account_id()))
         with pytest.raises(NotFoundError):
-            await fx_uow().change_book(project_id, lambda repos, _project: repos.page_step_changes.add(change))
+            await fx_uow().change_book(project_id, lambda repos, _project: repos.page_history.add(change))
 
     async def test_change_is_stored_once(self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory) -> None:
         """Verify a change with an identifier that is stored already is a conflict.
@@ -1576,10 +1576,10 @@ class TestPageStepChangeRepository:
         :type fx_new_owner: OwnerFactory
         """
         project_id, page_id = await _store_page(fx_uow, fx_new_owner)
-        change = make_page_step_change(page_id=page_id)
-        await fx_uow().change_book(project_id, lambda repos, _project: repos.page_step_changes.add(change))
+        change = make_page_history_entry(page_id=page_id)
+        await fx_uow().change_book(project_id, lambda repos, _project: repos.page_history.add(change))
         with pytest.raises(ConflictError):
-            await fx_uow().change_book(project_id, lambda repos, _project: repos.page_step_changes.add(change))
+            await fx_uow().change_book(project_id, lambda repos, _project: repos.page_history.add(change))
 
 
 class TestPageVersionProcessing:

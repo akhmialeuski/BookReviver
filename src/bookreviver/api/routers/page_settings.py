@@ -18,7 +18,7 @@ from fastapi_pagination import Page, Params
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.pagination import Pager
 from bookreviver.api.routers.processing import StagePath
-from bookreviver.api.schemas.page_history import PageStepChangeSchema
+from bookreviver.api.schemas.page_history import PageHistoryEntrySchema
 from bookreviver.api.schemas.page_settings import (
     PageStepSettingsSchema,
     ValueChangesSchema,
@@ -143,7 +143,7 @@ async def put_value(
     """
     done = await settings.change(actor, address.project_id, address.of(form.to_target()), form.value)
     return ValueChangesSchema(
-        batch_id=done.batch_id, changes=[PageStepChangeSchema.model_validate(change) for change in done.changes]
+        batch_id=done.batch_id, changes=[PageHistoryEntrySchema.model_validate(change) for change in done.changes]
     )
 
 
@@ -172,5 +172,5 @@ async def delete_value(
     """
     done = await settings.reset(actor, address.project_id, address.of(target.to_target()))
     return ValueChangesSchema(
-        batch_id=done.batch_id, changes=[PageStepChangeSchema.model_validate(change) for change in done.changes]
+        batch_id=done.batch_id, changes=[PageHistoryEntrySchema.model_validate(change) for change in done.changes]
     )

@@ -68,7 +68,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Job, Page, PageVersion, Project, Recipe, ResultMarkChange, Scan
+    from bookreviver.domain.entities import Job, Page, PageVersion, Project, Recipe, Scan
     from bookreviver.domain.ids import JobId, PageVersionId, ProjectId
     from bookreviver.domain.values import JobEnd, MetadataMap, RecipeDraft, Slice
     from bookreviver.ports.persistence import BookRepositories, PageVersionRepository, UnitOfWork
@@ -555,21 +555,6 @@ async def found_version(kit: ProcessingKit, project_id: ProjectId, version_id: P
     :rtype: PageVersion | None
     """
     return await kit.uow().read_book(project_id, lambda repos: repos.page_versions.find(version_id))
-
-
-async def mark_log(kit: ProcessingKit, project_id: ProjectId, version: PageVersion) -> Sequence[ResultMarkChange]:
-    """Read the log of the marks and comments of a version as committed.
-
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
-    :param project_id: Project whose book is read.
-    :type project_id: ProjectId
-    :param version: The version.
-    :type version: PageVersion
-    :returns: The changes of the version, by sequence.
-    :rtype: Sequence[ResultMarkChange]
-    """
-    return await kit.uow().read_book(project_id, lambda repos: repos.result_mark_changes.list_for_version(version.id))
 
 
 async def found_stage(kit: ProcessingKit, project_id: ProjectId, page: Page, stage: Stage) -> PageStage | None:

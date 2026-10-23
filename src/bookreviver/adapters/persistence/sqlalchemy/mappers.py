@@ -23,15 +23,14 @@ from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow, Re
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     BOOK_PLACE_ID,
     BookPlaceRow,
+    PageHistoryRow,
     PageRow,
     PageStageRow,
-    PageStepChangeRow,
     PageStepStateRow,
     PageVersionRow,
     PaginationSectionRow,
     ProjectRow,
     RecipeRow,
-    ResultMarkChangeRow,
     ScanRow,
     SourceRow,
     StepValuesRow,
@@ -41,15 +40,14 @@ from bookreviver.domain.entities import (
     LibraryEntry,
     Page,
     PageEdit,
+    PageHistoryEntry,
     PageStage,
-    PageStepChange,
     PageStepState,
     PageVersion,
     PaginationSection,
     Project,
     Recipe,
     RecipeProfile,
-    ResultMarkChange,
     Scan,
     Source,
 )
@@ -58,14 +56,13 @@ from bookreviver.domain.geometry import Point, Quad, Transform, geometry_from_da
 from bookreviver.domain.ids import (
     AccountId,
     ChangeBatchId,
+    PageHistoryEntryId,
     PageId,
-    PageStepChangeId,
     PageVersionId,
     PaginationSectionId,
     ProjectId,
     RecipeId,
     RecipeProfileId,
-    ResultMarkChangeId,
     ScanId,
     SourceId,
     StepId,
@@ -711,20 +708,20 @@ class PageStepStateMapper(RowMapper[PageStepState, PageStepStateRow]):
         )
 
 
-class PageStepChangeMapper(RowMapper[PageStepChange, PageStepChangeRow]):
+class PageHistoryMapper(RowMapper[PageHistoryEntry, PageHistoryRow]):
     """Translation of a change of a layer of a step, whose values are stored as JSON objects."""
 
     @override
-    def to_entity(self, row: PageStepChangeRow) -> PageStepChange:
+    def to_entity(self, row: PageHistoryRow) -> PageHistoryEntry:
         """Build the change stored in ``row``.
 
-        :param row: Page step change row loaded from the database.
-        :type row: PageStepChangeRow
+        :param row: Page history row loaded from the database.
+        :type row: PageHistoryRow
         :returns: The change.
-        :rtype: PageStepChange
+        :rtype: PageHistoryEntry
         """
-        return PageStepChange(
-            id=PageStepChangeId(row.id),
+        return PageHistoryEntry(
+            id=PageHistoryEntryId(row.id),
             page_id=PageId(row.page_id),
             stage=row.stage,
             step_id=StepId(row.step_id),
@@ -735,21 +732,21 @@ class PageStepChangeMapper(RowMapper[PageStepChange, PageStepChangeRow]):
             after=row.after,
             source=row.source,
             batch_id=None if row.batch_id is None else ChangeBatchId(row.batch_id),
-            undoes=None if row.undoes_id is None else PageStepChangeId(row.undoes_id),
+            undoes=None if row.undoes_id is None else PageHistoryEntryId(row.undoes_id),
             created_at=row.created_at,
             sequence=row.sequence,
         )
 
     @override
-    def to_row(self, entity: PageStepChange) -> PageStepChangeRow:
+    def to_row(self, entity: PageHistoryEntry) -> PageHistoryRow:
         """Build the row of ``entity``.
 
         :param entity: Change to store.
-        :type entity: PageStepChange
-        :returns: Transient page step change row.
-        :rtype: PageStepChangeRow
+        :type entity: PageHistoryEntry
+        :returns: Transient page history row.
+        :rtype: PageHistoryRow
         """
-        return PageStepChangeRow(
+        return PageHistoryRow(
             id=entity.id,
             page_id=entity.page_id,
             stage=entity.stage,
@@ -804,50 +801,6 @@ class StepValuesMapper(RowMapper[StepValues, StepValuesRow]):
             stage=entity.stage,
             params=dict(entity.params),
             updated_at=entity.updated_at,
-        )
-
-
-class ResultMarkChangeMapper(RowMapper[ResultMarkChange, ResultMarkChangeRow]):
-    """Translation of a change of the mark or the comment of a result, which is one row of plain columns."""
-
-    @override
-    def to_entity(self, row: ResultMarkChangeRow) -> ResultMarkChange:
-        """Build the change stored in ``row``.
-
-        :param row: Result mark change row loaded from the database.
-        :type row: ResultMarkChangeRow
-        :returns: The change.
-        :rtype: ResultMarkChange
-        """
-        return ResultMarkChange(
-            id=ResultMarkChangeId(row.id),
-            version_id=PageVersionId(row.version_id),
-            mark_before=row.mark_before,
-            mark_after=row.mark_after,
-            comment_before=row.comment_before,
-            comment_after=row.comment_after,
-            created_at=row.created_at,
-            sequence=row.sequence,
-        )
-
-    @override
-    def to_row(self, entity: ResultMarkChange) -> ResultMarkChangeRow:
-        """Build the row of ``entity``.
-
-        :param entity: Change to store.
-        :type entity: ResultMarkChange
-        :returns: Transient result mark change row.
-        :rtype: ResultMarkChangeRow
-        """
-        return ResultMarkChangeRow(
-            id=entity.id,
-            version_id=entity.version_id,
-            mark_before=entity.mark_before,
-            mark_after=entity.mark_after,
-            comment_before=entity.comment_before,
-            comment_after=entity.comment_after,
-            created_at=entity.created_at,
-            sequence=entity.sequence,
         )
 
 

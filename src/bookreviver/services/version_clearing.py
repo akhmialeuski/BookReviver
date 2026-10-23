@@ -1,6 +1,6 @@
 """The deletion of a batch of versions a collection chose, which keeps every chain of inputs whole.
 
-A version is deleted with its files, its row and the log of its marks, in this order: the mark first, so a version whose
+A version is deleted with its files and its row, in this order: the mark first, so a version whose
 files are half removed is never taken for a result, then the directory, and the row only when the directory is gone. A
 batch is written by two transactions, one for the marks and one for the rows, so a version whose directory cannot be
 removed keeps its mark and its row and takes back nothing of the others.

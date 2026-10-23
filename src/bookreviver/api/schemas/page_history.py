@@ -7,7 +7,7 @@ from pydantic import Field
 
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.domain.enums import ChangeSource, Stage, StepLayer, ValueScope
-from bookreviver.domain.ids import ChangeBatchId, PageId, PageStepChangeId, StepId
+from bookreviver.domain.ids import ChangeBatchId, PageHistoryEntryId, PageId, StepId
 
 
 class UndoForm(RequestModel):
@@ -17,12 +17,12 @@ class UndoForm(RequestModel):
                      newest change alone.
     """
 
-    change_id: PageStepChangeId | None = Field(
+    change_id: PageHistoryEntryId | None = Field(
         default=None, description='The oldest change to take back, with every later one, or none for the newest change'
     )
 
 
-class PageStepChangeSchema(ResponseModel):
+class PageHistoryEntrySchema(ResponseModel):
     """One change of a layer of a step on a page.
 
     :ivar id: Identifier of the change.
@@ -42,7 +42,7 @@ class PageStepChangeSchema(ResponseModel):
     :ivar sequence: Place of the change in the history of its page.
     """
 
-    id: PageStepChangeId
+    id: PageHistoryEntryId
     page_id: PageId
     stage: Stage
     step_id: StepId
@@ -53,7 +53,7 @@ class PageStepChangeSchema(ResponseModel):
     after: dict[str, Any] | None
     source: ChangeSource
     batch_id: ChangeBatchId | None
-    undoes: PageStepChangeId | None
+    undoes: PageHistoryEntryId | None
     undone: bool = False
     created_at: datetime
     sequence: int
@@ -65,7 +65,7 @@ class UndoneSchema(ResponseModel):
     :ivar changes: The undos that were written, which are none when the step had no change to take back.
     """
 
-    changes: list[PageStepChangeSchema]
+    changes: list[PageHistoryEntrySchema]
 
 
 class ClearedSchema(ResponseModel):

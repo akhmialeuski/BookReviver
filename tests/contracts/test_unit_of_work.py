@@ -30,14 +30,13 @@ from tests.helpers.builders import (
     EPOCH,
     make_book_place,
     make_page,
+    make_page_history_entry,
     make_page_stage,
-    make_page_step_change,
     make_page_step_state,
     make_page_version,
     make_project,
     make_recipe,
     make_recipe_profile,
-    make_result_mark_change,
     make_scan,
     make_section,
     make_source,
@@ -357,8 +356,7 @@ async def fx_book_rows(fx_uow: UnitOfWorkFactory, fx_book: Book) -> dict[str, Ro
     stage = make_page_stage(page_id=page.id, stage=Stage.GEOMETRY)
     state = make_page_step_state(page_id=page.id)
     values = make_step_values()
-    step_change = make_page_step_change(page_id=page.id)
-    mark_change = make_result_mark_change(version_id=version.id)
+    history_entry = make_page_history_entry(page_id=page.id)
     recipe = make_recipe()
     place = make_book_place()
 
@@ -378,8 +376,7 @@ async def fx_book_rows(fx_uow: UnitOfWorkFactory, fx_book: Book) -> dict[str, Ro
         repos.page_stages.add(stage)
         repos.page_step_states.add(state)
         repos.step_values.add(values)
-        repos.page_step_changes.add(step_change)
-        repos.result_mark_changes.add(mark_change)
+        repos.page_history.add(history_entry)
         repos.recipes.add(recipe)
         repos.book_places.save(place)
 
@@ -423,17 +420,11 @@ async def fx_book_rows(fx_uow: UnitOfWorkFactory, fx_book: Book) -> dict[str, Ro
             evolve(values, scope=ValueScope.ODD),
             values.key,
         ),
-        'page_step_changes': Row(
-            step_change,
-            evolve(step_change, created_at=step_change.created_at + ONE_MINUTE),
-            make_page_step_change(page_id=page.id),
-            step_change.id,
-        ),
-        'result_mark_changes': Row(
-            mark_change,
-            evolve(mark_change, created_at=mark_change.created_at + ONE_MINUTE),
-            make_result_mark_change(version_id=version.id),
-            mark_change.id,
+        'page_history': Row(
+            history_entry,
+            evolve(history_entry, created_at=history_entry.created_at + ONE_MINUTE),
+            make_page_history_entry(page_id=page.id),
+            history_entry.id,
         ),
         'recipes': Row(
             recipe,

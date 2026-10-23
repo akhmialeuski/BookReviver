@@ -1,5 +1,5 @@
 import { Undo2Icon } from 'lucide-react';
-import type { PageStepChangeSchema, ProcessorSchema } from '@/api';
+import type { PageHistoryEntrySchema, ProcessorSchema } from '@/api';
 import { factsOf } from '@/features/processing/facts';
 import { describeContent, stands } from '@/features/processing/pageHistory';
 import { ResultNote } from '@/features/processing/ResultNote';
@@ -31,7 +31,7 @@ export function ChangeRow({
   disabled,
   onUndo,
 }: {
-  change: PageStepChangeSchema;
+  change: PageHistoryEntrySchema;
   /** Gives the title a field of the settings in the change is worded by. */
   titleOf: (name: string) => string;
   /** Whether an undo is on its way, which holds the buttons back. */

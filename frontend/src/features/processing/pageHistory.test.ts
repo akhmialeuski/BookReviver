@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { PageStepChangeSchema } from '@/api';
+import type { PageHistoryEntrySchema } from '@/api';
 import { describeContent, lastStanding, stands } from '@/features/processing/pageHistory';
 
-function change(overrides: Partial<PageStepChangeSchema> = {}): PageStepChangeSchema {
+function change(overrides: Partial<PageHistoryEntrySchema> = {}): PageHistoryEntrySchema {
   return {
     id: 'c',
     page_id: 'page',

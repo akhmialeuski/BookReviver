@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PageStepChangeSchema } from '@/api';
+import type { PageHistoryEntrySchema } from '@/api';
 import { processing, recipe, step, version } from '@/features/processing/fixtures';
 import { PageTimeline } from '@/features/processing/PageTimeline';
 import { HISTORY_OPEN_KEY } from '@/features/workspace/historyOpen';
@@ -45,7 +45,7 @@ function at(hour: number, minute = 0): string {
   return `2026-10-01T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00Z`;
 }
 
-function change(overrides: Partial<PageStepChangeSchema>): PageStepChangeSchema {
+function change(overrides: Partial<PageHistoryEntrySchema>): PageHistoryEntrySchema {
   return {
     id: 'c',
     page_id: 'page',
@@ -67,7 +67,7 @@ function change(overrides: Partial<PageStepChangeSchema>): PageStepChangeSchema 
 }
 
 /** `count` settings changes of the page, the newest first, named `c<count>` down to `c1` and an hour apart from 10:30. */
-function settingsChanges(count: number): PageStepChangeSchema[] {
+function settingsChanges(count: number): PageHistoryEntrySchema[] {
   return Array.from({ length: count }, (_, index) =>
     change({
       id: `c${count - index}`,
@@ -79,7 +79,7 @@ function settingsChanges(count: number): PageStepChangeSchema[] {
 }
 
 /** Answer a request of the changes as the server does: the window of the page asked for, and the total of all. */
-function serve(all: readonly PageStepChangeSchema[], size = 100): void {
+function serve(all: readonly PageHistoryEntrySchema[], size = 100): void {
   sdk.history.mockImplementation(async (options: { query?: { page?: number } }) => {
     const page = options.query?.page ?? 1;
     return {

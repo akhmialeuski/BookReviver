@@ -529,7 +529,7 @@ export type CarryOverSchema = {
     /**
      * Changes
      */
-    changes: Array<PageStepChangeSchema>;
+    changes: Array<PageHistoryEntrySchema>;
     /**
      * Skipped
      */
@@ -1318,6 +1318,82 @@ export type PageEditSchema = {
 export type PageFilter = 'all' | 'check' | 'bad' | 'left-out' | 'wide';
 
 /**
+ * PageHistoryEntrySchema
+ *
+ * One change of a layer of a step on a page.
+ *
+ * :ivar id: Identifier of the change.
+ * :ivar page_id: Page the change was made on.
+ * :ivar stage: Stage of the step.
+ * :ivar step_id: Identifier of the step.
+ * :ivar layer: The layer that changed.
+ * :ivar scope: Whose settings the layer holds: the page's own, or the odd pages, the even pages or a group it takes.
+ * :ivar group_label: Label of the group for the scope of a group, and empty for the others.
+ * :ivar before: Content of the layer before the change, or None when it was empty.
+ * :ivar after: Content of the layer after the change, or None when the change emptied it.
+ * :ivar source: What made the change.
+ * :ivar batch_id: Identifier shared by the changes of one batch, which are undone together, or None.
+ * :ivar undoes: The change this one takes back, or None for a change that is not an undo.
+ * :ivar undone: Whether a later change took this one back, so it no longer stands.
+ * :ivar created_at: When the change was made.
+ * :ivar sequence: Place of the change in the history of its page.
+ */
+export type PageHistoryEntrySchema = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Page Id
+     */
+    page_id: string;
+    stage: Stage;
+    /**
+     * Step Id
+     */
+    step_id: string;
+    layer: StepLayer;
+    scope: ValueScope;
+    /**
+     * Group Label
+     */
+    group_label: string;
+    /**
+     * Before
+     */
+    before: {
+        [key: string]: unknown;
+    } | null;
+    /**
+     * After
+     */
+    after: {
+        [key: string]: unknown;
+    } | null;
+    source: ChangeSource;
+    /**
+     * Batch Id
+     */
+    batch_id: string | null;
+    /**
+     * Undoes
+     */
+    undoes: string | null;
+    /**
+     * Undone
+     */
+    undone?: boolean;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Sequence
+     */
+    sequence: number;
+};
+
+/**
  * PageKind
  *
  * Role of a page in the printed book.
@@ -1486,82 +1562,6 @@ export type PageStageSchema = {
  * Where one page stands in one stage: the state of its record, or that the stage has not run on it yet.
  */
 export type PageStageStatus = 'not-run' | 'fresh' | 'stale' | 'failed';
-
-/**
- * PageStepChangeSchema
- *
- * One change of a layer of a step on a page.
- *
- * :ivar id: Identifier of the change.
- * :ivar page_id: Page the change was made on.
- * :ivar stage: Stage of the step.
- * :ivar step_id: Identifier of the step.
- * :ivar layer: The layer that changed.
- * :ivar scope: Whose settings the layer holds: the page's own, or the odd pages, the even pages or a group it takes.
- * :ivar group_label: Label of the group for the scope of a group, and empty for the others.
- * :ivar before: Content of the layer before the change, or None when it was empty.
- * :ivar after: Content of the layer after the change, or None when the change emptied it.
- * :ivar source: What made the change.
- * :ivar batch_id: Identifier shared by the changes of one batch, which are undone together, or None.
- * :ivar undoes: The change this one takes back, or None for a change that is not an undo.
- * :ivar undone: Whether a later change took this one back, so it no longer stands.
- * :ivar created_at: When the change was made.
- * :ivar sequence: Place of the change in the history of its page.
- */
-export type PageStepChangeSchema = {
-    /**
-     * Id
-     */
-    id: string;
-    /**
-     * Page Id
-     */
-    page_id: string;
-    stage: Stage;
-    /**
-     * Step Id
-     */
-    step_id: string;
-    layer: StepLayer;
-    scope: ValueScope;
-    /**
-     * Group Label
-     */
-    group_label: string;
-    /**
-     * Before
-     */
-    before: {
-        [key: string]: unknown;
-    } | null;
-    /**
-     * After
-     */
-    after: {
-        [key: string]: unknown;
-    } | null;
-    source: ChangeSource;
-    /**
-     * Batch Id
-     */
-    batch_id: string | null;
-    /**
-     * Undoes
-     */
-    undoes: string | null;
-    /**
-     * Undone
-     */
-    undone?: boolean;
-    /**
-     * Created At
-     */
-    created_at: string;
-    /**
-     * Sequence
-     */
-    sequence: number;
-};
 
 /**
  * PageStepSettingsSchema
@@ -1812,13 +1812,13 @@ export type PagePageEditSchema = {
 };
 
 /**
- * Page[PageStageSchema]
+ * Page[PageHistoryEntrySchema]
  */
-export type PagePageStageSchema = {
+export type PagePageHistoryEntrySchema = {
     /**
      * Items
      */
-    items: Array<PageStageSchema>;
+    items: Array<PageHistoryEntrySchema>;
     /**
      * Total
      */
@@ -1838,13 +1838,13 @@ export type PagePageStageSchema = {
 };
 
 /**
- * Page[PageStepChangeSchema]
+ * Page[PageStageSchema]
  */
-export type PagePageStepChangeSchema = {
+export type PagePageStageSchema = {
     /**
      * Items
      */
-    items: Array<PageStepChangeSchema>;
+    items: Array<PageStageSchema>;
     /**
      * Total
      */
@@ -2001,32 +2001,6 @@ export type PageRecipeSchema = {
      * Items
      */
     items: Array<RecipeSchema>;
-    /**
-     * Total
-     */
-    total: number;
-    /**
-     * Page
-     */
-    page: number;
-    /**
-     * Size
-     */
-    size: number;
-    /**
-     * Pages
-     */
-    pages: number;
-};
-
-/**
- * Page[ResultMarkChangeSchema]
- */
-export type PageResultMarkChangeSchema = {
-    /**
-     * Items
-     */
-    items: Array<ResultMarkChangeSchema>;
     /**
      * Total
      */
@@ -3028,44 +3002,6 @@ export type RejectionReason = 'duplicate' | 'unreadable' | 'unsupported-type' | 
 export type ResultMark = 'good' | 'bad';
 
 /**
- * ResultMarkChangeSchema
- *
- * One change of the mark or the comment of a result.
- *
- * :ivar version_id: Version the change was made on.
- * :ivar sequence: Place of the change in the log of the version, from one.
- * :ivar mark_before: Mark before the change, or None.
- * :ivar mark_after: Mark after the change, or None.
- * :ivar comment_before: Comment before the change, or empty.
- * :ivar comment_after: Comment after the change, or empty.
- * :ivar created_at: When the change was made.
- */
-export type ResultMarkChangeSchema = {
-    /**
-     * Version Id
-     */
-    version_id: string;
-    /**
-     * Sequence
-     */
-    sequence: number;
-    mark_before: ResultMark | null;
-    mark_after: ResultMark | null;
-    /**
-     * Comment Before
-     */
-    comment_before: string;
-    /**
-     * Comment After
-     */
-    comment_after: string;
-    /**
-     * Created At
-     */
-    created_at: string;
-};
-
-/**
  * ResultMarkForm
  *
  * The mark and the comment of a result from now on, which replace both.
@@ -3819,7 +3755,7 @@ export type UndoneSchema = {
     /**
      * Changes
      */
-    changes: Array<PageStepChangeSchema>;
+    changes: Array<PageHistoryEntrySchema>;
 };
 
 /**
@@ -3866,7 +3802,7 @@ export type ValueChangesSchema = {
     /**
      * Changes
      */
-    changes: Array<PageStepChangeSchema>;
+    changes: Array<PageHistoryEntrySchema>;
 };
 
 /**
@@ -7151,7 +7087,7 @@ export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetRes
     /**
      * Successful Response
      */
-    200: PagePageStepChangeSchema;
+    200: PagePageHistoryEntrySchema;
 };
 
 export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetResponse = ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetResponses[keyof ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetResponses];
@@ -7263,67 +7199,6 @@ export type PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutResp
 };
 
 export type PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutResponse = PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutResponses[keyof PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutResponses];
-
-export type ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetData = {
-    body?: never;
-    path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
-        /**
-         * Page Id
-         *
-         * Identifier of the page
-         */
-        page_id: string;
-        /**
-         * Version Id
-         *
-         * Identifier of the page version
-         */
-        version_id: string;
-    };
-    query?: {
-        /**
-         * Page
-         */
-        page?: number;
-        /**
-         * Size
-         */
-        size?: number;
-    };
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}/mark-changes';
-};
-
-export type ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetError = ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetErrors[keyof ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetErrors];
-
-export type ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: PageResultMarkChangeSchema;
-};
-
-export type ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetResponse = ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetResponses[keyof ListMarkChangesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkChangesGetResponses];
 
 export type ListProcessorsApiV1ProcessorsGetData = {
     body?: never;

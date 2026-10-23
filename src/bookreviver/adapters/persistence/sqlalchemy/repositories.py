@@ -38,16 +38,15 @@ from bookreviver.adapters.persistence.sqlalchemy.database import SQLITE_DIALECT
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     BookPlaceMapper,
     LibraryEntryMapper,
+    PageHistoryMapper,
     PageMapper,
     PageStageMapper,
-    PageStepChangeMapper,
     PageStepStateMapper,
     PageVersionMapper,
     PaginationSectionMapper,
     ProjectMapper,
     RecipeMapper,
     RecipeProfileMapper,
-    ResultMarkChangeMapper,
     ScanMapper,
     SourceMapper,
     StepValuesMapper,
@@ -56,15 +55,14 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     BOOK_PLACE_ID,
     EMPTY_TEXT,
     BookPlaceRow,
+    PageHistoryRow,
     PageRow,
     PageStageRow,
-    PageStepChangeRow,
     PageStepStateRow,
     PageVersionRow,
     PaginationSectionRow,
     ProjectRow,
     RecipeRow,
-    ResultMarkChangeRow,
     ScanRow,
     SourceRow,
     StepValuesRow,
@@ -72,8 +70,8 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
 from bookreviver.domain.entities import (
     LibraryEntry,
     Page,
+    PageHistoryEntry,
     PageStage,
-    PageStepChange,
     PageStepState,
     PageVersion,
     PaginationSection,
@@ -81,7 +79,6 @@ from bookreviver.domain.entities import (
     ProjectOverview,
     Recipe,
     RecipeProfile,
-    ResultMarkChange,
     Scan,
     Source,
 )
@@ -101,14 +98,13 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import (
+    PageHistoryEntryId,
     PageId,
-    PageStepChangeId,
     PageVersionId,
     PaginationSectionId,
     ProjectId,
     RecipeId,
     RecipeProfileId,
-    ResultMarkChangeId,
     ScanId,
     SourceId,
 )
@@ -122,9 +118,9 @@ from bookreviver.ports.persistence import (
     CatalogueRepositories,
     KeyedRepository,
     LibraryRepository,
+    PageHistoryRepository,
     PageRepository,
     PageStageRepository,
-    PageStepChangeRepository,
     PageStepStateRepository,
     PageVersionRepository,
     PaginationSectionRepository,
@@ -132,7 +128,6 @@ from bookreviver.ports.persistence import (
     RecipeProfileRepository,
     RecipeRepository,
     Repository,
-    ResultMarkChangeRepository,
     ScanRepository,
     SourceRepository,
     StepValuesRepository,
@@ -449,16 +444,10 @@ class StepValuesRows(RowRepository[StepValuesRow]):
     model_type = StepValuesRow
 
 
-class PageStepChangeRows(RowRepository[PageStepChangeRow]):
-    """Rows of the ``page_step_changes`` table."""
+class PageHistoryRows(RowRepository[PageHistoryRow]):
+    """Rows of the ``page_history`` table."""
 
-    model_type = PageStepChangeRow
-
-
-class ResultMarkChangeRows(RowRepository[ResultMarkChangeRow]):
-    """Rows of the ``result_mark_changes`` table."""
-
-    model_type = ResultMarkChangeRow
+    model_type = PageHistoryRow
 
 
 class BookPlaceRows(RowRepository[BookPlaceRow]):
@@ -1583,27 +1572,27 @@ class SqlAlchemyStepValuesRepository(
         return sorted(found, key=lambda values: (str(values.step_id), order.index(values.scope), values.group_label))
 
 
-class SqlAlchemyPageStepChangeRepository(
-    SqlAlchemyRepository[PageStepChange, PageStepChangeId, PageStepChangeRow], PageStepChangeRepository
+class SqlAlchemyPageHistoryRepository(
+    SqlAlchemyRepository[PageHistoryEntry, PageHistoryEntryId, PageHistoryRow], PageHistoryRepository
 ):
     """The history of the layers of the steps of the pages."""
 
     def __init__(self, session: Session) -> None:
-        """Create the repository over the ``page_step_changes`` table.
+        """Create the repository over the ``page_history`` table.
 
         :param session: Session of the unit of work.
         :type session: Session
         """
-        super().__init__(rows=PageStepChangeRows(session=session), mapper=PageStepChangeMapper())
+        super().__init__(rows=PageHistoryRows(session=session), mapper=PageHistoryMapper())
 
     @override
-    def add(self, entity: PageStepChange) -> PageStepChange:
+    def add(self, entity: PageHistoryEntry) -> PageHistoryEntry:
         """Store a change, numbering it after the last change of its page.
 
         :param entity: Change to store.
-        :type entity: PageStepChange
+        :type entity: PageHistoryEntry
         :returns: The change as stored, with its sequence.
-        :rtype: PageStepChange
+        :rtype: PageHistoryEntry
         :raises ConflictError: If a change with this identifier is stored already.
         :raises NotFoundError: If the page is not stored.
         """
@@ -1611,22 +1600,22 @@ class SqlAlchemyPageStepChangeRepository(
         return stored
 
     @override
-    def add_many(self, entities: Sequence[PageStepChange]) -> Sequence[PageStepChange]:
+    def add_many(self, entities: Sequence[PageHistoryEntry]) -> Sequence[PageHistoryEntry]:
         """Store several changes, numbering each after the last change of its page in the order given.
 
         :param entities: Changes to store.
-        :type entities: Sequence[PageStepChange]
+        :type entities: Sequence[PageHistoryEntry]
         :returns: The changes as stored, with their sequences.
-        :rtype: Sequence[PageStepChange]
+        :rtype: Sequence[PageHistoryEntry]
         :raises ConflictError: If an identifier is stored already or given twice.
         :raises NotFoundError: If a page is not stored.
         """
         next_of: dict[PageId, int] = {}
-        numbered: list[PageStepChange] = []
+        numbered: list[PageHistoryEntry] = []
         for change in entities:
             if change.page_id not in next_of:
                 last = self._rows.session.scalar(
-                    select(func.max(PageStepChangeRow.sequence)).where(PageStepChangeRow.page_id == change.page_id)
+                    select(func.max(PageHistoryRow.sequence)).where(PageHistoryRow.page_id == change.page_id)
                 )
                 next_of[change.page_id] = (last or 0) + 1
             numbered.append(evolve(change, sequence=next_of[change.page_id]))
@@ -1634,7 +1623,7 @@ class SqlAlchemyPageStepChangeRepository(
         return super().add_many(numbered)
 
     @override
-    def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepChange]:
+    def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageHistoryEntry]:
         """Return the changes of one page, by their sequence.
 
         :param page_id: Page the changes were made on.
@@ -1642,41 +1631,41 @@ class SqlAlchemyPageStepChangeRepository(
         :param stage: Stage listed, or None for every stage.
         :type stage: Stage | None
         :returns: The changes of the page.
-        :rtype: Sequence[PageStepChange]
+        :rtype: Sequence[PageHistoryEntry]
         """
-        filters: list[ColumnElement[bool]] = [PageStepChangeRow.page_id == page_id]
+        filters: list[ColumnElement[bool]] = [PageHistoryRow.page_id == page_id]
         if stage is not None:
-            filters.append(PageStepChangeRow.stage == stage)
-        rows = self._rows.get_many(*filters, order_by=[PageStepChangeRow.sequence.asc()])
+            filters.append(PageHistoryRow.stage == stage)
+        rows = self._rows.get_many(*filters, order_by=[PageHistoryRow.sequence.asc()])
         return [self._mapper.to_entity(row) for row in rows]
 
     @override
-    def list_for_batch(self, batch_id: ChangeBatchId) -> Sequence[PageStepChange]:
+    def list_for_batch(self, batch_id: ChangeBatchId) -> Sequence[PageHistoryEntry]:
         """Return the changes of one batch, by page and then by sequence.
 
         :param batch_id: Identifier the changes of the batch share.
         :type batch_id: ChangeBatchId
         :returns: The changes of the batch.
-        :rtype: Sequence[PageStepChange]
+        :rtype: Sequence[PageHistoryEntry]
         """
         rows = self._rows.get_many(
-            order_by=[PageStepChangeRow.page_id.asc(), PageStepChangeRow.sequence.asc()], batch_id=batch_id
+            order_by=[PageHistoryRow.page_id.asc(), PageHistoryRow.sequence.asc()], batch_id=batch_id
         )
         return [self._mapper.to_entity(row) for row in rows]
 
     @override
-    def list_undoing(self, change_ids: Collection[PageStepChangeId]) -> Sequence[PageStepChange]:
+    def list_undoing(self, change_ids: Collection[PageHistoryEntryId]) -> Sequence[PageHistoryEntry]:
         """Return the changes that take back any of the given changes, by page and then by sequence.
 
         :param change_ids: Identifiers of the changes that may have been undone.
-        :type change_ids: Collection[PageStepChangeId]
+        :type change_ids: Collection[PageHistoryEntryId]
         :returns: The undos.
-        :rtype: Sequence[PageStepChange]
+        :rtype: Sequence[PageHistoryEntry]
         """
         rows = self._rows.get_many_in(
-            PageStepChangeRow.undoes_id,
+            PageHistoryRow.undoes_id,
             set(change_ids),
-            order=[PageStepChangeRow.page_id, PageStepChangeRow.sequence],
+            order=[PageHistoryRow.page_id, PageHistoryRow.sequence],
         )
         return [self._mapper.to_entity(row) for row in rows]
 
@@ -1689,55 +1678,13 @@ class SqlAlchemyPageStepChangeRepository(
         :returns: How many changes were deleted.
         :rtype: int
         """
-        statement = delete(PageStepChangeRow).where(
-            PageStepChangeRow.page_id == key.page_id,
-            PageStepChangeRow.stage == key.stage,
-            PageStepChangeRow.step_id == key.step_id,
+        statement = delete(PageHistoryRow).where(
+            PageHistoryRow.page_id == key.page_id,
+            PageHistoryRow.stage == key.stage,
+            PageHistoryRow.step_id == key.step_id,
         )
         # An ORM delete of a mapped class returns the cursor result, whose row count the database reports
         return cast('CursorResult[Any]', self._rows.session.execute(statement)).rowcount
-
-
-class SqlAlchemyResultMarkChangeRepository(
-    SqlAlchemyRepository[ResultMarkChange, ResultMarkChangeId, ResultMarkChangeRow], ResultMarkChangeRepository
-):
-    """The log of the marks and comments of the results."""
-
-    def __init__(self, session: Session) -> None:
-        """Create the repository over the ``result_mark_changes`` table.
-
-        :param session: Session of the unit of work.
-        :type session: Session
-        """
-        super().__init__(rows=ResultMarkChangeRows(session=session), mapper=ResultMarkChangeMapper())
-
-    @override
-    def add(self, entity: ResultMarkChange) -> ResultMarkChange:
-        """Store a change, numbering it after the last change of its version.
-
-        :param entity: Change to store.
-        :type entity: ResultMarkChange
-        :returns: The change as stored, with its sequence.
-        :rtype: ResultMarkChange
-        :raises ConflictError: If a change with this identifier is stored already.
-        :raises NotFoundError: If the version is not stored.
-        """
-        last = self._rows.session.scalar(
-            select(func.max(ResultMarkChangeRow.sequence)).where(ResultMarkChangeRow.version_id == entity.version_id)
-        )
-        return super().add(evolve(entity, sequence=(last or 0) + 1))
-
-    @override
-    def list_for_version(self, version_id: PageVersionId) -> Sequence[ResultMarkChange]:
-        """Return the changes of one version, by their sequence.
-
-        :param version_id: Version the changes were made on.
-        :type version_id: PageVersionId
-        :returns: The changes of the version.
-        :rtype: Sequence[ResultMarkChange]
-        """
-        rows = self._rows.get_many(order_by=[ResultMarkChangeRow.sequence.asc()], version_id=version_id)
-        return [self._mapper.to_entity(row) for row in rows]
 
 
 class SqlAlchemyBookPlaceRepository(BookPlaceRepository):
@@ -1893,9 +1840,8 @@ class SqlAlchemyBookRepositories(BookRepositories):
     :ivar page_versions: Page version repository bound to the session.
     :ivar page_stages: Page stage repository bound to the session.
     :ivar page_step_states: Page step state repository bound to the session.
-    :ivar page_step_changes: Page step change repository bound to the session.
+    :ivar page_history: Page history repository bound to the session.
     :ivar step_values: Step values repository bound to the session.
-    :ivar result_mark_changes: Result mark change repository bound to the session.
     :ivar recipes: Recipe repository bound to the session.
     :ivar book_places: Book place repository bound to the session.
     """
@@ -1914,8 +1860,7 @@ class SqlAlchemyBookRepositories(BookRepositories):
         self.page_versions = SqlAlchemyPageVersionRepository(session)
         self.page_stages = SqlAlchemyPageStageRepository(session)
         self.page_step_states = SqlAlchemyPageStepStateRepository(session)
-        self.page_step_changes = SqlAlchemyPageStepChangeRepository(session)
+        self.page_history = SqlAlchemyPageHistoryRepository(session)
         self.step_values = SqlAlchemyStepValuesRepository(session)
-        self.result_mark_changes = SqlAlchemyResultMarkChangeRepository(session)
         self.recipes = SqlAlchemyRecipeRepository(session)
         self.book_places = SqlAlchemyBookPlaceRepository(session)

@@ -25,14 +25,30 @@ from sqlalchemy.orm import Session
 from bookreviver.adapters.persistence.sqlalchemy.accounts import OAuthAccountTable
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyBookRepositories
-from bookreviver.adapters.persistence.sqlalchemy.tables import PageRow, PageVersionRow, ProjectRow, ScanRow, SourceRow
+from bookreviver.adapters.persistence.sqlalchemy.tables import (
+    PageHistoryRow,
+    PageRow,
+    PageVersionRow,
+    ProjectRow,
+    ScanRow,
+    SourceRow,
+)
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.container import build_container
 from bookreviver.app.main import create_app
 from bookreviver.app.providers.database import MIGRATE_COMMAND, MIGRATE_DOWNGRADE_COMMAND, RUN, SCHEMA_AT
 from bookreviver.domain.enums import BlockKind
+from bookreviver.domain.ids import PageId
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
-from tests.helpers.builders import make_book_place, make_page, make_page_version, make_project, make_scan, make_source
+from tests.helpers.builders import (
+    make_book_place,
+    make_page,
+    make_page_history_entry,
+    make_page_version,
+    make_project,
+    make_scan,
+    make_source,
+)
 from tests.helpers.seeding import commit_account
 
 if TYPE_CHECKING:
@@ -67,6 +83,8 @@ BEFORE_BOOK_KEYS: str = '2ec5b0830b62'
 BOOK_KEYED: tuple[str, ...] = ('sources', 'scans', 'pages', 'book_places')
 # The revision before the one that counts the scans of a source on read
 BEFORE_SCAN_COUNT: str = '2b10e694550f'
+# The revision before the one that calls the history of a page page_history
+BEFORE_HISTORY: str = '179088fbcd7b'
 # A provider account, linked twice by the test of the unique key
 PROVIDER: str = 'google'
 PROVIDER_ACCOUNT: str = 'provider-account-1'
@@ -611,6 +629,35 @@ class TestScanCountRevision:
         await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_SCAN_COUNT)
         with _session(fx_empty_book) as session:
             assert session.scalars(text('SELECT scan_count FROM sources')).all() == [1]
+
+
+class TestHistoryRevision:
+    """Tests for the revision that calls the history of the changes of a page page_history."""
+
+    async def test_the_history_of_a_page_keeps_its_rows_both_ways(self, fx_empty_book: SqlDatabase) -> None:
+        """Verify the change of a page is in page_step_changes after the downgrade and in page_history after the upgrade.
+
+        :param fx_empty_book: Database of a book with no table.
+        :type fx_empty_book: SqlDatabase
+        """
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        project_id = await _commit_book(fx_empty_book)
+        with _session(fx_empty_book) as session:
+            page_id = PageId(session.scalars(select(PageRow.id)).one())
+        entry = make_page_history_entry(page_id=page_id)
+        await fx_empty_book.write(
+            lambda session: SqlAlchemyBookRepositories(session).page_history.add(entry),
+            kind=BlockKind.BOOK,
+            book=project_id,
+            wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
+        )
+        await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_HISTORY)
+        with _session(fx_empty_book) as session:
+            expect(session.scalar(text('SELECT count(*) FROM page_step_changes')) == 1)
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        with _session(fx_empty_book) as session:
+            expect(session.scalars(select(PageHistoryRow.id)).all() == [entry.id])
+        assert_expectations()
 
 
 class TestEnv:

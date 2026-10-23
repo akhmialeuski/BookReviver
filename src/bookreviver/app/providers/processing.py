@@ -391,19 +391,17 @@ class ProcessingProvider(Provider):
         return PageHistoryService(uow=uow, records=parts.records, starter=parts.starter, assets=assets, clock=clock)
 
     @provide(scope=Scope.REQUEST)
-    def result_marks_service(self, uow: UnitOfWork, library: Library, clock: Clock) -> ResultMarksService:
+    def result_marks_service(self, uow: UnitOfWork, library: Library) -> ResultMarksService:
         """Build the result marks service of a request.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
         :param library: Library of the current request.
         :type library: Library
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: The result marks service.
         :rtype: ResultMarksService
         """
-        return ResultMarksService(uow=uow, library=library, clock=clock)
+        return ResultMarksService(uow=uow, library=library)
 
     @provide(scope=Scope.REQUEST)
     def outdated_results(self, uow: UnitOfWork, catalogue: ProcessorCatalog, clock: Clock) -> OutdatedResults:

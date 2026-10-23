@@ -1,4 +1,4 @@
-import type { PageStepChangeSchema, StepLayer } from '@/api';
+import type { PageHistoryEntrySchema, StepLayer } from '@/api';
 import { describeEdit } from '@/features/editors/registry';
 import { showValue } from '@/features/processing/pageSettings';
 
@@ -14,7 +14,7 @@ import { showValue } from '@/features/processing/pageSettings';
 export type LayerContent = Readonly<Record<string, unknown>> | null;
 
 /** Tell whether a change still stands, which is whether an undo can take it back. */
-export function stands(change: PageStepChangeSchema): boolean {
+export function stands(change: PageHistoryEntrySchema): boolean {
   return change.source !== 'undo' && change.undone !== true;
 }
 
@@ -25,8 +25,8 @@ export function stands(change: PageStepChangeSchema): boolean {
  * @returns The newest change that stands, or undefined when there is none.
  */
 export function lastStanding(
-  changes: readonly PageStepChangeSchema[],
-): PageStepChangeSchema | undefined {
+  changes: readonly PageHistoryEntrySchema[],
+): PageHistoryEntrySchema | undefined {
   return changes.find(stands);
 }
 

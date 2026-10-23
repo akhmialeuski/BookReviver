@@ -16,7 +16,7 @@ from bookreviver.domain.entities import (
     Actor,
     LibraryEntry,
     PageEdit,
-    PageStepChange,
+    PageHistoryEntry,
     VersionInputs,
 )
 from bookreviver.domain.enums import (
@@ -40,7 +40,7 @@ from bookreviver.domain.enums import (
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.geometry import Line, Point, Rotation
 from bookreviver.domain.history import StepHistory
-from bookreviver.domain.ids import PageId, PageStepChangeId, PageVersionId, ScanId, StorageKey
+from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId, ScanId, StorageKey
 from bookreviver.domain.values import BookDetails, ProcessorRef, Progress, Renditions, StageRun, Step
 from tests.helpers.builders import (
     EPOCH,
@@ -48,7 +48,7 @@ from tests.helpers.builders import (
     make_job,
     make_page,
     make_page_edit,
-    make_page_step_change,
+    make_page_history_entry,
     make_page_step_state,
     make_page_version,
     make_project,
@@ -582,14 +582,14 @@ class TestPageEditSnapshot:
         assert edit.to_snapshot() == evolve(edit, updated_at=EPOCH + timedelta(days=1)).to_snapshot()
 
 
-class TestPageStepChangeBetween:
-    """Tests for PageStepChange.between."""
+class TestPageHistoryEntryBetween:
+    """Tests for PageHistoryEntry.between."""
 
     def test_the_change_holds_the_layer_before_and_after_and_the_time_of_the_new_state(self) -> None:
         """Verify the change names the page, the step and the layer, and carries the content on both sides."""
         before = make_page_step_state(page_id=PAGE_ID, params={'max_angle': 3})
         after = evolve(make_page_step_state(page_id=PAGE_ID), updated_at=EPOCH + timedelta(days=1))
-        change = PageStepChange.between(before, after, StepLayer.SETTINGS, ChangeSource.USER)
+        change = PageHistoryEntry.between(before, after, StepLayer.SETTINGS, ChangeSource.USER)
         expect((change.page_id, change.step_id, change.key) == (PAGE_ID, after.step_id, after.key))
         expect((change.before, change.after) == ({'max_angle': 3}, None))
         expect((change.source, change.batch_id, change.undoes) == (ChangeSource.USER, None, None))
@@ -601,18 +601,18 @@ class TestStepHistory:
     """Tests for the stack of changes that can be taken back."""
 
     @staticmethod
-    def _change(source: ChangeSource = ChangeSource.USER, undoes: PageStepChange | None = None) -> PageStepChange:
+    def _change(source: ChangeSource = ChangeSource.USER, undoes: PageHistoryEntry | None = None) -> PageHistoryEntry:
         """Build a change of the settings of the deskew step.
 
         :param source: What made the change.
         :type source: ChangeSource
         :param undoes: The change it takes back, or None.
-        :type undoes: PageStepChange | None
+        :type undoes: PageHistoryEntry | None
         :returns: The change.
-        :rtype: PageStepChange
+        :rtype: PageHistoryEntry
         """
         return evolve(
-            make_page_step_change(page_id=PAGE_ID), source=source, undoes=None if undoes is None else undoes.id
+            make_page_history_entry(page_id=PAGE_ID), source=source, undoes=None if undoes is None else undoes.id
         )
 
     def test_the_changes_an_undo_names_and_the_undos_do_not_stand(self) -> None:
@@ -634,7 +634,7 @@ class TestStepHistory:
         taken = self._change()
         undo = self._change(ChangeSource.UNDO, taken)
         history = StepHistory((taken, undo))
-        for gone in (taken.id, undo.id, PageStepChangeId(uuid4())):
+        for gone in (taken.id, undo.id, PageHistoryEntryId(uuid4())):
             with pytest.raises(NotFoundError):
                 history.back_to(gone)
 

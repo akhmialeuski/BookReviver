@@ -25,27 +25,25 @@ from typing import TYPE_CHECKING, NewType
 from bookreviver.domain.entities import (
     LibraryEntry,
     Page,
+    PageHistoryEntry,
     PageStage,
-    PageStepChange,
     PageStepState,
     PageVersion,
     PaginationSection,
     Project,
     Recipe,
     RecipeProfile,
-    ResultMarkChange,
     Scan,
     Source,
 )
 from bookreviver.domain.ids import (
+    PageHistoryEntryId,
     PageId,
-    PageStepChangeId,
     PageVersionId,
     PaginationSectionId,
     ProjectId,
     RecipeId,
     RecipeProfileId,
-    ResultMarkChangeId,
     ScanId,
     SourceId,
 )
@@ -571,8 +569,6 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
     def delete_many(self, version_ids: Collection[PageVersionId]) -> None:
         """Remove the rows of several versions in the one transaction; a version that is not stored is left alone.
 
-        The log of the marks of each version goes with it.
-
         :param version_ids: Versions to remove.
         :type version_ids: Collection[PageVersionId]
         """
@@ -742,7 +738,7 @@ class StepValuesRepository(KeyedRepository[StepValues, StepValuesKey]):
         """
 
 
-class PageStepChangeRepository(Repository[PageStepChange, PageStepChangeId]):
+class PageHistoryRepository(Repository[PageHistoryEntry, PageHistoryEntryId]):
     """The history of the layers of the steps of each page. A change is added once and never rewritten.
 
     Deleting a page removes its history. ``add`` and ``add_many`` number the changes of a page from one in the order
@@ -750,7 +746,7 @@ class PageStepChangeRepository(Repository[PageStepChange, PageStepChangeId]):
     """
 
     @abstractmethod
-    def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageStepChange]:
+    def list_for_page(self, page_id: PageId, stage: Stage | None = None) -> Sequence[PageHistoryEntry]:
         """Return the changes of one page, those of one stage or of all, in the order they were written (by sequence).
 
         :param page_id: Page the changes were made on.
@@ -758,27 +754,27 @@ class PageStepChangeRepository(Repository[PageStepChange, PageStepChangeId]):
         :param stage: Stage whose changes are listed, or None for every stage.
         :type stage: Stage | None
         :returns: The changes of the page.
-        :rtype: Sequence[PageStepChange]
+        :rtype: Sequence[PageHistoryEntry]
         """
 
     @abstractmethod
-    def list_for_batch(self, batch_id: ChangeBatchId) -> Sequence[PageStepChange]:
+    def list_for_batch(self, batch_id: ChangeBatchId) -> Sequence[PageHistoryEntry]:
         """Return the changes of one batch, which may span several pages, by page and then by sequence.
 
         :param batch_id: Identifier the changes of the batch share.
         :type batch_id: ChangeBatchId
         :returns: The changes of the batch.
-        :rtype: Sequence[PageStepChange]
+        :rtype: Sequence[PageHistoryEntry]
         """
 
     @abstractmethod
-    def list_undoing(self, change_ids: Collection[PageStepChangeId]) -> Sequence[PageStepChange]:
+    def list_undoing(self, change_ids: Collection[PageHistoryEntryId]) -> Sequence[PageHistoryEntry]:
         """Return the changes that take back any of the given changes.
 
         :param change_ids: Identifiers of the changes that may have been undone.
-        :type change_ids: Collection[PageStepChangeId]
+        :type change_ids: Collection[PageHistoryEntryId]
         :returns: The undos, by page and then by sequence; none for changes that stand.
-        :rtype: Sequence[PageStepChange]
+        :rtype: Sequence[PageHistoryEntry]
         """
 
     @abstractmethod
@@ -792,24 +788,6 @@ class PageStepChangeRepository(Repository[PageStepChange, PageStepChangeId]):
         :type key: PageStepKey
         :returns: How many changes were deleted.
         :rtype: int
-        """
-
-
-class ResultMarkChangeRepository(Repository[ResultMarkChange, ResultMarkChangeId]):
-    """The log of the marks and comments of the results. A change is added once and never rewritten.
-
-    Deleting a version removes its log. ``add`` numbers the changes of a version from one in the order they are written,
-    whatever their ``sequence``, and returns them as stored.
-    """
-
-    @abstractmethod
-    def list_for_version(self, version_id: PageVersionId) -> Sequence[ResultMarkChange]:
-        """Return the changes of the mark and the comment of one version, in the order they were written.
-
-        :param version_id: Version the changes were made on.
-        :type version_id: PageVersionId
-        :returns: The changes of the version, by sequence.
-        :rtype: Sequence[ResultMarkChange]
         """
 
 
@@ -920,10 +898,9 @@ class BookRepositories(ABC):
     :ivar page_versions: Page version repository of this transaction.
     :ivar page_stages: Page stage repository of this transaction.
     :ivar page_step_states: Repository of the settings and manual edits of the steps of the pages, of this transaction.
-    :ivar page_step_changes: Repository of the history of the steps of the pages, of this transaction.
+    :ivar page_history: Repository of the history of the steps of the pages, of this transaction.
     :ivar step_values: Repository of the values of the steps for the odd pages, the even pages and the groups, of this
                        transaction.
-    :ivar result_mark_changes: Repository of the log of the marks and comments of the results, of this transaction.
     :ivar recipes: Recipe repository of this transaction.
     :ivar book_places: Repository of the place the reader left the book at, of this transaction.
     """
@@ -936,9 +913,8 @@ class BookRepositories(ABC):
     page_versions: PageVersionRepository
     page_stages: PageStageRepository
     page_step_states: PageStepStateRepository
-    page_step_changes: PageStepChangeRepository
+    page_history: PageHistoryRepository
     step_values: StepValuesRepository
-    result_mark_changes: ResultMarkChangeRepository
     recipes: RecipeRepository
     book_places: BookPlaceRepository
 

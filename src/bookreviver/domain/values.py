@@ -592,7 +592,7 @@ class CanvasPosition:
 
 @frozen(kw_only=True)
 class NewBookPlace:
-    """Where a reader left a book, as the reader reports it; the account, the book and the time are added on storing.
+    """Where a reader left a book, as the reader reports it; the time is added on storing.
 
     A workspace place names a stage and the page, or on the stages that work on files the file and the scan, the
     reader had open. A reading place names the page of the viewer, and keeps the stage the reader was working on, so
