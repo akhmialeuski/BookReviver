@@ -10,7 +10,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import EventName
-from bookreviver.domain.enums import JobKind, JobState, PageChange, Stage, StageState
+from bookreviver.domain.enums import BookResource, JobKind, JobState, PageChange, Stage, StageState
 from bookreviver.domain.events import (
     PagesChanged,
     PageStageChanged,
@@ -46,6 +46,14 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 JOB_PATH: str = '/api/v1/jobs/{job_id}'
+PROJECT_PATH: str = '/api/v1/projects/{project_id}'
+NOTES_FIELD: str = 'notes'
+CHANGED_NOTES: str = 'Read again'
+RESOURCES_FIELD: str = 'resources'
+VERSION_FIELD: str = 'version'
+LAST_EVENT_ID_HEADER: bytes = b'last-event-id'
+# An id no version of a book ever has
+NO_VERSION: bytes = b'-1'
 JOBS_PATH: str = '/api/v1/projects/{project_id}/jobs'
 ACTIVE_PARAMETER: str = 'active'
 CONTENT_TYPE_HEADER: str = 'content-type'
@@ -283,6 +291,54 @@ class TestStreamProjectEvents:
         expect(reader.events[0].data[JOB_STATE_FIELD] == JobState.CANCELLED)
         expect(reader.events[1].data == {PROJECT_ID_FIELD: str(project_id)})
         expect(fx_fakes.events.open_subscriptions == 0)
+        assert_expectations()
+
+    async def test_a_committed_change_of_the_book_is_announced_with_its_version_as_id(
+        self, fx_app: FastAPI, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_queued_job: Job
+    ) -> None:
+        """Verify a change of the description reaches the stream as ``book-changed`` with the version and its part.
+
+        :param fx_app: The running application.
+        :type fx_app: FastAPI
+        :param fx_client: Client of the signed-in account.
+        :type fx_client: httpx.AsyncClient
+        :param fx_fakes: Adapters the application runs on.
+        :type fx_fakes: JobFakes
+        :param fx_queued_job: Queued job of the signed-in account, whose project is changed.
+        :type fx_queued_job: Job
+        """
+        project_id = fx_queued_job.project_id
+        reader = EventStreamReader(count=1)
+        async with anyio.create_task_group() as group:
+            group.start_soon(reader.read, fx_app, fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=project_id))
+            await fx_fakes.events.subscribed.wait()
+            await fx_client.patch(PROJECT_PATH.format(project_id=project_id), json={NOTES_FIELD: CHANGED_NOTES})
+
+        [changed] = reader.events
+        expect(changed.name == EventName.BOOK_CHANGED)
+        expect(changed.data[RESOURCES_FIELD] == [BookResource.PROJECT])
+        expect(changed.id == str(changed.data[VERSION_FIELD]))
+        assert_expectations()
+
+    async def test_a_browser_back_with_an_old_version_is_told_to_read_the_book_again(
+        self, fx_app: FastAPI, fx_queued_job: Job
+    ) -> None:
+        """Verify a stream opened with the id of another version starts with ``book-reset`` naming the version now.
+
+        :param fx_app: The running application.
+        :type fx_app: FastAPI
+        :param fx_queued_job: Queued job of the signed-in account, whose project is listened to.
+        :type fx_queued_job: Job
+        """
+        project_id = fx_queued_job.project_id
+        reader = EventStreamReader(count=1)
+        path = fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=project_id)
+
+        await reader.read(fx_app, path, headers=[(LAST_EVENT_ID_HEADER, NO_VERSION)])
+
+        [reset] = reader.events
+        expect(reset.name == EventName.BOOK_RESET)
+        expect(reset.id == str(reset.data[VERSION_FIELD]))
         assert_expectations()
 
     async def test_stream_delivers_the_progress_of_a_running_job(

@@ -41,6 +41,7 @@ from tests.helpers.builders import (
     make_source,
     new_account_id,
 )
+from tests.helpers.fakes_jobs import RecordingEventBus
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Collection, Sequence
@@ -269,7 +270,7 @@ class TestSplit:
         :type fx_books: BookDatabases
         """
         report = await SharedDatabaseSplit(fx_shared.path, catalogue=fx_empty_catalogue, books=fx_books).run()
-        uow = SqlAlchemyUnitOfWork(fx_empty_catalogue, fx_books)
+        uow = SqlAlchemyUnitOfWork(fx_empty_catalogue, fx_books, publisher=RecordingEventBus())
         entries = await uow.read(lambda repos: repos.library.list_for_owner(fx_shared.owner_id, SliceRequest()))
         profiles = await uow.read(lambda repos: repos.recipe_profiles.list_for_account(fx_shared.owner_id))
         first = await uow.read_book(
@@ -311,7 +312,7 @@ class TestSplit:
         """
         await SharedDatabaseSplit(fx_shared.path, catalogue=fx_empty_catalogue, books=fx_books).run()
 
-        uow = SqlAlchemyUnitOfWork(fx_empty_catalogue, fx_books)
+        uow = SqlAlchemyUnitOfWork(fx_empty_catalogue, fx_books, publisher=RecordingEventBus())
         page = await uow.read_book(fx_shared.first.id, lambda repos: repos.pages.get(fx_shared.labelled))
         assert page.manual_label == MANUAL_LABEL
 

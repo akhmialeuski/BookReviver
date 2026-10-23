@@ -101,6 +101,17 @@ class CountingUnitOfWork(UnitOfWork):
         await self._inner.delete_book(project_id)
 
     @override
+    async def book_version(self, project_id: ProjectId) -> int:
+        """Read the version of a book on the wrapped unit of work.
+
+        :param project_id: The book.
+        :type project_id: ProjectId
+        :returns: The version of the book.
+        :rtype: int
+        """
+        return await self._inner.book_version(project_id)
+
+    @override
     async def snapshot_book(self, project_id: ProjectId) -> bytes:
         """Copy the store of a book on the wrapped unit of work.
 

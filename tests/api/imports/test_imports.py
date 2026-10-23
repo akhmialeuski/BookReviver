@@ -54,17 +54,21 @@ DJVU_PAGES: tuple[DjvuPage, ...] = (DjvuPage(), DjvuPage(size_px=(250, 350)), Dj
 # The events of an import of one image, in the order they are published: the job queued and running, the job with
 # its total, the source and its pages, the job with its file dealt with, the job as the cut of its scan begins, the
 # scan, the stage of its page, the job with its scan cut and the job as it ended
+# A committed change of the book is announced first, and the event of the service that made it follows
 ONE_IMAGE_EVENTS: list[EventName] = [
     EventName.JOB_CHANGED,
     EventName.JOB_CHANGED,
     EventName.JOB_CHANGED,
+    EventName.BOOK_CHANGED,
     EventName.SOURCE_IMPORTED,
     EventName.PAGES_CHANGED,
     EventName.JOB_CHANGED,
     EventName.JOB_CHANGED,
+    EventName.BOOK_CHANGED,
     EventName.SCAN_READY,
     EventName.PAGE_STAGE_CHANGED,
     EventName.JOB_CHANGED,
+    EventName.BOOK_CHANGED,
     EventName.JOB_CHANGED,
 ]
 
@@ -206,8 +210,8 @@ class TestUploadSources:
         [source], [scan] = book.sources, book.scans
         queued, ended = reader.events[0].data, reader.events[-1].data
         expect([event.name for event in reader.events] == ONE_IMAGE_EVENTS)
-        expect(reader.events[3].data == {'project_id': str(fx_project.id), 'source_id': str(source.id)})
-        expect(reader.events[7].data == {'project_id': str(fx_project.id), 'scan_id': str(scan.id)})
+        expect(reader.events[4].data == {'project_id': str(fx_project.id), 'source_id': str(source.id)})
+        expect(reader.events[9].data == {'project_id': str(fx_project.id), 'scan_id': str(scan.id)})
         expect((queued['state'], ended['state']) == (JobState.QUEUED, JobState.SUCCEEDED))
         expect(ended['id'] == queued['id'])
         assert_expectations()

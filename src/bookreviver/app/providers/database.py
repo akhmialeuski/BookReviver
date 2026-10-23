@@ -23,6 +23,7 @@ from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlData
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.app.settings import Settings
 from bookreviver.ports.persistence import ChangeWaitSeconds, UnitOfWork
+from bookreviver.ports.runtime import EventPublisher
 from bookreviver.ports.tracing import Tracer
 
 # The command applying the migrations to the database the settings name, a script of pyproject.toml
@@ -118,7 +119,11 @@ class DatabaseProvider(Provider):
 
     @provide(scope=Scope.REQUEST)
     def unit_of_work(
-        self, database: SqlDatabase, books: BookDatabases, wait_seconds: ChangeWaitSeconds
+        self,
+        database: SqlDatabase,
+        books: BookDatabases,
+        publisher: EventPublisher,
+        wait_seconds: ChangeWaitSeconds,
     ) -> SqlAlchemyUnitOfWork:
         """Build the unit of work of a request or job, which keeps no state but the wait limit of its scope.
 
@@ -129,11 +134,13 @@ class DatabaseProvider(Provider):
         :type database: SqlDatabase
         :param books: The registry of the databases of the books.
         :type books: BookDatabases
+        :param publisher: Where a committed change of a book is announced.
+        :type publisher: EventPublisher
         :param wait_seconds: How long a change of the unit of work waits for a writer, by the scope it lives in.
         :type wait_seconds: ChangeWaitSeconds
         :returns: Unit of work over the catalogue and the books.
         :rtype: SqlAlchemyUnitOfWork
         """
-        return SqlAlchemyUnitOfWork(database, books, wait_seconds=wait_seconds)
+        return SqlAlchemyUnitOfWork(database, books, publisher=publisher, wait_seconds=wait_seconds)
 
     unit_of_work_port = alias(source=SqlAlchemyUnitOfWork, provides=UnitOfWork)

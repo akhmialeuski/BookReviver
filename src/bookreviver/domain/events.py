@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bookreviver.domain.entities import Job, PageStage, PageVersion, Scan, Source
-    from bookreviver.domain.enums import PageChange
+    from bookreviver.domain.enums import BookResource, PageChange
     from bookreviver.domain.ids import PageId, ProjectId
 
 
@@ -95,3 +95,15 @@ class PageStageChanged(DomainEvent):
 @frozen(kw_only=True)
 class ProjectChanged(DomainEvent):
     """The description of the book changed."""
+
+
+@frozen(kw_only=True)
+class BookChanged(DomainEvent):
+    """A change of the book committed, which raised its version by one.
+
+    :ivar version: The version of the book after the change, one more than before it.
+    :ivar resources: The parts of the book the change wrote, which are the reads to repeat.
+    """
+
+    version: int
+    resources: frozenset[BookResource]

@@ -13,6 +13,7 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Body, Depends, Path, Request, Response, status
 
 from bookreviver.api.auth import ActorDep
+from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import ManifestPage, Pager
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import JobSchema
@@ -39,7 +40,7 @@ PROJECT_ID_DESCRIPTION: str = 'Identifier of the project'
 PAGE_ID_DESCRIPTION: str = 'Identifier of the page'
 LOCATION_HEADER: str = 'Location'
 
-router = APIRouter(prefix='/projects', tags=['pages'], route_class=DishkaRoute)
+router = APIRouter(prefix='/projects', tags=['pages'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 
 @dataclass(frozen=True)

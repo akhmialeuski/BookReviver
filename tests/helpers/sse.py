@@ -12,7 +12,7 @@ import anyio
 import anyio.lowlevel
 
 if TYPE_CHECKING:
-    from collections.abc import MutableMapping
+    from collections.abc import MutableMapping, Sequence
 
     from fastapi import FastAPI
 
@@ -25,6 +25,7 @@ SSE_FIELD_SEPARATOR: str = ': '
 SSE_COMMENT_PREFIX: str = ':'
 SSE_EVENT_FIELD: str = 'event'
 SSE_DATA_FIELD: str = 'data'
+SSE_ID_FIELD: str = 'id'
 # ASGI message keys and values
 ASGI_TYPE_KEY: str = 'type'
 ASGI_BODY_KEY: str = 'body'
@@ -37,10 +38,12 @@ class StreamedEvent(NamedTuple):
 
     :ivar name: Value of the event's ``event`` field.
     :ivar data: The event's ``data`` field, parsed as JSON.
+    :ivar id: Value of the event's ``id`` field, or None for an event without one.
     """
 
     name: str
     data: dict[str, Any]
+    id: str | None = None
 
 
 class EventStreamReader:
@@ -65,12 +68,14 @@ class EventStreamReader:
         self._enough = anyio.Event()
         self._request_sent = False
 
-    async def read(self, app: FastAPI, path: str) -> None:
+    async def read(self, app: FastAPI, path: str, headers: Sequence[tuple[bytes, bytes]] = ()) -> None:
         """Send a GET request for ``path`` and collect events until the reader disconnects.
 
         :param app: The running application.
         :type app: FastAPI
         :param path: Path of the event stream.
+        :param headers: Further headers of the request, such as ``last-event-id``.
+        :type headers: Sequence[tuple[bytes, bytes]]
         :type path: str
         """
         scope = {
@@ -83,7 +88,7 @@ class EventStreamReader:
             'raw_path': path.encode(),
             'root_path': '',
             'query_string': b'',
-            'headers': [(b'host', b'testserver'), (b'accept', EVENT_STREAM_TYPE.encode())],
+            'headers': [(b'host', b'testserver'), (b'accept', EVENT_STREAM_TYPE.encode()), *headers],
             'server': ('testserver', 80),
             'client': ('testclient', 50_000),
         }
@@ -118,7 +123,10 @@ class EventStreamReader:
             if not lines:
                 continue
             fields = dict(line.split(SSE_FIELD_SEPARATOR, 1) for line in lines)
-            self.events.append(StreamedEvent(name=fields[SSE_EVENT_FIELD], data=json.loads(fields[SSE_DATA_FIELD])))
+            event = StreamedEvent(
+                name=fields[SSE_EVENT_FIELD], data=json.loads(fields[SSE_DATA_FIELD]), id=fields.get(SSE_ID_FIELD)
+            )
+            self.events.append(event)
             if len(self.events) >= self._count:
                 self._enough.set()
         # A socket write is a suspension point of a real server; keep one so the test interleaves with the stream

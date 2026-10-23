@@ -9,7 +9,7 @@ from uuid import UUID
 
 import anyio
 import pytest
-from delayed_assert import expect
+from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.errors import ConflictError, NotFoundError
@@ -234,6 +234,22 @@ class TestJobBoard:
         expect([job.id for job in everything] == [waiting.id, held.id, ended.id])
         expect([job.id for job in active] == [waiting.id, held.id])
         expect([job.id for job in of_both] == [elsewhere.id, waiting.id, held.id])
+
+    async def test_the_mark_of_a_book_changes_with_its_jobs_alone(self, fx_board_adapter: BoardAdapter) -> None:
+        """Verify putting and running a job of a book changes the mark of that book and leaves another book's mark.
+
+        :param fx_board_adapter: Adapter under test.
+        :type fx_board_adapter: BoardAdapter
+        """
+        async with open_board_under_test(fx_board_adapter) as under_test:
+            empty, other = under_test.board.revision(BOOK), under_test.board.revision(OTHER_BOOK)
+            under_test.board.put(make_job(project_id=BOOK))
+            queued = under_test.board.revision(BOOK)
+            await settle(under_test)
+            ended = under_test.board.revision(BOOK)
+            expect(len({empty, queued, ended}) == len((empty, queued, ended)))
+            expect(under_test.board.revision(OTHER_BOOK) == other)
+        assert_expectations()
 
     async def test_it_does_not_know_a_job_it_was_not_given(self, fx_board_adapter: BoardAdapter) -> None:
         """Verify reading or cancelling an unknown job is reported as not found.

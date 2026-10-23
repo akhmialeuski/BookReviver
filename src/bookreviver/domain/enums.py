@@ -728,6 +728,24 @@ class PageFilter(LabeledStrEnum):
     WIDE = 'wide', 'Pages cut from a wide scan'
 
 
+class BookResource(LabeledStrEnum):
+    """A part of a book a reader asks for, which a change of the book names so the reader reads only that part again.
+
+    The place where the reader left the book is not one: it changes as the reader moves and is read once, when the
+    book is opened.
+    """
+
+    PROJECT = 'project', 'The description of the book'
+    SOURCES = 'sources', 'The uploaded files of the book'
+    SCANS = 'scans', 'The scans of the files'
+    PAGES = 'pages', 'The pages, their order, their labels and their groups'
+    VERSIONS = 'versions', 'The results of the pages'
+    STAGES = 'stages', 'Where every page stands in every stage'
+    SETTINGS = 'settings', 'The settings and the edits of the steps on the pages'
+    HISTORY = 'history', 'The history of the steps on the pages'
+    RECIPES = 'recipes', 'The recipes of the stages'
+
+
 class PageChange(LabeledStrEnum):
     """What a use case did to the pages of a book, which the ``PagesChanged`` event reports."""
 

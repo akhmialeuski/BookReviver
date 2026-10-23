@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
+from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import ManifestPage, ManifestParams, Pager
 from bookreviver.api.routers.processing import StagePath
 from bookreviver.api.schemas.stages import StagePageSchema, StageSummarySchema
@@ -33,7 +34,7 @@ class StageRowsPath(StagePath):
     request: Request
 
 
-router = APIRouter(prefix='/projects', tags=['stages'], route_class=DishkaRoute)
+router = APIRouter(prefix='/projects', tags=['stages'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 
 @router.get('/{project_id}/stages')

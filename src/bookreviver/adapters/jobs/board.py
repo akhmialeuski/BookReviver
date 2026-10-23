@@ -23,6 +23,7 @@ from collections import deque
 from contextlib import suppress
 from operator import attrgetter
 from typing import TYPE_CHECKING, Any, Self, override
+from uuid import uuid4
 
 from attrs import define, evolve, field
 
@@ -54,11 +55,13 @@ class BookJobs:
     :ivar jobs: Every job held, queued, running or ended, in the order they were put.
     :ivar queue: Identifiers of the queued jobs, in the order they run.
     :ivar serving: Whether a task of the board is serving the queue of the book.
+    :ivar changes: How many times a job of the book was put, started, advanced, cancelled or ended in this process.
     """
 
     jobs: dict[JobId, Job] = field(factory=dict)
     queue: deque[JobId] = field(factory=deque)
     serving: bool = False
+    changes: int = 0
 
 
 class JobLedger:
@@ -88,6 +91,7 @@ class JobLedger:
         with self._lock:
             book = self._books.setdefault(job.project_id, BookJobs())
             book.jobs[job.id] = job
+            book.changes += 1
             book.queue.append(job.id)
             starts = not book.serving
             book.serving = True
@@ -108,6 +112,7 @@ class JobLedger:
                 return None
             job = evolve(book.jobs[book.queue.popleft()], state=JobState.RUNNING, started_at=self._clock.now())
             book.jobs[job.id] = job
+            book.changes += 1
             return job
 
     def get(self, job_id: JobId) -> Job:
@@ -160,6 +165,7 @@ class JobLedger:
                 return None
             updated = evolve(job, progress=change(job.progress))
             book.jobs[job_id] = updated
+            book.changes += 1
             return updated
 
     def cancel(self, job_id: JobId) -> Job:
@@ -180,6 +186,7 @@ class JobLedger:
                 book.queue.remove(job_id)
             cancelled = evolve(job, state=JobState.CANCELLED, finished_at=self._clock.now())
             book.jobs[job_id] = cancelled
+            book.changes += 1
             self._forget_oldest_ended(book)
             return cancelled
 
@@ -208,8 +215,21 @@ class JobLedger:
             else:
                 final = evolve(job, state=JobState.FAILED, error=end.error, finished_at=moment)
             book.jobs[job_id] = final
+            book.changes += 1
             self._forget_oldest_ended(book)
             return final, True
+
+    def changes(self, project_id: ProjectId) -> int:
+        """Return how many times a job of a book changed in this process.
+
+        :param project_id: The book.
+        :type project_id: ProjectId
+        :returns: The number of changes, none for a book without a job.
+        :rtype: int
+        """
+        with self._lock:
+            book = self._books.get(project_id)
+            return 0 if book is None else book.changes
 
     def _locate(self, job_id: JobId) -> tuple[BookJobs, Job]:
         """Find a job and the book that holds it, with the lock held.
@@ -332,6 +352,7 @@ class InMemoryJobBoard(JobBoard):
         self._publisher = publisher
         self._ledger = JobLedger(clock=clock, kept_ended=kept_ended)
         self._tasks: set[asyncio.Task[None]] = set()
+        self._process = uuid4().hex
 
     async def __aenter__(self) -> Self:
         """Open the board.
@@ -410,6 +431,17 @@ class InMemoryJobBoard(JobBoard):
         :rtype: Sequence[Job]
         """
         return self._ledger.listing(project_ids, active=active)
+
+    @override
+    def revision(self, project_id: ProjectId) -> str:
+        """Return the identifier of this process and the number of changes of the jobs of the book in it.
+
+        :param project_id: The book.
+        :type project_id: ProjectId
+        :returns: The mark of the jobs of the book.
+        :rtype: str
+        """
+        return f'{self._process}.{self._ledger.changes(project_id)}'
 
     @override
     async def cancel(self, job_id: JobId) -> Job:

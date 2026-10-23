@@ -18,12 +18,13 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyBookRepositories
-from bookreviver.domain.enums import BlockKind
+from bookreviver.domain.enums import BlockKind, BookResource
+from bookreviver.domain.events import BookChanged
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import SliceRequest
 from bookreviver.ports.persistence import NoChangeOpenError
 from tests.helpers.book_hold import HOLD_LIMIT_SECONDS
-from tests.helpers.builders import make_page, make_page_version, make_project
+from tests.helpers.builders import make_book_place, make_page, make_page_version, make_project
 from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 
@@ -162,6 +164,89 @@ def group_key(repos: BookRepositories) -> int | None:
     """
     assert isinstance(repos, SqlAlchemyBookRepositories)
     return repos.groups.find(GROUP)
+
+
+class TestBookVersion:
+    """Tests for the version of a book, which a change that writes a part of the book raises and announces."""
+
+    async def test_a_change_of_the_pages_raises_the_version_and_names_the_pages(
+        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_book_changes: RecordingEventBus
+    ) -> None:
+        """Verify adding a page raises the version by one and announces it with the pages, after the change.
+
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
+        """
+        project = make_project()
+        uow = fx_uow()
+        await store_project(uow, project, owner=fx_owner_id)
+        before = await uow.book_version(project.id)
+        fx_book_changes.published.clear()
+
+        await uow.change_book(project.id, lambda repos, _project: repos.pages.add(make_page()))
+
+        after = await uow.book_version(project.id)
+        expect(after == before + 1)
+        expect(
+            fx_book_changes.published
+            == [BookChanged(project_id=project.id, version=after, resources=frozenset({BookResource.PAGES}))]
+        )
+        assert_expectations()
+
+    async def test_a_change_that_writes_nothing_or_only_the_place_leaves_the_version(
+        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_book_changes: RecordingEventBus
+    ) -> None:
+        """Verify a change that reads, and one that writes only the place of the reader, announce nothing.
+
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
+        """
+        project = make_project()
+        uow = fx_uow()
+        await store_project(uow, project, owner=fx_owner_id)
+        before = await uow.book_version(project.id)
+        fx_book_changes.published.clear()
+
+        await uow.change_book(project.id, count_pages)
+        await uow.change_book(project.id, lambda repos, _project: repos.book_places.save(make_book_place()))
+
+        expect(await uow.book_version(project.id) == before)
+        expect(fx_book_changes.published == [])
+        assert_expectations()
+
+    async def test_a_bulk_delete_names_its_part_only_when_it_deleted_a_row(
+        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_book_changes: RecordingEventBus
+    ) -> None:
+        """Verify a delete of versions that finds none is no change, and one that deletes a version names the versions.
+
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_owner_id: Committed account owning the project.
+        :type fx_owner_id: AccountId
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
+        """
+        project, page = make_project(), make_page()
+        version = make_page_version(page_id=page.id)
+        uow = fx_uow()
+        await store_project(uow, project, page, owner=fx_owner_id)
+        await uow.change_book(project.id, lambda repos, _project: repos.page_versions.add(version))
+        fx_book_changes.published.clear()
+
+        await uow.change_book(project.id, lambda repos, _project: repos.page_versions.delete_many([MISSING_VERSION.id]))
+        await uow.change_book(project.id, lambda repos, _project: repos.page_versions.delete_many([version.id]))
+
+        assert [event.resources for event in fx_book_changes.published if isinstance(event, BookChanged)] == [
+            frozenset({BookResource.VERSIONS})
+        ]
 
 
 class TestGroups:

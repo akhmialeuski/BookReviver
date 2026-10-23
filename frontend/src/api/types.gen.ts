@@ -7460,6 +7460,12 @@ export type ListProjectJobsApiV1ProjectsProjectIdJobsGetResponse = ListProjectJo
 
 export type ProjectEventsApiV1ProjectsProjectIdEventsGetData = {
     body?: never;
+    headers?: {
+        /**
+         * Last-Event-Id
+         */
+        'last-event-id'?: string | null;
+    };
     path: {
         /**
          * Project Id

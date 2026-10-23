@@ -16,6 +16,7 @@ from bookreviver.app.settings import AuthSettings, Settings
 from bookreviver.domain.entities import Actor
 from tests.helpers.builders import new_account_id
 from tests.helpers.database import SharedDatabaseProvider, copy_schema_template, create_schema_template, database_file
+from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.processing import InProcessExecutorProvider
 from tests.helpers.seeding import commit_account
 
@@ -93,6 +94,16 @@ def fx_settings(tmp_path: Path) -> Settings:
         frontend_dir=tmp_path / 'no-frontend',
         auth=AuthSettings(secret=TEST_SECRET, cookie_secure=False),
     )
+
+
+@pytest.fixture
+def fx_book_changes() -> RecordingEventBus:
+    """Record the changes of the books the units of work of the test announce, apart from the events of the services.
+
+    :returns: The bus every unit of work of the test publishes to.
+    :rtype: RecordingEventBus
+    """
+    return RecordingEventBus()
 
 
 @pytest.fixture
@@ -182,7 +193,9 @@ async def fx_books(fx_settings: Settings, fx_book_template: Path) -> AsyncIterat
 
 
 @pytest.fixture
-def fx_uow(fx_database: SqlDatabase, fx_books: BookDatabases, fx_settings: Settings) -> UnitOfWorkFactory:
+def fx_uow(
+    fx_database: SqlDatabase, fx_books: BookDatabases, fx_settings: Settings, fx_book_changes: RecordingEventBus
+) -> UnitOfWorkFactory:
     """Return a function opening a new unit of work over the catalogue and the books of the test, as a request would get.
 
     :param fx_database: Catalogue of the test.
@@ -191,6 +204,8 @@ def fx_uow(fx_database: SqlDatabase, fx_books: BookDatabases, fx_settings: Setti
     :type fx_books: BookDatabases
     :param fx_settings: Settings of the test, whose job limit is the wait of a unit of work opened with none.
     :type fx_settings: Settings
+    :param fx_book_changes: Where the units of work announce the committed changes of the books.
+    :type fx_book_changes: RecordingEventBus
     :returns: Function opening a unit of work over ``fx_database`` and ``fx_books``.
     :rtype: UnitOfWorkFactory
     """
@@ -204,7 +219,7 @@ def fx_uow(fx_database: SqlDatabase, fx_books: BookDatabases, fx_settings: Setti
         :rtype: UnitOfWork
         """
         seconds = fx_settings.change_wait.job_seconds if wait_seconds is None else wait_seconds
-        return SqlAlchemyUnitOfWork(fx_database, fx_books, wait_seconds=seconds)
+        return SqlAlchemyUnitOfWork(fx_database, fx_books, publisher=fx_book_changes, wait_seconds=seconds)
 
     return open_unit_of_work
 

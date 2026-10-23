@@ -22,6 +22,7 @@ from bookreviver.adapters.persistence.sqlalchemy.accounts import (
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.app.container import build_container
 from bookreviver.ports.persistence import NoChangeOpenError, UnitOfWork
+from tests.helpers.fakes_jobs import RecordingEventBus
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
@@ -82,7 +83,7 @@ class CountingUnitOfWork(SqlAlchemyUnitOfWork):
         :param books: Registry of the books of the test.
         :type books: BookDatabases
         """
-        super().__init__(database, books)
+        super().__init__(database, books, publisher=RecordingEventBus())
         self.blocks = 0
 
     @override

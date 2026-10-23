@@ -14,6 +14,10 @@ to one database, which runs it in a thread of its own on a session of a transact
   transaction is rolled back and the exception goes on. ``change_book`` reads the project row first, so the work sees
   the project as the previous change committed it. Every file has a writer of its own, so a change of one book never
   waits for a change of another book or of the catalogue.
+- A change of a book that wrote a part of the book a reader asks for raises the version on the row of its project, in
+  its own transaction, and is announced as ``BookChanged`` with the new version and the parts it wrote once it has
+  committed. The parts are found from the tables the transaction wrote, by
+  :class:`~bookreviver.adapters.persistence.sqlalchemy.changes.WrittenParts`.
 
 A book is held open by the registry for the length of each call, so it is never closed under a transaction. The work
 receives the repositories of its file bound to the session of the transaction. The accounts of fastapi-users are
@@ -29,6 +33,7 @@ from typing import TYPE_CHECKING, cast, override
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import DatabaseError
 
+from bookreviver.adapters.persistence.sqlalchemy.changes import WrittenParts
 from bookreviver.adapters.persistence.sqlalchemy.repositories import (
     SqlAlchemyBookRepositories,
     SqlAlchemyCatalogueRepositories,
@@ -36,6 +41,7 @@ from bookreviver.adapters.persistence.sqlalchemy.repositories import (
 from bookreviver.adapters.persistence.sqlalchemy.tables import ProjectRow
 from bookreviver.domain.enums import BlockKind
 from bookreviver.domain.errors import InvalidArchiveError
+from bookreviver.domain.events import BookChanged
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS, UnitOfWork
 
 if TYPE_CHECKING:
@@ -48,6 +54,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Project
     from bookreviver.domain.ids import ProjectId
     from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories
+    from bookreviver.ports.runtime import EventPublisher
 
 
 # Where SQLite keeps a database that lives in memory alone, as the copy of a book does
@@ -62,10 +69,16 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     :ivar _catalogue: The database of the catalogue.
     :ivar _books: The registry of the databases of the books.
     :ivar _wait_seconds: How long a change waits for the writer of its file before it gives up with ``BookBusyError``.
+    :ivar _publisher: Where a committed change of a book is announced, with the new version of the book.
     """
 
     def __init__(
-        self, catalogue: SqlDatabase, books: BookDatabases, *, wait_seconds: float = DEFAULT_CHANGE_WAIT_SECONDS
+        self,
+        catalogue: SqlDatabase,
+        books: BookDatabases,
+        *,
+        publisher: EventPublisher,
+        wait_seconds: float = DEFAULT_CHANGE_WAIT_SECONDS,
     ) -> None:
         """Run the transactions of the catalogue and of the books with the given wait limit for a writer.
 
@@ -73,6 +86,8 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         :type catalogue: SqlDatabase
         :param books: The registry of the databases of the books, shared by every unit of work.
         :type books: BookDatabases
+        :param publisher: Where a committed change of a book is announced.
+        :type publisher: EventPublisher
         :param wait_seconds: How long a change waits for the writer of its file before it gives up with
                              ``BookBusyError``; :mod:`bookreviver.adapters.persistence.sqlalchemy.database` says what it
                              covers.
@@ -80,6 +95,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         """
         self._catalogue = catalogue
         self._books = books
+        self._publisher = publisher
         self._wait_seconds = wait_seconds
 
     @override
@@ -138,12 +154,16 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         :raises BookBusyError: If the writer of the book or SQLite's write lock was not free within the wait limit.
         """
         async with self._books.use(project_id) as database:
-            return await database.write(
+            done, changed = await database.write(
                 partial(self._work_on_book, project_id, work),
                 kind=BlockKind.BOOK,
                 book=project_id,
                 wait_seconds=self._wait_seconds,
             )
+        # The change is announced once it committed, so no reader asks for the new version before it is there
+        if changed is not None:
+            await self._publisher.publish(changed)
+        return done
 
     @override
     async def create_book(self, project: Project) -> Project:
@@ -174,6 +194,20 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         :type project_id: ProjectId
         """
         await self._books.remove(project_id)
+
+    @override
+    async def book_version(self, project_id: ProjectId) -> int:
+        """Read the version of a book in one transaction of a reader of the book.
+
+        :param project_id: The book.
+        :type project_id: ProjectId
+        :returns: The version of the book.
+        :rtype: int
+        :raises NotFoundError: If the book is not stored.
+        :raises BookTooNewError: If the file of the book is at a revision this code does not ship.
+        """
+        async with self._books.use(project_id) as database:
+            return await database.read(lambda session: session.scalars(select(ProjectRow.version)).one())
 
     @override
     async def snapshot_book(self, project_id: ProjectId) -> bytes:
@@ -222,7 +256,9 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         return await self._books.stored()
 
     @staticmethod
-    def _work_on_book[T](project_id: ProjectId, work: Callable[[BookRepositories, Project], T], session: Session) -> T:
+    def _work_on_book[T](
+        project_id: ProjectId, work: Callable[[BookRepositories, Project], T], session: Session
+    ) -> tuple[T, BookChanged | None]:
         """Read the project of a book on the session of a change, hand it with the repositories to the work, then prune.
 
         A group of pages is made by the first row that names it, so once the work is done the groups no row names any
@@ -239,9 +275,16 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         :raises NotFoundError: If the project is not stored.
         """
         repositories = SqlAlchemyBookRepositories(session)
+        written = WrittenParts(session)
         done = work(repositories, repositories.projects.get(project_id))
         repositories.groups.prune()
-        return done
+        session.flush()
+        if not written.parts:
+            return done, None
+        parts = frozenset(written.parts)
+        raise_version = update(ProjectRow).values(version=ProjectRow.version + 1).returning(ProjectRow.version)
+        raised = session.execute(raise_version)
+        return done, BookChanged(project_id=project_id, version=raised.scalar_one(), resources=parts)
 
     async def read_session[T](self, work: Callable[[Session], T]) -> T:
         """Run ``work`` over a session of the catalogue that only reads, which is not part of the port.
