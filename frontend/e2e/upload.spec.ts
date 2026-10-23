@@ -77,7 +77,7 @@ test('a reader uploads a folder and sees the book with its pages', async ({ page
     await page.getByLabel('Title', { exact: true }).fill(title);
     await page.getByRole('button', { name: 'Create book' }).click();
     await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
-    await expect(page).toHaveURL(/\/projects\/[^/]+\/stages\/import$/);
+    await expect(page).toHaveURL(/\/books\/[^/]+\/stages\/import$/);
   });
 
   await test.step('the Import stage has no files yet and the book waits for pages', async () => {

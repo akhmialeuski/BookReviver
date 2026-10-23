@@ -24,7 +24,7 @@ test('a reader turns the pages of a book in the viewer', async ({ page }) => {
 
   await test.step('open the viewer on the first page', async () => {
     await page.getByRole('link', { name: 'Read the book' }).click();
-    await expect(page).toHaveURL(/\/projects\/[^/]+\/viewer$/);
+    await expect(page).toHaveURL(/\/books\/[^/]+\/viewer$/);
     await expect(canvas).toHaveAttribute('data-state', 'ready');
     await expect(caption).toContainText('1 of 6');
     await expect(page.getByTestId('page-panel').getByRole('button')).toHaveCount(PAGES);
