@@ -151,7 +151,7 @@ async def _add_unimported(uow: UnitOfWork, book: Book, status_of: SourceStatus, 
     """
     rejected = status_of is SourceStatus.REJECTED
     source = evolve(
-        make_source(project_id=book.project.id, name=name, minutes=minutes),
+        make_source(name=name, minutes=minutes),
         kind=None,
         file_type=None,
         scan_count=0,
@@ -184,7 +184,8 @@ class TestListSources:
         expect([item.id for item in sources.items] == [fx_book.first.id, fx_book.second.id])
         expect((first.kind, first.file_type, first.file_name) == (SourceKind.PDF, FileType.PDF, 'part1.pdf'))
         expect([file.name for file in first.files] == ['part1.pdf'])
-        expect((first.size_bytes, first.sha256, first.scan_count) == (4096, fx_book.first.sha256, 12))
+        scans_of_first = sum(scan.source_id == fx_book.first.id for scan in fx_book.scans)
+        expect((first.size_bytes, first.sha256, first.scan_count) == (4096, fx_book.first.sha256, scans_of_first))
         expect((first.metadata, first.suggestion.title) == ({}, ''))
         expect((first.status, first.rejection, first.detail) == (SourceStatus.IMPORTED, None, ''))
         expect(sources.total == 2)
@@ -504,7 +505,7 @@ class TestListScans:
         """
         policy = ImagePolicy.LOSSLESS if full is Rendition.FULL_JPEG else ImagePolicy.COMPACT
         project = evolve(make_project(), image_policy=policy)
-        source = make_source(project_id=project.id)
+        source = make_source()
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True, full=full))
         await store_project(fx_uow(), project, owner=fx_actor.account_id, sources=[source], scans=[scan])
 
@@ -527,7 +528,7 @@ class TestListScans:
         :type fx_actor: Actor
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         await store_project(
             fx_uow(), project, owner=fx_actor.account_id, sources=[source], scans=[make_scan(source=source, number=0)]
         )

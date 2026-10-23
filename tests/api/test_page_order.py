@@ -79,15 +79,15 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     """
     project = make_project()
     first, second = (
-        make_source(project_id=project.id, name='part1.pdf'),
-        make_source(project_id=project.id, name='part2.pdf'),
+        make_source(name='part1.pdf'),
+        make_source(name='part2.pdf'),
     )
     scans = [
         *(make_scan(source=first, number=number) for number in range(FIRST_SOURCE_PAGES)),
         *(make_scan(source=second, number=number) for number in range(SECOND_SOURCE_PAGES)),
     ]
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(scans))
-    pages = [make_page(project_id=project.id, order_key=key, scan=scan) for key, scan in zip(keys, scans, strict=True)]
+    pages = [make_page(order_key=key, scan=scan) for key, scan in zip(keys, scans, strict=True)]
     await store_project(fx_uow(), project, *pages, owner=fx_actor.account_id, sources=[first, second], scans=scans)
     return Book(project=project, first=first, second=second, pages=pages)
 
@@ -234,7 +234,7 @@ class TestMovePage:
         :type fx_uow: UnitOfWorkFactory
         """
         stranger = make_project()
-        page = make_page(project_id=stranger.id)
+        page = make_page()
         await commit_project(fx_database, fx_uow(), stranger, page, owner=new_account_id())
 
         unknown = await fx_client.post(
@@ -333,7 +333,7 @@ class TestMovePages:
         :type fx_actor: Actor
         """
         other = make_project()
-        page = make_page(project_id=other.id)
+        page = make_page()
         await store_project(fx_uow(), other, page, owner=fx_actor.account_id)
 
         response = await fx_client.post(

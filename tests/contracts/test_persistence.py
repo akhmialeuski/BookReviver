@@ -109,9 +109,9 @@ async def _add_book(uow: UnitOfWork, project: Project) -> list[Page]:
     :returns: The pages in book order.
     :rtype: list[Page]
     """
-    source = make_source(project_id=project.id)
+    source = make_source()
     scans = [make_scan(source=source, number=number) for number in range(PAGE_COUNT)]
-    pages = [make_page(project_id=project.id, order_key=f'a{scan.number}', scan=scan) for scan in scans]
+    pages = [make_page(order_key=f'a{scan.number}', scan=scan) for scan in scans]
     pages[-1] = evolve(pages[-1], included=False)
 
     def add_rows(repos: BookRepositories, _project: Project) -> None:
@@ -130,11 +130,9 @@ async def _add_book(uow: UnitOfWork, project: Project) -> list[Page]:
     return pages
 
 
-def _unimported(project: Project, *, status: SourceStatus, name: str, minutes: int = 0, typed: bool = True) -> Source:
+def _unimported(*, status: SourceStatus, name: str, minutes: int = 0, typed: bool = True) -> Source:
     """Build a rejected or a skipped file of a project, which holds no scan and whose digest follows from its name.
 
-    :param project: Project owning the file.
-    :type project: Project
     :param status: Rejected or skipped.
     :type status: SourceStatus
     :param name: Name of the uploaded file; files of different names have different digests.
@@ -148,7 +146,7 @@ def _unimported(project: Project, *, status: SourceStatus, name: str, minutes: i
     """
     rejected = status is SourceStatus.REJECTED
     return evolve(
-        make_source(project_id=project.id, name=name, minutes=minutes),
+        make_source(name=name, minutes=minutes),
         kind=SourceKind.PDF if typed else None,
         file_type=FileType.PDF if typed else None,
         scan_count=0,
@@ -249,7 +247,7 @@ class TestProjectRepository:
         uow = fx_uow()
         await store_project(uow, project, owner=await fx_new_owner())
         await _add_book(uow, project)
-        placeholder = make_page(project_id=project.id, order_key=KEY_B0)
+        placeholder = make_page(order_key=KEY_B0)
         await uow.change_book(project.id, lambda repos, _project: repos.pages.add(placeholder))
         overview = await fx_uow().read_book(project.id, lambda repos: repos.projects.overview(project))
         assert (overview.page_count, overview.image_page_count) == (BOOK[0] + 1, PAGE_COUNT)
@@ -266,7 +264,7 @@ class TestProjectRepository:
         """
         project = make_project()
         text, cover, back = (
-            make_page(project_id=project.id, order_key=key, kind=kind)
+            make_page(order_key=key, kind=kind)
             for key, kind in (('a0', PageKind.TEXT), ('a1', PageKind.COVER), ('a2', PageKind.COVER))
         )
         await store_project(fx_uow(), project, back, text, cover, owner=await fx_new_owner())
@@ -285,7 +283,7 @@ class TestProjectRepository:
         """
         owner_id = await fx_new_owner()
         empty, project = make_project(), make_project()
-        first, second = (make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1'))
+        first, second = (make_page(order_key=key) for key in ('a0', 'a1'))
         await store_project(fx_uow(), empty, owner=owner_id)
         await store_project(fx_uow(), project, second, first, owner=owner_id)
 
@@ -457,13 +455,13 @@ class TestSourceRepository:
         """
         owner_id = await fx_new_owner()
         project, other = make_project(), make_project()
-        later = make_source(project_id=project.id, name=SECOND_PART_PDF, minutes=2)
+        later = make_source(name=SECOND_PART_PDF, minutes=2)
         earlier = evolve(
-            make_source(project_id=project.id, name=FIRST_PART_PDF, minutes=1),
+            make_source(name=FIRST_PART_PDF, minutes=1),
             metadata={'pdf_version': '1.4'},
             suggestion=MetadataSuggestion(title='Book', publication_year='1887'),
         )
-        foreign = make_source(project_id=other.id)
+        foreign = make_source()
         uow = fx_uow()
         await store_project(uow, project, owner=owner_id)
         await store_project(uow, other, owner=owner_id)
@@ -471,16 +469,13 @@ class TestSourceRepository:
         await uow.change_book(other.id, lambda repos, _project: repos.sources.add(foreign))
         reader = fx_uow()
         expect(await reader.read_book(project.id, lambda repos: repos.sources.get(earlier.id)) == earlier)
-        expect(
-            await reader.read_book(project.id, lambda repos: repos.sources.list_for_project(project.id))
-            == [earlier, later]
-        )
+        expect(await reader.read_book(project.id, lambda repos: repos.sources.list_all()) == [earlier, later])
         assert_expectations()
 
-    async def test_find_by_sha256_looks_only_inside_the_project(
+    async def test_find_by_sha256_looks_only_inside_the_book(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify a digest finds the project's source with it, and nothing in a project without it.
+        """Verify a digest finds the source of the book with it, and nothing in another book, whose file holds none.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -489,19 +484,13 @@ class TestSourceRepository:
         """
         owner_id = await fx_new_owner()
         project, other = make_project(), make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         uow = fx_uow()
         await store_project(uow, project, owner=owner_id, sources=[source])
         await store_project(uow, other, owner=owner_id)
         reader = fx_uow()
-        expect(
-            await reader.read_book(project.id, lambda repos: repos.sources.find_by_sha256(project.id, source.sha256))
-            == source
-        )
-        expect(
-            await reader.read_book(project.id, lambda repos: repos.sources.find_by_sha256(other.id, source.sha256))
-            is None
-        )
+        expect(await reader.read_book(project.id, lambda repos: repos.sources.find_by_sha256(source.sha256)) == source)
+        expect(await reader.read_book(other.id, lambda repos: repos.sources.find_by_sha256(source.sha256)) is None)
         assert_expectations()
 
     async def test_same_file_twice_in_a_project_raises_conflict(
@@ -515,8 +504,8 @@ class TestSourceRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        await store_project(fx_uow(), project, owner=await fx_new_owner(), sources=[make_source(project_id=project.id)])
-        duplicate = make_source(project_id=project.id)
+        await store_project(fx_uow(), project, owner=await fx_new_owner(), sources=[make_source()])
+        duplicate = make_source()
         with pytest.raises(ConflictError, match=duplicate.sha256):
             await fx_uow().change_book(project.id, lambda repos, _project: repos.sources.add(duplicate))
 
@@ -534,7 +523,7 @@ class TestSourceRepository:
         first, second = make_project(), make_project()
         uow = fx_uow()
         for project in (first, second):
-            await store_project(uow, project, owner=owner_id, sources=[make_source(project_id=project.id)])
+            await store_project(uow, project, owner=owner_id, sources=[make_source()])
 
         async def sources_of(project: Project) -> int:
             """Count the sources of one book.
@@ -544,7 +533,7 @@ class TestSourceRepository:
             :returns: How many sources it has.
             :rtype: int
             """
-            return await fx_uow().read_book(project.id, lambda repos: len(repos.sources.list_for_project(project.id)))
+            return await fx_uow().read_book(project.id, lambda repos: len(repos.sources.list_all()))
 
         counts = [await sources_of(project) for project in (first, second)]
         assert counts == [1, 1]
@@ -556,7 +545,7 @@ class TestSourceRepository:
         :type fx_uow: UnitOfWorkFactory
         """
         project_id = make_project().id
-        orphan = make_source(project_id=project_id)
+        orphan = make_source()
         # The book is not stored, so the change is refused before the source is added
         with pytest.raises(NotFoundError, match=str(project_id)):
             await fx_uow().change_book(project_id, lambda repos, _project: repos.sources.add(orphan))
@@ -573,8 +562,8 @@ class TestSourceRepository:
         """
         project = make_project()
         doomed, kept = (
-            make_source(project_id=project.id, name=FIRST_PDF),
-            make_source(project_id=project.id, name=SECOND_PDF),
+            make_source(name=FIRST_PDF),
+            make_source(name=SECOND_PDF),
         )
         await store_project(
             fx_uow(),
@@ -614,13 +603,11 @@ class TestSourceRepository:
             :param _project: Project of the book, which the work does not need.
             :type _project: Project
             """
-            repos.sources.delete(repos.sources.list_for_project(project.id)[0].id)
+            repos.sources.delete(repos.sources.list_all()[0].id)
 
         await fx_uow().change_book(project.id, delete_the_source)
         reader = fx_uow()
-        kept = await reader.read_book(
-            project.id, lambda repos: repos.pages.list_for_project(project.id, SliceRequest())
-        )
+        kept = await reader.read_book(project.id, lambda repos: repos.pages.list_window(SliceRequest()))
         expect(list(kept.items) == [evolve(page, scan_id=None) for page in pages])
         expect(
             await reader.read_book(project.id, lambda repos: repos.page_versions.list_for_page(pages[0].id))
@@ -643,7 +630,7 @@ class TestScanRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         scans = [make_scan(source=source, number=number) for number in range(PAGE_COUNT)]
         await store_project(fx_uow(), project, owner=await fx_new_owner(), sources=[source], scans=scans)
         unstored = make_scan(source=source, number=PAGE_COUNT)
@@ -665,7 +652,7 @@ class TestScanRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         scans = [
             evolve(make_scan(source=source, number=number), source_label=f'{number + 1}')
             for number in reversed(range(PAGE_COUNT))
@@ -690,19 +677,17 @@ class TestScanRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        first = make_source(project_id=project.id, name=FIRST_PART_PDF, minutes=1)
-        second = make_source(project_id=project.id, name=SECOND_PART_PDF, minutes=2)
+        first = make_source(name=FIRST_PART_PDF, minutes=1)
+        second = make_source(name=SECOND_PART_PDF, minutes=2)
         expected = [make_scan(source=source, number=number) for source in (first, second) for number in range(2)]
         # Insert against the expected order, so neither insertion nor storage order can pass for it
         await store_project(
             fx_uow(), project, owner=await fx_new_owner(), sources=[second, first], scans=list(reversed(expected))
         )
         reader = fx_uow()
-        everything = await reader.read_book(
-            project.id, lambda repos: repos.scans.list_for_project(project.id, SliceRequest())
-        )
+        everything = await reader.read_book(project.id, lambda repos: repos.scans.list_window(SliceRequest()))
         window = await reader.read_book(
-            project.id, lambda repos: repos.scans.list_for_project(project.id, SliceRequest(offset=1, limit=2))
+            project.id, lambda repos: repos.scans.list_window(SliceRequest(offset=1, limit=2))
         )
         expect([scan.id for scan in everything.items] == [scan.id for scan in expected])
         expect([scan.id for scan in window.items] == [scan.id for scan in expected[1:3]])
@@ -720,7 +705,7 @@ class TestScanRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         scan = make_scan(source=source, number=0)
         await store_project(fx_uow(), project, owner=await fx_new_owner(), sources=[source])
         ready = evolve(scan, renditions=Renditions(ready=True, version=2, full=Rendition.FULL_PNG))
@@ -751,9 +736,9 @@ class TestScanRepository:
         """
         owner_id = await fx_new_owner()
         project, other = make_project(), make_project()
-        first = make_source(project_id=project.id, name=FIRST_PDF, minutes=1)
-        second = make_source(project_id=project.id, name=SECOND_PDF, minutes=2)
-        foreign = make_source(project_id=other.id, name='c.pdf', minutes=0)
+        first = make_source(name=FIRST_PDF, minutes=1)
+        second = make_source(name=SECOND_PDF, minutes=2)
+        foreign = make_source(name='c.pdf', minutes=0)
         ready = Renditions(ready=True)
         scans = [
             make_scan(source=second, number=0),
@@ -765,7 +750,7 @@ class TestScanRepository:
         uow = fx_uow()
         await store_project(uow, project, owner=owner_id, sources=[second, first], scans=scans)
         await store_project(uow, other, owner=owner_id, sources=[foreign], scans=[make_scan(source=foreign, number=0)])
-        unready = await fx_uow().read_book(project.id, lambda repos: repos.scans.list_unready(project.id))
+        unready = await fx_uow().read_book(project.id, lambda repos: repos.scans.list_unready())
         assert [(scan.source_id, scan.number) for scan in unready] == [
             (first.id, 1),
             (first.id, 2),
@@ -784,10 +769,10 @@ class TestScanRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         uow = fx_uow()
         await store_project(uow, project, owner=await fx_new_owner())
-        expect(await uow.read_book(project.id, lambda repos: repos.scans.list_unready(project.id)) == [])
+        expect(await uow.read_book(project.id, lambda repos: repos.scans.list_unready()) == [])
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
 
         def add_ready_scan(repos: BookRepositories, _project: Project) -> None:
@@ -802,7 +787,7 @@ class TestScanRepository:
             repos.scans.add(scan)
 
         await uow.change_book(project.id, add_ready_scan)
-        expect(await fx_uow().read_book(project.id, lambda repos: repos.scans.list_unready(project.id)) == [])
+        expect(await fx_uow().read_book(project.id, lambda repos: repos.scans.list_unready()) == [])
         assert_expectations()
 
     async def test_same_number_twice_in_a_source_raises_conflict(
@@ -816,7 +801,7 @@ class TestScanRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         uow = fx_uow()
         await store_project(
             uow, project, owner=await fx_new_owner(), sources=[source], scans=[make_scan(source=source, number=0)]
@@ -836,7 +821,7 @@ class TestScanRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         uow = fx_uow()
         await store_project(uow, project, owner=await fx_new_owner())
         orphan = make_scan(source=source, number=0)
@@ -861,18 +846,16 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        pages = [make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS]
+        pages = [make_page(order_key=key) for key in UNORDERED_KEYS]
         await store_project(fx_uow(), project, *pages, owner=await fx_new_owner())
         reader = fx_uow()
-        everything = await reader.read_book(
-            project.id, lambda repos: repos.pages.list_for_project(project.id, SliceRequest())
-        )
+        everything = await reader.read_book(project.id, lambda repos: repos.pages.list_window(SliceRequest()))
         window = await reader.read_book(
-            project.id, lambda repos: repos.pages.list_for_project(project.id, SliceRequest(offset=1, limit=2))
+            project.id, lambda repos: repos.pages.list_window(SliceRequest(offset=1, limit=2))
         )
         beyond = await reader.read_book(
             project.id,
-            lambda repos: repos.pages.list_for_project(project.id, SliceRequest(offset=len(UNORDERED_KEYS), limit=1)),
+            lambda repos: repos.pages.list_window(SliceRequest(offset=len(UNORDERED_KEYS), limit=1)),
         )
         expect([page.order_key for page in everything.items] == [KEY_ZZ, KEY_A0, KEY_A0_UPPER, KEY_A0_LOWER, KEY_A1])
         expect([page.order_key for page in window.items] == [KEY_A0, KEY_A0_UPPER])
@@ -892,12 +875,12 @@ class TestPageRepository:
         owner_id = await fx_new_owner()
         project, empty = make_project(), make_project()
         uow = fx_uow()
-        pages = [make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS]
+        pages = [make_page(order_key=key) for key in UNORDERED_KEYS]
         await store_project(uow, project, *pages, owner=owner_id)
         await store_project(uow, empty, owner=owner_id)
         reader = fx_uow()
-        expect(await reader.read_book(project.id, lambda repos: repos.pages.last_order_key(project.id)) == KEY_A1)
-        expect(await reader.read_book(empty.id, lambda repos: repos.pages.last_order_key(empty.id)) is None)
+        expect(await reader.read_book(project.id, lambda repos: repos.pages.last_order_key()) == KEY_A1)
+        expect(await reader.read_book(empty.id, lambda repos: repos.pages.last_order_key()) is None)
         assert_expectations()
 
     async def test_kind_tally_counts_the_pages_with_an_image_of_each_kind(
@@ -915,10 +898,10 @@ class TestPageRepository:
         """
         owner_id = await fx_new_owner()
         project, other = make_project(), make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         scans = [make_scan(source=source, number=number) for number in range(5)]
         text, plate, blank, found, by_hand = (
-            make_page(project_id=project.id, order_key=f'a{number}', scan=scan, kind=kind)
+            make_page(order_key=f'a{number}', scan=scan, kind=kind)
             for number, (scan, kind) in enumerate(
                 zip(scans, (PageKind.TEXT, PageKind.PLATE, PageKind.BLANK, PageKind.TEXT, PageKind.PLATE), strict=True)
             )
@@ -934,13 +917,13 @@ class TestPageRepository:
             blank,
             found,
             by_hand,
-            make_page(project_id=project.id, order_key=KEY_B0),
+            make_page(order_key=KEY_B0),
             owner=owner_id,
             sources=[source],
             scans=scans,
         )
-        await store_project(uow, other, make_page(project_id=other.id, order_key=KEY_A0), owner=owner_id)
-        tally = await fx_uow().read_book(project.id, lambda repos: repos.pages.kind_tally(project.id))
+        await store_project(uow, other, make_page(order_key=KEY_A0), owner=owner_id)
+        tally = await fx_uow().read_book(project.id, lambda repos: repos.pages.kind_tally())
         assert dict(tally) == {
             RecipeKind.TEXT: 2,
             RecipeKind.COLOR_PICTURE: 1,
@@ -961,7 +944,7 @@ class TestPageRepository:
         owner_id = await fx_new_owner()
         project = make_project()
         uow = fx_uow()
-        book = [make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS]
+        book = [make_page(order_key=key) for key in UNORDERED_KEYS]
         book[0] = evolve(book[0], included=False)
         await store_project(uow, project, *book, owner=owner_id)
 
@@ -991,12 +974,12 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         spread, other = make_scan(source=source, number=0), make_scan(source=source, number=1)
-        right = evolve(make_page(project_id=project.id, order_key=KEY_A1, scan=spread), slot=2)
-        left = evolve(make_page(project_id=project.id, order_key=KEY_A2, scan=spread), slot=1)
-        elsewhere = make_page(project_id=project.id, order_key=KEY_A3, scan=other)
-        placeholder = make_page(project_id=project.id, order_key='a4')
+        right = evolve(make_page(order_key=KEY_A1, scan=spread), slot=2)
+        left = evolve(make_page(order_key=KEY_A2, scan=spread), slot=1)
+        elsewhere = make_page(order_key=KEY_A3, scan=other)
+        placeholder = make_page(order_key='a4')
         uow = fx_uow()
         await store_project(
             uow,
@@ -1025,16 +1008,16 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        book = [make_page(project_id=project.id, order_key=key) for key in (KEY_A0, KEY_A1, KEY_A2)]
+        book = [make_page(order_key=key) for key in (KEY_A0, KEY_A1, KEY_A2)]
         book[1] = evolve(book[1], included=False)
         await store_project(fx_uow(), project, *book, owner=await fx_new_owner())
         reader = fx_uow()
         everything = await reader.read_book(
-            project.id, lambda repos: repos.pages.list_for_project(project.id, SliceRequest(), included_only=True)
+            project.id, lambda repos: repos.pages.list_window(SliceRequest(), included_only=True)
         )
         window = await reader.read_book(
             project.id,
-            lambda repos: repos.pages.list_for_project(project.id, SliceRequest(offset=1, limit=1), included_only=True),
+            lambda repos: repos.pages.list_window(SliceRequest(offset=1, limit=1), included_only=True),
         )
         expect(list(everything.items) == [book[0], book[2]])
         expect((list(window.items), window.total) == ([book[2]], 2))
@@ -1051,10 +1034,10 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        book = [make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS]
+        book = [make_page(order_key=key) for key in UNORDERED_KEYS]
         await store_project(fx_uow(), project, *book, owner=await fx_new_owner())
         wanted = [book[0].id, book[2].id, book[4].id, book[2].id]
-        listed = await fx_uow().read_book(project.id, lambda repos: repos.pages.list_by_ids(project.id, wanted))
+        listed = await fx_uow().read_book(project.id, lambda repos: repos.pages.list_by_ids(wanted))
         # Stored as a1, a0v, a0V, a0, Zz, so these three are a1, a0V and Zz
         assert [page.order_key for page in listed] == [KEY_ZZ, KEY_A0_UPPER, KEY_A1]
 
@@ -1070,16 +1053,16 @@ class TestPageRepository:
         """
         owner_id = await fx_new_owner()
         project, other = make_project(), make_project()
-        own, foreign = make_page(project_id=project.id), make_page(project_id=other.id)
+        own, foreign = make_page(), make_page()
         uow = fx_uow()
         await store_project(uow, project, own, owner=owner_id)
         await store_project(uow, other, foreign, owner=owner_id)
         reader = fx_uow()
-        missing = make_page(project_id=project.id)
+        missing = make_page()
         with pytest.raises(NotFoundError, match=str(foreign.id)):
-            await reader.read_book(project.id, lambda repos: repos.pages.list_by_ids(project.id, [own.id, foreign.id]))
+            await reader.read_book(project.id, lambda repos: repos.pages.list_by_ids([own.id, foreign.id]))
         with pytest.raises(NotFoundError, match=str(missing.id)):
-            await reader.read_book(project.id, lambda repos: repos.pages.list_by_ids(project.id, [own.id, missing.id]))
+            await reader.read_book(project.id, lambda repos: repos.pages.list_by_ids([own.id, missing.id]))
 
     async def test_list_for_source_returns_the_pages_of_its_scans_in_book_order(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1093,8 +1076,8 @@ class TestPageRepository:
         """
         project = make_project()
         first, second = (
-            make_source(project_id=project.id, name=FIRST_PDF),
-            make_source(project_id=project.id, name=SECOND_PDF),
+            make_source(name=FIRST_PDF),
+            make_source(name=SECOND_PDF),
         )
         scans = [
             make_scan(source=first, number=0),
@@ -1102,10 +1085,9 @@ class TestPageRepository:
             make_scan(source=first, number=1),
         ]
         late, elsewhere, early = (
-            make_page(project_id=project.id, order_key=key, scan=scan)
-            for key, scan in zip((KEY_A2, KEY_A1, KEY_A0), scans, strict=True)
+            make_page(order_key=key, scan=scan) for key, scan in zip((KEY_A2, KEY_A1, KEY_A0), scans, strict=True)
         )
-        placeholder = make_page(project_id=project.id, order_key=KEY_A3)
+        placeholder = make_page(order_key=KEY_A3)
         uow = fx_uow()
         await store_project(
             uow,
@@ -1119,18 +1101,9 @@ class TestPageRepository:
             scans=scans,
         )
         reader = fx_uow()
-        expect(
-            await reader.read_book(project.id, lambda repos: repos.pages.list_for_source(project.id, first.id))
-            == [early, late]
-        )
-        expect(
-            await reader.read_book(project.id, lambda repos: repos.pages.list_for_source(project.id, second.id))
-            == [elsewhere]
-        )
-        expect(
-            await reader.read_book(project.id, lambda repos: repos.pages.list_for_source(project.id, SourceId(uuid4())))
-            == []
-        )
+        expect(await reader.read_book(project.id, lambda repos: repos.pages.list_for_source(first.id)) == [early, late])
+        expect(await reader.read_book(project.id, lambda repos: repos.pages.list_for_source(second.id)) == [elsewhere])
+        expect(await reader.read_book(project.id, lambda repos: repos.pages.list_for_source(SourceId(uuid4()))) == [])
         assert_expectations()
 
     async def test_neighbour_key_is_the_nearest_key_on_a_side_without_the_excluded_pages(
@@ -1145,10 +1118,10 @@ class TestPageRepository:
         """
         owner_id = await fx_new_owner()
         project, other = make_project(), make_project()
-        book = [make_page(project_id=project.id, order_key=key) for key in UNORDERED_KEYS]
+        book = [make_page(order_key=key) for key in UNORDERED_KEYS]
         uow = fx_uow()
         await store_project(uow, project, *book, owner=owner_id)
-        await store_project(uow, other, make_page(project_id=other.id, order_key=KEY_A0_W), owner=owner_id)
+        await store_project(uow, other, make_page(order_key=KEY_A0_W), owner=owner_id)
         # The keys are stored as a1, a0v, a0V, a0, Zz and sort as Zz, a0, a0V, a0v, a1
         by_key = {page.order_key: page.id for page in book}
 
@@ -1162,12 +1135,12 @@ class TestPageRepository:
             """
             pages = repos.pages
             return [
-                pages.neighbour_key(project.id, KEY_A0_UPPER, Side.BEFORE),
-                pages.neighbour_key(project.id, KEY_A0_UPPER, Side.AFTER),
-                pages.neighbour_key(project.id, KEY_A0_UPPER, Side.AFTER, excluding=[by_key[KEY_A0_LOWER]]),
-                pages.neighbour_key(project.id, KEY_A0_UPPER, Side.BEFORE, excluding=[by_key[KEY_A0], by_key[KEY_ZZ]]),
-                pages.neighbour_key(project.id, KEY_ZZ, Side.BEFORE),
-                pages.neighbour_key(project.id, KEY_A1, Side.AFTER),
+                pages.neighbour_key(KEY_A0_UPPER, Side.BEFORE),
+                pages.neighbour_key(KEY_A0_UPPER, Side.AFTER),
+                pages.neighbour_key(KEY_A0_UPPER, Side.AFTER, excluding=[by_key[KEY_A0_LOWER]]),
+                pages.neighbour_key(KEY_A0_UPPER, Side.BEFORE, excluding=[by_key[KEY_A0], by_key[KEY_ZZ]]),
+                pages.neighbour_key(KEY_ZZ, Side.BEFORE),
+                pages.neighbour_key(KEY_A1, Side.AFTER),
             ]
 
         assert await fx_uow().read_book(project.id, look_around) == [KEY_A0, KEY_A0_LOWER, KEY_A1, None, None, None]
@@ -1183,13 +1156,11 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        book = [make_page(project_id=project.id, order_key=key) for key in (KEY_A0, KEY_A1, KEY_A2)]
+        book = [make_page(order_key=key) for key in (KEY_A0, KEY_A1, KEY_A2)]
         await store_project(fx_uow(), project, *book, owner=await fx_new_owner())
         moved = [evolve(book[0], order_key='a1V'), evolve(book[1], order_key='a1G')]
         await fx_uow().change_book(project.id, lambda repos, _project: repos.pages.update_many(moved))
-        everything = await fx_uow().read_book(
-            project.id, lambda repos: repos.pages.list_for_project(project.id, SliceRequest())
-        )
+        everything = await fx_uow().read_book(project.id, lambda repos: repos.pages.list_window(SliceRequest()))
         assert list(everything.items) == [moved[1], moved[0], book[2]]
 
     async def test_get_after_update_many_in_the_same_change_returns_the_new_state(
@@ -1203,7 +1174,7 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        book = [make_page(project_id=project.id, order_key=key) for key in (KEY_A0, KEY_A1)]
+        book = [make_page(order_key=key) for key in (KEY_A0, KEY_A1)]
         await store_project(fx_uow(), project, *book, owner=await fx_new_owner())
         moved = [evolve(page, manual_label=PAGE_LABEL, included=False) for page in book]
 
@@ -1233,7 +1204,7 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        first, second = (make_page(project_id=project.id, order_key=key) for key in (KEY_A0, KEY_A1))
+        first, second = (make_page(order_key=key) for key in (KEY_A0, KEY_A1))
         await store_project(fx_uow(), project, first, second, owner=await fx_new_owner())
         taking = evolve(first, order_key=KEY_A1)
         uow = fx_uow()
@@ -1253,7 +1224,7 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        missing = make_page(project_id=project.id)
+        missing = make_page()
         uow = fx_uow()
         await store_project(uow, project, owner=await fx_new_owner())
         with pytest.raises(NotFoundError, match=str(missing.id)):
@@ -1268,13 +1239,13 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         await store_project(fx_uow(), project, page, owner=await fx_new_owner())
         changed = evolve(
             page, order_key=KEY_A0_UPPER, manual_label=PAGE_LABEL, kind=PageKind.TITLE, included=False, notes='Stamp'
         )
         await fx_uow().change_book(project.id, lambda repos, _project: repos.pages.update(changed))
-        assert await fx_uow().read_book(page.project_id, lambda repos: repos.pages.get(page.id)) == changed
+        assert await fx_uow().read_book(project.id, lambda repos: repos.pages.get(page.id)) == changed
 
     async def test_same_order_key_twice_in_a_project_raises_conflict(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -1290,8 +1261,8 @@ class TestPageRepository:
         project, other = make_project(), make_project()
         uow = fx_uow()
         for owned in (project, other):
-            await store_project(uow, owned, make_page(project_id=owned.id, order_key=KEY_A5), owner=owner_id)
-        clashing = make_page(project_id=project.id, order_key=KEY_A5)
+            await store_project(uow, owned, make_page(order_key=KEY_A5), owner=owner_id)
+        clashing = make_page(order_key=KEY_A5)
         with pytest.raises(ConflictError, match=KEY_A5):
             await uow.change_book(project.id, lambda repos, _project: repos.pages.add(clashing))
 
@@ -1306,19 +1277,19 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         scan = make_scan(source=source, number=0)
         uow = fx_uow()
         await store_project(
             uow,
             project,
-            *[make_page(project_id=project.id, order_key=key) for key in (KEY_A0, KEY_A1)],
-            make_page(project_id=project.id, order_key=KEY_A2, scan=scan),
+            *[make_page(order_key=key) for key in (KEY_A0, KEY_A1)],
+            make_page(order_key=KEY_A2, scan=scan),
             owner=await fx_new_owner(),
             sources=[source],
             scans=[scan],
         )
-        second_page = make_page(project_id=project.id, order_key=KEY_A3, scan=scan)
+        second_page = make_page(order_key=KEY_A3, scan=scan)
         with pytest.raises(ConflictError, match=str(scan.id)):
             await uow.change_book(project.id, lambda repos, _project: repos.pages.add(second_page))
 
@@ -1333,14 +1304,14 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        missing_scan = make_scan(source=make_source(project_id=project.id), number=0)
-        orphan = make_page(project_id=project.id)
+        missing_scan = make_scan(source=make_source(), number=0)
+        orphan = make_page()
         uow = fx_uow()
         # The book is not stored, so the change is refused before the page is added
         with pytest.raises(NotFoundError, match=str(project.id)):
             await uow.change_book(project.id, lambda repos, _project: repos.pages.add(orphan))
         await store_project(uow, project, owner=await fx_new_owner())
-        scanned = make_page(project_id=project.id, scan=missing_scan)
+        scanned = make_page(scan=missing_scan)
         with pytest.raises(NotFoundError, match=str(missing_scan.id)):
             await uow.change_book(project.id, lambda repos, _project: repos.pages.add(scanned))
 
@@ -1353,7 +1324,7 @@ class TestPageRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        doomed, kept = (make_page(project_id=project.id, order_key=key) for key in (KEY_A0, KEY_A1))
+        doomed, kept = (make_page(order_key=key) for key in (KEY_A0, KEY_A1))
         await store_project(
             fx_uow(),
             project,
@@ -1378,7 +1349,7 @@ class TestPageRepository:
         """
         project = make_project()
         await store_project(fx_uow(), project, owner=await fx_new_owner())
-        page = make_page(project_id=project.id)
+        page = make_page()
         with pytest.raises(NotFoundError, match=str(page.id)):
             await fx_uow().read_book(project.id, lambda repos: repos.pages.get(page.id))
 
@@ -1401,8 +1372,8 @@ class TestPageVersionRepository:
         """
         owner_id = await fx_new_owner()
         project, other = make_project(), make_project()
-        pages = [make_page(project_id=project.id, order_key=f'a{number}') for number in range(5)]
-        elsewhere = make_page(project_id=other.id)
+        pages = [make_page(order_key=f'a{number}') for number in range(5)]
+        elsewhere = make_page()
         pending = make_page_version(page_id=pages[0].id, minutes=3)
         failed = evolve(
             make_page_version(page_id=pages[1].id, minutes=1),
@@ -1425,10 +1396,10 @@ class TestPageVersionRepository:
         reader = fx_uow()
         found = await reader.read_book(
             project.id,
-            lambda repos: repos.page_versions.list_to_prepare(project.id, {'split.none', BLANK_PROCESSOR_KEY}),
+            lambda repos: repos.page_versions.list_to_prepare({'split.none', BLANK_PROCESSOR_KEY}),
         )
         only_blank = await reader.read_book(
-            project.id, lambda repos: repos.page_versions.list_to_prepare(project.id, {BLANK_PROCESSOR_KEY})
+            project.id, lambda repos: repos.page_versions.list_to_prepare({BLANK_PROCESSOR_KEY})
         )
         expect(list(found) == [failed, pending])
         expect(list(only_blank) == [failed])
@@ -1449,15 +1420,13 @@ class TestPageVersionRepository:
         """
         owner_id = await fx_new_owner()
         project, other = make_project(), make_project()
-        sources = [make_source(project_id=owned.id) for owned in (project, other)]
+        sources = [make_source() for owned in (project, other)]
         scans = [make_scan(source=sources[0], number=number) for number in range(5)]
         foreign_scan = make_scan(source=sources[1], number=0)
-        pages = [
-            make_page(project_id=project.id, order_key=f'a{number}', scan=scan) for number, scan in enumerate(scans)
-        ]
+        pages = [make_page(order_key=f'a{number}', scan=scan) for number, scan in enumerate(scans)]
         pages[1] = evolve(pages[1], included=False)
-        leaf = evolve(make_page(project_id=project.id, order_key=KEY_B0), origin=PageOrigin.BLANK)
-        foreign_page = make_page(project_id=other.id, scan=foreign_scan)
+        leaf = evolve(make_page(order_key=KEY_B0), origin=PageOrigin.BLANK)
+        foreign_page = make_page(scan=foreign_scan)
         sized = {WIDTH_PX: 2000, HEIGHT_PX: 3000, 'dpi': 300.0}
         # The sizes of the pages in order: counted, kept out, generated, recording none, recording no resolution, foreign
         recorded: list[dict[str, Any]] = [sized, sized, sized, {}, {WIDTH_PX: 10, HEIGHT_PX: 20}, sized]
@@ -1497,7 +1466,7 @@ class TestPageVersionRepository:
             scans=[foreign_scan],
             versions=[versions[-1]],
         )
-        found = await fx_uow().read_book(project.id, lambda repos: repos.page_versions.base_sizes(project.id))
+        found = await fx_uow().read_book(project.id, lambda repos: repos.page_versions.base_sizes())
         assert sorted(found, key=attrgetter(WIDTH_PX)) == [
             PageSize(width_px=10, height_px=20, dpi=None),
             PageSize(width_px=2000, height_px=3000, dpi=300.0),
@@ -1514,9 +1483,9 @@ class TestPageVersionRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         scan = make_scan(source=source, number=0)
-        page = make_page(project_id=project.id, scan=scan, kind=PageKind.BLANK)
+        page = make_page(scan=scan, kind=PageKind.BLANK)
         await store_project(fx_uow(), project, page, owner=await fx_new_owner(), sources=[source], scans=[scan])
 
         def fill(repos: BookRepositories, _project: Project, *, blank_fill: BlankFill) -> Page:
@@ -1540,8 +1509,7 @@ class TestPageVersionRepository:
         expect(stored.blank_fill is BlankFill.SCAN)
         expect((leaf.blank_fill, leaf.scan_id) == (BlankFill.PAPER, scan.id))
         expect(
-            (await fx_uow().read_book(page.project_id, lambda repos: repos.pages.get(page.id))).blank_fill
-            is BlankFill.SCAN
+            (await fx_uow().read_book(project.id, lambda repos: repos.pages.get(page.id))).blank_fill is BlankFill.SCAN
         )
         assert_expectations()
 
@@ -1556,7 +1524,7 @@ class TestPageVersionRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         await store_project(fx_uow(), project, page, owner=await fx_new_owner())
 
         def set_content(
@@ -1583,7 +1551,7 @@ class TestPageVersionRepository:
         by_user = partial(set_content, content_type=ContentType.COLOR_PICTURE, by_hand=True)
         added = await fx_uow().change_book(project.id, by_found)
         found = await fx_uow().change_book(project.id, by_user)
-        by_hand = await fx_uow().read_book(page.project_id, lambda repos: repos.pages.get(page.id))
+        by_hand = await fx_uow().read_book(project.id, lambda repos: repos.pages.get(page.id))
         expect((added.content_type, added.content_by_hand) == (None, False))
         expect((found.content_type, found.content_by_hand) == (ContentType.BW_PICTURE, False))
         expect((by_hand.content_type, by_hand.content_by_hand) == (ContentType.COLOR_PICTURE, True))
@@ -1600,7 +1568,7 @@ class TestPageVersionRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        page, other = (make_page(project_id=project.id, order_key=key) for key in (KEY_A0, KEY_A1))
+        page, other = (make_page(order_key=key) for key in (KEY_A0, KEY_A1))
         base = make_page_version(page_id=page.id, minutes=1)
         later = evolve(make_page_version(page_id=page.id, minutes=2), input_id=base.id, renditions=None)
         await store_project(
@@ -1614,7 +1582,7 @@ class TestPageVersionRepository:
         reader = fx_uow()
         expect(await reader.read_book(project.id, lambda repos: repos.page_versions.get(later.id)) == later)
         expect(
-            await reader.read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id))
+            await reader.read_book(project.id, lambda repos: repos.page_versions.list_for_page(page.id))
             == [base, later]
         )
         assert_expectations()
@@ -1630,7 +1598,7 @@ class TestPageVersionRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        first, second, unasked = (make_page(project_id=project.id, order_key=key) for key in (KEY_A0, KEY_A1, KEY_A2))
+        first, second, unasked = (make_page(order_key=key) for key in (KEY_A0, KEY_A1, KEY_A2))
         first_base = make_page_version(page_id=first.id, minutes=2)
         second_base = make_page_version(page_id=second.id, minutes=1)
         derived = evolve(make_page_version(page_id=first.id, minutes=3), input_id=first_base.id)
@@ -1662,7 +1630,7 @@ class TestPageVersionRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         missing_input = make_page_version(page_id=page.id)
         orphan = make_page_version(page_id=page.id)
         uow = fx_uow()
@@ -1685,12 +1653,12 @@ class TestPageVersionRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         base = make_page_version(page_id=page.id)
         later = evolve(make_page_version(page_id=page.id, minutes=1), input_id=base.id)
         await store_project(fx_uow(), project, page, owner=await fx_new_owner(), versions=[base, later])
         await fx_uow().change_book(project.id, lambda repos, _project: repos.page_versions.delete(base.id))
-        listed = await fx_uow().read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id))
+        listed = await fx_uow().read_book(project.id, lambda repos: repos.page_versions.list_for_page(page.id))
         assert listed == [evolve(later, input_id=None)]
 
     async def test_update_of_a_version_read_before_its_page_was_deleted_raises_not_found(
@@ -1707,11 +1675,11 @@ class TestPageVersionRepository:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         version = make_page_version(page_id=page.id)
         await store_project(fx_uow(), project, page, owner=await fx_new_owner(), versions=[version])
         reading = fx_uow()
-        [read] = await reading.read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id))
+        [read] = await reading.read_book(project.id, lambda repos: repos.page_versions.list_for_page(page.id))
         await fx_uow().change_book(project.id, lambda repos, _project: repos.pages.delete(page.id))
 
         with pytest.raises(NotFoundError, match=version.id):
@@ -1719,7 +1687,7 @@ class TestPageVersionRepository:
                 project.id, lambda repos, _project: repos.page_versions.update(evolve(read, state=VersionState.READY))
             )
 
-        assert await fx_uow().read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id)) == []
+        assert await fx_uow().read_book(project.id, lambda repos: repos.page_versions.list_for_page(page.id)) == []
 
 
 class TestSourceStatus:
@@ -1736,9 +1704,9 @@ class TestSourceStatus:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        rejected = _unimported(project, status=SourceStatus.REJECTED, name=FIRST_PDF, minutes=1)
-        untyped = _unimported(project, status=SourceStatus.REJECTED, name=NOTES_TXT, minutes=2, typed=False)
-        skipped = _unimported(project, status=SourceStatus.SKIPPED, name=SECOND_PDF, minutes=3)
+        rejected = _unimported(status=SourceStatus.REJECTED, name=FIRST_PDF, minutes=1)
+        untyped = _unimported(status=SourceStatus.REJECTED, name=NOTES_TXT, minutes=2, typed=False)
+        skipped = _unimported(status=SourceStatus.SKIPPED, name=SECOND_PDF, minutes=3)
         await store_project(fx_uow(), project, owner=await fx_new_owner(), sources=[rejected, untyped, skipped])
         reader = fx_uow()
 
@@ -1776,16 +1744,16 @@ class TestSourceStatus:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        imported = make_source(project_id=project.id)
+        imported = make_source()
         repeats = [
-            evolve(_unimported(project, status=status, name=FIRST_PDF), sha256=imported.sha256)
+            evolve(_unimported(status=status, name=FIRST_PDF), sha256=imported.sha256)
             for status in (SourceStatus.REJECTED, SourceStatus.REJECTED, SourceStatus.SKIPPED)
         ]
         uow = fx_uow()
         await store_project(uow, project, owner=await fx_new_owner(), sources=[imported])
         await uow.change_book(project.id, lambda repos, _project: repos.sources.add_many(repeats))
 
-        listed = await fx_uow().read_book(project.id, lambda repos: repos.sources.list_unimported(project.id))
+        listed = await fx_uow().read_book(project.id, lambda repos: repos.sources.list_unimported())
 
         assert {source.id for source in listed} == {source.id for source in repeats}
 
@@ -1800,11 +1768,11 @@ class TestSourceStatus:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        imported = make_source(project_id=project.id)
-        rejected = evolve(_unimported(project, status=SourceStatus.REJECTED, name=FIRST_PDF), sha256=imported.sha256)
+        imported = make_source()
+        rejected = evolve(_unimported(status=SourceStatus.REJECTED, name=FIRST_PDF), sha256=imported.sha256)
         uow = fx_uow()
         await store_project(uow, project, owner=await fx_new_owner(), sources=[imported, rejected])
-        duplicate = make_source(project_id=project.id)
+        duplicate = make_source()
 
         with pytest.raises(ConflictError, match=duplicate.sha256):
             await fx_uow().change_book(project.id, lambda repos, _project: repos.sources.add(duplicate))
@@ -1820,9 +1788,9 @@ class TestSourceStatus:
         :type fx_new_owner: OwnerFactory
         """
         project = make_project()
-        imported = make_source(project_id=project.id, name=FIRST_PDF)
-        rejected = _unimported(project, status=SourceStatus.REJECTED, name=SECOND_PDF)
-        skipped = _unimported(project, status=SourceStatus.SKIPPED, name=FIRST_PART_PDF)
+        imported = make_source(name=FIRST_PDF)
+        rejected = _unimported(status=SourceStatus.REJECTED, name=SECOND_PDF)
+        skipped = _unimported(status=SourceStatus.SKIPPED, name=FIRST_PART_PDF)
         await store_project(fx_uow(), project, owner=await fx_new_owner(), sources=[imported, rejected, skipped])
         reader = fx_uow()
 
@@ -1834,11 +1802,9 @@ class TestSourceStatus:
             :returns: What the lookup finds for the rejected file and for the skipped one.
             :rtype: list[Source | None]
             """
-            return [repos.sources.find_by_sha256(project.id, source.sha256) for source in (rejected, skipped)]
+            return [repos.sources.find_by_sha256(source.sha256) for source in (rejected, skipped)]
 
-        expect(
-            await reader.read_book(project.id, lambda repos: repos.sources.list_for_project(project.id)) == [imported]
-        )
+        expect(await reader.read_book(project.id, lambda repos: repos.sources.list_all()) == [imported])
         expect(await reader.read_book(project.id, find_digests) == [None, None])
         assert_expectations()
 
@@ -1854,17 +1820,15 @@ class TestSourceStatus:
         """
         owner_id = await fx_new_owner()
         project, other = make_project(), make_project()
-        later = _unimported(project, status=SourceStatus.SKIPPED, name=SECOND_PDF, minutes=2)
-        earlier = _unimported(project, status=SourceStatus.REJECTED, name=FIRST_PDF, minutes=1)
+        later = _unimported(status=SourceStatus.SKIPPED, name=SECOND_PDF, minutes=2)
+        earlier = _unimported(status=SourceStatus.REJECTED, name=FIRST_PDF, minutes=1)
         uow = fx_uow()
+        await store_project(uow, project, owner=owner_id, sources=[later, earlier, make_source(name=NOTES_TXT)])
         await store_project(
-            uow, project, owner=owner_id, sources=[later, earlier, make_source(project_id=project.id, name=NOTES_TXT)]
-        )
-        await store_project(
-            uow, other, owner=owner_id, sources=[_unimported(other, status=SourceStatus.REJECTED, name=FIRST_PDF)]
+            uow, other, owner=owner_id, sources=[_unimported(status=SourceStatus.REJECTED, name=FIRST_PDF)]
         )
 
-        listed = await fx_uow().read_book(project.id, lambda repos: repos.sources.list_unimported(project.id))
+        listed = await fx_uow().read_book(project.id, lambda repos: repos.sources.list_unimported())
 
         assert listed == [earlier, later]
 
@@ -1880,8 +1844,8 @@ class TestSourceStatus:
         """
         owner_id = await fx_new_owner()
         project, other = make_project(), make_project()
-        imported = make_source(project_id=project.id)
-        foreign = _unimported(other, status=SourceStatus.REJECTED, name=FIRST_PDF)
+        imported = make_source()
+        foreign = _unimported(status=SourceStatus.REJECTED, name=FIRST_PDF)
         uow = fx_uow()
         await store_project(
             uow,
@@ -1889,20 +1853,18 @@ class TestSourceStatus:
             owner=owner_id,
             sources=[
                 imported,
-                _unimported(project, status=SourceStatus.REJECTED, name=FIRST_PDF),
-                _unimported(project, status=SourceStatus.SKIPPED, name=SECOND_PDF),
+                _unimported(status=SourceStatus.REJECTED, name=FIRST_PDF),
+                _unimported(status=SourceStatus.SKIPPED, name=SECOND_PDF),
             ],
         )
         await store_project(uow, other, owner=owner_id, sources=[foreign])
 
-        await fx_uow().change_book(project.id, lambda repos, _project: repos.sources.delete_unimported(project.id))
+        await fx_uow().change_book(project.id, lambda repos, _project: repos.sources.delete_unimported())
 
         reader = fx_uow()
-        expect(await reader.read_book(project.id, lambda repos: repos.sources.list_unimported(project.id)) == [])
-        expect(
-            await reader.read_book(project.id, lambda repos: repos.sources.list_for_project(project.id)) == [imported]
-        )
-        expect(await reader.read_book(other.id, lambda repos: repos.sources.list_unimported(other.id)) == [foreign])
+        expect(await reader.read_book(project.id, lambda repos: repos.sources.list_unimported()) == [])
+        expect(await reader.read_book(project.id, lambda repos: repos.sources.list_all()) == [imported])
+        expect(await reader.read_book(other.id, lambda repos: repos.sources.list_unimported()) == [foreign])
         assert_expectations()
 
     async def test_project_overview_counts_imported_sources_only(
@@ -1918,9 +1880,9 @@ class TestSourceStatus:
         owner_id = await fx_new_owner()
         project = make_project()
         sources = [
-            make_source(project_id=project.id),
-            _unimported(project, status=SourceStatus.REJECTED, name=FIRST_PDF),
-            _unimported(project, status=SourceStatus.SKIPPED, name=SECOND_PDF),
+            make_source(),
+            _unimported(status=SourceStatus.REJECTED, name=FIRST_PDF),
+            _unimported(status=SourceStatus.SKIPPED, name=SECOND_PDF),
         ]
         await store_project(fx_uow(), project, owner=owner_id, sources=sources)
 

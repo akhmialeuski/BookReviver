@@ -150,10 +150,10 @@ class TestPageMapper:
         :type fx_owner_id: AccountId
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         scan = make_scan(source=source, number=11)
         page = evolve(
-            make_page(project_id=project.id, order_key='a0V', scan=scan),
+            make_page(order_key='a0V', scan=scan),
             manual_label=ROMAN_LABEL,
             kind=PageKind.PLATE,
             slot=2,
@@ -187,7 +187,7 @@ class TestPageVersionMapper:
         :type renditions: Renditions | None
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         base = make_page_version(page_id=page.id)
         version = evolve(
             make_page_version(page_id=page.id, minutes=1),
@@ -227,7 +227,7 @@ class TestPageVersionMapper:
         :type transform: Transform
         """
         project = make_project()
-        page = make_page(project_id=project.id)
+        page = make_page()
         version = evolve(make_page_version(page_id=page.id), transform=transform)
         uow = fx_uow()
         await store_project(uow, project, page, versions=[version], owner=fx_owner_id)
@@ -249,7 +249,7 @@ class TestSourceMapper:
         """
         project = make_project()
         source = evolve(
-            make_source(project_id=project.id),
+            make_source(),
             kind=SourceKind.DJVU,
             file_type=FileType.DJVU,
             file_name='kazki/index.djvu',
@@ -260,8 +260,10 @@ class TestSourceMapper:
             metadata=FULL_METADATA,
             suggestion=FULL_SUGGESTION,
         )
+        # The count is read from the scans of the source, so the source is stored with as many
+        scans = [make_scan(source=source, number=number) for number in range(source.scan_count)]
         uow = fx_uow()
-        await store_project(uow, project, sources=[source], owner=fx_owner_id)
+        await store_project(uow, project, sources=[source], scans=scans, owner=fx_owner_id)
         assert await uow.read_book(project.id, lambda repos: repos.sources.get(source.id)) == source
 
     @pytest.mark.parametrize(
@@ -288,7 +290,7 @@ class TestSourceMapper:
         """
         project = make_project()
         source = evolve(
-            make_source(project_id=project.id),
+            make_source(),
             kind=None,
             file_type=None,
             scan_count=0,
@@ -313,7 +315,7 @@ class TestScanMapper:
         :type fx_owner_id: AccountId
         """
         project = make_project()
-        source = make_source(project_id=project.id)
+        source = make_source()
         scan = evolve(
             make_scan(source=source, number=11),
             source_label=ROMAN_LABEL,

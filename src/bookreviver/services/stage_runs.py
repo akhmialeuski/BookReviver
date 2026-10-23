@@ -445,7 +445,7 @@ class StageWork:
         if measure is not None:
             fresh[page.id] = measure
         return await self._uow.read_book(
-            page.project_id, lambda repos: BookBlocks(repos).by_the_book(page.project_id, stage, params, fresh)
+            self._project.id, lambda repos: BookBlocks(repos).by_the_book(stage, params, fresh)
         )
 
     async def _execute(self, version: PageVersion, run: StepRun) -> PageVersion:
@@ -673,7 +673,7 @@ class StageWork:
                 raise
             if made.state is VersionState.READY:
                 span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.RAN)
-                await self._publisher.publish(PageVersionReady(project_id=layers.page.project_id, version=made))
+                await self._publisher.publish(PageVersionReady(project_id=self._project.id, version=made))
             return made
 
 
@@ -924,12 +924,12 @@ class RecipeRun(StageWork):
                 changed.extend(self._splits.unsplit(repos, undoing))
             return undoing, changed
 
-        if (done := await self._uow.change_book(page.project_id, apply)) is None:
+        if (done := await self._uow.change_book(self._project.id, apply)) is None:
             return RunOutcome.SKIPPED
         undoing, changed = done
         if undoing is not None:
             await self._splits.finish_unsplit(undoing)
-        await self._records.announce(page.project_id, changed)
+        await self._records.announce(self._project.id, changed)
         return RunOutcome.DONE
 
     async def measure(self, page: Page, recipe: Recipe, *, through_step: int | None = None) -> BlockMeasure | None:
@@ -991,8 +991,8 @@ class RecipeRun(StageWork):
         params = self._book_fields([step for _, step in recipe.indexed_steps_through(through_step)])
         if params is not None:
             self._books[recipe.id] = await self._uow.read_book(
-                recipe.project_id,
-                lambda repos: BookBlocks(repos).by_the_book(recipe.project_id, recipe.stage, params, fresh),
+                self._project.id,
+                lambda repos: BookBlocks(repos).by_the_book(recipe.stage, params, fresh),
             )
 
     @override
@@ -1008,7 +1008,7 @@ class RecipeRun(StageWork):
         :type stage: Stage
         """
         try:
-            recipe = (await self._recipes.for_pages(page.project_id, stage, [page]))[page.id]
+            recipe = (await self._recipes.for_pages(self._project.id, stage, [page]))[page.id]
         except NotFoundError:
             # A stage without a recipe, such as the page order, has nothing to run again
             return
@@ -1043,11 +1043,11 @@ class RecipeRun(StageWork):
             return self._records.mark_failed(repos, page.id, recipe.stage, recipe_id=recipe.id)
 
         try:
-            record = await self._uow.change_book(page.project_id, fail)
+            record = await self._uow.change_book(self._project.id, fail)
         except NotFoundError:
             await self._runner.discard(self._keys.page(page.id))
             return RunOutcome.SKIPPED
-        await self._records.announce(page.project_id, [record])
+        await self._records.announce(self._project.id, [record])
         return RunOutcome.FAILED
 
 

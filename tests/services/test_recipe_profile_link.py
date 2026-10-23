@@ -14,6 +14,7 @@ from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Project, Recipe, RecipeProfile
+    from bookreviver.domain.ids import ProjectId
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -69,17 +70,19 @@ async def another_book(kit: ProcessingKit, actor: Actor) -> Project:
     return project
 
 
-async def stored_recipe(kit: ProcessingKit, recipe: Recipe) -> Recipe:
+async def stored_recipe(kit: ProcessingKit, project_id: ProjectId, recipe: Recipe) -> Recipe:
     """Read a recipe back through a new unit of work.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
     :param recipe: The recipe to read.
     :type recipe: Recipe
     :returns: The recipe as committed.
     :rtype: Recipe
     """
-    return await kit.uow().read_book(recipe.project_id, lambda repos: repos.recipes.get(recipe.id))
+    return await kit.uow().read_book(project_id, lambda repos: repos.recipes.get(recipe.id))
 
 
 class TestProfileOrder:
@@ -195,7 +198,7 @@ class TestReplaceProfile:
         await fx_ordered_kit.profiles().replace(
             actor, profile.id, ProfileDraft(name=RENAMED, steps=[Step(processor_key=SECOND_KEY)])
         )
-        assert await stored_recipe(fx_ordered_kit, applied.recipe) == applied.recipe
+        assert await stored_recipe(fx_ordered_kit, project.id, applied.recipe) == applied.recipe
 
     async def test_a_profile_of_another_account_is_not_found(self, fx_ordered_kit: ProcessingKit) -> None:
         """Reject replacing a profile the account does not own.
@@ -222,7 +225,7 @@ class TestRecipeLink:
         actor, project = await fx_ordered_kit.seed_project()
         profile = await save_profile(fx_ordered_kit, actor)
         applied = (await fx_ordered_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.BLANK)).recipe
-        assert (await stored_recipe(fx_ordered_kit, applied)).profile_id == profile.id
+        assert (await stored_recipe(fx_ordered_kit, project.id, applied)).profile_id == profile.id
 
     async def test_the_default_profile_of_a_new_book_is_the_profile_of_its_first_recipe(
         self, fx_ordered_kit: ProcessingKit
@@ -251,7 +254,7 @@ class TestRecipeLink:
         key = RecipeKey(Stage.GEOMETRY, recipe.id)
         linked = await fx_ordered_kit.profiles().link(actor, project.id, key, profile.id)
         assert linked == evolve(recipe, profile_id=profile.id)
-        assert await stored_recipe(fx_ordered_kit, recipe) == linked
+        assert await stored_recipe(fx_ordered_kit, project.id, recipe) == linked
         unlinked = await fx_ordered_kit.profiles().link(actor, project.id, key, None)
         assert unlinked == recipe
 
@@ -280,7 +283,7 @@ class TestRecipeLink:
         profile = await save_profile(fx_ordered_kit, actor)
         applied = (await fx_ordered_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)).recipe
         await fx_ordered_kit.profiles().remove(actor, profile.id)
-        assert (await stored_recipe(fx_ordered_kit, applied)).profile_id is None
+        assert (await stored_recipe(fx_ordered_kit, project.id, applied)).profile_id is None
 
     async def test_a_profile_of_another_stage_is_refused(self, fx_ordered_kit: ProcessingKit) -> None:
         """Reject linking a recipe to a profile whose steps belong to another stage.
@@ -309,4 +312,4 @@ class TestRecipeLink:
             await fx_ordered_kit.profiles().link(owner, project.id, key, theirs.id)
         with pytest.raises(NotFoundError):
             await fx_ordered_kit.profiles().link(stranger, foreign_project.id, key, theirs.id)
-        assert (await stored_recipe(fx_ordered_kit, recipe)).profile_id is None
+        assert (await stored_recipe(fx_ordered_kit, project.id, recipe)).profile_id is None

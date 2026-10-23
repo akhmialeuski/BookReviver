@@ -43,18 +43,22 @@ class SeededPage:
     """A book of one page that has its base version, with the results the test commits on it.
 
     :ivar kit: What the processing services of the test share.
+    :ivar project_id: Identifier of the project of the book.
     :ivar page: The page.
     """
 
-    def __init__(self, kit: ProcessingKit, page: Page) -> None:
-        """Hold the kit and the page the results are committed on.
+    def __init__(self, kit: ProcessingKit, project_id: ProjectId, page: Page) -> None:
+        """Hold the kit, the book and the page the results are committed on.
 
         :param kit: What the processing services of the test share.
         :type kit: ProcessingKit
+        :param project_id: Identifier of the project of the book.
+        :type project_id: ProjectId
         :param page: The page.
         :type page: Page
         """
         self.kit = kit
+        self.project_id = project_id
         self.page = page
 
     @classmethod
@@ -68,8 +72,8 @@ class SeededPage:
         """
         _, project = await kit.seed_project()
         page, _ = await kit.seed_scan_page(project, order_key='a0')
-        await kit.seed_base_version(page)
-        return cls(kit, page)
+        await kit.seed_base_version(project.id, page)
+        return cls(kit, project.id, page)
 
     async def result(
         self,
@@ -114,7 +118,7 @@ class SeededPage:
             repos.page_versions.add(version)
             repos.page_stages.save(record)
 
-        await self.kit.uow().change_book(self.page.project_id, add_result)
+        await self.kit.uow().change_book(self.project_id, add_result)
         return version
 
     async def base(self) -> PageVersion:
@@ -125,7 +129,7 @@ class SeededPage:
         """
         return (
             await self.kit.uow().read_book(
-                self.page.project_id, lambda repos: repos.page_versions.list_for_page(self.page.id)
+                self.project_id, lambda repos: repos.page_versions.list_for_page(self.page.id)
             )
         )[0]
 
@@ -138,7 +142,7 @@ class SeededPage:
         :rtype: PageStage
         """
         return await self.kit.uow().read_book(
-            self.page.project_id, lambda repos: repos.page_stages.get(PageStageKey(self.page.id, stage))
+            self.project_id, lambda repos: repos.page_stages.get(PageStageKey(self.page.id, stage))
         )
 
 
@@ -221,7 +225,7 @@ class TestMarkStale:
             found = await read(project_id, work)
             if not changed:
                 changed = True
-                await fx_kit.uow().change_book(page.page.project_id, request_changes_record)
+                await fx_kit.uow().change_book(project_id, request_changes_record)
             return found
 
         monkeypatch.setattr(uow, 'read_book', read_then_change)
@@ -229,7 +233,7 @@ class TestMarkStale:
 
         marked = await OutdatedResults(uow=uow, catalogue=fx_kit.catalogue, clock=fx_kit.clock).mark_stale()
 
-        stored = await fx_kit.uow().read_book(page.page.project_id, lambda repos: repos.page_stages.find(record.key))
+        stored = await fx_kit.uow().read_book(page.project_id, lambda repos: repos.page_stages.find(record.key))
         assert (marked, stored) == ([], left)
 
     async def test_fresh_stage_made_by_an_older_version_of_a_processor_becomes_stale(

@@ -142,9 +142,7 @@ class StageRecords:
             repos, (record for record in repos.page_stages.list_for_pages(page_ids) if record.stage in stages)
         )
 
-    def mark_group_stale(
-        self, repos: BookRepositories, project_id: ProjectId, page_id: PageId, labels: Collection[str]
-    ) -> list[PageStage]:
+    def mark_group_stale(self, repos: BookRepositories, page_id: PageId, labels: Collection[str]) -> list[PageStage]:
         """Mark the stages of a page stale in which a group it joined or left has values for a step.
 
         A page takes the values of its group over those of its side, so a page that changes its group runs with other
@@ -152,8 +150,6 @@ class StageRecords:
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param project_id: Project owning the page and the values.
-        :type project_id: ProjectId
         :param page_id: Page whose group changed.
         :type page_id: PageId
         :param labels: The group the page was in and the one it is in now, either of which may be empty for none.
@@ -163,14 +159,12 @@ class StageRecords:
         """
         stages = {
             values.stage
-            for values in repos.step_values.list_for_project(project_id)
+            for values in repos.step_values.list_all()
             if values.scope is ValueScope.GROUP and values.group_label in labels
         }
         return self.mark_pages_stale(repos, [page_id], stages)
 
-    def mark_sides_stale(
-        self, repos: BookRepositories, project_id: ProjectId, page_ids: Collection[PageId]
-    ) -> list[PageStage]:
+    def mark_sides_stale(self, repos: BookRepositories, page_ids: Collection[PageId]) -> list[PageStage]:
         """Mark the stages of pages stale in which the odd pages or the even pages have values for a step.
 
         A page takes the values of the odd or the even pages by its place in the book, so a page whose place changed
@@ -178,14 +172,12 @@ class StageRecords:
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param project_id: Project owning the pages and the values.
-        :type project_id: ProjectId
         :param page_ids: Pages that stand on the other side of the book than they did.
         :type page_ids: Collection[PageId]
         :returns: The records that became stale, none for a page that has not been through such a stage.
         :rtype: list[PageStage]
         """
-        return self.mark_pages_stale(repos, page_ids, self.side_stages(repos, project_id))
+        return self.mark_pages_stale(repos, page_ids, self.side_stages(repos))
 
     def watching_sides(self, repos: BookRepositories, project_id: ProjectId) -> SideWatch:
         """Watch the pages of a project for the ones that a block of code turns over to the other side of the book.
@@ -200,19 +192,15 @@ class StageRecords:
         return SideWatch(records=self, repos=repos, project_id=project_id)
 
     @staticmethod
-    def side_stages(repos: BookRepositories, project_id: ProjectId) -> set[Stage]:
+    def side_stages(repos: BookRepositories) -> set[Stage]:
         """Find the stages in which the odd pages or the even pages of a project have values for a step.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param project_id: Project owning the values.
-        :type project_id: ProjectId
         :returns: The stages, none when no side has a value.
         :rtype: set[Stage]
         """
-        return {
-            values.stage for values in repos.step_values.list_for_project(project_id) if values.scope in SIDE_SCOPES
-        }
+        return {values.stage for values in repos.step_values.list_all() if values.scope in SIDE_SCOPES}
 
     def mark_content_stale(self, repos: BookRepositories, page_id: PageId) -> list[PageStage]:
         """Mark every stage of a page after the page order stale, because what the page shows changed.
@@ -358,7 +346,7 @@ class SideWatch:
         :returns: The watch.
         :rtype: Self
         """
-        if self._records.side_stages(self._repos, self._project_id):
+        if self._records.side_stages(self._repos):
             self._before = self._order()
         return self
 
@@ -376,7 +364,7 @@ class SideWatch:
         """
         if exc_type is None and self._before is not None:
             turned = pages_changing_side(self._before, self._order())
-            self.turned = self._records.mark_sides_stale(self._repos, self._project_id, turned)
+            self.turned = self._records.mark_sides_stale(self._repos, turned)
 
     def _order(self) -> list[PageId]:
         """Read the pages of the project in book order, the placeholders and the pages kept out of the book included.
@@ -384,4 +372,4 @@ class SideWatch:
         :returns: The identifiers of the pages, by place.
         :rtype: list[PageId]
         """
-        return [page.id for page in book_pages(self._repos.pages, self._project_id)]
+        return [page.id for page in book_pages(self._repos.pages)]

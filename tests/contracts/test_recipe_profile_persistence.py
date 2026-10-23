@@ -293,8 +293,8 @@ class TestRecipeProfileRepository:
         owner_id = await fx_new_owner()
         profile = make_recipe_profile(account_id=owner_id)
         project = make_project()
-        linked = evolve(make_recipe(project_id=project.id), profile_id=profile.id)
-        unlinked = make_recipe(project_id=project.id, stage=Stage.CLEANUP)
+        linked = evolve(make_recipe(), profile_id=profile.id)
+        unlinked = make_recipe(stage=Stage.CLEANUP)
 
         def profile_ids(repos: BookRepositories) -> list[object]:
             """Read the profile each of the two recipes names.

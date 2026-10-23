@@ -57,7 +57,6 @@ export function section(
 ): PaginationSectionSchema {
   return {
     id,
-    project_id: 'book',
     first_page_id: firstPageId,
     name: '',
     style: 'arabic',

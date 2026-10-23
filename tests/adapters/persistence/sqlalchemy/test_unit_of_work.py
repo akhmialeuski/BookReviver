@@ -45,7 +45,7 @@ WRITE_ARG: str = 'write'
 # A write of each form the repositories use, which a read refuses, by the name of the test case; each takes the
 # repositories and the stored project of the test
 WRITES: dict[str, Callable[[BookRepositories, Project], object]] = {
-    'insert-through-the-session': lambda repos, project: repos.pages.add(make_page(project_id=project.id)),
+    'insert-through-the-session': lambda repos, project: repos.pages.add(make_page()),
     'update-through-the-session': lambda repos, project: repos.projects.update(
         evolve(project, details=evolve(project.details, title=NEW_TITLE))
     ),
@@ -53,17 +53,17 @@ WRITES: dict[str, Callable[[BookRepositories, Project], object]] = {
 }
 
 
-def count_pages(repos: BookRepositories, project: Project) -> int:
+def count_pages(repos: BookRepositories, _project: Project) -> int:
     """Count the pages of the book.
 
     :param repos: Repositories of the transaction.
     :type repos: BookRepositories
-    :param project: The project of the book.
-    :type project: Project
+    :param _project: The project of the book.
+    :type _project: Project
     :returns: How many pages the transaction sees.
     :rtype: int
     """
-    return repos.pages.list_for_project(project.id, SliceRequest()).total
+    return repos.pages.list_window(SliceRequest()).total
 
 
 class TestRead:
@@ -115,8 +115,8 @@ class TestRead:
         """
         project = make_project()
         uow = fx_uow()
-        await store_project(uow, project, make_page(project_id=project.id, order_key='a0'), owner=fx_owner_id)
-        written = make_page(project_id=project.id, order_key='a1')
+        await store_project(uow, project, make_page(order_key='a0'), owner=fx_owner_id)
+        written = make_page(order_key='a1')
         snapshot_taken, change_committed = threading.Event(), threading.Event()
         seen: list[tuple[int, int]] = []
 

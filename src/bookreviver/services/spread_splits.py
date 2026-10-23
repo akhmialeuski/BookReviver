@@ -313,7 +313,7 @@ class SpreadSplit:
         :returns: The stage records of the pages that turned over and became stale, which the caller announces.
         :rtype: list[PageStage]
         """
-        self._labels.settle(repos, self._project.id, leaving=[right.id for right in undoing.rights])
+        self._labels.settle(repos, leaving=[right.id for right in undoing.rights])
         with self._records.watching_sides(repos, self._project.id) as watch:
             for right in undoing.rights:
                 repos.pages.delete(right.id)
@@ -357,11 +357,10 @@ class SpreadSplit:
         siblings = repos.pages.list_for_scan(page.scan_id)
         if (right := next((sibling for sibling in siblings if sibling.slot == Page.RIGHT_HALF), None)) is not None:
             return Halves(left=left, right=right, left_changes=left != page, right_is_new=False)
-        upper = repos.pages.neighbour_key(self._project.id, left.order_key, Side.AFTER)
+        upper = repos.pages.neighbour_key(left.order_key, Side.AFTER)
         moment = self._clock.now()
         right = Page(
             id=PageId(uuid4()) if right_id is None else right_id,
-            project_id=self._project.id,
             order_key=self._order_keys.between(lower=left.order_key, upper=upper),
             origin=PageOrigin.SCAN,
             scan_id=page.scan_id,
@@ -583,7 +582,7 @@ class SpreadSplit:
             repos.pages.update(halves.left)
         if len(made) > 1 and halves.right_is_new:
             # The new half takes a number, which may be past what its section can write
-            self._labels.settle(repos, self._project.id)
+            self._labels.settle(repos)
         for version in made:
             if (earlier := repos.page_versions.find(version.id)) is None:
                 repos.page_versions.add(version)

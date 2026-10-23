@@ -63,10 +63,10 @@ class TestFailedImportOnSqlAlchemy:
         sources, unimported, scans, pages = await uow.read_book(
             project.id,
             lambda repos: (
-                repos.sources.list_for_project(project.id),
-                repos.sources.list_unimported(project.id),
-                repos.scans.list_for_project(project.id, EVERY_SLICE),
-                repos.pages.list_for_project(project.id, EVERY_SLICE),
+                repos.sources.list_all(),
+                repos.sources.list_unimported(),
+                repos.scans.list_window(EVERY_SLICE),
+                repos.pages.list_window(EVERY_SLICE),
             ),
         )
         stored = rig.stored_job(job)

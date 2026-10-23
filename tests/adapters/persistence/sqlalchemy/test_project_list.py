@@ -56,7 +56,7 @@ async def _store_books(uow: UnitOfWork, board: JobBoard, owner_id: AccountId, co
     """
     for minutes in range(count):
         project = make_project(minutes=minutes)
-        page = make_page(project_id=project.id)
+        page = make_page()
         await store_project(uow, project, page, owner=owner_id)
         await uow.change_book(project.id, partial(_add_stage_record, page_id=page.id))
         board.put(make_job(project_id=project.id, minutes=minutes))

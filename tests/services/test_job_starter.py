@@ -50,7 +50,7 @@ async def prepared_page(kit: ProcessingKit) -> tuple[Actor, Project, Page]:
     """
     actor, project = await kit.seed_project()
     page, _ = await kit.seed_scan_page(project)
-    await kit.seed_base_version(page)
+    await kit.seed_base_version(project.id, page)
     return actor, project, page
 
 

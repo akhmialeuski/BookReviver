@@ -86,7 +86,7 @@ async def _seed_book(uow: UnitOfWork, owner_id: AccountId) -> tuple[Project, lis
     :rtype: tuple[Project, list[Page], list[PageVersion]]
     """
     project = make_project()
-    pages = [make_page(project_id=project.id, order_key=f'a{number}') for number in range(COUNT)]
+    pages = [make_page(order_key=f'a{number}') for number in range(COUNT)]
     versions = [make_page_version(page_id=page.id, minutes=number) for number, page in enumerate(pages)]
     await store_project(uow, project, *pages, owner=owner_id, versions=versions)
 
@@ -136,7 +136,7 @@ class TestListsLongerThanAChunk:
         listed_pages, listed_versions, listed_stages = await uow.read_book(
             project.id,
             lambda repos: (
-                repos.pages.list_by_ids(project.id, [page.id for page in reversed(pages)]),
+                repos.pages.list_by_ids([page.id for page in reversed(pages)]),
                 repos.page_versions.list_by_ids([version.id for version in reversed(versions)]),
                 repos.page_stages.list_for_pages([page.id for page in reversed(pages)]),
             ),

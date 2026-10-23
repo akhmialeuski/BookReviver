@@ -45,7 +45,6 @@ from bookreviver.domain.values import BookDetails, ProcessorRef, Progress, Rendi
 from tests.helpers.builders import (
     EPOCH,
     SPLIT_NONE,
-    make_book_place,
     make_job,
     make_page,
     make_page_edit,
@@ -83,15 +82,6 @@ class TestLibraryEntry:
         assert_expectations()
 
 
-class TestBookPlace:
-    """Tests for BookPlace, which is the one place of a book."""
-
-    def test_the_place_is_stored_under_the_identifier_of_its_book(self) -> None:
-        """Verify a book has one place, so the key of the place is the identifier of the book."""
-        project_id = make_project().id
-        assert make_book_place(project_id=project_id).key == project_id
-
-
 class TestJobStage:
     """Tests for Job.stage."""
 
@@ -125,7 +115,7 @@ class TestPage:
         :param origin: Origin of a page that has no scan.
         :type origin: PageOrigin
         """
-        page = make_page(project_id=make_project().id)
+        page = make_page()
         with pytest.raises(ValueError, match='has no scan'):
             evolve(page, origin=origin, scan_id=ScanId(uuid4()))
 
@@ -136,20 +126,18 @@ class TestPage:
         :param fill: The leaf the page shows.
         :type fill: BlankFill
         """
-        project = make_project()
-        scan = make_scan(source=make_source(project_id=project.id), number=0)
-        page = make_page(project_id=project.id, scan=scan, kind=PageKind.BLANK)
+        scan = make_scan(source=make_source(), number=0)
+        page = make_page(scan=scan, kind=PageKind.BLANK)
 
         assert evolve(page, blank_fill=fill).is_leaf
 
     def test_a_page_that_keeps_its_scan_is_no_leaf_and_a_generated_page_is_one(self) -> None:
         """Verify the scan is no leaf, and a page generated as a white leaf is one without choosing anything."""
-        project = make_project()
-        scan = make_scan(source=make_source(project_id=project.id), number=0)
-        scanned = make_page(project_id=project.id, scan=scan, kind=PageKind.BLANK)
+        scan = make_scan(source=make_source(), number=0)
+        scanned = make_page(scan=scan, kind=PageKind.BLANK)
 
         assert not scanned.is_leaf
-        assert evolve(make_page(project_id=project.id), origin=PageOrigin.BLANK).is_leaf
+        assert evolve(make_page(), origin=PageOrigin.BLANK).is_leaf
 
     @pytest.mark.parametrize(
         ('kind', 'origin'),
@@ -170,21 +158,20 @@ class TestPage:
         :param origin: Where the image of the page comes from.
         :type origin: PageOrigin
         """
-        project = make_project()
-        scan = make_scan(source=make_source(project_id=project.id), number=0) if origin is PageOrigin.SCAN else None
-        page = evolve(make_page(project_id=project.id, scan=scan, kind=kind), origin=origin)
+        scan = make_scan(source=make_source(), number=0) if origin is PageOrigin.SCAN else None
+        page = evolve(make_page(scan=scan, kind=kind), origin=origin)
 
         with pytest.raises(ValueError, match='blank page cut from a scan'):
             evolve(page, blank_fill=BlankFill.WHITE)
 
     def test_page_whose_source_was_deleted_keeps_its_origin(self) -> None:
         """Verify a page cut from a scan stays one when its scan is gone, since it keeps its own copy of the image."""
-        page = evolve(make_page(project_id=make_project().id), origin=PageOrigin.SCAN)
+        page = evolve(make_page(), origin=PageOrigin.SCAN)
         assert (page.origin, page.scan_id) == (PageOrigin.SCAN, None)
 
     def test_an_empty_manual_label_is_refused(self) -> None:
         """Verify a manual label is never empty, since None is what leaves the number to the sections."""
-        page = make_page(project_id=make_project().id)
+        page = make_page()
         with pytest.raises(ValueError, match='manual_label'):
             evolve(page, manual_label='')
 
@@ -305,7 +292,7 @@ class TestPageContent:
         :param expected: What the page shows.
         :type expected: ContentType
         """
-        page = make_page(project_id=make_project().id, kind=kind)
+        page = make_page(kind=kind)
         expect(page.content is expected)
         expect(page.content_source is ContentSource.KIND)
         assert_expectations()
@@ -333,7 +320,7 @@ class TestPageContent:
         :param expected: What the page shows.
         :type expected: ContentType
         """
-        page = evolve(make_page(project_id=make_project().id, kind=kind), content_type=detected)
+        page = evolve(make_page(kind=kind), content_type=detected)
         assert page.content is expected
 
     @pytest.mark.parametrize('kind', [PageKind.TEXT, PageKind.PLATE])
@@ -349,7 +336,7 @@ class TestPageContent:
         :type chosen: ContentType
         """
         page = evolve(
-            make_page(project_id=make_project().id, kind=kind),
+            make_page(kind=kind),
             content_type=chosen,
             content_by_hand=True,
         )
@@ -386,7 +373,7 @@ class TestPageContent:
         :type expected: RecipeKind
         """
         page = evolve(
-            make_page(project_id=make_project().id, kind=kind),
+            make_page(kind=kind),
             content_type=content_type,
             content_by_hand=by_hand,
         )
@@ -398,13 +385,13 @@ class TestPageContent:
 
     def test_a_detected_page_says_it_was_found(self) -> None:
         """Verify the source of a detected type on a page that is no plate is the detection."""
-        page = evolve(make_page(project_id=make_project().id), content_type=ContentType.BW_PICTURE)
+        page = evolve(make_page(), content_type=ContentType.BW_PICTURE)
         assert page.content_source is ContentSource.DETECTED
 
     def test_a_content_type_set_by_hand_has_to_be_given(self) -> None:
         """Reject a page that is said to have its type set by hand and has none."""
         with pytest.raises(ValueError, match='set by hand has to be given'):
-            evolve(make_page(project_id=make_project().id), content_by_hand=True)
+            evolve(make_page(), content_by_hand=True)
 
 
 class TestRecipe:
@@ -426,7 +413,7 @@ class TestRecipe:
         :returns: The recipe.
         :rtype: Recipe
         """
-        return evolve(make_recipe(project_id=make_project().id), steps=steps)
+        return evolve(make_recipe(), steps=steps)
 
     def test_enabled_steps_are_the_steps_that_are_on_in_their_order(self) -> None:
         """Verify the steps a run takes are the ones switched on, in the order of the recipe."""

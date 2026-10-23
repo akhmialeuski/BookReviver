@@ -189,7 +189,7 @@ def summary_of(
     :returns: The summary.
     :rtype: StageSummary
     """
-    tally = None if counts is None else StageTally(project_id=PROJECT_ID, stage=stage, **counts._asdict())
+    tally = None if counts is None else StageTally(stage=stage, **counts._asdict())
     return StageSummary.of(stage, available=available, pages=pages, tally=tally)
 
 
@@ -382,7 +382,6 @@ def recipe_of(*steps: Step) -> Recipe:
     moment = datetime(2026, 1, 1, tzinfo=UTC)
     return Recipe(
         id=RecipeId(uuid4()),
-        project_id=PROJECT_ID,
         stage=Stage.GEOMETRY,
         kind=RecipeKind.TEXT,
         steps=steps,
@@ -622,7 +621,11 @@ class TestStageManual:
 
 
 class TestStageRowMarkedBad:
-    """Tests for StageRow.marked_bad."""
+    """Tests for StageRow.marked_bad.
+
+    :ivar BAD: A version marked bad.
+    :ivar GOOD: A version marked good.
+    """
 
     BAD: PageVersion = evolve(make_page_version(page_id=PageId(uuid4())), mark=ResultMark.BAD)
     GOOD: PageVersion = evolve(make_page_version(page_id=PageId(uuid4())), mark=ResultMark.GOOD)

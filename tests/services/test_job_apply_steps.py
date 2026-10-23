@@ -47,7 +47,7 @@ async def untiled_version(kit: ProcessingKit) -> tuple[Actor, Project, PageVersi
     """
     actor, project = await kit.seed_project()
     page, _ = await kit.seed_scan_page(project)
-    base = await kit.seed_base_version(page)
+    base = await kit.seed_base_version(project.id, page)
     untiled = evolve(base, id=UNTILED_VERSION_ID, tiles_ready=False)
     await kit.uow().change_book(project.id, lambda repos, _project: repos.page_versions.add(untiled))
     await kit.store_files(untiled, project.id)
@@ -195,7 +195,7 @@ class TestRunPage:
             :rtype: RunOutcome
             :raises ConflictError: Always.
             """
-            await fx_kit.uow().change_book(page.project_id, lambda repos, _project: repos.pages.delete(page.id))
+            await fx_kit.uow().change_book(project.id, lambda repos, _project: repos.pages.delete(page.id))
             raise ConflictError(STEP_FAILURE)
 
         monkeypatch.setattr(RecipeRun, 'run', delete_the_page_and_fail)
@@ -219,5 +219,5 @@ async def kit_with_page(kit: ProcessingKit) -> tuple[Actor, Project]:
     """
     actor, project = await kit.seed_project()
     page, _ = await kit.seed_scan_page(project)
-    await kit.seed_base_version(page)
+    await kit.seed_base_version(project.id, page)
     return actor, project

@@ -92,7 +92,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
     :rtype: Book
     """
     project = make_project()
-    first, second = make_source(project_id=project.id, name='a.pdf'), make_source(project_id=project.id, name='b.jpg')
+    first, second = make_source(name='a.pdf'), make_source(name='b.jpg')
     scans = [
         evolve(
             make_scan(source=source, number=0),
@@ -102,8 +102,8 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
         )
         for source, label in ((first, ''), (second, 'xii'))
     ]
-    shown = make_page(project_id=project.id, order_key='a0', scan=scans[0])
-    placeholder = evolve(make_page(project_id=project.id, order_key='a1'), kind=PageKind.COVER, notes='Missing')
+    shown = make_page(order_key='a0', scan=scans[0])
+    placeholder = evolve(make_page(order_key='a1'), kind=PageKind.COVER, notes='Missing')
     base = BaseVersions.split_none(page=shown, scan=scans[0], state=VersionState.READY, moment=EPOCH)
     await store_project(
         fx_uow(),
@@ -127,6 +127,8 @@ async def _page(client: httpx.AsyncClient, book: Book, page_id: object) -> PageS
 
     :param client: Client of the running application.
     :type client: httpx.AsyncClient
+    :param book: Book of the signed-in account.
+    :type book: Book
     :param page_id: Identifier of the page.
     :type page_id: object
     :returns: The page.
@@ -425,7 +427,7 @@ class TestDeletePage:
         response = await fx_client.delete(f'{fx_book.pages_path}/{fx_book.shown.id}')
 
         again = await fx_client.get(f'{fx_book.pages_path}/{fx_book.shown.id}')
-        kept = await fx_uow().read_book(fx_book.shown.project_id, lambda repos: repos.scans.list_by_ids([scan_id]))
+        kept = await fx_uow().read_book(fx_book.project.id, lambda repos: repos.scans.list_by_ids([scan_id]))
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
         expect(again.status_code == status.HTTP_404_NOT_FOUND)
         expect([scan.id for scan in kept] == [scan_id])
@@ -559,7 +561,7 @@ class TestAttachScan:
         :type fx_actor: Actor
         """
         other = make_project()
-        source = make_source(project_id=other.id)
+        source = make_source()
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
         await store_project(fx_uow(), other, owner=fx_actor.account_id, sources=[source], scans=[scan])
         path = f'{fx_book.pages_path}/{fx_book.placeholder.id}/scan'

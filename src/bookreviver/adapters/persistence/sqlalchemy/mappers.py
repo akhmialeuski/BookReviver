@@ -21,6 +21,7 @@ from attrs import asdict
 
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow, RecipeProfileRow
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
+    BOOK_PLACE_ID,
     BookPlaceRow,
     PageRow,
     PageStageRow,
@@ -296,7 +297,6 @@ class PageMapper(RowMapper[Page, PageRow]):
         """
         return Page(
             id=PageId(row.id),
-            project_id=ProjectId(row.project_id),
             order_key=row.order_key,
             manual_label=row.manual_label,
             kind=row.kind,
@@ -324,7 +324,6 @@ class PageMapper(RowMapper[Page, PageRow]):
         """
         return PageRow(
             id=entity.id,
-            project_id=entity.project_id,
             order_key=entity.order_key,
             manual_label=entity.manual_label,
             kind=entity.kind,
@@ -356,7 +355,6 @@ class PaginationSectionMapper(RowMapper[PaginationSection, PaginationSectionRow]
         """
         return PaginationSection(
             id=PaginationSectionId(row.id),
-            project_id=ProjectId(row.project_id),
             first_page_id=PageId(row.first_page_id),
             name=row.name,
             style=row.style,
@@ -379,7 +377,6 @@ class PaginationSectionMapper(RowMapper[PaginationSection, PaginationSectionRow]
         """
         return PaginationSectionRow(
             id=entity.id,
-            project_id=entity.project_id,
             first_page_id=entity.first_page_id,
             name=entity.name,
             style=entity.style,
@@ -492,7 +489,6 @@ class SourceMapper(RowMapper[Source, SourceRow]):
         """
         return Source(
             id=SourceId(row.id),
-            project_id=ProjectId(row.project_id),
             kind=row.kind,
             file_type=row.file_type,
             file_name=row.file_name,
@@ -527,14 +523,12 @@ class SourceMapper(RowMapper[Source, SourceRow]):
         """
         return SourceRow(
             id=entity.id,
-            project_id=entity.project_id,
             kind=entity.kind,
             file_type=entity.file_type,
             file_name=entity.file_name,
             files=[asdict(stored) for stored in entity.files],
             size_bytes=entity.size_bytes,
             sha256=entity.sha256,
-            scan_count=entity.scan_count,
             metadata_=dict(entity.metadata),
             suggestion={
                 'title': entity.suggestion.title,
@@ -579,7 +573,6 @@ class ScanMapper(RowMapper[Scan, ScanRow]):
         )
         return Scan(
             id=ScanId(row.id),
-            project_id=ProjectId(row.project_id),
             source_id=SourceId(row.source_id),
             number=row.number,
             source_label=row.source_label,
@@ -599,7 +592,6 @@ class ScanMapper(RowMapper[Scan, ScanRow]):
         facts = entity.facts
         return ScanRow(
             id=entity.id,
-            project_id=entity.project_id,
             source_id=entity.source_id,
             number=entity.number,
             source_label=entity.source_label,
@@ -788,7 +780,6 @@ class StepValuesMapper(RowMapper[StepValues, StepValuesRow]):
         :rtype: StepValues
         """
         return StepValues(
-            project_id=ProjectId(row.project_id),
             stage=row.stage,
             step_id=StepId(row.step_id),
             scope=row.scope,
@@ -810,7 +801,6 @@ class StepValuesMapper(RowMapper[StepValues, StepValuesRow]):
             step_id=entity.step_id,
             scope=entity.scope,
             group_label=entity.group_label,
-            project_id=entity.project_id,
             stage=entity.stage,
             params=dict(entity.params),
             updated_at=entity.updated_at,
@@ -880,7 +870,6 @@ class BookPlaceMapper(RowMapper[BookPlace, BookPlaceRow]):
             else CanvasPosition(zoom=zoom, centre_x=centre_x, centre_y=centre_y)
         )
         return BookPlace(
-            project_id=ProjectId(row.project_id),
             mode=row.mode,
             stage=row.stage,
             page_id=None if row.page_id is None else PageId(row.page_id),
@@ -905,7 +894,7 @@ class BookPlaceMapper(RowMapper[BookPlace, BookPlaceRow]):
         """
         canvas = entity.canvas
         return BookPlaceRow(
-            project_id=entity.project_id,
+            id=BOOK_PLACE_ID,
             mode=entity.mode,
             stage=entity.stage,
             page_id=entity.page_id,
@@ -936,7 +925,6 @@ class RecipeMapper(RowMapper[Recipe, RecipeRow]):
         """
         return Recipe(
             id=RecipeId(row.id),
-            project_id=ProjectId(row.project_id),
             stage=row.stage,
             kind=row.kind,
             steps=tuple(Step.from_map(step) for step in row.steps),
@@ -956,7 +944,6 @@ class RecipeMapper(RowMapper[Recipe, RecipeRow]):
         """
         return RecipeRow(
             id=entity.id,
-            project_id=entity.project_id,
             stage=entity.stage,
             kind=entity.kind,
             steps=[step.to_map() for step in entity.steps],

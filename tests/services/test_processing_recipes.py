@@ -112,18 +112,20 @@ async def save_stage_records(kit: ProcessingKit, project: Project, *records: Pag
     await kit.uow().change_book(project.id, save)
 
 
-async def geometry_state(kit: ProcessingKit, page: Page) -> StageState:
+async def geometry_state(kit: ProcessingKit, project_id: ProjectId, page: Page) -> StageState:
     """Read the state of the record of the Geometry stage of a page as committed.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
     :param page: The page.
     :type page: Page
     :returns: The state of the record.
     :rtype: StageState
     """
     record = await kit.uow().read_book(
-        page.project_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        project_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
     )
     return record.state
 
@@ -233,7 +235,7 @@ class TestRecipes:
             pages.append(page)
         reader = fx_cv_kit.uow()
         stored_pages = await reader.read_book(
-            project.id, lambda repos: repos.pages.list_by_ids(project.id, [page.id for page in pages])
+            project.id, lambda repos: repos.pages.list_by_ids([page.id for page in pages])
         )
         picked = await fx_cv_kit.parts(reader).recipes.for_pages(project.id, Stage.CLEANUP, stored_pages)
         assert [picked[page.id].kind for page in pages] == [
@@ -369,12 +371,12 @@ class TestSaveRecipe:
         """
         actor, project = await fx_kit.seed_project()
         page, _ = await fx_kit.seed_scan_page(project)
-        await fx_kit.seed_base_version(page)
+        await fx_kit.seed_base_version(project.id, page)
         recipe = (await recipes_of(fx_kit, actor, project, Stage.GEOMETRY))[RecipeKind.TEXT]
         await save_stage_records(fx_kit, project, make_page_stage(page_id=page.id, recipe_id=recipe.id))
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})])
         await fx_kit.service().save_recipe(actor, project.id, RecipeKey(Stage.GEOMETRY, recipe.id), draft)
-        expect(await geometry_state(fx_kit, page) is StageState.STALE)
+        expect(await geometry_state(fx_kit, project.id, page) is StageState.STALE)
         expect(any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
         expect(fx_kit.board.put_jobs == [])
         assert_expectations()
@@ -399,7 +401,7 @@ class TestSaveRecipe:
         await fx_kit.service().save_recipe(
             actor, project.id, RecipeKey(Stage.GEOMETRY, recipes[RecipeKind.TEXT].id), draft
         )
-        states = [await geometry_state(fx_kit, page) for page in (first, second)]
+        states = [await geometry_state(fx_kit, project.id, page) for page in (first, second)]
         assert states == [StageState.STALE, StageState.FRESH]
 
     async def test_switching_a_step_off_keeps_its_parameters_and_marks_the_pages_stale(
@@ -412,7 +414,7 @@ class TestSaveRecipe:
         """
         actor, project = await fx_kit.seed_project()
         page, _ = await fx_kit.seed_scan_page(project)
-        await fx_kit.seed_base_version(page)
+        await fx_kit.seed_base_version(project.id, page)
         recipe = (await recipes_of(fx_kit, actor, project, Stage.GEOMETRY))[RecipeKind.TEXT]
         await save_stage_records(fx_kit, project, make_page_stage(page_id=page.id, recipe_id=recipe.id))
         steps = [
@@ -424,7 +426,7 @@ class TestSaveRecipe:
         )
         stored = (await recipes_of(fx_kit, actor, project, Stage.GEOMETRY))[RecipeKind.TEXT]
         expect([(step.enabled, step.params[STRENGTH_PARAMETER]) for step in stored.steps] == [(True, 1), (False, 9)])
-        expect(await geometry_state(fx_kit, page) is StageState.STALE)
+        expect(await geometry_state(fx_kit, project.id, page) is StageState.STALE)
         assert_expectations()
 
     async def test_recipe_of_another_stage_is_not_found_and_stays_as_it_was(self, fx_kit: ProcessingKit) -> None:
@@ -638,9 +640,7 @@ class TestDefaultRecipesInChanges:
         async with anyio.create_task_group() as tasks:
             for unit in units:
                 tasks.start_soon(ask, unit)
-        stored = await fx_kit.uow().read_book(
-            project.id, lambda repos: repos.recipes.list_for_stage(project.id, Stage.GEOMETRY)
-        )
+        stored = await fx_kit.uow().read_book(project.id, lambda repos: repos.recipes.list_for_stage(Stage.GEOMETRY))
         expect(gate.reads == TASKS)
         expect(stored_sets == [len(RecipeKind)])
         expect(len(stored) == len(RecipeKind))

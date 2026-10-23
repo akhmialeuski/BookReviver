@@ -1,6 +1,6 @@
 """Tests for the sums of the stages of books: the summary of a book, the rows of a stage and the progress in a list."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
 
 import pytest
@@ -73,38 +73,43 @@ async def seed_book(kit: ProcessingKit) -> tuple[Actor, Project, list[Page]]:
     pages = []
     for key in PAGE_KEYS:
         page, _ = await kit.seed_scan_page(project, order_key=key)
-        await kit.seed_base_version(page)
+        await kit.seed_base_version(project.id, page)
         pages.append(page)
     return actor, project, pages
 
 
-async def seed_geometry(
-    kit: ProcessingKit,
-    page: Page,
-    state: StageState,
-    review: ReviewReason | None = None,
-    through_step: int | None = None,
-) -> None:
+class GeometrySeed(NamedTuple):
+    """The record of the geometry stage a test seeds on a page.
+
+    :ivar state: State of the record.
+    :ivar review: Why the version asks for a review, or None.
+    :ivar through_step: Index of the last step the run went through, or None for the whole recipe.
+    """
+
+    state: StageState
+    review: ReviewReason | None = None
+    through_step: int | None = None
+
+
+async def seed_geometry(kit: ProcessingKit, project_id: ProjectId, page: Page, seed: GeometrySeed) -> None:
     """Commit a record of the geometry stage of a page with a ready current version.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
     :param page: The page.
     :type page: Page
-    :param state: State of the record.
-    :type state: StageState
-    :param review: Review mark of the current version, or None.
-    :type review: ReviewReason | None
-    :param through_step: Step the page was run through when that is short of the last step, or None.
-    :type through_step: int | None
+    :param seed: The state, the review mark and the last step run of the record.
+    :type seed: GeometrySeed
     """
     uow = kit.uow()
-    base = (await uow.read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id)))[0]
+    base = (await uow.read_book(project_id, lambda repos: repos.page_versions.list_for_page(page.id)))[0]
     version = evolve(
         make_page_version(page_id=page.id, minutes=1),
         stage=Stage.GEOMETRY,
         input_id=base.id,
-        review=review,
+        review=seed.review,
         state=VersionState.READY,
     )
 
@@ -117,10 +122,10 @@ async def seed_geometry(
         :type _project: Project
         """
         repos.page_versions.add(version)
-        record = make_page_stage(page_id=page.id, stage=Stage.GEOMETRY, head_version_id=version.id, state=state)
-        repos.page_stages.save(evolve(record, through_step=through_step))
+        record = make_page_stage(page_id=page.id, stage=Stage.GEOMETRY, head_version_id=version.id, state=seed.state)
+        repos.page_stages.save(evolve(record, through_step=seed.through_step))
 
-    await uow.change_book(page.project_id, work)
+    await uow.change_book(project_id, work)
 
 
 async def mark_version(kit: ProcessingKit, project_id: ProjectId, version: PageVersion, mark: ResultMark) -> None:
@@ -140,13 +145,17 @@ async def mark_version(kit: ProcessingKit, project_id: ProjectId, version: PageV
     )
 
 
-async def seed_marked_chain(kit: ProcessingKit, page: Page, *, steps: int, marked_at: int) -> None:
+async def seed_marked_chain(
+    kit: ProcessingKit, project_id: ProjectId, page: Page, *, steps: int, marked_at: int
+) -> None:
     """Commit a geometry record whose current version is the last of a chain of steps, the marks starting at one.
 
     A step keeps the mark of the step before it, as the processors do, so every version from ``marked_at`` on has one.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
     :param page: The page.
     :type page: Page
     :param steps: Number of versions in the chain.
@@ -155,7 +164,7 @@ async def seed_marked_chain(kit: ProcessingKit, page: Page, *, steps: int, marke
     :type marked_at: int
     """
     uow = kit.uow()
-    first = (await uow.read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id)))[0]
+    first = (await uow.read_book(project_id, lambda repos: repos.page_versions.list_for_page(page.id)))[0]
 
     def work(repos: BookRepositories, _project: Project) -> None:
         """Add the chain of versions and the record of the stage that names the last one.
@@ -181,7 +190,7 @@ async def seed_marked_chain(kit: ProcessingKit, page: Page, *, steps: int, marke
             make_page_stage(page_id=page.id, stage=Stage.GEOMETRY, head_version_id=previous.id, state=StageState.FRESH)
         )
 
-    await uow.change_book(page.project_id, work)
+    await uow.change_book(project_id, work)
 
 
 async def summaries_of(kit: ProcessingKit, project: Project) -> dict[Stage, StageSummary]:
@@ -222,8 +231,8 @@ class TestOfBook:
         :type fx_kit: ProcessingKit
         """
         _, project, pages = await seed_book(fx_kit)
-        await seed_geometry(fx_kit, pages[0], StageState.FRESH, ReviewReason.LOW_CONFIDENCE)
-        await seed_geometry(fx_kit, pages[1], StageState.STALE)
+        await seed_geometry(fx_kit, project.id, pages[0], GeometrySeed(StageState.FRESH, ReviewReason.LOW_CONFIDENCE))
+        await seed_geometry(fx_kit, project.id, pages[1], GeometrySeed(StageState.STALE))
         geometry = (await summaries_of(fx_kit, project))[Stage.GEOMETRY]
         expect((geometry.pages, geometry.fresh, geometry.stale, geometry.failed) == (3, 1, 1, 0))
         expect((geometry.not_run, geometry.review) == (1, 1))
@@ -237,8 +246,8 @@ class TestOfBook:
         :type fx_kit: ProcessingKit
         """
         _, project, pages = await seed_book(fx_kit)
-        await seed_geometry(fx_kit, pages[0], StageState.STALE, ReviewReason.LOW_CONFIDENCE)
-        await seed_geometry(fx_kit, pages[1], StageState.FRESH)
+        await seed_geometry(fx_kit, project.id, pages[0], GeometrySeed(StageState.STALE, ReviewReason.LOW_CONFIDENCE))
+        await seed_geometry(fx_kit, project.id, pages[1], GeometrySeed(StageState.FRESH))
         geometry = (await summaries_of(fx_kit, project))[Stage.GEOMETRY]
         expect((geometry.stale, geometry.review, geometry.check) == (1, 1, 1))
         assert_expectations()
@@ -264,9 +273,9 @@ class TestOfBook:
         :type fx_kit: ProcessingKit
         """
         _, project, pages = await seed_book(fx_kit)
-        await seed_geometry(fx_kit, pages[0], StageState.FRESH, through_step=0)
-        await seed_geometry(fx_kit, pages[1], StageState.FRESH, through_step=1)
-        await seed_geometry(fx_kit, pages[2], StageState.FRESH)
+        await seed_geometry(fx_kit, project.id, pages[0], GeometrySeed(StageState.FRESH, through_step=0))
+        await seed_geometry(fx_kit, project.id, pages[1], GeometrySeed(StageState.FRESH, through_step=1))
+        await seed_geometry(fx_kit, project.id, pages[2], GeometrySeed(StageState.FRESH))
         geometry = (await summaries_of(fx_kit, project))[Stage.GEOMETRY]
         expect((geometry.fresh, geometry.partial, geometry.not_run) == (3, 2, 0))
         expect(
@@ -283,7 +292,7 @@ class TestOfBook:
         :type fx_kit: ProcessingKit
         """
         _, project, pages = await seed_book(fx_kit)
-        await seed_geometry(fx_kit, pages[0], StageState.FAILED, through_step=0)
+        await seed_geometry(fx_kit, project.id, pages[0], GeometrySeed(StageState.FAILED, through_step=0))
         geometry = (await summaries_of(fx_kit, project))[Stage.GEOMETRY]
         assert (geometry.partial, geometry.stopped) == (0, ())
 
@@ -313,7 +322,7 @@ class TestOfBook:
 
         await uow.change_book(project.id, retype)
         await fx_kit.seed_scan_page(project, order_key=FOURTH_KEY, kind=PageKind.TEXT)
-        placeholder = make_page(project_id=project.id, order_key='a4')
+        placeholder = make_page(order_key='a4')
         await uow.change_book(project.id, lambda repos, _project: repos.pages.add(placeholder))
         before = (await summaries_of(fx_kit, project))[Stage.GEOMETRY].recipes
         recipes = {
@@ -346,8 +355,8 @@ class TestRows:
         :type fx_kit: ProcessingKit
         """
         _, project, pages = await seed_book(fx_kit)
-        await seed_geometry(fx_kit, pages[0], StageState.FRESH, ReviewReason.NOT_APPLIED)
-        await seed_geometry(fx_kit, pages[2], StageState.FAILED)
+        await seed_geometry(fx_kit, project.id, pages[0], GeometrySeed(StageState.FRESH, ReviewReason.NOT_APPLIED))
+        await seed_geometry(fx_kit, project.id, pages[2], GeometrySeed(StageState.FAILED))
         rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest())
         expect([row.page_id for row in rows.items] == [page.id for page in pages])
         expect(
@@ -366,8 +375,8 @@ class TestRows:
         :type fx_kit: ProcessingKit
         """
         _, project, pages = await seed_book(fx_kit)
-        await seed_geometry(fx_kit, pages[0], StageState.FRESH, through_step=1)
-        await seed_geometry(fx_kit, pages[1], StageState.FRESH)
+        await seed_geometry(fx_kit, project.id, pages[0], GeometrySeed(StageState.FRESH, through_step=1))
+        await seed_geometry(fx_kit, project.id, pages[1], GeometrySeed(StageState.FRESH))
         rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest())
         assert [row.through_step for row in rows.items] == [1, None, None]
 
@@ -378,9 +387,9 @@ class TestRows:
         :type fx_kit: ProcessingKit
         """
         _, project, pages = await seed_book(fx_kit)
-        await seed_marked_chain(fx_kit, pages[0], steps=3, marked_at=1)
-        await seed_marked_chain(fx_kit, pages[1], steps=3, marked_at=3)
-        await seed_geometry(fx_kit, pages[2], StageState.FRESH, ReviewReason.LOW_CONFIDENCE)
+        await seed_marked_chain(fx_kit, project.id, pages[0], steps=3, marked_at=1)
+        await seed_marked_chain(fx_kit, project.id, pages[1], steps=3, marked_at=3)
+        await seed_geometry(fx_kit, project.id, pages[2], GeometrySeed(StageState.FRESH, ReviewReason.LOW_CONFIDENCE))
         rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest())
         expect([row.review is not None for row in rows.items] == [True, False, True])
         expect(rows.items[0].review_processor == 'geometry.step1')
@@ -396,7 +405,7 @@ class TestRows:
         """
         _, project, pages = await seed_book(fx_kit)
         for page in pages:
-            await seed_geometry(fx_kit, page, StageState.FRESH)
+            await seed_geometry(fx_kit, project.id, page, GeometrySeed(StageState.FRESH))
 
         def geometry_heads(repos: BookRepositories) -> list[PageVersion]:
             """Read the geometry version of every page, in the order of the pages.
@@ -430,7 +439,7 @@ class TestRows:
         base = (await uow.read_book(project.id, lambda repos: repos.page_versions.list_for_page(pages[0].id)))[0]
         marked_base = evolve(base, review=ReviewReason.UNSURE_GUTTER)
         await uow.change_book(project.id, lambda repos, _project: repos.page_versions.update(marked_base))
-        await seed_marked_chain(fx_kit, pages[0], steps=2, marked_at=0)
+        await seed_marked_chain(fx_kit, project.id, pages[0], steps=2, marked_at=0)
         rows = await stage_rows(fx_kit, project, Stage.GEOMETRY, SliceRequest())
         assert (rows.items[0].review is not None, rows.items[0].review_processor) == (True, None)
 
@@ -518,7 +527,7 @@ async def seed_text_and_leaf(kit: ProcessingKit) -> tuple[Actor, Project, Page, 
     leaf = evolve(scanned, origin=PageOrigin.BLANK, scan_id=None)
     await kit.uow().change_book(project.id, lambda repos, _project: repos.pages.update(leaf))
     for page in (text, leaf):
-        await kit.seed_base_version(page)
+        await kit.seed_base_version(project.id, page)
     steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)]
     recipe = await kit.recipe_of(actor, project, Stage.GEOMETRY)
     await kit.service().save_recipe(actor, project.id, RecipeKey(Stage.GEOMETRY, recipe.id), RecipeDraft(steps=steps))
@@ -535,9 +544,7 @@ async def step_ids_of(kit: ProcessingKit, project: Project) -> list[StepId]:
     :returns: The identifiers of the steps.
     :rtype: list[StepId]
     """
-    stored = await kit.uow().read_book(
-        project.id, lambda repos: repos.recipes.list_for_stage(project.id, Stage.GEOMETRY)
-    )
+    stored = await kit.uow().read_book(project.id, lambda repos: repos.recipes.list_for_stage(Stage.GEOMETRY))
     recipe = next(recipe for recipe in stored if recipe.kind is RecipeKind.TEXT)
     return [step.step_id for step in recipe.steps]
 
@@ -705,7 +712,7 @@ async def seed_measured_book(kit: ProcessingKit) -> tuple[Project, StepId]:
     pages: list[Page] = []
     for key in (*PAGE_KEYS, FOURTH_KEY):
         page, _ = await kit.seed_scan_page(project, order_key=key)
-        await kit.seed_base_version(page)
+        await kit.seed_base_version(project.id, page)
         pages.append(page)
     recipe = await kit.recipe_of(actor, project, Stage.GEOMETRY)
     await kit.service().save_recipe(

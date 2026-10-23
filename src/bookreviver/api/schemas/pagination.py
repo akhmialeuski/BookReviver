@@ -12,7 +12,7 @@ from pydantic import Field, model_validator
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
 from bookreviver.api.schemas.types import NumberPrefix, PageKindList, SectionName
 from bookreviver.domain.enums import LabelStyle, NumberDisplay, PageKind
-from bookreviver.domain.ids import PageId, PaginationSectionId, ProjectId
+from bookreviver.domain.ids import PageId, PaginationSectionId
 from bookreviver.domain.values import PaginationSectionDraft
 
 if TYPE_CHECKING:
@@ -23,7 +23,6 @@ class PaginationSectionSchema(ResponseModel):
     """A pagination section of a book.
 
     :ivar id: Identifier of the section.
-    :ivar project_id: Project owning the section.
     :ivar first_page_id: The page the section starts at, so the section follows the page when it is moved.
     :ivar name: Name the user sees.
     :ivar style: How the numbers of the section are written.
@@ -36,7 +35,6 @@ class PaginationSectionSchema(ResponseModel):
     """
 
     id: PaginationSectionId
-    project_id: ProjectId
     first_page_id: PageId
     name: str
     style: LabelStyle
@@ -58,7 +56,6 @@ class PaginationSectionSchema(ResponseModel):
         """
         return cls(
             id=section.id,
-            project_id=section.project_id,
             first_page_id=section.first_page_id,
             name=section.name,
             style=section.style,

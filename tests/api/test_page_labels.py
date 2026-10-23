@@ -84,7 +84,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(LAYOUT))
     pages = [
         evolve(
-            make_page(project_id=project.id, order_key=key),
+            make_page(order_key=key),
             kind=kind,
             included=included,
             manual_label=STALE_LABEL,
@@ -254,7 +254,7 @@ class TestUpdatePage:
         :type fx_uow: UnitOfWorkFactory
         """
         stranger = make_project()
-        page = make_page(project_id=stranger.id)
+        page = make_page()
         await commit_project(fx_database, fx_uow(), stranger, page, owner=new_account_id())
 
         missing = await fx_client.patch(f'{PROJECTS_PATH}/{fx_book.project.id}/pages/{uuid4()}', json={'label': '1'})

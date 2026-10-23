@@ -39,7 +39,7 @@ UPDATED_LABEL: str = '[4]'
 SAVES: dict[str, Callable[[BookRepositories, Page], object]] = {
     'page stage': lambda repos, page: repos.page_stages.save(make_page_stage(page_id=page.id)),
     'step state': lambda repos, page: repos.page_step_states.save(make_page_step_state(page_id=page.id)),
-    'step values': lambda repos, page: repos.step_values.save(make_step_values(project_id=page.project_id)),
+    'step values': lambda repos, page: repos.step_values.save(make_step_values()),
 }
 
 
@@ -55,7 +55,7 @@ async def fx_stored_book(fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId) -> t
     :rtype: tuple[Project, list[Page]]
     """
     project = make_project()
-    pages = [make_page(project_id=project.id, order_key=f'a{index}') for index in range(BATCH)]
+    pages = [make_page(order_key=f'a{index}') for index in range(BATCH)]
     await store_project(fx_uow(), project, *pages, owner=fx_owner_id)
     return project, pages
 

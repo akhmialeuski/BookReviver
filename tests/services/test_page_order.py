@@ -143,15 +143,15 @@ async def _commit_book(uow: UnitOfWork, owner: Actor) -> Book:
     """
     project = make_project()
     first, second = (
-        make_source(project_id=project.id, name='part1.pdf'),
-        make_source(project_id=project.id, name='part2.pdf'),
+        make_source(name='part1.pdf'),
+        make_source(name='part2.pdf'),
     )
     scans = [
         *(make_scan(source=first, number=number) for number in range(FIRST_SOURCE_PAGES)),
         *(make_scan(source=second, number=number) for number in range(SECOND_SOURCE_PAGES)),
     ]
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(scans))
-    pages = [make_page(project_id=project.id, order_key=key, scan=scan) for key, scan in zip(keys, scans, strict=True)]
+    pages = [make_page(order_key=key, scan=scan) for key, scan in zip(keys, scans, strict=True)]
     await store_project(uow, project, *pages, owner=owner.account_id, sources=[first, second], scans=scans)
     return Book(project=project, first=first, second=second, pages=pages)
 
@@ -584,7 +584,7 @@ class TestMoveSource:
         :type fx_events: RecordingEventBus
         """
         book = await _commit_book(fx_uow(), fx_actor)
-        bare = make_source(project_id=book.project.id, name='bare.pdf')
+        bare = make_source(name='bare.pdf')
         await fx_uow().change_book(book.project.id, lambda repos, _project: repos.sources.add(bare))
 
         await fx_service().move_source(

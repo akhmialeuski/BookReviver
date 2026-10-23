@@ -68,7 +68,7 @@ class PageLayers:
         :rtype: dict[str, Any]
         """
         if self._parts is None:
-            self._parts = list(repos.step_values.list_for_project(self.page.project_id))
+            self._parts = list(repos.step_values.list_all())
         parts = [values for values in self._parts if values.step_id == step_id]
         position = self.position(repos) if parts else 0
         return StepValueLayers(parts).lay_over(params, group_label=self.page.group_label, position=position, own=own)

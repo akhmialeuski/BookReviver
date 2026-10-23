@@ -119,8 +119,8 @@ class PaginationService:
             :rtype: Slice[PaginationSection]
             :raises NotFoundError: If the actor has no such project.
             """
-            sections = repos.pagination_sections.list_for_project(project_id)
-            starts = repos.pages.list_by_ids(project_id, {section.first_page_id for section in sections})
+            sections = repos.pagination_sections.list_all()
+            starts = repos.pages.list_by_ids({section.first_page_id for section in sections})
             position = {page.id: index for index, page in enumerate(starts)}
             ordered = sorted(sections, key=lambda section: (position[section.first_page_id], section.is_series))
             return Slice(items=ordered[request.offset : request.offset + request.limit], total=len(ordered))
@@ -146,7 +146,6 @@ class PaginationService:
         moment = self._clock.now()
         section = PaginationSection(
             id=PaginationSectionId(uuid4()),
-            project_id=project_id,
             first_page_id=draft.first_page_id,
             name=draft.name,
             style=draft.style,
@@ -171,11 +170,11 @@ class PaginationService:
             :raises ConflictError: If another section that takes the same pages starts at the page, or a number does
                                    not fit the style.
             """
-            self._require_own_page(repos, project_id, section.first_page_id)
-            self._require_no_clash(repos, project_id, section)
-            with self._labels.watching(repos, project_id) as watch:
+            repos.pages.get(section.first_page_id)
+            self._require_no_clash(repos, section)
+            with self._labels.watching(repos) as watch:
                 stored = repos.pagination_sections.add(section)
-                self._labels.settle(repos, project_id)
+                self._labels.settle(repos)
             return stored, watch.renumbered
 
         stored, renumbered = await self._uow.change_book(project_id, work)
@@ -217,7 +216,7 @@ class PaginationService:
                                    not fit the style.
             """
             section = evolve(
-                self._section(repos, project_id, section_id),
+                repos.pagination_sections.get(section_id),
                 first_page_id=draft.first_page_id,
                 name=draft.name,
                 style=draft.style,
@@ -227,11 +226,11 @@ class PaginationService:
                 kinds=draft.kinds,
                 updated_at=self._clock.now(),
             )
-            self._require_own_page(repos, project_id, section.first_page_id)
-            self._require_no_clash(repos, project_id, section)
-            with self._labels.watching(repos, project_id) as watch:
+            repos.pages.get(section.first_page_id)
+            self._require_no_clash(repos, section)
+            with self._labels.watching(repos) as watch:
                 stored = repos.pagination_sections.update(section)
-                self._labels.settle(repos, project_id)
+                self._labels.settle(repos)
             return stored, watch.renumbered
 
         stored, renumbered = await self._uow.change_book(project_id, work)
@@ -264,10 +263,10 @@ class PaginationService:
             :raises NotFoundError: If the project has no such section.
             :raises ConflictError: If the section before cannot write the numbers of the pages that fall to it.
             """
-            section = self._section(repos, project_id, section_id)
-            with self._labels.watching(repos, project_id) as watch:
+            section = repos.pagination_sections.get(section_id)
+            with self._labels.watching(repos) as watch:
                 repos.pagination_sections.delete(section.id)
-                self._labels.settle(repos, project_id)
+                self._labels.settle(repos)
             return watch.renumbered
 
         renumbered = await self._uow.change_book(project_id, work)
@@ -301,14 +300,14 @@ class PaginationService:
             :raises ReversedRangeError: If the range runs backwards.
             :raises ConflictError: If a number does not fit the style, such as 4000 in Roman numerals.
             """
-            plan = self._plan(repos, project_id, numbering)
+            plan = self._plan(repos, numbering)
             # A number that does not fit is found before anything is written
             plan.labels()
-            with self._labels.watching(repos, project_id) as watch:
+            with self._labels.watching(repos) as watch:
                 for section_id in plan.removed:
                     repos.pagination_sections.delete(section_id)
                 repos.pagination_sections.add_many(plan.added)
-                self._labels.settle(repos, project_id, unpin=plan.counted)
+                self._labels.settle(repos, unpin=plan.counted)
             return watch.renumbered
 
         renumbered = await self._uow.change_book(project_id, work)
@@ -345,19 +344,17 @@ class PaginationService:
             :raises NotFoundError: If the project lacks the first or the last page.
             :raises ReversedRangeError: If the range runs backwards.
             """
-            return self._plan(repos, project_id, numbering)
+            return self._plan(repos, numbering)
 
         plan = await self._uow.read_book(project_id, work)
         labels = plan.labels()
         return [NumberedPage(page_id=page.id, label=labels[page.id]) for page in plan.pages if page.id in plan.counted]
 
-    def _plan(self, repos: BookRepositories, project_id: ProjectId, numbering: PageNumbering) -> NumberingPlan:
+    def _plan(self, repos: BookRepositories, numbering: PageNumbering) -> NumberingPlan:
         """Work out the sections a numbering makes and replaces, and the pages it numbers.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
         :param numbering: The range, the style and the first number.
         :type numbering: PageNumbering
         :returns: The plan, with nothing written.
@@ -365,7 +362,7 @@ class PaginationService:
         :raises NotFoundError: If the project lacks the first or the last page.
         :raises ReversedRangeError: If the range runs backwards.
         """
-        pages = book_pages(repos.pages, project_id)
+        pages = book_pages(repos.pages)
         position = {page.id: index for index, page in enumerate(pages)}
         if numbering.first_page_id not in position:
             raise NotFoundError(numbering.first_page_id)
@@ -379,7 +376,7 @@ class PaginationService:
         )
 
         moment = self._clock.now()
-        make = partial(PaginationSection, project_id=project_id, created_at=moment, updated_at=moment)
+        make = partial(PaginationSection, created_at=moment, updated_at=moment)
         added = [
             make(
                 id=PaginationSectionId(uuid4()),
@@ -403,7 +400,7 @@ class PaginationService:
             )
 
         # A section that starts inside the range is replaced, and a series only when it takes a kind that is skipped
-        existing = repos.pagination_sections.list_for_project(project_id)
+        existing = repos.pagination_sections.list_all()
         removed = [
             section
             for section in existing
@@ -432,52 +429,15 @@ class PaginationService:
         )
 
     @staticmethod
-    def _section(repos: BookRepositories, project_id: ProjectId, section_id: PaginationSectionId) -> PaginationSection:
-        """Read a section of the project.
-
-        :param repos: Repositories of the transaction the caller runs in.
-        :type repos: BookRepositories
-        :param project_id: Identifier of the project the section must belong to.
-        :type project_id: ProjectId
-        :param section_id: Identifier of the section.
-        :type section_id: PaginationSectionId
-        :returns: The section.
-        :rtype: PaginationSection
-        :raises NotFoundError: If there is no such section, or it belongs to another project, which is reported like a
-                               missing one so no identifier can be probed across projects.
-        """
-        section = repos.pagination_sections.get(section_id)
-        if section.project_id != project_id:
-            raise NotFoundError(section_id)
-        return section
-
-    @staticmethod
-    def _require_own_page(repos: BookRepositories, project_id: ProjectId, page_id: PageId) -> None:
-        """Require the page a section starts at to be a page of the project.
-
-        :param repos: Repositories of the transaction the caller runs in.
-        :type repos: BookRepositories
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :param page_id: Identifier of the page.
-        :type page_id: PageId
-        :raises NotFoundError: If there is no such page, or it belongs to another project.
-        """
-        if repos.pages.get(page_id).project_id != project_id:
-            raise NotFoundError(page_id)
-
-    @staticmethod
-    def _require_no_clash(repos: BookRepositories, project_id: ProjectId, section: PaginationSection) -> None:
+    def _require_no_clash(repos: BookRepositories, section: PaginationSection) -> None:
         """Require that no other section of the project takes the same pages from the same page.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
         :param section: The section about to be stored.
         :type section: PaginationSection
         :raises ConflictError: If another section starts at the page and is of the same flow, or shares a kind.
         """
-        others = repos.pagination_sections.list_for_project(project_id)
+        others = repos.pagination_sections.list_all()
         if any(section.clashes_with(other) for other in others):
             raise ConflictError(SECTION_CLASH)

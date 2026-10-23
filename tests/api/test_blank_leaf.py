@@ -109,7 +109,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
     :rtype: Book
     """
     project = make_project()
-    source = make_source(project_id=project.id)
+    source = make_source()
     kinds = [PageKind.TEXT, PageKind.BLANK, PageKind.BLANK]
     scans = [
         evolve(
@@ -122,7 +122,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
         for number in range(len(kinds))
     ]
     pages = [
-        make_page(project_id=project.id, order_key=f'a{number}', scan=scan, kind=kind)
+        make_page(order_key=f'a{number}', scan=scan, kind=kind)
         for number, (scan, kind) in enumerate(zip(scans, kinds, strict=True))
     ]
     versions = [

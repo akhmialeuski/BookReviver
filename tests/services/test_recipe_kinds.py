@@ -72,7 +72,7 @@ async def add_page(kit: ProcessingKit, project: Project, kind: PageKind, *, orde
     :rtype: PageId
     """
     page, _ = await kit.seed_scan_page(project, order_key=order_key)
-    await kit.seed_base_version(page)
+    await kit.seed_base_version(project.id, page)
     await kit.uow().change_book(project.id, lambda repos, _project: repos.pages.update(evolve(page, kind=kind)))
     return page.id
 

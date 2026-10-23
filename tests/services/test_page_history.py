@@ -63,17 +63,19 @@ FIRST: NewPageEdit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(deg
 SECOND: NewPageEdit = NewPageEdit(kind=EditorKind.ROTATION, geometry=Rotation(degrees=SECOND_ANGLE))
 
 
-async def step_key(kit: ProcessingKit, page: Page) -> PageStepKey:
+async def step_key(kit: ProcessingKit, project_id: ProjectId, page: Page) -> PageStepKey:
     """Give the key of the step of the active geometry recipe that runs the fake processor on a page.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
     :param page: The page.
     :type page: Page
     :returns: The key of the step on the page.
     :rtype: PageStepKey
     """
-    return await kit.edit_key(page, Stage.GEOMETRY, FAKE_KEY)
+    return await kit.edit_key(project_id, page, Stage.GEOMETRY, FAKE_KEY)
 
 
 async def history_of(kit: ProcessingKit, actor: Actor, project: Project, key: PageStepKey) -> list[PageStepChange]:
@@ -179,7 +181,7 @@ class TestHistoryOfEdits:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         first = await fx_kit.edits().save(actor, project.id, key, FIRST, None)
         second = await fx_kit.edits().save(actor, project.id, key, SECOND, None)
         await fx_kit.edits().delete(actor, project.id, key)
@@ -200,7 +202,7 @@ class TestHistoryOfEdits:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         await fx_kit.edits().save(actor, project.id, key, FIRST, None)
         await fx_kit.edits().save(actor, project.id, key, FIRST, None)
         assert len(await history_of(fx_kit, actor, project, key)) == 1
@@ -213,7 +215,7 @@ class TestHistoryOfEdits:
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
         other, _ = await fx_kit.seed_scan_page(project, order_key=OTHER_ORDER_KEY)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         await fx_kit.edits().save(actor, project.id, key, FIRST, None)
         await fx_kit.edits().save(actor, project.id, evolve(key, page_id=other.id), SECOND, None)
         history = await history_of(fx_kit, actor, project, key)
@@ -233,7 +235,7 @@ class TestUndo:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         [change] = await history_of(fx_kit, actor, project, key)
         [undo] = await fx_kit.page_history().undo(actor, project.id, key, None)
@@ -252,7 +254,7 @@ class TestUndo:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGEST)
         await fx_kit.page_history().undo(actor, project.id, key, None)
@@ -272,7 +274,7 @@ class TestUndo:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         first = await fx_kit.edits().save(actor, project.id, key, FIRST, None)
         await fx_kit.edits().save(actor, project.id, key, SECOND, None)
         await fx_kit.page_history().undo(actor, project.id, key, None)
@@ -289,7 +291,7 @@ class TestUndo:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         saved = await fx_kit.edits().save(actor, project.id, key, FIRST, None)
         await fx_kit.edits().delete(actor, project.id, key)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
@@ -307,7 +309,7 @@ class TestUndo:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
 
         def make_fresh(repos: BookRepositories, _project: Project) -> None:
@@ -338,7 +340,7 @@ class TestUndo:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         [change] = await history_of(fx_kit, actor, project, key)
         await fx_kit.uow().change_book(
@@ -363,7 +365,7 @@ class TestUndo:
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
         _, other_project = await fx_kit.seed_project()
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         attempts = (
             (actor, other_project, None),
@@ -386,7 +388,7 @@ class TestUndoBackTo:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         await fx_kit.edits().save(actor, project.id, key, FIRST, None)
         await PageValues(fx_kit, actor, project.id).set(key, FAILING_PARAMETER, NOT_FAILING)
@@ -408,7 +410,7 @@ class TestUndoBackTo:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         [change] = await history_of(fx_kit, actor, project, key)
         [undo] = await fx_kit.page_history().undo(actor, project.id, key, None)
@@ -428,7 +430,7 @@ class TestUndoOfABatch:
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
         other, _ = await fx_kit.seed_scan_page(project, order_key=OTHER_ORDER_KEY)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         other_key = evolve(key, page_id=other.id)
         batch = ChangeBatchId(uuid4())
         await store_carried_batch(fx_kit, project, (key, other_key), batch)
@@ -448,7 +450,7 @@ class TestUndoOfABatch:
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
         other, _ = await fx_kit.seed_scan_page(project, order_key=OTHER_ORDER_KEY)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         other_key = evolve(key, page_id=other.id)
         batch = ChangeBatchId(uuid4())
 
@@ -497,7 +499,7 @@ class TestClear:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, version = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         await fx_kit.edits().save(actor, project.id, key, FIRST, None)
         await fx_kit.page_history().undo(actor, project.id, key, None)
@@ -672,12 +674,12 @@ class TestClear:
         actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
         first, second = made
         other, _ = await fx_kit.seed_scan_page(project, order_key=OTHER_ORDER_KEY)
-        await fx_kit.seed_base_version(other)
+        await fx_kit.seed_base_version(project.id, other)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         before = {
             version.id
             for version in await fx_kit.uow().read_book(
-                page.project_id, lambda repos: repos.page_versions.list_for_page(other.id)
+                project.id, lambda repos: repos.page_versions.list_for_page(other.id)
             )
         }
         await fx_kit.uow().change_book(
@@ -721,7 +723,7 @@ class TestClear:
         actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.CLEANUP))
         later = await fx_kit.uow().read_book(
-            page.project_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.CLEANUP))
+            project.id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.CLEANUP))
         )
         assert later.head_version_id is not None
         head_id = later.head_version_id
@@ -763,7 +765,7 @@ class TestClear:
         :type monkeypatch: pytest.MonkeyPatch
         """
         actor, project, page, version = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         monkeypatch.setattr(fx_kit.assets, 'delete_prefix', AsyncMock(side_effect=OSError('The disk is read only.')))
         cleared = await fx_kit.page_history().clear(actor, project.id, key)
         expect([deleted.id for deleted in cleared.versions] == [version.id])
@@ -779,7 +781,7 @@ class TestClear:
         """
         actor, project = await fx_kit.seed_project()
         page, _ = await fx_kit.seed_scan_page(project)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         fx_kit.events.published.clear()
         cleared = await fx_kit.page_history().clear(actor, project.id, key)
         expect((cleared.changes, cleared.versions) == (0, ()))
@@ -794,7 +796,7 @@ class TestClear:
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
         other, _ = await fx_kit.seed_scan_page(project, order_key=OTHER_ORDER_KEY)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         other_key = evolve(key, page_id=other.id)
         batch = ChangeBatchId(uuid4())
         await store_carried_batch(fx_kit, project, (key, other_key), batch)
@@ -814,7 +816,7 @@ class TestClear:
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
         _, other_project = await fx_kit.seed_project()
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         for who, book in ((actor, other_project), (Actor(account_id=new_account_id()), project)):
             with pytest.raises(NotFoundError):
@@ -830,7 +832,7 @@ class TestClear:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, version = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         written = len(await history_of(fx_kit, actor, project, key))
         await fx_kit.service().start_collection(actor, project.id)
@@ -860,11 +862,11 @@ class TestClear:
         :type state: JobState
         """
         actor, project, page, version = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         # The preview is of another page, so the version it makes while its step is held is none of those the clear deletes
         other, _ = await fx_kit.seed_scan_page(project, order_key=OTHER_ORDER_KEY)
-        await fx_kit.seed_base_version(other)
+        await fx_kit.seed_base_version(project.id, other)
         async with previewed(fx_kit, actor, project, other, state) as preview:
             cleared = await fx_kit.page_history().clear(actor, project.id, key)
         announced = [
@@ -892,7 +894,7 @@ class TestClear:
         :type active: JobKind
         """
         actor, project, page, version = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         written = len(await history_of(fx_kit, actor, project, key))
         job = await fx_kit.parts(fx_kit.uow()).starter.enqueue(
@@ -913,7 +915,7 @@ class TestClear:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, _ = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         preview = await fx_kit.parts(fx_kit.uow()).starter.enqueue(project.id, JobKind.PREVIEW_STEP, {})
         with pytest.raises(NotFoundError):
             await fx_kit.page_history().clear(actor, project.id, evolve(key, step_id=StepId(uuid4())))
@@ -928,7 +930,7 @@ class TestClear:
         :type fx_kit: ProcessingKit
         """
         actor, project, page, version = await ran_geometry(fx_kit)
-        key = await step_key(fx_kit, page)
+        key = await step_key(fx_kit, project.id, page)
         await PageValues(fx_kit, actor, project.id).set(key, STRENGTH_PARAMETER, STRONGER)
         with pytest.raises(NotFoundError):
             await fx_kit.page_history().clear(actor, project.id, evolve(key, step_id=StepId(uuid4())))

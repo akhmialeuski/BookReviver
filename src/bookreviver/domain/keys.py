@@ -127,11 +127,7 @@ class ProjectKeys:
         :type scan: Scan
         :returns: Key of ``assets/scans/<source_id>/<number>/v<version>``.
         :rtype: StorageKey
-        :raises ValueError: If the scan belongs to another project.
         """
-        if scan.project_id != self.project_id:
-            err_msg = f'Scan {scan.id} belongs to project {scan.project_id}, not {self.project_id}.'
-            raise ValueError(err_msg)
         return self._key(
             KeySegment.ASSETS,
             KeySegment.SCANS,
@@ -149,7 +145,6 @@ class ProjectKeys:
         :type rendition: Rendition
         :returns: Key of ``assets/scans/<source_id>/<number>/v<version>/<rendition>``.
         :rtype: StorageKey
-        :raises ValueError: If the scan belongs to another project.
         """
         return StorageKey(f'{self.scan_directory(scan)}{self.SEPARATOR}{rendition}')
 

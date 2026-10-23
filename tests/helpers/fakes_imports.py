@@ -121,10 +121,10 @@ async def stored_book(uow: UnitOfWork, project_id: ProjectId) -> StoredBook:
         :rtype: StoredBook
         """
         return StoredBook(
-            sources=list(repos.sources.list_for_project(project_id)),
-            scans=list(repos.scans.list_for_project(project_id, BOOK_WINDOW).items),
-            pages=list(repos.pages.list_for_project(project_id, BOOK_WINDOW).items),
-            sections=list(repos.pagination_sections.list_for_project(project_id)),
+            sources=list(repos.sources.list_all()),
+            scans=list(repos.scans.list_window(BOOK_WINDOW).items),
+            pages=list(repos.pages.list_window(BOOK_WINDOW).items),
+            sections=list(repos.pagination_sections.list_all()),
         )
 
     return await uow.read_book(project_id, work)

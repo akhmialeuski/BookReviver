@@ -6,7 +6,7 @@ import pytest
 from attrs import evolve, frozen
 
 from bookreviver.domain.enums import PageKind, RecipeKind, Stage
-from bookreviver.domain.values import RecipeDraft, SliceRequest, StageRun, Step
+from bookreviver.domain.values import PageStageKey, RecipeDraft, SliceRequest, StageRun, Step
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 from tests.helpers.spreads import head_of, run_stage
 from tests.helpers.stage_heads import seed_head
@@ -14,7 +14,7 @@ from tests.helpers.stage_reads import stage_rows
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page, PageVersion, Project
-    from bookreviver.domain.ids import PageId, PageVersionId, StepId
+    from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, StepId
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.processing import ProcessingKit
 
@@ -80,11 +80,13 @@ class StagedBook:
         return [self.full, self.partial, self.idle, self.other]
 
 
-async def chain_of(kit: ProcessingKit, page: Page, stage: Stage) -> list[PageVersion]:
+async def chain_of(kit: ProcessingKit, project_id: ProjectId, page: Page, stage: Stage) -> list[PageVersion]:
     """Read the versions a stage made on a page by walking back from its current version.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Identifier of the project.
+    :type project_id: ProjectId
     :param page: The page.
     :type page: Page
     :param stage: The stage.
@@ -92,7 +94,7 @@ async def chain_of(kit: ProcessingKit, page: Page, stage: Stage) -> list[PageVer
     :returns: The versions of the stage that made its current version, the first step first.
     :rtype: list[PageVersion]
     """
-    head = await head_of(kit, page, stage)
+    head = await head_of(kit, project_id, page, stage)
 
     def walk(repos: BookRepositories) -> list[PageVersion]:
         """Walk back from the current version of the stage while the versions belong to it.
@@ -111,7 +113,7 @@ async def chain_of(kit: ProcessingKit, page: Page, stage: Stage) -> list[PageVer
             chain.insert(0, version)
         return chain
 
-    return await kit.uow().read_book(page.project_id, walk)
+    return await kit.uow().read_book(project_id, walk)
 
 
 async def seed_staged_book(kit: ProcessingKit, case: StageCase) -> StagedBook:
@@ -128,7 +130,7 @@ async def seed_staged_book(kit: ProcessingKit, case: StageCase) -> StagedBook:
     pages: list[Page] = []
     for key in PAGE_KEYS:
         page, _ = await kit.seed_scan_page(project, order_key=key)
-        await kit.seed_base_version(page)
+        await kit.seed_base_version(project.id, page)
         pages.append(page)
     full, partial, idle, other = pages
     other = evolve(other, kind=PageKind.PLATE)
@@ -143,8 +145,8 @@ async def seed_staged_book(kit: ProcessingKit, case: StageCase) -> StagedBook:
     await run_stage(kit, actor, project, StageRun(stage=case.stage, page_ids=(partial.id,), through_step=0))
     await run_stage(kit, actor, project, StageRun(stage=case.stage, page_ids=(other.id,)))
     recipe = await kit.recipe_of(actor, project, case.stage)
-    reads = {page.id: await head_of(kit, page, case.earlier) for page in pages}
-    chains = {page.id: await chain_of(kit, page, case.stage) for page in (full, partial, other)}
+    reads = {page.id: await head_of(kit, project.id, page, case.earlier) for page in pages}
+    chains = {page.id: await chain_of(kit, project.id, page, case.stage) for page in (full, partial, other)}
     return StagedBook(
         project=project,
         step_ids=[step.step_id for step in recipe.steps],
@@ -303,7 +305,10 @@ class TestPicture:
         :type step_index: int | None
         """
         book = await seed_staged_book(fx_kit, case)
-        later = [await seed_head(fx_kit, page, case.later, after=book.reads[page.id]) for page in book.pages]
+        later = [
+            await seed_head(fx_kit, book.project.id, PageStageKey(page.id, case.later), after=book.reads[page.id])
+            for page in book.pages
+        ]
         step_id = None if step_index is None else book.step_ids[step_index]
         rows = await stage_rows(fx_kit, book.project, case.stage, SliceRequest(), step_id)
         later_ids = {version.id for version in later}

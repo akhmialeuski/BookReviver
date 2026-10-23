@@ -35,7 +35,7 @@ from bookreviver.domain.step_values import (
     StepValuesKey,
 )
 from bookreviver.services.page_batches import PageBatch
-from bookreviver.services.projects import book_page, book_pages
+from bookreviver.services.projects import book_pages
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -79,13 +79,11 @@ class _Scene:
     states: Mapping[PageId, PageStepState]
 
     @classmethod
-    def load(cls, repos: BookRepositories, project_id: ProjectId, field: ValueField, moment: datetime) -> Self:
+    def load(cls, repos: BookRepositories, field: ValueField, moment: datetime) -> Self:
         """Read the step, the pages the field names and the values they have.
 
         :param repos: Repositories of the transaction the reads go through.
         :type repos: BookRepositories
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
         :param field: The field of the step the change is for, and the pages it names.
         :type field: ValueField
         :param moment: When the change is made.
@@ -98,29 +96,26 @@ class _Scene:
         step_id, target = field.step_id, field.target
         steps = {
             recipe.kind: step
-            for recipe in repos.recipes.list_for_stage(project_id, field.stage)
+            for recipe in repos.recipes.list_for_stage(field.stage)
             for step in recipe.steps
             if step.step_id == step_id
         }
         if not steps:
             raise NotFoundError(step_id)
-        parts = repos.step_values.list_for_step(project_id, step_id)
+        parts = repos.step_values.list_for_step(step_id)
         if target.scope is ValueScope.PAGES:
             holder = None
-            named = repos.pages.list_by_ids(project_id, target.page_ids)
+            named = repos.pages.list_by_ids(target.page_ids)
             positions = {page.id: repos.pages.count_before(page) + 1 for page in named} if parts else {}
         else:
-            holder = repos.step_values.find(
-                StepValuesKey(project_id, step_id, target.scope, target.group_label)
-            ) or StepValues(
-                project_id=project_id,
+            holder = repos.step_values.find(StepValuesKey(step_id, target.scope, target.group_label)) or StepValues(
                 stage=field.stage,
                 step_id=step_id,
                 scope=target.scope,
                 group_label=target.group_label,
                 updated_at=moment,
             )
-            named = book_pages(repos.pages, project_id)
+            named = book_pages(repos.pages)
             positions = {page.id: index for index, page in enumerate(named, start=1)}
         pages = [
             page
@@ -257,13 +252,13 @@ class PageSettingsService:
             :rtype: Sequence[PageStepSettings]
             :raises NotFoundError: If the project has no such page.
             """
-            page = book_page(repos, project_id, page_id)
-            recipes = repos.recipes.list_for_stage(project_id, stage)
+            page = repos.pages.get(page_id)
+            recipes = repos.recipes.list_for_stage(stage)
             recipe = next((recipe for recipe in recipes if recipe.kind is page.recipe_kind), None)
             listed: list[PageStepSettings] = []
             if recipe is None:
                 return listed
-            parts = repos.step_values.list_for_project(project_id)
+            parts = repos.step_values.list_all()
             states = {state.step_id: state for state in repos.page_step_states.list_for_page(page_id, stage)}
             position = repos.pages.count_before(page) + 1
             for step in recipe.steps:
@@ -323,7 +318,7 @@ class PageSettingsService:
             :raises InvalidParametersError: If the processor has no such field, or the value is out of its range on a
                                             page it reaches.
             """
-            scene = _Scene.load(repos, project_id, field, self._clock.now())
+            scene = _Scene.load(repos, field, self._clock.now())
             name = field.name
             processor = self._catalogue.get(next(iter(scene.steps.values())).processor_key)
             if scene.holder is None:
@@ -382,7 +377,7 @@ class PageSettingsService:
                                    stage has the step, or none of the pages the target names has a value for the
                                    field.
             """
-            scene = _Scene.load(repos, project_id, field, self._clock.now())
+            scene = _Scene.load(repos, field, self._clock.now())
             name = field.name
             if scene.holder is None:
                 own = {

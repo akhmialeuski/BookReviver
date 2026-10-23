@@ -199,7 +199,6 @@ class Source:
     Both are kept until the reader closes the report of the import, hold no scan and have no stored file.
 
     :ivar id: Identifier of the source, which also names its storage directory.
-    :ivar project_id: Project owning the source.
     :ivar kind: Kind of the source, which selects the format that reads it, or None for a rejected or skipped file whose
                 type is unknown.
     :ivar file_type: Exact format of the main file, or None for a rejected or skipped file whose type is unknown.
@@ -218,7 +217,6 @@ class Source:
     """
 
     id: SourceId
-    project_id: ProjectId
     kind: SourceKind | None
     file_type: FileType | None
     file_name: str = field(validator=validators.min_len(1))
@@ -252,7 +250,6 @@ class Scan:
     A scan is created by the import and never changes, apart from the state of its derived files.
 
     :ivar id: Identifier of the scan.
-    :ivar project_id: Project owning the scan's source, which lists the scans of a book without reading its sources.
     :ivar source_id: Source holding the scan.
     :ivar number: Position of the scan in its source, starting at 0.
     :ivar source_label: Page label the file itself gives, such as the PDF page label ``xii``, or empty.
@@ -261,7 +258,6 @@ class Scan:
     """
 
     id: ScanId
-    project_id: ProjectId
     source_id: SourceId
     number: int = field(validator=validators.ge(0))
     source_label: str = ''
@@ -279,7 +275,6 @@ class Page:
     among the keys of the project's pages, and the position number shown to the user is computed when it is read.
 
     :ivar id: Identifier of the page, which names its storage directory.
-    :ivar project_id: Project owning the page.
     :ivar order_key: Fractional index string whose byte order is the order of the pages in the book.
     :ivar manual_label: Printed number written by hand or taken from the scan, such as ``xii``, which the page shows in
                         place of the number its pagination section gives, or None for the number of the section. The
@@ -309,7 +304,6 @@ class Page:
     RIGHT_HALF: ClassVar[int] = 2
 
     id: PageId
-    project_id: ProjectId
     order_key: str = field(validator=validators.min_len(1))
     manual_label: str | None = field(default=None, validator=validators.optional(validators.min_len(1)))
     kind: PageKind = PageKind.TEXT
@@ -383,7 +377,6 @@ class PaginationSection:
     ``Plate I`` and ``Plate II`` without disturbing the numbers of the text.
 
     :ivar id: Identifier of the section.
-    :ivar project_id: Project owning the section.
     :ivar first_page_id: The page the section starts at, so the section follows the page when it is moved.
     :ivar name: Name the user sees, such as ``Preface``.
     :ivar style: How the numbers of the section are written.
@@ -396,7 +389,6 @@ class PaginationSection:
     """
 
     id: PaginationSectionId
-    project_id: ProjectId
     first_page_id: PageId
     name: str = ''
     style: LabelStyle
@@ -651,7 +643,6 @@ class Recipe:
     The name of a recipe is the label of its kind.
 
     :ivar id: Identifier of the recipe.
-    :ivar project_id: Project owning the recipe.
     :ivar stage: Stage the recipe processes.
     :ivar kind: Kind of the pages the recipe processes, which is unique among the recipes of the stage.
     :ivar steps: The steps in the order they run, each a processor with its parameters.
@@ -663,7 +654,6 @@ class Recipe:
     """
 
     id: RecipeId
-    project_id: ProjectId
     stage: Stage
     kind: RecipeKind
     steps: tuple[Step, ...]
@@ -789,7 +779,6 @@ class BookPlace:
     A book has one owner and so one place, which is replaced whole each time the reader moves, and read when the book is
     opened again, on any device. It holds the fields of ``NewBookPlace`` beside the book and the time of the last write.
 
-    :ivar project_id: Book the place is in, which is the key of the place.
     :ivar mode: Whether the reader was working on a stage or reading.
     :ivar stage: Stage the reader was on, or last was on before reading.
     :ivar page_id: Page that was open, or None for the first page.
@@ -803,7 +792,6 @@ class BookPlace:
     :ivar updated_at: When the place was last written.
     """
 
-    project_id: ProjectId
     mode: PlaceMode
     stage: Stage
     page_id: PageId | None = None
@@ -815,11 +803,6 @@ class BookPlace:
     canvas: CanvasPosition | None = None
     strip_page_id: PageId | None = None
     updated_at: datetime
-
-    @property
-    def key(self) -> ProjectId:
-        """The key the place is stored under, its book."""
-        return self.project_id
 
 
 @frozen(kw_only=True)

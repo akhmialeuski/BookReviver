@@ -48,7 +48,7 @@ async def _store_version(
     :rtype: tuple[ProjectId, PageId, PageVersionId]
     """
     project = make_project()
-    page = make_page(project_id=project.id)
+    page = make_page()
     version = make_page_version(page_id=page.id)
     await store_project(uow_factory(), project, page, owner=await new_owner(), versions=[version])
     return project.id, page.id, version.id

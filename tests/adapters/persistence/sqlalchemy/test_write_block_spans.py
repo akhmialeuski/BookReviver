@@ -82,7 +82,7 @@ class TestWriteBlockSpan:
         :param fx_tracer: Tracer of the test.
         :type fx_tracer: AskingTracer
         """
-        page = make_page(project_id=fx_project.id)
+        page = make_page()
         await fx_traced_uow().change_book(fx_project.id, lambda repos, _project: repos.pages.add(page))
         (span,) = fx_tracer.named(SpanName.WRITE_BLOCK)
         expect(span.attributes[SpanAttribute.BLOCK_KIND] is BlockKind.BOOK)
@@ -107,7 +107,7 @@ class TestWriteBlockSpan:
         :param fx_tracer: Tracer of the test.
         :type fx_tracer: AskingTracer
         """
-        page = make_page(project_id=fx_project.id)
+        page = make_page()
         with fx_tracer.span(SpanName.STEP):
             await fx_traced_uow().change_book(fx_project.id, lambda repos, _project: repos.pages.add(page))
         (step,) = fx_tracer.named(SpanName.STEP)
@@ -127,16 +127,16 @@ class TestWriteBlockSpan:
         :type fx_tracer: AskingTracer
         """
 
-        def write_then_fail(repos: BookRepositories, project: Project) -> None:
+        def write_then_fail(repos: BookRepositories, _project: Project) -> None:
             """Write a page of the book, and fail before the work ends.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param project: Project of the book.
-            :type project: Project
+            :param _project: Project of the book.
+            :type _project: Project
             :raises RuntimeError: Always, after the page is written.
             """
-            repos.pages.add(make_page(project_id=project.id))
+            repos.pages.add(make_page())
             raise RuntimeError(FAILED_BLOCK)
 
         with pytest.raises(RuntimeError, match=FAILED_BLOCK):

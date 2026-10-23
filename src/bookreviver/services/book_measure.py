@@ -349,13 +349,9 @@ class BookBlocks:
         """
         self._repos = repos
 
-    def read(
-        self, project_id: ProjectId, stage: Stage, *, leaving_out: Collection[PageId] = ()
-    ) -> dict[PageId, BlockMeasure]:
+    def read(self, stage: Stage, *, leaving_out: Collection[PageId] = ()) -> dict[PageId, BlockMeasure]:
         """Find the measure of every page whose current version came through the normalize step.
 
-        :param project_id: Project whose pages are read.
-        :type project_id: ProjectId
         :param stage: The stage of the normalize step.
         :type stage: Stage
         :param leaving_out: Pages whose measure is not wanted, since a fresher one stands in its place.
@@ -364,21 +360,17 @@ class BookBlocks:
         :rtype: dict[PageId, BlockMeasure]
         """
         measures: dict[PageId, BlockMeasure] = {}
-        for version in self._versions(project_id, stage, leaving_out):
+        for version in self._versions(stage, leaving_out):
             if (measure := BlockMeasure.of(version)) is not None:
                 measures[version.page_id] = measure
         return measures
 
-    def by_the_book(
-        self, project_id: ProjectId, stage: Stage, params: MetadataMap, fresh: Mapping[PageId, BlockMeasure]
-    ) -> MetadataMap:
+    def by_the_book(self, stage: Stage, params: MetadataMap, fresh: Mapping[PageId, BlockMeasure]) -> MetadataMap:
         """Work out the fields of the normalize step that are 0, from the boxes of the pages the step has placed.
 
         When the pages that were not just measured hold a line height and a page size, which they do after a run of
         the whole book, the pages that were are placed by those, so that a page run alone is as large as the others.
 
-        :param project_id: Project whose pages make the book.
-        :type project_id: ProjectId
         :param stage: The stage of the step.
         :type stage: Stage
         :param params: The parameters of the normalize step with the defaults of the processor filled in.
@@ -390,7 +382,7 @@ class BookBlocks:
         """
         if not wants_the_book(params):
             return {}
-        others = self._versions(project_id, stage, fresh)
+        others = self._versions(stage, fresh)
         held = Counter(setting for version in others if (setting := PageSetting.of(version)) is not None)
         if held and fresh:
             return BookSize(list(fresh.values())).by_the_book(params, held.most_common(1)[0][0])
@@ -400,11 +392,9 @@ class BookBlocks:
         ]
         return BookSize(measures).by_the_book(params) if measures else {}
 
-    def _versions(self, project_id: ProjectId, stage: Stage, leaving_out: Collection[PageId]) -> list[PageVersion]:
+    def _versions(self, stage: Stage, leaving_out: Collection[PageId]) -> list[PageVersion]:
         """Find the current version of the normalize step of every page but some.
 
-        :param project_id: Project whose pages are read.
-        :type project_id: ProjectId
         :param stage: The stage of the step.
         :type stage: Stage
         :param leaving_out: Pages that are not read.
@@ -413,11 +403,7 @@ class BookBlocks:
         :rtype: list[PageVersion]
         """
         left_out = set(leaving_out)
-        records = [
-            record
-            for record in self._repos.page_stages.list_for_project_stage(project_id, stage)
-            if record.page_id not in left_out
-        ]
+        records = [record for record in self._repos.page_stages.list_for_stage(stage) if record.page_id not in left_out]
         return self._normalized(records)
 
     def _normalized(self, records: Sequence[PageStage]) -> list[PageVersion]:
@@ -489,9 +475,7 @@ class BookMeasure:
         if not holders:
             raise ConflictError(NO_NORMALIZE_STEP.format(key=NORMALIZE_KEY))
         measures = list(
-            (
-                await self._uow.read_book(project_id, lambda repos: BookBlocks(repos).read(project_id, Stage.GEOMETRY))
-            ).values()
+            (await self._uow.read_book(project_id, lambda repos: BookBlocks(repos).read(Stage.GEOMETRY))).values()
         )
         if not measures:
             raise ConflictError(NOTHING_TO_MEASURE)
@@ -518,7 +502,7 @@ class BookMeasure:
             stale: list[PageStage] = []
             # The steps were measured from the recipes as they were read, so a recipe saved or deleted since is not
             # written over
-            stored = {r.id: r.updated_at for r in repos.recipes.list_for_stage(project_id, Stage.GEOMETRY)}
+            stored = {r.id: r.updated_at for r in repos.recipes.list_for_stage(Stage.GEOMETRY)}
             if any(stored.get(recipe.id) != recipe.updated_at for recipe, _ in holders):
                 raise ConflictError(MEASURE_OUTDATED)
             for (recipe, position), step, own in zip(holders, steps, measured, strict=True):

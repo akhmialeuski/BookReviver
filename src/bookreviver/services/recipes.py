@@ -44,7 +44,7 @@ from bookreviver.domain.values import RecipeDraft, Step
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from bookreviver.domain.entities import Page, Project, RecipeProfile
+    from bookreviver.domain.entities import Page, RecipeProfile
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.domain.values import MetadataMap, PageStepKey
     from bookreviver.ports.persistence import BookRepositories, RecipeRepository, UnitOfWork
@@ -67,22 +67,20 @@ GEOMETRY_STEPS: tuple[str, ...] = (
 )
 
 
-def find_step(recipes: RecipeRepository, project_id: ProjectId, key: PageStepKey) -> Step:
+def find_step(recipes: RecipeRepository, key: PageStepKey) -> Step:
     """Find a step by its identifier in the recipes of its stage, where a copy of a step keeps the identifier.
 
     It is called from the work of a transaction.
 
     :param recipes: Repository of the transaction to read the recipes from.
     :type recipes: RecipeRepository
-    :param project_id: Project owning the recipes.
-    :type project_id: ProjectId
     :param key: The page, the stage and the step.
     :type key: PageStepKey
     :returns: The step as the first recipe of the stage that has it holds it.
     :rtype: Step
     :raises NotFoundError: If no recipe of the stage has the step.
     """
-    for recipe in recipes.list_for_stage(project_id, key.stage):
+    for recipe in recipes.list_for_stage(key.stage):
         for step in recipe.steps:
             if step.step_id == key.step_id:
                 return step
@@ -256,14 +254,12 @@ class RecipeBook:
             """
             if checking is not None:
                 checking(repos)
-            return self._stored(repos, project_id, stage)
+            return self._stored(repos, stage)
 
         if found := await self._uow.read_book(project_id, read):
             return found
         profile = await self.default_profile(project_id, stage)
-        return await self._uow.change_book(
-            project_id, lambda repos, project: self.recipes_in(repos, project, stage, profile)
-        )
+        return await self._uow.change_book(project_id, lambda repos, _project: self.recipes_in(repos, stage, profile))
 
     async def default_profile(self, project_id: ProjectId, stage: Stage) -> RecipeProfile | None:
         """Read the default profile of the owner of a book for a stage, in a read of the catalogue.
@@ -280,9 +276,7 @@ class RecipeBook:
             lambda repos: repos.recipe_profiles.find_default(repos.library.get(project_id).owner_id, stage)
         )
 
-    def recipes_in(
-        self, repos: BookRepositories, project: Project, stage: Stage, default: RecipeProfile | None
-    ) -> list[Recipe]:
+    def recipes_in(self, repos: BookRepositories, stage: Stage, default: RecipeProfile | None) -> list[Recipe]:
         """Return the recipes of a stage, creating them when the stage is first asked for, in the transaction of a work.
 
         This is the form to use inside the work of ``change_book`` or ``change``, where ``recipes`` cannot be awaited.
@@ -291,8 +285,6 @@ class RecipeBook:
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param project: Project owning the recipes.
-        :type project: Project
         :param stage: The stage.
         :type stage: Stage
         :param default: The default profile of the owner of the book for the stage, which the first recipes may be made
@@ -302,14 +294,13 @@ class RecipeBook:
         :rtype: list[Recipe]
         :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
         """
-        if found := self._stored(repos, project.id, stage):
+        if found := self._stored(repos, stage):
             return found
         moment = self._clock.now()
         steps, profile = self._starting_steps(stage, default)
         built = [
             Recipe(
                 id=RecipeId(uuid4()),
-                project_id=project.id,
                 stage=stage,
                 kind=kind,
                 steps=steps[kind],
@@ -323,19 +314,17 @@ class RecipeBook:
         repos.recipes.add_many(built)
         return built
 
-    def _stored(self, repos: BookRepositories, project_id: ProjectId, stage: Stage) -> list[Recipe]:
+    def _stored(self, repos: BookRepositories, stage: Stage) -> list[Recipe]:
         """Read the stored recipes of a stage, each with the parameters of its steps as their processors write them now.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param project_id: Project owning the recipes.
-        :type project_id: ProjectId
         :param stage: The stage.
         :type stage: Stage
         :returns: The recipes in the order they were created, which are none before the stage has been used.
         :rtype: list[Recipe]
         """
-        return [self._current(recipe) for recipe in repos.recipes.list_for_stage(project_id, stage)]
+        return [self._current(recipe) for recipe in repos.recipes.list_for_stage(stage)]
 
     def _current(self, recipe: Recipe) -> Recipe:
         """Give a stored recipe with the parameters of every step as their processors write them now.
@@ -411,25 +400,21 @@ class RecipeBook:
         profile_id = profile.id if profile is not None and kind is RecipeKind.TEXT else None
         return RecipeDraft(steps=steps[kind], order=OrderMode.FREE, profile_id=profile_id)
 
-    def get(
-        self, repos: BookRepositories, project_id: ProjectId, recipe_id: RecipeId, *, stage: Stage | None = None
-    ) -> Recipe:
+    def get(self, repos: BookRepositories, recipe_id: RecipeId, *, stage: Stage | None = None) -> Recipe:
         """Return a recipe of the project, of the given stage when one is named.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
         :param recipe_id: Identifier of the recipe.
         :type recipe_id: RecipeId
         :param stage: Stage the recipe must process, or None for any.
         :type stage: Stage | None
         :returns: The recipe.
         :rtype: Recipe
-        :raises NotFoundError: If the recipe does not exist, belongs to another project, or processes another stage.
+        :raises NotFoundError: If the recipe does not exist or processes another stage.
         """
         recipe = repos.recipes.get(recipe_id)
-        if recipe.project_id != project_id or (stage is not None and recipe.stage is not stage):
+        if stage is not None and recipe.stage is not stage:
             raise NotFoundError(recipe_id)
         return recipe
 

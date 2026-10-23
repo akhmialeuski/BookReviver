@@ -23,6 +23,8 @@ from bookreviver.adapters.persistence.sqlalchemy.columns import CASCADE, RESTRIC
 from bookreviver.domain.enums import OrderMode, Stage
 
 LIBRARY_TABLE: Final = 'library'
+# The column of the library that names the book, its key
+PROJECT_ID_COLUMN: Final = 'project_id'
 RECIPE_PROFILES_TABLE: Final = 'recipe_profiles'
 # The rows of the partial unique index of ``recipe_profiles``: the default profile of a stage of an account
 DEFAULT_PROFILE: Final = text('is_default')

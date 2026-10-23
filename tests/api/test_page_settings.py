@@ -105,12 +105,9 @@ async def fx_book(fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_ac
     :rtype: Book
     """
     project = make_project()
-    sources = [make_source(project_id=project.id, name=f'{order_key}.pdf') for order_key in ORDER_KEYS]
+    sources = [make_source(name=f'{order_key}.pdf') for order_key in ORDER_KEYS]
     scans = [evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True)) for source in sources]
-    pages = [
-        make_page(project_id=project.id, order_key=order_key, scan=scan)
-        for order_key, scan in zip(ORDER_KEYS, scans, strict=True)
-    ]
+    pages = [make_page(order_key=order_key, scan=scan) for order_key, scan in zip(ORDER_KEYS, scans, strict=True)]
     await store_project(fx_uow(), project, *pages, owner=fx_actor.account_id, sources=sources, scans=scans)
     listed = await fx_client.get(f'{PROJECTS_PATH}/{project.id}/stages/geometry/recipes')
     recipe = next(

@@ -16,7 +16,6 @@ from bookreviver.domain.entities import ResultMarkChange
 from bookreviver.domain.enums import VersionScale
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import ResultMarkChangeId
-from bookreviver.services.projects import book_page
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -88,7 +87,7 @@ class ResultMarksService:
             :raises NotFoundError: If the project has no such page, or the page has no such version.
             :raises ConflictError: If the version is a preview.
             """
-            version = self._version(repos, project_id, page_id, version_id)
+            version = self._version(repos, page_id, version_id)
             if version.scale is not VersionScale.FULL:
                 raise ConflictError(PREVIEW_TAKES_NO_MARK.format(version_id=version_id))
             if (note.mark, note.comment) == (version.mark, version.comment):
@@ -139,21 +138,17 @@ class ResultMarksService:
             :rtype: Sequence[ResultMarkChange]
             :raises NotFoundError: If the project has no such page, or the page has no such version.
             """
-            version = self._version(repos, project_id, page_id, version_id)
+            version = self._version(repos, page_id, version_id)
             return repos.result_mark_changes.list_for_version(version.id)
 
         return await self._uow.read_book(project_id, work)
 
     @staticmethod
-    def _version(
-        repos: BookRepositories, project_id: ProjectId, page_id: PageId, version_id: PageVersionId
-    ) -> PageVersion:
+    def _version(repos: BookRepositories, page_id: PageId, version_id: PageVersionId) -> PageVersion:
         """Return a version of a page of a book, in the transaction of the caller.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :param version_id: Identifier of the version.
@@ -162,7 +157,7 @@ class ResultMarksService:
         :rtype: PageVersion
         :raises NotFoundError: If the project has no such page, or the page has no such version.
         """
-        book_page(repos, project_id, page_id)
+        repos.pages.get(page_id)
         version = repos.page_versions.get(version_id)
         if version.page_id != page_id:
             raise NotFoundError(version_id)
