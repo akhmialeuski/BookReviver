@@ -194,6 +194,11 @@ export const MESSAGES = {
     counts: {
       pages: (count: number) => `${count} ${pluralize(count, 'page', 'pages')}`,
     },
+    import: {
+      open: 'Import a book',
+      importing: 'Importing…',
+      label: 'Archive of a book',
+    },
     untitled: 'Untitled book',
   },
   book: {
@@ -236,6 +241,7 @@ export const MESSAGES = {
       storage: 'Image storage',
     } satisfies Record<Section, string>,
     delete: 'Delete the book',
+    download: 'Download the book',
     clearResults: {
       open: 'Clear old results',
       title: 'Clear old results?',

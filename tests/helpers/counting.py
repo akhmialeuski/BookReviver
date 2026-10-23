@@ -101,6 +101,28 @@ class CountingUnitOfWork(UnitOfWork):
         await self._inner.delete_book(project_id)
 
     @override
+    async def snapshot_book(self, project_id: ProjectId) -> bytes:
+        """Copy the store of a book on the wrapped unit of work.
+
+        :param project_id: Project whose book is copied.
+        :type project_id: ProjectId
+        :returns: The copy of the store.
+        :rtype: bytes
+        """
+        return await self._inner.snapshot_book(project_id)
+
+    @override
+    async def adopt_book(self, project_id: ProjectId) -> Project:
+        """Take in the store an archive placed for a new book, on the wrapped unit of work.
+
+        :param project_id: Identifier of the new book.
+        :type project_id: ProjectId
+        :returns: The project of the new book.
+        :rtype: Project
+        """
+        return await self._inner.adopt_book(project_id)
+
+    @override
     async def stored_books(self) -> Collection[ProjectId]:
         """Return the books the wrapped unit of work stores.
 

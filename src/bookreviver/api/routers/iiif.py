@@ -1,14 +1,16 @@
 """The derived files of a book as immutable static files: renditions of scans and pages, and IIIF tile pyramids.
 
-Every file is served exactly as it is stored. A pyramid's ``info.json`` already names the path of this route as its
-``id``, because the tiler was given that path when it cut the pyramid, so the route neither parses the document nor
-builds an address from the request. A change of domain, port or device address therefore leaves every cut pyramid valid.
+Every file is served exactly as it is stored but a pyramid's ``info.json``, whose ``id`` the route sets to the path the
+document was asked at, without its file name: the address of the pyramid, which the viewer builds the address of every
+tile from. The stored document never names its book, so a book imported under a new identifier, or served at another
+domain, port or device address, keeps every pyramid it has.
 
 The key of a file carries the version of its renditions, so the content behind a key never changes and browsers cache
 it for good. The cache is private because access is checked for every request. On a server a reverse proxy can take
 over ``/iiif`` after the API has checked access, since all files are served alike.
 """
 
+import json
 import pathlib
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack
@@ -16,8 +18,8 @@ from typing import Annotated
 
 import anyio
 from dishka.integrations.fastapi import DishkaRoute, FromDishka, inject
-from fastapi import APIRouter, Depends, Path
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, Path, Request
+from fastapi.responses import FileResponse, Response
 
 from bookreviver.api.auth import ActorDep
 from bookreviver.api.route_names import RouteName
@@ -32,6 +34,8 @@ IIIF_PREFIX: str = '/iiif'
 # Asset keys carry the version of the asset, so the content behind a URL never changes; private, as access is checked
 IMMUTABLE_CACHE: dict[str, str] = {'Cache-Control': 'private, max-age=31536000, immutable'}
 KEY_DESCRIPTION: str = 'Storage key of the file, as found in the image addresses of a page or a scan'
+# The property of an image information document that holds the address of its image service
+IIIF_ID: str = 'id'
 
 router = APIRouter(prefix=IIIF_PREFIX, tags=['iiif'], route_class=DishkaRoute)
 
@@ -68,16 +72,22 @@ async def opened_asset(
 async def iiif_file(
     key: Annotated[AssetKey, Path(description=KEY_DESCRIPTION)],
     path: Annotated[pathlib.Path, Depends(opened_asset)],
-) -> FileResponse:
-    """Stream a stored file exactly as it was written, an image information document with its IIIF media type.
+    request: Request,
+) -> Response:
+    """Stream a stored file, and an image information document with its IIIF media type and the address of its pyramid.
 
     \N{FORM FEED}
     :param key: Storage key of the file.
     :type key: AssetKey
     :param path: Local path of the file, kept open until the response has been sent.
     :type path: pathlib.Path
+    :param request: The request, whose path, without the name of the document, is the address of the pyramid.
+    :type request: Request
     :returns: The file, cacheable for good.
-    :rtype: FileResponse
+    :rtype: Response
     """
-    is_info = pathlib.PurePosixPath(key).name == IIIF_INFO_FILE
-    return FileResponse(path, media_type=IIIF_INFO_MEDIA_TYPE if is_info else None, headers=IMMUTABLE_CACHE)
+    if pathlib.PurePosixPath(key).name != IIIF_INFO_FILE:
+        return FileResponse(path, headers=IMMUTABLE_CACHE)
+    info = json.loads(await anyio.Path(path).read_bytes())
+    info[IIIF_ID] = request.url.path.removesuffix(f'/{IIIF_INFO_FILE}')
+    return Response(json.dumps(info), media_type=IIIF_INFO_MEDIA_TYPE, headers=IMMUTABLE_CACHE)

@@ -68,7 +68,6 @@ PAGE_WIDTH_PX: int = 200
 PAGE_HEIGHT_PX: int = 300
 GRAY_MODE: str = 'L'
 JPEG_FORMAT: str = 'JPEG'
-IIIF_ROOT: str = '/api/v1/iiif'
 MAX_FILES: int = 100
 MAX_BYTES: int = 10 * 1024 * 1024
 DEFAULT_PARALLEL_SCANS: int = 2
@@ -340,9 +339,9 @@ class WatchedRasterizer(PageRasterizer):
 
 
 class WatchedTiler(Tiler):
-    """The real tiler, remembering the resource ids it cut pyramids for and crashing on demand.
+    """The real tiler, remembering the directories it cut pyramids into and crashing on demand.
 
-    :ivar resource_ids: Resource id of every pyramid cut, in order.
+    :ivar targets: Directory of every pyramid cut, in order.
     :ivar crash_on_preview: Number of the preview call that raises ``WorkerCrashError``, counting from 1, or None.
     """
 
@@ -353,23 +352,21 @@ class WatchedTiler(Tiler):
         :type inner: Tiler
         """
         self._inner = inner
-        self.resource_ids: list[str] = []
+        self.targets: list[Path] = []
         self.crash_on_preview: int | None = None
         self._previews = 0
 
     @override
-    async def tile(self, image: Path, target_dir: Path, *, resource_id: str) -> None:
-        """Cut the pyramid with the real tiler and remember its resource id.
+    async def tile(self, image: Path, target_dir: Path) -> None:
+        """Cut the pyramid with the real tiler and remember its directory.
 
         :param image: Image to cut.
         :type image: Path
         :param target_dir: Directory to create for the pyramid.
         :type target_dir: Path
-        :param resource_id: Path the pyramid is served from.
-        :type resource_id: str
         """
-        self.resource_ids.append(resource_id)
-        await self._inner.tile(image, target_dir, resource_id=resource_id)
+        self.targets.append(target_dir)
+        await self._inner.tile(image, target_dir)
 
     @override
     async def preview(self, image: Path, target: Path) -> None:
@@ -539,7 +536,6 @@ class ImportRig:
                 jpeg_quality=ImagingSettings().jpeg_quality,
             ),
             tiler=self.tiler,
-            iiif_root=IIIF_ROOT,
         )
 
     def open_uow(self) -> UnitOfWork:
@@ -597,9 +593,7 @@ class ImportRig:
                 publisher=self.fakes.events,
                 clock=self.fakes.clock,
                 order_keys=FractionalOrderKeys(),
-                limits=ImportLimits(
-                    max_files=max_files, max_bytes=max_bytes, parallel_scans=parallel_scans, iiif_root=IIIF_ROOT
-                ),
+                limits=ImportLimits(max_files=max_files, max_bytes=max_bytes, parallel_scans=parallel_scans),
                 board=self.fakes.board,
             ),
             parts=parts,

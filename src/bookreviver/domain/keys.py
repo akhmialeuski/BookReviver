@@ -59,6 +59,8 @@ class ProjectKeys:
     MIN_SEGMENTS: ClassVar[int] = 4
     # Segments that would address the parent of a key or climb out of it
     UNSAFE_SEGMENTS: ClassVar[frozenset[str]] = frozenset({'', '.', '..'})
+    # What the archive of a book carries: its database, its sources and its derived files, and no upload in progress
+    ARCHIVED: ClassVar[frozenset[str]] = frozenset({KeySegment.DATABASE, KeySegment.SOURCES, KeySegment.ASSETS})
 
     @property
     def prefix(self) -> StorageKey:
@@ -246,6 +248,33 @@ class ProjectKeys:
         except ValueError:
             return None
         return cls(ProjectId(project_id))
+
+    def archived(self, name: str) -> StorageKey | None:
+        """Return the key of a file of the archive of a book, which names it relative to the directory of the book.
+
+        :param name: Path of the file in the archive, with ``/`` between its segments, such as ``assets/pages/...``.
+        :type name: str
+        :returns: The key of the file in this project, or None for a name outside what an archive carries: not the
+                  database and not under ``sources/`` or ``assets/``, a directory of them alone, or a name holding an
+                  empty, ``.`` or ``..`` segment.
+        :rtype: StorageKey | None
+        """
+        segments = name.split(self.SEPARATOR)
+        lone = segments[0] == KeySegment.DATABASE
+        unsafe = self.UNSAFE_SEGMENTS.intersection(segments)
+        if segments[0] not in self.ARCHIVED or lone != (len(segments) == 1) or unsafe:
+            return None
+        return self._key(*segments)
+
+    def relative(self, key: StorageKey) -> str:
+        """Return a key of this project relative to the directory of the project, as an archive of the book names it.
+
+        :param key: Key of a file of the project.
+        :type key: StorageKey
+        :returns: The key without the prefix of the project.
+        :rtype: str
+        """
+        return key.removeprefix(self.prefix)
 
     def _key(self, *segments: str) -> StorageKey:
         """Join ``segments`` under the project's directory into a key.

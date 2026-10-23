@@ -1,5 +1,6 @@
 """Tests for the IIIF file endpoint, on the SQLite file and the local stores under the test's data directory."""
 
+import json
 from typing import TYPE_CHECKING, NamedTuple
 from uuid import uuid4
 
@@ -33,9 +34,9 @@ CACHE_HEADER, CACHE_VALUE = next(iter(IMMUTABLE_CACHE.items()))
 CONTENT_TYPE_HEADER: str = 'content-type'
 TILE_PATH: str = '0,0,512,512/512,/0/default.jpg'
 TILE_CONTENT: bytes = b'\xff\xd8 tile'
-# What the tiler writes: the path of the route as its id, exactly as the viewer needs it
+# What a pyramid stores: an id that names another address, as one cut for a book under another identifier does
 INFO_CONTENT: bytes = (
-    b'{"@context":"http://iiif.io/api/image/3/context.json","id":"/api/v1/iiif/pyramid","type":"ImageService3"}'
+    b'{"@context":"http://iiif.io/api/image/3/context.json","id":"/api/v1/iiif/elsewhere","type":"ImageService3"}'
 )
 SOURCE_NAME: str = 'book.pdf'
 MAX_UPLOAD_BYTES: int = 1024
@@ -88,14 +89,14 @@ async def _store_book(uow: UnitOfWork, assets: AssetStore, owner: AccountId) -> 
 class TestIiifFile:
     """Tests for GET /iiif/{key}."""
 
-    async def test_info_json_is_served_exactly_as_the_pyramid_stores_it(
+    async def test_info_json_names_the_address_it_was_asked_at(
         self,
         fx_client: httpx.AsyncClient,
         fx_uow: UnitOfWorkFactory,
         fx_asset_store: AssetStore,
         fx_actor: Actor,
     ) -> None:
-        """Verify the document reaches the viewer byte for byte, with the IIIF media type and an eternal cache.
+        """Verify the document keeps what the pyramid stores but its id, which is the address of the pyramid asked for.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -111,7 +112,7 @@ class TestIiifFile:
         response = await fx_client.get(f'{IIIF_PATH}/{book.pyramid}/{IIIF_INFO_FILE}')
 
         expect(response.status_code == status.HTTP_200_OK)
-        expect(response.content == INFO_CONTENT)
+        expect(response.json() == {**json.loads(INFO_CONTENT), 'id': f'{IIIF_PATH}/{book.pyramid}'})
         expect(response.headers[CONTENT_TYPE_HEADER] == IIIF_INFO_MEDIA_TYPE)
         expect(response.headers[CACHE_HEADER] == CACHE_VALUE)
         assert_expectations()

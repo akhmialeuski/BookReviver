@@ -96,6 +96,18 @@ def fx_settings(tmp_path: Path) -> Settings:
 
 
 @pytest.fixture
+def fx_storage_root(fx_settings: Settings) -> Path:
+    """Return the storage root of the test, which holds the directory of every book as the application's does.
+
+    :param fx_settings: Settings of the test, which name the storage root.
+    :type fx_settings: Settings
+    :returns: Directory the stores, the archive and the books of the test write under, created by the first write.
+    :rtype: Path
+    """
+    return fx_settings.storage_root
+
+
+@pytest.fixture
 def fx_request_context() -> dict[Any, Any]:
     """Build the context dishka's FastAPI integration puts into the scope of every HTTP request.
 

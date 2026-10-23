@@ -18,8 +18,10 @@ import errno
 import hashlib
 import os
 import shutil
+import zipfile
 from contextlib import asynccontextmanager
 from functools import partial
+from operator import itemgetter
 from pathlib import Path
 from typing import TYPE_CHECKING, override
 from uuid import uuid4
@@ -27,14 +29,15 @@ from uuid import uuid4
 import anyio
 
 from bookreviver.domain.enums import UploadProblem
-from bookreviver.domain.errors import ConflictError, NotFoundError, UploadRejectedError
+from bookreviver.domain.errors import ConflictError, InvalidArchiveError, NotFoundError, UploadRejectedError
 from bookreviver.domain.keys import KeySegment, ProjectKeys
 from bookreviver.domain.values import SourceFile, UploadPath
-from bookreviver.ports.storage import AssetStore, SourceStore
+from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
+    from typing import BinaryIO
 
     from bookreviver.domain.ids import JobId, ProjectId, SourceId, StorageKey
     from bookreviver.ports.storage import IncomingFile
@@ -42,6 +45,13 @@ if TYPE_CHECKING:
 # Read size of an upload stream, large enough to keep the per-chunk overhead negligible
 CHUNK_BYTES: int = 1024 * 1024
 PARTIAL_ROLE: str = 'partial'
+# First character of the name of a file or directory still being written, which nothing but its writer reads
+HIDDEN_PREFIX: str = '.'
+# The archive of a book is stored without compression, since its images and documents are compressed already
+ARCHIVE_COMPRESSION: int = zipfile.ZIP_STORED
+NOT_AN_ARCHIVE: str = 'The file is not a ZIP archive.'
+NO_DATABASE: str = 'The archive holds no database of a book.'
+OUTSIDE_THE_BOOK: str = 'The archive holds {name}, which is not a file of a book.'
 # What ``rmdir`` reports for a directory that is gone or still holds another store's files
 KEPT_DIRECTORY_ERRNOS: frozenset[int] = frozenset({errno.ENOENT, errno.ENOTEMPTY})
 
@@ -164,7 +174,7 @@ class LocalSourceStore(_LocalTree, SourceStore):
         if await target.exists():
             raise ConflictError(conflict_message)
         await target.parent.mkdir(parents=True, exist_ok=True)
-        hidden = target.with_name(f'.{target.name}-{PARTIAL_ROLE}-{uuid4().hex}')
+        hidden = target.with_name(f'{HIDDEN_PREFIX}{target.name}-{PARTIAL_ROLE}-{uuid4().hex}')
         await hidden.mkdir()
         try:
             for name, stored_name in stored_names.items():
@@ -445,6 +455,149 @@ async def _receive(files: Sequence[IncomingFile], *, directory: anyio.Path, max_
     return received
 
 
+class _Pieces:
+    """Where ``zipfile`` writes an archive, held until the stream of the archive takes it.
+
+    It has no ``tell``, so ``zipfile`` writes the sizes of each file after its data and never seeks back.
+
+    :ivar _pieces: What was written since the last time the pieces were taken.
+    """
+
+    def __init__(self) -> None:
+        """Start with nothing written."""
+        self._pieces: list[bytes] = []
+
+    def write(self, data: bytes, /) -> int:
+        """Keep what ``zipfile`` writes.
+
+        :param data: The bytes written.
+        :type data: bytes
+        :returns: How many bytes were written.
+        :rtype: int
+        """
+        self._pieces.append(bytes(data))
+        return len(data)
+
+    def flush(self) -> None:
+        """Do nothing, since the pieces are taken by the stream."""
+
+    def close(self) -> None:
+        """Do nothing, since nothing is open."""
+
+    def take(self) -> bytes:
+        """Return what was written since the last call, and forget it.
+
+        :returns: The bytes written meanwhile, which are empty when nothing was.
+        :rtype: bytes
+        """
+        taken = b''.join(self._pieces)
+        self._pieces.clear()
+        return taken
+
+
+class LocalBookArchive(_LocalTree, BookArchive):
+    """The archives of the books as ZIP files of the directories of the books under the local storage root.
+
+    The archive is written as it is streamed, one piece of a file at a time, so a book of many gigabytes needs no
+    temporary file and no more memory than one piece. Files still being written under a hidden name are left out.
+    """
+
+    @override
+    async def export(self, project_id: ProjectId, database: bytes) -> AsyncIterator[bytes]:
+        """Stream the archive of a book: its database first, then every file of its sources and derived files.
+
+        :param project_id: The book.
+        :type project_id: ProjectId
+        :param database: The copy of the database of the book.
+        :type database: bytes
+        :returns: The pieces of the archive, in order.
+        :rtype: AsyncIterator[bytes]
+        """
+        keys = ProjectKeys(project_id)
+        pieces = _Pieces()
+        # The archive and its entries write to memory alone, so a stream given up half way leaves nothing open
+        archive = zipfile.ZipFile(pieces, mode='w', compression=ARCHIVE_COMPRESSION)
+        archive.writestr(keys.relative(keys.database), database)
+        yield pieces.take()
+        for path, name in await anyio.to_thread.run_sync(self._files_of, keys):
+            info = await anyio.to_thread.run_sync(zipfile.ZipInfo.from_file, path, name)
+            entry = archive.open(info, mode='w')
+            offset = 0
+            while piece := await anyio.to_thread.run_sync(_piece_of, path, offset):
+                entry.write(piece)
+                offset += len(piece)
+                yield pieces.take()
+            entry.close()
+            yield pieces.take()
+        archive.close()
+        yield pieces.take()
+
+    @override
+    async def unpack(self, project_id: ProjectId, archive: BinaryIO) -> None:
+        """Place the content of an archive as the directory of a new book, its database first.
+
+        :param project_id: The new book, which has no directory yet.
+        :type project_id: ProjectId
+        :param archive: The archive, a file that can be read from any position.
+        :type archive: BinaryIO
+        :raises InvalidArchiveError: If the file is not a ZIP archive, holds no database, or holds a file outside what
+                                     the archive of a book carries.
+        :raises ConflictError: If the new book has a directory already.
+        """
+        await anyio.to_thread.run_sync(self._unpack, ProjectKeys(project_id), archive)
+
+    def _files_of(self, keys: ProjectKeys) -> list[tuple[Path, str]]:
+        """List the files of the sources and the derived files of a book, by their names in the archive.
+
+        :param keys: The keys of the book.
+        :type keys: ProjectKeys
+        :returns: Each file and its name relative to the directory of the book, in the order of the names.
+        :rtype: list[tuple[Path, str]]
+        """
+        book = Path(self._path(keys.prefix))
+        files = [
+            (path, path.relative_to(book).as_posix())
+            for area in (keys.sources_area, keys.assets_area)
+            for path in Path(self._path(area)).rglob('*')
+            if path.is_file() and not any(part.startswith(HIDDEN_PREFIX) for part in path.relative_to(book).parts)
+        ]
+        return sorted(files, key=itemgetter(1))
+
+    def _unpack(self, keys: ProjectKeys, archive: BinaryIO) -> None:
+        """Check every name of the archive, then write its files into the new directory of the book, database first.
+
+        :param keys: The keys of the new book.
+        :type keys: ProjectKeys
+        :param archive: The archive, a file that can be read from any position.
+        :type archive: BinaryIO
+        :raises InvalidArchiveError: If the archive is refused.
+        :raises ConflictError: If the new book has a directory already.
+        """
+        try:
+            opened = zipfile.ZipFile(archive)
+        except zipfile.BadZipFile as error:
+            raise InvalidArchiveError(NOT_AN_ARCHIVE) from error
+        with opened:
+            files = [member for member in opened.infolist() if not member.is_dir()]
+            placed: dict[str, StorageKey] = {}
+            for member in files:
+                if (key := keys.archived(member.filename)) is None:
+                    raise InvalidArchiveError(OUTSIDE_THE_BOOK.format(name=member.filename))
+                placed[member.filename] = key
+            database = keys.relative(keys.database)
+            if database not in placed:
+                raise InvalidArchiveError(NO_DATABASE)
+            try:
+                Path(self._path(keys.prefix)).mkdir(parents=True)
+            except FileExistsError as error:
+                raise ConflictError(keys.project_id) from error
+            for member in sorted(files, key=lambda member: member.filename != database):
+                target = Path(self._path(placed[member.filename]))
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with opened.open(member) as source, target.open('xb') as copy:
+                    shutil.copyfileobj(source, copy, CHUNK_BYTES)
+
+
 def _list_files(directory: Path) -> dict[str, Path]:
     """Find the files under ``directory``, however deep, by their relative path.
 
@@ -517,6 +670,21 @@ def _copy_tree(origin: Path, destination: Path) -> None:
         shutil.copytree(origin, destination)
     else:
         shutil.copyfile(origin, destination)
+
+
+def _piece_of(path: Path, offset: int) -> bytes:
+    """Read one piece of a file, opening and closing it for the piece alone.
+
+    :param path: The file.
+    :type path: Path
+    :param offset: Where the piece starts.
+    :type offset: int
+    :returns: The piece, which is empty at the end of the file.
+    :rtype: bytes
+    """
+    with path.open('rb') as source:
+        source.seek(offset)
+        return source.read(CHUNK_BYTES)
 
 
 def _tree_size(path: Path) -> int:

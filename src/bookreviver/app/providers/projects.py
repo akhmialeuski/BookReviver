@@ -2,13 +2,12 @@
 
 from dishka import Provider, Scope, provide
 
-from bookreviver.api.routing import IIIF_ROOT
 from bookreviver.ports.imaging import Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
-from bookreviver.ports.storage import AssetStore, SourceStore
+from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.library import Library
 from bookreviver.services.pages import PageImaging, PageRuntime, PageService
@@ -50,17 +49,19 @@ class ProjectsProvider(Provider):
         return Library(uow=uow)
 
     @provide(scope=Scope.APP)
-    def project_files(self, sources: SourceStore, assets: AssetStore) -> ProjectFiles:
-        """Gather the stores whose files go when a book is deleted.
+    def project_files(self, sources: SourceStore, assets: AssetStore, archive: BookArchive) -> ProjectFiles:
+        """Gather the stores whose files go when a book is deleted, and the archive of a whole book.
 
         :param sources: Source store of the application.
         :type sources: SourceStore
         :param assets: Asset store of the application.
         :type assets: AssetStore
+        :param archive: Archive of a whole book.
+        :type archive: BookArchive
         :returns: The stores of the files of a book.
         :rtype: ProjectFiles
         """
-        return ProjectFiles(sources=sources, assets=assets)
+        return ProjectFiles(sources=sources, assets=assets, archive=archive)
 
     @provide
     def projects(
@@ -115,7 +116,7 @@ class ProjectsProvider(Provider):
         :returns: The builder of base versions and the runner of their processors.
         :rtype: PageImaging
         """
-        base_versions = BaseVersions(assets=assets, tiler=tiler, iiif_root=IIIF_ROOT)
+        base_versions = BaseVersions(assets=assets, tiler=tiler)
         return PageImaging(base_versions=base_versions, runner=runner)
 
     @provide

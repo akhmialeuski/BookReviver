@@ -41,18 +41,6 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def fx_storage_root(tmp_path: Path) -> Path:
-    """Return the storage root both stores of the test share.
-
-    :param tmp_path: Temporary directory of the test.
-    :type tmp_path: Path
-    :returns: Directory under the temporary directory, created by the first write.
-    :rtype: Path
-    """
-    return tmp_path / 'storage'
-
-
-@pytest.fixture
 def fx_source_store(fx_storage_root: Path) -> LocalSourceStore:
     """Build the source store over the test's storage root.
 
