@@ -9,9 +9,15 @@
 
 default_install_hook_types:
   - pre-commit
+  - pre-push
   - post-checkout
   - post-merge
   - post-rewrite
+# A hook runs on a commit unless it names its stages, so a push runs the CRAP gate alone
+default_stages:
+  - pre-commit
+# The crap-gate script is a copy of the skill's, kept as it is so a later copy replaces it whole
+exclude: ^tools/crap_gate\.py$
 
 repos:
   # Standard checks and fixers
@@ -117,3 +123,23 @@ repos:
         entry: '\b(status_code|status)\s*(==|!=|=)\s*[1-5][0-9]{2}\b'
         language: pygrep
         types: [ python ]
+
+  # crap-gate: code lines per function and per file on every commit, and on every push the pytest suite with coverage,
+  # the CRAP of each function and the coverage of the changed lines. Recorded debt lives in the two baselines
+  - repo: local
+    hooks:
+      - id: crap-gate-size
+        name: code lines per function and per file
+        entry: uv run --no-project tools/crap_gate.py size --baseline size-baseline.json
+        language: system
+        types: [ python ]
+        files: ^src/
+        # An applied Alembic revision is never rewritten
+        exclude: ^src/bookreviver/adapters/persistence/sqlalchemy/migrations/
+      - id: crap-gate
+        name: CRAP, coverage and changed-line coverage
+        entry: bash tools/crap-gate.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [ pre-push ]

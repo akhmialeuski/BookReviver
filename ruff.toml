@@ -167,14 +167,21 @@ exclude = [
     ".mypy_cache", ".nox", ".pants.d", ".pytest_cache",
     ".ruff_cache", ".svn", ".tox", ".venv", "__pypackages__",
     "_build", "buck-out", "build", "dist", "node_modules", "venv",
+    # The crap-gate script is a copy of the skill's, kept as it is so a later copy replaces it whole
+    "tools/crap_gate.py",
 ]
 
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [lint.mccabe]
-max-complexity = 15
+# The crap-gate limit: at full coverage the CRAP of a function equals its complexity, and the gate allows 8
+max-complexity = 8
 
 [lint.per-file-ignores]
+# An applied Alembic revision is never rewritten to meet a later limit
+"src/bookreviver/adapters/persistence/sqlalchemy/migrations/**" = [
+    "complex-structure", # function too complex
+]
 # Invariant — every project has these two
 "__init__.py" = [
     "module-import-not-at-top-of-file", # import violations
