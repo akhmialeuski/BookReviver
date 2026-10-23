@@ -101,10 +101,15 @@ describe('usePreview', () => {
   /** Say what the stream says when the server has made a preview. */
   async function announce(id: string): Promise<void> {
     act(() =>
-      applyProjectEvent(client, PROJECT, {
-        event: EventName.PageVersionReady,
-        data: { project_id: PROJECT, page_id: PAGE, version_id: id },
-      }),
+      applyProjectEvent(
+        client,
+        PROJECT,
+        {
+          event: EventName.PageVersionReady,
+          data: { project_id: PROJECT, page_id: PAGE, version_id: id },
+        },
+        { version: null },
+      ),
     );
     await elapse(0);
   }

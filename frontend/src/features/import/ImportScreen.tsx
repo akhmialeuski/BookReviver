@@ -50,7 +50,7 @@ export function ImportScreen({
   const sources = useSources(projectId);
   const jobs = useJobs(projectId);
   const report = useImportReport(projectId);
-  const closeReport = useCloseImportReport(projectId);
+  const closeReport = useCloseImportReport();
   const manifest = useManifest(projectId);
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
   const [grid, setGrid] = useState<{ sourceId: string | undefined; page: number }>({

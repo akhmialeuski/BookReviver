@@ -320,6 +320,24 @@ class TestStreamProjectEvents:
         expect(changed.id == str(changed.data[VERSION_FIELD]))
         assert_expectations()
 
+    async def test_a_stream_opens_with_the_version_of_the_book(self, fx_app: FastAPI, fx_queued_job: Job) -> None:
+        """Verify a browser that names no version is first told the version of the book, as the id of the event.
+
+        :param fx_app: The running application.
+        :type fx_app: FastAPI
+        :param fx_queued_job: Queued job of the signed-in account, whose project is listened to.
+        :type fx_queued_job: Job
+        """
+        reader = EventStreamReader(count=0)
+        path = fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=fx_queued_job.project_id)
+
+        await reader.read(fx_app, path)
+
+        assert reader.opening is not None
+        expect(reader.opening.id == str(reader.opening.data[VERSION_FIELD]))
+        expect(reader.events == [])
+        assert_expectations()
+
     async def test_a_browser_back_with_an_old_version_is_told_to_read_the_book_again(
         self, fx_app: FastAPI, fx_queued_job: Job
     ) -> None:

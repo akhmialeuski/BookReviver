@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageCreate, PageSchema } from '@/api';
 import { useCreatePages, useUpdatePages } from '@/features/pages/actions';
 import { manifestOptions } from '@/features/pages/manifest';
-import { applyProjectEvent, EventName } from '@/features/projects/events';
+import { applyProjectEvent, BURST_DELAY_MS, EventName } from '@/features/projects/events';
 import { page } from '@/features/workspace/fixtures';
 
 /**
@@ -138,9 +138,21 @@ describe('a change of pages while the manifest is being read', () => {
 
     await act(async () => change?.());
     expect(answers).toHaveLength(1);
-    // A job cutting the scans of the book announces a scan while the change is on its way to the server
-    applyProjectEvent(client, PROJECT, { event: EventName.ScanReady, data: {} });
-    applyProjectEvent(client, PROJECT, { event: EventName.PageVersionReady, data: {} });
+    // A job cutting the scans of the book changes it while the change is on its way to the server
+    const sync = { version: 1 };
+    applyProjectEvent(
+      client,
+      PROJECT,
+      { event: EventName.BookChanged, data: { version: 2, resources: ['scans'] } },
+      sync,
+    );
+    applyProjectEvent(
+      client,
+      PROJECT,
+      { event: EventName.BookChanged, data: { version: 3, resources: ['versions'] } },
+      sync,
+    );
+    await new Promise((resolve) => setTimeout(resolve, BURST_DELAY_MS));
     expect(pageReads()).toBe(0);
 
     answers[0]?.();
@@ -231,9 +243,8 @@ describe('the adding of several pages', () => {
 
     answers[0]?.();
     await vi.waitFor(() => expect(invalidate).toHaveBeenCalled());
-    // One read of the pages, the pagination sections, the project and the project list, and it comes after the
-    // request for the new pages
-    expect(invalidate).toHaveBeenCalledTimes(4);
+    // One read of the pages and the pagination sections, and it comes after the request for the new pages
+    expect(invalidate).toHaveBeenCalledTimes(2);
     expect(addPages.mock.invocationCallOrder[0]).toBeLessThan(
       invalidate.mock.invocationCallOrder[0] ?? 0,
     );

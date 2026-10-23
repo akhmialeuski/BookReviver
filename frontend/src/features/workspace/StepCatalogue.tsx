@@ -40,7 +40,7 @@ export function StepCatalogue({
   onAdded: (stepId: string, index: number) => void;
 }): React.JSX.Element | null {
   const { projectId, stage, recipe, catalogue } = processing;
-  const save = useSaveRecipe(projectId, stage);
+  const save = useSaveRecipe(projectId);
   const [open, setOpen] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
   if (recipe === undefined) {

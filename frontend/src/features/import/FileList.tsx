@@ -1,9 +1,8 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { FileImageIcon, FileTextIcon, Loader2Icon } from 'lucide-react';
 import type { JobSchema } from '@/api';
 import { cancelJobApiV1JobsJobIdDeleteMutation } from '@/api/@tanstack/react-query.gen';
 import type { ImportedSource } from '@/features/import/queries';
-import { refreshProject } from '@/features/projects/events';
 import { UploadDialog } from '@/features/projects/upload/UploadDialog';
 import { describeError } from '@/shared/http/problem';
 import { formatBytes, formatDateTime } from '@/shared/lib/format';
@@ -71,12 +70,9 @@ function FileRow({
   );
 }
 
-function ImportRow({ job, projectId }: { job: JobSchema; projectId: string }): React.JSX.Element {
-  const queryClient = useQueryClient();
-  const stop = useMutation({
-    ...cancelJobApiV1JobsJobIdDeleteMutation(),
-    onSuccess: () => refreshProject(queryClient, projectId),
-  });
+function ImportRow({ job }: { job: JobSchema }): React.JSX.Element {
+  // The cancelled job and whatever the import wrote before it stopped reach the screen by the events of the book
+  const stop = useMutation(cancelJobApiV1JobsJobIdDeleteMutation());
   const labels = MESSAGES.import.files;
   const { done, total, fraction } = job.progress;
 
@@ -160,7 +156,7 @@ export function FileList({
           />
         ))}
         {imports.map((job) => (
-          <ImportRow key={job.id} job={job} projectId={projectId} />
+          <ImportRow key={job.id} job={job} />
         ))}
       </ul>
     </section>

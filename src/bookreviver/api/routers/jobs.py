@@ -25,7 +25,7 @@ from bookreviver.api.pagination import Pager
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import (
     BookChangedSchema,
-    BookResetSchema,
+    BookVersionSchema,
     EventName,
     JobQuery,
     JobSchema,
@@ -155,8 +155,10 @@ async def stream_project_events(
 ) -> AsyncIterator[ServerSentEvent]:
     """Stream the project's events as they happen: jobs, imported sources, ready scans, pages, versions, description.
 
-    A committed change of the book is a ``book-changed`` event whose id is the new version of the book. The stream keeps
-    no changes, so a browser that comes back with the id of an older version is sent ``book-reset`` first.
+    A committed change of the book is a ``book-changed`` event whose id is the new version of the book. A browser that
+    connects is first sent ``book-version`` with the version now, so it knows which version it holds. The stream keeps
+    no changes, so a browser that comes back with the id of another version is sent ``book-reset`` instead, and one that
+    comes back with the id of the version now is sent nothing.
 
     \N{FORM FEED}
     :param project_id: Identifier of the project.
@@ -172,11 +174,13 @@ async def stream_project_events(
     :returns: Iterator yielding one server-sent event per domain event the browser listens to.
     :rtype: AsyncIterator[ServerSentEvent]
     """
-    if last_event_id is not None:
-        current = await freshness.version(actor, project_id)
-        if last_event_id != str(current):
-            reset = BookResetSchema(project_id=project_id, version=current)
-            yield ServerSentEvent(event=EventName.BOOK_RESET, id=str(current), data=reset)
+    current = await freshness.version(actor, project_id)
+    if last_event_id is None:
+        named = BookVersionSchema(project_id=project_id, version=current)
+        yield ServerSentEvent(event=EventName.BOOK_VERSION, id=str(current), data=named)
+    elif last_event_id != str(current):
+        reset = BookVersionSchema(project_id=project_id, version=current)
+        yield ServerSentEvent(event=EventName.BOOK_RESET, id=str(current), data=reset)
     async for event in events:
         match event:
             case BookChanged(project_id=changed_id, version=book_version, resources=resources):

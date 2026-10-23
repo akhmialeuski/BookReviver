@@ -28,6 +28,7 @@ class EventName(enum.StrEnum):
     PROJECT_CHANGED = 'project-changed'
     BOOK_CHANGED = 'book-changed'
     BOOK_RESET = 'book-reset'
+    BOOK_VERSION = 'book-version'
 
 
 class ProgressSchema(ResponseModel):
@@ -97,12 +98,14 @@ class BookChangedSchema(ResponseModel):
     resources: list[BookResource]
 
 
-class BookResetSchema(ResponseModel):
-    """A book that changed while the browser was not listening; the data of a ``book-reset`` event.
+class BookVersionSchema(ResponseModel):
+    """The version of a book when the browser connects; the data of ``book-version`` and ``book-reset`` events.
 
-    The stream keeps no changes for a browser that comes back, so every read of the book is to be repeated.
+    ``book-version`` tells a browser that connects for the first time which version it holds. ``book-reset`` tells one
+    that comes back that the book changed while it was not listening, and since the stream keeps no changes, every read
+    of the book is to be repeated.
 
-    :ivar project_id: Identifier of the project whose reads to repeat.
+    :ivar project_id: Identifier of the project.
     :ivar version: The version of the book now.
     """
 

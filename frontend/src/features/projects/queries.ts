@@ -1,6 +1,7 @@
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import type { Stage } from '@/api';
 import {
+  collectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetQueryKey,
   listPagesApiV1ProjectsProjectIdPagesGetQueryKey,
   listPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetQueryKey,
   listProjectJobsApiV1ProjectsProjectIdJobsGetQueryKey,
@@ -12,14 +13,19 @@ import {
   listStagesApiV1ProjectsProjectIdStagesGetQueryKey,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
   projectApiV1ProjectsProjectIdGetQueryKey,
+  readJobApiV1JobsJobIdGetQueryKey,
 } from '@/api/@tanstack/react-query.gen';
 import { STAGES } from '@/features/stages/stages';
+
+// A stage to build the key of the recipes of a book with, whose identifier and address alone are kept
+const ANY_STAGE: Stage = 'import';
 
 /**
  * Which cached queries a change of a book makes stale.
  *
  * The keys come from the generated client, and a key without parameters matches every query of its endpoint, so
- * one call refreshes all pages and filters of a list. The event stream and the mutations both call these.
+ * one call refreshes all pages and filters of a list. The event stream calls these for the parts of the book a change
+ * named, and the changes of the pages call them as they end.
  */
 
 /**
@@ -137,22 +143,6 @@ export function invalidateStageRows(
   );
 }
 
-/**
- * Refresh the rows of a stage and of every stage after it. A row draws the version its stage reads, which is the
- * current version of an earlier stage, so a change of a page in a stage changes the picture of the later stages too,
- * even for the pages they have not run on and that no event of their own names.
- */
-export async function invalidateStageRowsFrom(
-  queryClient: QueryClient,
-  projectId: string,
-  stage: Stage,
-): Promise<void> {
-  const first = STAGES.findIndex((entry) => entry.stage === stage);
-  await Promise.all(
-    STAGES.slice(first).map((entry) => invalidateStageRows(queryClient, projectId, entry.stage)),
-  );
-}
-
 /** Refresh the rows of every stage; only the stage on screen is read again at once, the others when it is opened. */
 export async function invalidateAllStageRows(
   queryClient: QueryClient,
@@ -200,16 +190,29 @@ export function invalidateAllVersions(queryClient: QueryClient, projectId: strin
   });
 }
 
-/** Refresh the recipes of a stage, which a job that writes their parameters, such as the measure of a book, changed. */
-export function invalidateRecipes(
-  queryClient: QueryClient,
-  projectId: string,
-  stage: Stage,
-): Promise<void> {
-  const path = { project_id: projectId, stage };
+/** Refresh the count of what a collection of old versions of a book would delete, which every new or marked result changes. */
+export function invalidateCollectable(queryClient: QueryClient, projectId: string): Promise<void> {
   return queryClient.invalidateQueries({
-    queryKey: listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetQueryKey({ path }),
+    queryKey: collectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetQueryKey({
+      path: { project_id: projectId },
+    }),
   });
+}
+
+/** Refresh the recipes of every stage of a book. The key names the book alone, so it matches the recipes of each stage. */
+export function invalidateAllRecipes(queryClient: QueryClient, projectId: string): Promise<void> {
+  const [{ _id, baseUrl }] = listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetQueryKey({
+    path: { project_id: projectId, stage: ANY_STAGE },
+  });
+  return queryClient.invalidateQueries({
+    queryKey: [{ _id, baseUrl, path: { project_id: projectId } }],
+  });
+}
+
+/** Refresh every job read one by one, such as the job a preview waits for, whose events a break of the stream lost. */
+export function invalidateJobReads(queryClient: QueryClient): Promise<void> {
+  const [{ _id, baseUrl }] = readJobApiV1JobsJobIdGetQueryKey({ path: { job_id: '' } });
+  return queryClient.invalidateQueries({ queryKey: [{ _id, baseUrl }] });
 }
 
 /** Refresh the jobs of a book, those running and the latest of any state, which the activity shows. */

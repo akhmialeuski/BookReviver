@@ -25,7 +25,7 @@ export function RecipeSaveBar({
   rows: readonly StagePageSchema[];
 }): React.JSX.Element | null {
   const { projectId, stage, recipe, steps } = processing;
-  const save = useSaveRecipe(projectId, stage);
+  const save = useSaveRecipe(projectId);
   if (recipe === undefined || !processing.dirty) {
     return null;
   }

@@ -65,7 +65,7 @@ function BookActions({
   onApplied: (notice: CardNotice) => void;
 }): React.JSX.Element {
   const { processing } = book;
-  const apply = useApplyProfile(processing.projectId, profile.stage);
+  const apply = useApplyProfile(processing.projectId);
   const dirty = processing.dirty && processing.stage === profile.stage;
 
   return (

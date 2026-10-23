@@ -25,12 +25,8 @@ import { manifestOptions } from '@/features/pages/manifest';
 import { anchorOf, movePages, pageIdsOfSource } from '@/features/pages/order';
 import {
   invalidatePages,
-  invalidateProject,
-  invalidateProjectList,
-  invalidateScans,
   invalidateSections,
   invalidateSources,
-  invalidateStageRowsFrom,
   pageChangesInFlight,
   pagesScope,
 } from '@/features/projects/queries';
@@ -72,8 +68,6 @@ async function refreshPages(
     invalidatePages(queryClient, projectId, settling),
     // A page that leaves hands its section on, so a section can change with the pages
     invalidateSections(queryClient, projectId),
-    invalidateProject(queryClient, projectId),
-    invalidateProjectList(queryClient),
   ]);
 }
 
@@ -208,10 +202,9 @@ export function useUpdatePages(projectId: string) {
 /**
  * Choose the image of blank pages: their scan, a white leaf or the paper of the book.
  *
- * The choice is shown on the pages at once. The leaf itself is drawn by a job, so the picture of a page changes when
- * the rows of the Order stage are read after the job's event, and a page the server refuses leaves all of them as they
- * were. The rows are read again when the change ends too, since a leaf that was made before is found again at once and
- * no job follows, and the picture of the page at the Order stage, which the grid draws, is what the leaf replaces.
+ * The choice is shown on the pages at once, and a page the server refuses leaves all of them as they were. The leaf
+ * itself is drawn by a job, or found again at once when it was made before, and either way the rows of the stages,
+ * whose picture the leaf replaces, are read again by the `book-changed` event of the write.
  */
 export function useFillBlankPages(projectId: string) {
   const queryClient = useQueryClient();
@@ -226,13 +219,7 @@ export function useFillBlankPages(projectId: string) {
         );
       }),
     onError: (_error, _variables, snapshot) => restore(queryClient, projectId, snapshot),
-    onSettled: async () => {
-      await Promise.all([
-        readWhenLast(queryClient, projectId)(),
-        // A later stage reads the leaf too, so its rows draw it for the pages it has not run on
-        invalidateStageRowsFrom(queryClient, projectId, 'page-order'),
-      ]);
-    },
+    onSettled: readWhenLast(queryClient, projectId),
   });
 }
 
@@ -347,12 +334,10 @@ export function useDeleteSource(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...deleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteMutation(),
-    onSettled: async () => {
-      await Promise.all([
+    onSettled: () =>
+      Promise.all([
         refreshPages(queryClient, projectId),
         invalidateSources(queryClient, projectId),
-        invalidateScans(queryClient, projectId),
-      ]);
-    },
+      ]),
   });
 }

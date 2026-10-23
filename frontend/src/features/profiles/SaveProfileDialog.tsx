@@ -45,8 +45,8 @@ export function SaveProfileDialog({
   const { projectId, stage, recipe, steps } = processing;
   const [name, setName] = useState('');
   const save = useSaveProfile();
-  const link = useLinkProfile(projectId, stage);
-  const saveRecipe = useSaveRecipe(projectId, stage);
+  const link = useLinkProfile(projectId);
+  const saveRecipe = useSaveRecipe(projectId);
   const recipeName =
     recipe === undefined ? undefined : MESSAGES.processing.recipe.kinds[recipe.kind];
   const { reset: resetSave } = save;

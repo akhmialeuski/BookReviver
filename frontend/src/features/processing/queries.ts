@@ -1,5 +1,4 @@
 import {
-  type QueryClient,
   queryOptions,
   type UseQueryResult,
   useIsMutating,
@@ -23,20 +22,15 @@ import {
   chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation,
   collectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetOptions,
   collectVersionsApiV1ProjectsProjectIdVersionsCollectPostMutation,
-  deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteMutation,
   deleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteMutation,
   detectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostMutation,
-  listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetOptions,
-  listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey,
   listProcessorsApiV1ProcessorsGetOptions,
   listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetOptions,
-  listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetQueryKey,
   listScansApiV1ProjectsProjectIdScansGetQueryKey,
   listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetOptions,
   listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetQueryKey,
   measureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostMutation,
   previewStepApiV1ProjectsProjectIdStagesStagePreviewPostMutation,
-  putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutMutation,
   putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutMutation,
   putRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutMutation,
   putValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutMutation,
@@ -46,11 +40,9 @@ import {
 } from '@/api/@tanstack/react-query.gen';
 import { invalidatePageLayers } from '@/features/processing/historyQueries';
 import {
-  invalidateAllStageRows,
+  invalidateAllRecipes,
   invalidateJobs,
-  invalidateProject,
   invalidateStageRows,
-  invalidateStageSummary,
   invalidateVersions,
 } from '@/features/projects/queries';
 
@@ -58,9 +50,9 @@ import {
  * The queries and changes behind the processing workspace: the catalogue of processors, the recipes of a stage, the
  * versions of a page, and the saving, running, previewing and choosing that act on them.
  *
- * The keys are the generated ones, so a change of a recipe marks exactly the reads of that stage stale. A recipe is
- * always saved through the route of its id. A save marks the pages it processed out of date on the server, and the rows and the summary of the stage are
- * read again at once, since the counts on the panel and the bar depend on them.
+ * The keys are the generated ones. A recipe is always saved through the route of its id. A change reads again only what
+ * the control that made it shows, so that control never shows the state before it. The rows and the summary of the
+ * stages, which a save marks out of date on the server, are read again by the `book-changed` event the change sends.
  */
 
 /** Items asked for per request of a short list; the routes accept at most this many. */
@@ -161,31 +153,12 @@ export function useVersions(
   });
 }
 
-/** Mark stale what a change of the recipes or of the results of a stage changes. */
-export async function refreshStage(
-  queryClient: QueryClient,
-  projectId: string,
-  stage: Stage,
-): Promise<void> {
-  await Promise.all([
-    queryClient.invalidateQueries({
-      queryKey: listRecipesApiV1ProjectsProjectIdStagesStageRecipesGetQueryKey({
-        path: { project_id: projectId, stage },
-      }),
-    }),
-    invalidateStageRows(queryClient, projectId, stage),
-    invalidateStageSummary(queryClient, projectId),
-    invalidateProject(queryClient, projectId),
-    invalidateJobs(queryClient, projectId),
-  ]);
-}
-
 /** Save the steps of a recipe. */
-export function useSaveRecipe(projectId: string, stage: Stage) {
+export function useSaveRecipe(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...putRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutMutation(),
-    onSettled: () => refreshStage(queryClient, projectId, stage),
+    onSettled: () => invalidateAllRecipes(queryClient, projectId),
   });
 }
 
@@ -193,11 +166,11 @@ export function useSaveRecipe(projectId: string, stage: Stage) {
  * Put the steps a stage starts with back into a recipe, which marks the pages it processed out of date. The steps are the
  * default profile of the account or the built-in template, chosen by the server.
  */
-export function useResetRecipe(projectId: string, stage: Stage) {
+export function useResetRecipe(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...resetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostMutation(),
-    onSettled: () => refreshStage(queryClient, projectId, stage),
+    onSettled: () => invalidateAllRecipes(queryClient, projectId),
   });
 }
 
@@ -212,13 +185,12 @@ function runKey(projectId: string): readonly [string, string] {
  * The mutation stays pending until the jobs of the book are read again, so the job it started is on the list by the time
  * it ends, and {@link useRunInFlight} covers the stretch from the press to that moment.
  */
-export function useRunStage(projectId: string, stage: Stage) {
+export function useRunStage(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...runStageApiV1ProjectsProjectIdStagesStageRunPostMutation(),
     mutationKey: runKey(projectId),
     onSettled: () => invalidateJobs(queryClient, projectId),
-    onSuccess: () => refreshStage(queryClient, projectId, stage),
   });
 }
 
@@ -251,8 +223,8 @@ export function useMeasureBook(projectId: string) {
 /**
  * Count what a collection would delete from the book now: the versions and the bytes of their files.
  *
- * The count is read again each time the question is asked, since a run or a mark changes it, so the query is on only
- * while the dialog that shows it is open.
+ * The query is on only while the dialog that shows it is open, and a run or a mark, which changes the count, reads it
+ * again through the `book-changed` event of the versions.
  *
  * @param projectId The book.
  * @param enabled Whether the question is being asked.
@@ -303,56 +275,6 @@ export function usePreviewStep(projectId: string) {
   });
 }
 
-/** Read the manual edits one stage holds on a page, by processor. */
-export function useEdits(projectId: string, pageId: string | undefined, stage: Stage) {
-  return useQuery({
-    ...listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetOptions({
-      path: { project_id: projectId, page_id: pageId ?? '', stage },
-      query: { size: LIST_SIZE },
-    }),
-    select: (page) => page.items,
-    enabled: pageId !== undefined,
-  });
-}
-
-/** Mark stale what a change of an edit of a page changes: its edits, and the rows and the summary of the stage. */
-async function refreshEdits(
-  queryClient: QueryClient,
-  projectId: string,
-  stage: Stage,
-  pageId: string,
-): Promise<void> {
-  await Promise.all([
-    queryClient.invalidateQueries({
-      queryKey: listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey({
-        path: { project_id: projectId, page_id: pageId, stage },
-      }),
-    }),
-    invalidateStageRows(queryClient, projectId, stage),
-    invalidateStageSummary(queryClient, projectId),
-  ]);
-}
-
-/** Save the edit a step of a recipe reads on a page, which marks the stage of the page out of date. */
-export function useSaveEdit(projectId: string, stage: Stage) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutMutation(),
-    onSettled: (_data, _error, variables) =>
-      refreshEdits(queryClient, projectId, stage, variables.path.page_id),
-  });
-}
-
-/** Delete the edit a step of a recipe reads on a page, which marks the stage of the page out of date. */
-export function useDeleteEdit(projectId: string, stage: Stage) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    ...deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteMutation(),
-    onSettled: (_data, _error, variables) =>
-      refreshEdits(queryClient, projectId, stage, variables.path.page_id),
-  });
-}
-
 /** Read the settings one stage holds for the steps of a page: the fields the page changes, by step. */
 export function usePageSettings(
   projectId: string,
@@ -370,43 +292,30 @@ export function usePageSettings(
   });
 }
 
-/** Mark stale what a change of a value of a setting changes: the settings of every page, and the rows and the summary of the stage. */
-async function refreshValues(
-  queryClient: QueryClient,
-  projectId: string,
-  stage: Stage,
-): Promise<void> {
-  await Promise.all([
-    invalidatePageLayers(queryClient),
-    invalidateStageRows(queryClient, projectId, stage),
-    invalidateStageSummary(queryClient, projectId),
-  ]);
-}
-
 /**
  * Set the value pages use for one field of a step: the open page, the pages selected, the odd pages, the even pages or
  * a group. The stage of each page whose parameters change is marked out of date on the server.
  *
  * The changes of values share one mutation scope per book, so they reach the server in the order they were made and an
  * older value never lands over a newer one. The settings of every page are read again, since a value for the odd pages
- * reaches half the book.
+ * reaches half the book, and the rows of the stages follow the `book-changed` event.
  */
-export function useSetValue(projectId: string, stage: Stage) {
+export function useSetValue(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...putValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutMutation(),
     scope: { id: `page-settings:${projectId}` },
-    onSettled: () => refreshValues(queryClient, projectId, stage),
+    onSettled: () => invalidatePageLayers(queryClient),
   });
 }
 
 /** Take a value of a field back from the pages it was set for, so they use the next by strength, which marks their stages out of date. */
-export function useRemoveValue(projectId: string, stage: Stage) {
+export function useRemoveValue(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...deleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteMutation(),
     scope: { id: `page-settings:${projectId}` },
-    onSettled: () => refreshValues(queryClient, projectId, stage),
+    onSettled: () => invalidatePageLayers(queryClient),
   });
 }
 
@@ -414,7 +323,7 @@ export function useRemoveValue(projectId: string, stage: Stage) {
  * Carry the shape the open page has set by hand for a step over to other pages, as one batch of the history.
  *
  * It shares the mutation scope of the edits of the book, so it reaches the server after the edit of the source page that
- * was saved just before it. The edits and the histories of every page it reached are read again.
+ * was saved just before it. The settings, the edits and the histories of every page it reached are read again.
  *
  * What it did is handed over by the mutation itself and not by the call that sent it, so a reader who moves to another
  * page while it is on its way, which takes the menu that sent it away, still sees the result and its undo.
@@ -423,22 +332,13 @@ export function useRemoveValue(projectId: string, stage: Stage) {
  * @param stage The stage of the step.
  * @param onCarried Called with what the carry-over did.
  */
-export function useCarryShape(
-  projectId: string,
-  stage: Stage,
-  onCarried: (result: CarryOverSchema) => void,
-) {
+export function useCarryShape(projectId: string, onCarried: (result: CarryOverSchema) => void) {
   const queryClient = useQueryClient();
   return useMutation({
     ...carryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostMutation(),
     scope: { id: `page-edits:${projectId}` },
     onSuccess: onCarried,
-    onSettled: () =>
-      Promise.all([
-        invalidatePageLayers(queryClient),
-        invalidateStageRows(queryClient, projectId, stage),
-        invalidateStageSummary(queryClient, projectId),
-      ]),
+    onSettled: () => invalidatePageLayers(queryClient),
   });
 }
 
@@ -472,14 +372,14 @@ export function useOwnWork(projectId: string, stage: Stage, body: StageRunBody |
   });
 }
 
-/** Make one of the results of a page its current result in the stage. */
+/** Make one of the results of a page its current result in the stage, which the rows of the stage and its results show. */
 export function useChooseVersion(projectId: string, stage: Stage) {
   const queryClient = useQueryClient();
   return useMutation({
     ...chooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutMutation(),
     onSettled: (_data, _error, variables) =>
       Promise.all([
-        refreshStage(queryClient, projectId, stage),
+        invalidateStageRows(queryClient, projectId, stage),
         invalidateVersions(queryClient, projectId, variables.path.page_id),
       ]),
   });
@@ -489,18 +389,15 @@ export function useChooseVersion(projectId: string, stage: Stage) {
  * Set the mark and the comment of a result, which are the user's notes and change nothing the step reads.
  *
  * Both are replaced together, so a caller that changes one sends the other as it is. The versions of the page are read
- * again, since every list of results shows the notes, and so are the rows of the stages, since the strip marks the pages
- * whose result is marked bad.
+ * again, since every list of results shows the notes. The strip, which marks the pages whose result is marked bad,
+ * follows the `book-changed` event.
  */
 export function useMarkResult(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...putMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutMutation(),
     onSettled: (_data, _error, variables) =>
-      Promise.all([
-        invalidateVersions(queryClient, projectId, variables.path.page_id),
-        invalidateAllStageRows(queryClient, projectId),
-      ]),
+      invalidateVersions(queryClient, projectId, variables.path.page_id),
   });
 }
 

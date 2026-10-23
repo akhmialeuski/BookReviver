@@ -60,8 +60,8 @@ export function ProfileMenu({
   const [notice, setNotice] = useState<string | null>(null);
   const profiles = useProfiles(stage);
   const replace = useReplaceProfile();
-  const saveRecipe = useSaveRecipe(processing.projectId, stage);
-  const apply = useApplyProfile(processing.projectId, stage);
+  const saveRecipe = useSaveRecipe(processing.projectId);
+  const apply = useApplyProfile(processing.projectId);
   if (recipe === undefined) {
     return null;
   }

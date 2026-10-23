@@ -26,6 +26,8 @@ SSE_COMMENT_PREFIX: str = ':'
 SSE_EVENT_FIELD: str = 'event'
 SSE_DATA_FIELD: str = 'data'
 SSE_ID_FIELD: str = 'id'
+# The event a stream opens with when the browser names no version it holds
+OPENING_EVENT: str = 'book-version'
 # ASGI message keys and values
 ASGI_TYPE_KEY: str = 'type'
 ASGI_BODY_KEY: str = 'body'
@@ -49,7 +51,10 @@ class StreamedEvent(NamedTuple):
 class EventStreamReader:
     """Reads an event stream until ``count`` events arrived, then disconnects like a closed browser tab.
 
-    :ivar events: Events received so far, in order.
+    :ivar events: Events received so far, in order, after the version the stream opens with.
+    :ivar opening: The ``book-version`` event the stream opens with, or None before it arrived or when the stream
+                   opened with another event.
+    :ivar opened: Set once the stream sent its first event, which is after the stream read what it opens with.
     :ivar status: Status of the response, or None before it started.
     :ivar content_type: Media type of the response, or empty before it started.
     """
@@ -61,6 +66,8 @@ class EventStreamReader:
         :type count: int
         """
         self.events: list[StreamedEvent] = []
+        self.opening: StreamedEvent | None = None
+        self.opened = anyio.Event()
         self.status: int | None = None
         self.content_type = ''
         self._count = count
@@ -126,7 +133,11 @@ class EventStreamReader:
             event = StreamedEvent(
                 name=fields[SSE_EVENT_FIELD], data=json.loads(fields[SSE_DATA_FIELD]), id=fields.get(SSE_ID_FIELD)
             )
-            self.events.append(event)
+            if not self.events and self.opening is None and event.name == OPENING_EVENT:
+                self.opening = event
+            else:
+                self.events.append(event)
+            self.opened.set()
             if len(self.events) >= self._count:
                 self._enough.set()
         # A socket write is a suspension point of a real server; keep one so the test interleaves with the stream

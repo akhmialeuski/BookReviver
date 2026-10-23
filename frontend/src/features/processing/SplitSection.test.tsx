@@ -56,7 +56,7 @@ describe('SplitSection', () => {
 
   /** A control elsewhere on the screen that sends the same request to run the stage as the banners and the footer do. */
   function OtherRun(): React.JSX.Element {
-    const run = useRunStage('project', 'page-split');
+    const run = useRunStage('project');
     return (
       <button
         type="button"

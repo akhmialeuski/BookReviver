@@ -115,8 +115,8 @@ function FieldValues({
 }): React.JSX.Element {
   const { page, stepId } = values;
   const { projectId, stage } = page;
-  const set = useSetValue(projectId, stage);
-  const remove = useRemoveValue(projectId, stage);
+  const set = useSetValue(projectId);
+  const remove = useRemoveValue(projectId);
   const [editing, setEditing] = useState<string | null>(null);
   const chips = chipsOf(page, stepId, name);
   const choices = choicesOf(page, stepId, name);

@@ -13,7 +13,7 @@ import {
   planSave,
   toFields,
 } from '@/features/about/fields';
-import { invalidateProject, invalidateProjectList } from '@/features/projects/queries';
+import { invalidateProject } from '@/features/projects/queries';
 import { useDebouncedCallback } from '@/shared/hooks/useDebouncedCallback';
 import { describeError } from '@/shared/http/problem';
 
@@ -79,7 +79,6 @@ export function useAutosave(project: ProjectSchema): Autosave {
         projectApiV1ProjectsProjectIdGetQueryKey({ path: { project_id: updated.id } }),
         updated,
       );
-      void invalidateProjectList(queryClient);
     },
     onError: (_error, variables) => setFailedKey(JSON.stringify(variables.body)),
   });
