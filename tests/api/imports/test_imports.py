@@ -13,7 +13,7 @@ from fastapi import Request
 from bookreviver.api.auth import current_actor
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import EventName
-from bookreviver.domain.enums import JobKind, JobState, RejectionReason, SourceStatus
+from bookreviver.domain.enums import BookResource, JobKind, JobState, RejectionReason, SourceStatus
 from tests.adapters.imaging.samples import DjvuPage, requires_djvulibre, write_djvu_indirect
 from tests.helpers.builders import make_job, make_project, new_account_id
 from tests.helpers.fakes_imports import djvu_uploads, image_upload, pdf_upload, stored_book
@@ -41,6 +41,8 @@ pytestmark = pytest.mark.anyio
 
 SOURCES_PATH: str = '/api/v1/projects/{project_id}/sources'
 FILES_FIELD: str = 'files'
+# The parts of the book a ``book-changed`` event names
+RESOURCES_FIELD: str = 'resources'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
 FIRST_PART_PAGES: int = 2
@@ -52,21 +54,17 @@ SECOND_PART_WIDTH_PX: int = 210
 # Pages of the sample indirect DjVu documents
 DJVU_PAGES: tuple[DjvuPage, ...] = (DjvuPage(), DjvuPage(size_px=(250, 350)), DjvuPage(size_px=(320, 420)))
 # The events of an import of one image, in the order they are published: the job queued and running, the job with
-# its total, the source and its pages, the job with its file dealt with, the job as the cut of its scan begins, the
-# scan, the stage of its page, the job with its scan cut and the job as it ended
-# A committed change of the book is announced first, and the event of the service that made it follows
+# its total, the change that stored the source and its pages, the job with its file dealt with, the job as the cut of
+# its scan begins, the change that stored the scan and the result of its page, the job with its scan cut, the change
+# the end of the job made and the job as it ended
 ONE_IMAGE_EVENTS: list[EventName] = [
     EventName.JOB_CHANGED,
     EventName.JOB_CHANGED,
     EventName.JOB_CHANGED,
     EventName.BOOK_CHANGED,
-    EventName.SOURCE_IMPORTED,
-    EventName.PAGES_CHANGED,
     EventName.JOB_CHANGED,
     EventName.JOB_CHANGED,
     EventName.BOOK_CHANGED,
-    EventName.SCAN_READY,
-    EventName.PAGE_STAGE_CHANGED,
     EventName.JOB_CHANGED,
     EventName.BOOK_CHANGED,
     EventName.JOB_CHANGED,
@@ -182,20 +180,18 @@ class TestUploadSources:
         self,
         fx_listen: EventListener,
         fx_client: httpx.AsyncClient,
-        fx_uow: UnitOfWorkFactory,
         fx_project: Project,
         tmp_path: Path,
     ) -> None:
-        """Verify the events a browser follows during an import: the job, the source, its pages and scan, the result.
+        """Verify the events a browser follows during an import: the job, the changes of the book and the result.
 
-        There is no event per page, since the page manifest is read in one request.
+        One change stores the source with its pages, and the next the scan with the result of its page. There is no
+        event per page, since the parts a change names are read again whole.
 
         :param fx_listen: Function listening to the events of a project, as a browser tab does.
         :type fx_listen: EventListener
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_project: Project of the signed-in account.
         :type fx_project: Project
         :param tmp_path: Temporary directory of the test.
@@ -206,12 +202,11 @@ class TestUploadSources:
                 SOURCES_PATH.format(project_id=fx_project.id), files=_multipart([image_upload(tmp_path, 'cover.jpg')])
             )
 
-        book = await stored_book(fx_uow(), fx_project.id)
-        [source], [scan] = book.sources, book.scans
         queued, ended = reader.events[0].data, reader.events[-1].data
+        stored_source, stored_scan = (set(reader.events[index].data[RESOURCES_FIELD]) for index in (3, 6))
         expect([event.name for event in reader.events] == ONE_IMAGE_EVENTS)
-        expect(reader.events[4].data == {'project_id': str(fx_project.id), 'source_id': str(source.id)})
-        expect(reader.events[9].data == {'project_id': str(fx_project.id), 'scan_id': str(scan.id)})
+        expect({BookResource.SOURCES, BookResource.PAGES} <= stored_source)
+        expect({BookResource.SCANS, BookResource.VERSIONS} <= stored_scan)
         expect((queued['state'], ended['state']) == (JobState.QUEUED, JobState.SUCCEEDED))
         expect(ended['id'] == queued['id'])
         assert_expectations()

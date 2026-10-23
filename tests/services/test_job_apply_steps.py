@@ -12,7 +12,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import JobState, Rendition, Stage, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.events import PageStageChanged, PageVersionReady
+from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import StageRun
@@ -169,7 +169,7 @@ class TestRunPage:
         """Verify the record of a failed stage is not written for a page that is gone, and the job ends for its reason.
 
         The step fails right after the page was deleted, so the change that records the failure finds no page. The page
-        counts as failed, the job fails with the reason of a run that processed no page, and no stage is announced.
+        counts as failed, and the job fails with the reason of a run that processed no page.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -204,9 +204,7 @@ class TestRunPage:
         await fx_kit.work_queue()
 
         stored = stored_job(fx_kit, job.id)
-        expect((stored.state, stored.error) == (JobState.FAILED, NO_PAGE_PROCESSED))
-        expect(not any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
-        assert_expectations()
+        assert (stored.state, stored.error) == (JobState.FAILED, NO_PAGE_PROCESSED)
 
 
 async def kit_with_page(kit: ProcessingKit) -> tuple[Actor, Project]:

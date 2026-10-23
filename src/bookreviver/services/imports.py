@@ -44,7 +44,6 @@ from bookreviver.domain.enums import (
     FileType,
     JobKind,
     JobState,
-    PageChange,
     PageOrigin,
     RecipeKind,
     RejectionReason,
@@ -61,7 +60,6 @@ from bookreviver.domain.errors import (
     UnsupportedSourceError,
     UploadRejectedError,
 )
-from bookreviver.domain.events import PagesChanged, ProjectChanged, ScanReady, SourceImported
 from bookreviver.domain.ids import JobId, PageId, ScanId, SourceId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import ImportRequest, JobEnd, PageStageKey, Renditions, StageRun, UploadPath
@@ -75,14 +73,14 @@ from bookreviver.services.steps import StepRun
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Actor, PageStage, Project
+    from bookreviver.domain.entities import Actor, Project
     from bookreviver.domain.enums import SourceKind
     from bookreviver.domain.ids import ProjectId
     from bookreviver.domain.values import MetadataSuggestion, UploadedSource
     from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
-    from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard, JobControl
+    from bookreviver.ports.runtime import Clock, JobBoard, JobControl
     from bookreviver.ports.storage import AssetStore, IncomingFile, SourceStore
     from bookreviver.services.processing_parts import ProcessingParts
     from bookreviver.services.steps import StepRunner
@@ -143,14 +141,12 @@ class ImportImaging:
 class ImportRuntime:
     """What an import reports through and is bounded by.
 
-    :ivar publisher: Publisher of the events the browser follows.
     :ivar clock: Clock stamping jobs and what they create.
     :ivar order_keys: Builder of the order keys of the new pages.
     :ivar limits: Bounds of an upload and of an import.
     :ivar board: Board the import job is put on.
     """
 
-    publisher: EventPublisher
     clock: Clock
     order_keys: OrderKeys
     limits: ImportLimits
@@ -199,7 +195,7 @@ class ImportRun:
         :type storage: ImportStorage
         :param imaging: The inspector, the rasterizer, the tiler and the runner of processors.
         :type imaging: ImportImaging
-        :param runtime: The publisher, the clock, the order keys and the limits.
+        :param runtime: The clock, the order keys and the limits.
         :type runtime: ImportRuntime
         """
         job = running.job
@@ -213,11 +209,10 @@ class ImportRun:
         self._inspector = imaging.inspector
         self._rasterizer = imaging.rasterizer
         self._runner = imaging.runner
-        self._records = StageRecords(publisher=runtime.publisher, clock=runtime.clock)
-        self._labels = PageLabels(publisher=runtime.publisher, clock=runtime.clock)
+        self._records = StageRecords(clock=runtime.clock)
+        self._labels = PageLabels(clock=runtime.clock)
         self._base_versions = BaseVersions(assets=storage.assets, tiler=imaging.tiler)
         self._order_keys = runtime.order_keys
-        self._publisher = runtime.publisher
         self._clock = runtime.clock
         self._limits = runtime.limits
         self._keys = ProjectKeys(job.project_id)
@@ -339,15 +334,15 @@ class ImportRun:
             for number, facts in enumerate(analysis.scans)
         ]
 
-        def store(repos: BookRepositories, project: Project) -> tuple[list[Page], bool]:
+        def store(repos: BookRepositories, project: Project) -> list[Page]:
             """Store the source with its scans and pages, and describe the book.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param project: The project as the change finds it.
             :type project: Project
-            :returns: The pages as stored, and whether the description of the book changed.
-            :rtype: tuple[list[Page], bool]
+            :returns: The pages as stored.
+            :rtype: list[Page]
             """
             order_keys = self._order_keys.spread(lower=repos.pages.last_order_key(), upper=None, count=len(scans))
             pages = [
@@ -378,9 +373,10 @@ class ImportRun:
                 repos.pagination_sections.add_many(source_labels.sections)
             # The new pages may take numbers past what a section of the book can write
             self._labels.settle(repos)
-            return pages, self._describe_book(repos, project, analysis.suggestion)
+            self._describe_book(repos, project, analysis.suggestion)
+            return pages
 
-        pages, described = await self._uow.change_book(self._job.project_id, store)
+        pages = await self._uow.change_book(self._job.project_id, store)
 
         def retract(repos: BookRepositories, _project: Project) -> None:
             """Delete the pages and the source, which takes their scans with it.
@@ -403,15 +399,9 @@ class ImportRun:
             raise
         self.imported.append(source.id)
         self._handled.update(uploaded.names)
-        await self._publisher.publish(SourceImported(project_id=self._job.project_id, source=source))
-        await self._publisher.publish(
-            PagesChanged(project_id=self._job.project_id, page_ids=[page.id for page in pages], change=PageChange.ADDED)
-        )
-        if described:
-            await self._publisher.publish(ProjectChanged(project_id=self._job.project_id))
         await self._report(done=len(uploaded.names), total=len(scans))
 
-    def _describe_book(self, repos: BookRepositories, project: Project, suggestion: MetadataSuggestion) -> bool:
+    def _describe_book(self, repos: BookRepositories, project: Project, suggestion: MetadataSuggestion) -> None:
         """Fill the empty fields of the book description from what a source suggests, never the title.
 
         Writes through the repositories of its caller and opens no transaction, so the change joins the one of the
@@ -424,14 +414,10 @@ class ImportRun:
         :type project: Project
         :param suggestion: Description fields found in the source, empty where nothing was found.
         :type suggestion: MetadataSuggestion
-        :returns: Whether the description changed.
-        :rtype: bool
         """
         details = project.details.fill_from(suggestion)
-        if details == project.details:
-            return False
-        repos.projects.update(evolve(project, details=details, updated_at=self._clock.now()))
-        return True
+        if details != project.details:
+            repos.projects.update(evolve(project, details=details, updated_at=self._clock.now()))
 
     async def _cut_scans(self) -> None:
         """Cut the images of every scan of the project that has none, a few at a time, in the order of the book.
@@ -532,32 +518,30 @@ class ImportRun:
                     )
                 )
 
-        def finish(repos: BookRepositories, _project: Project) -> tuple[bool, list[PageStage]]:
+        def finish(repos: BookRepositories, _project: Project) -> bool:
             """Store the versions and mark the scan ready, unless the book changed while the files were cut.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it, which the check does not need.
             :type _project: Project
-            :returns: Whether the scan and its pages were still the ones the versions were made for, and the records
-                      that changed, none when the versions were not stored.
-            :rtype: tuple[bool, list[PageStage]]
+            :returns: Whether the scan and its pages were still the ones the versions were made for.
+            :rtype: bool
             """
             # The scan and its pages are read again, since the book may have changed while the files were cut
             unready = {unready_scan.id for unready_scan in repos.scans.list_unready()}
             current = {page.id for page in repos.pages.list_for_scan(scan.id)}
             if scan.id not in unready or current != {page.id for page in pages}:
-                return False, []
+                return False
             repos.page_versions.add_many(versions)
-            changed: list[PageStage] = []
             for page, version in zip(pages, versions, strict=True):
-                changed += self._records.set_head(
+                self._records.set_head(
                     repos, PageStageKey(page.id, version.stage), head_version_id=version.id, recipe_id=None
                 )
             repos.scans.update(ready)
-            return True, changed
+            return True
 
-        fits, changed = await self._uow.change_book(self._job.project_id, finish)
+        fits = await self._uow.change_book(self._job.project_id, finish)
         if not fits:
             # The scan stays unready for the next run to cut, and the files made for it are of no version or scan
             logger.warning('Scan %s was changed or deleted while its images were cut, so they were not stored', scan.id)
@@ -566,8 +550,6 @@ class ImportRun:
                 await self._assets.delete_prefix(self._keys.version_directory(version))
             await self._report(total=-1)
             return
-        await self._publisher.publish(ScanReady(project_id=self._job.project_id, scan=ready))
-        await self._records.announce(self._job.project_id, changed)
         await self._report(done=1)
 
     async def _reject(
@@ -644,7 +626,7 @@ class ImportService:
         :type storage: ImportStorage
         :param imaging: The inspector, the rasterizer and the tiler.
         :type imaging: ImportImaging
-        :param runtime: The publisher, the clock, the order keys, the limits and the board.
+        :param runtime: The clock, the order keys, the limits and the board.
         :type runtime: ImportRuntime
         :param parts: The recipes and the job starter, with which the split of the new pages is queued.
         :type parts: ProcessingParts

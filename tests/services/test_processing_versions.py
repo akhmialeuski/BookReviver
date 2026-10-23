@@ -25,7 +25,7 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
-from bookreviver.domain.events import JobChanged, PageStageChanged, PageVersionReady
+from bookreviver.domain.events import JobChanged, PageVersionReady
 from bookreviver.domain.geometry import Point, Quad, Transform
 from bookreviver.domain.ids import PageVersionId, StepId
 from bookreviver.domain.keys import ProjectKeys
@@ -215,12 +215,6 @@ class TestChooseVersion:
         later = await stage_of(fx_kit, project.id, page, Stage.CLEANUP)
         expect((chosen.head_version_id, chosen.state) == (second.id, StageState.FRESH))
         expect(later.state is StageState.STALE)
-        expect(
-            any(
-                isinstance(event, PageStageChanged) and event.stage.stage is Stage.CLEANUP
-                for event in fx_kit.events.published
-            )
-        )
         assert_expectations()
 
     async def test_choice_is_refused_while_the_project_is_processing_something(self, fx_kit: ProcessingKit) -> None:
@@ -1101,7 +1095,7 @@ class TestChooseVersionApplyStep:
 
         The cancelling of the preview is a change of its own, and the use case announces it before its own change
         opens, so the version may have failed, or the page may have gone, in between. The stage is not given the
-        version, and nothing is announced for the choice.
+        version.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -1120,11 +1114,4 @@ class TestChooseVersionApplyStep:
         with pytest.raises(refusal):
             await fx_kit.service().choose_version(actor, project.id, page.id, Stage.GEOMETRY, second.id)
         record = await found_stage(fx_kit, project.id, page, Stage.GEOMETRY)
-        announced = [
-            event
-            for event in fx_kit.events.published
-            if isinstance(event, PageStageChanged) and event.stage.head_version_id == second.id
-        ]
-        expect(record is None or record.head_version_id != second.id)
-        expect(announced == [])
-        assert_expectations()
+        assert record is None or record.head_version_id != second.id

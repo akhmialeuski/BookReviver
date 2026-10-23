@@ -22,6 +22,7 @@ from bookreviver.domain.entities import (
     Source,
 )
 from bookreviver.domain.enums import (
+    BookResource,
     ChangeSource,
     ColorMode,
     CompareMode,
@@ -47,6 +48,7 @@ from bookreviver.domain.enums import (
     ValueScope,
     ViewMode,
 )
+from bookreviver.domain.events import BookChanged
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import (
     AccountId,
@@ -158,6 +160,19 @@ def make_project(*, title: str = 'Book', minutes: int = 0) -> Project:
         created_at=moment,
         updated_at=moment,
     )
+
+
+def make_book_change(*, project_id: ProjectId, version: int = 1) -> BookChanged:
+    """Build a committed change of the description of a book, which a test publishes as any event of the book.
+
+    :param project_id: The book.
+    :type project_id: ProjectId
+    :param version: The version of the book after the change.
+    :type version: int
+    :returns: The change.
+    :rtype: BookChanged
+    """
+    return BookChanged(project_id=project_id, version=version, resources=frozenset({BookResource.PROJECT}))
 
 
 def make_page(

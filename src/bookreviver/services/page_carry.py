@@ -29,7 +29,7 @@ from bookreviver.services.recipes import find_step
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Actor, Page, PageStage, Project
+    from bookreviver.domain.entities import Actor, Page, Project
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.domain.values import CarryRequest
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
@@ -79,15 +79,15 @@ class CarryOverService:
         await self._library.open(actor, project_id)
         key = request.key
 
-        def work(repos: BookRepositories, _project: Project) -> tuple[CarryOver, list[PageStage]]:
+        def work(repos: BookRepositories, _project: Project) -> CarryOver:
             """Write the shape to every target page as one batch, and mark their stages stale.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
-            :returns: The batch, the changes written and the pages skipped, and the stage records that became stale.
-            :rtype: tuple[CarryOver, list[PageStage]]
+            :returns: The batch, the changes written and the pages skipped.
+            :rtype: CarryOver
             :raises NotFoundError: If the project has no such page, no recipe of the
                                    stage has the step, or the source page has no shape set by hand.
             :raises InvalidParametersError: If the scope is the selected pages and none is named, or the edit is a mask.
@@ -122,14 +122,11 @@ class CarryOverService:
             for state in carried:
                 batch.write(state, StepLayer.HAND, shape)
             changes = batch.flush()
-            stale: list[PageStage] = []
             for change in changes:
-                stale.extend(self._records.mark_stale(repos, change.page_id, change.stage))
-            return CarryOver(batch_id=batch.batch_id, changes=tuple(changes), skipped=tuple(skipped)), stale
+                self._records.mark_stale(repos, change.page_id, change.stage)
+            return CarryOver(batch_id=batch.batch_id, changes=tuple(changes), skipped=tuple(skipped))
 
-        carry_over, stale = await self._uow.change_book(project_id, work)
-        await self._records.announce(project_id, stale)
-        return carry_over
+        return await self._uow.change_book(project_id, work)
 
     @staticmethod
     def _targets(repos: BookRepositories, request: CarryRequest, source: Page) -> Sequence[Page]:

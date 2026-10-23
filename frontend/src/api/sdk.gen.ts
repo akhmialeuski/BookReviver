@@ -165,7 +165,7 @@ export const listScansApiV1ProjectsProjectIdScansGet = <ThrowOnError extends boo
  *
  * Put every page of one source in a run before or after a page, which places a missing part of the book at once.
  *
- * The answer is 409 when the anchor is a page of the source. The new order reaches the browser as a ``pages-changed``
+ * The answer is 409 when the anchor is a page of the source. The new order reaches the browser as a ``book-changed``
  * event, so the answer has no body.
  */
 export const moveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePost = <ThrowOnError extends boolean = false>(options: Options<MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostData, ThrowOnError>): RequestResult<MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostResponses, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostErrors, ThrowOnError> => (options.client ?? client).post<MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostResponses, MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostErrors, ThrowOnError>({
@@ -256,7 +256,7 @@ export const movePageApiV1ProjectsProjectIdPagesPageIdMovePost = <ThrowOnError e
  *
  * Put several pages in a run before or after another page, keeping the order they have in the book.
  *
- * The answer is 409 when the anchor is one of the pages. The new order reaches the browser as a ``pages-changed``
+ * The answer is 409 when the anchor is one of the pages. The new order reaches the browser as a ``book-changed``
  * event, so the answer has no body.
  */
 export const movePagesApiV1ProjectsProjectIdPagesMovePost = <ThrowOnError extends boolean = false>(options: Options<MovePagesApiV1ProjectsProjectIdPagesMovePostData, ThrowOnError>): RequestResult<MovePagesApiV1ProjectsProjectIdPagesMovePostResponses, MovePagesApiV1ProjectsProjectIdPagesMovePostErrors, ThrowOnError> => (options.client ?? client).post<MovePagesApiV1ProjectsProjectIdPagesMovePostResponses, MovePagesApiV1ProjectsProjectIdPagesMovePostErrors, ThrowOnError>({
@@ -278,7 +278,7 @@ export const movePagesApiV1ProjectsProjectIdPagesMovePost = <ThrowOnError extend
  * written by a job, so the pages show it once the job is done. The scan stays, and choosing it again, or changing the
  * kind of the page, brings it back. The answer is 409 when a page is not cut from a scan, or is not blank and gets a
  * leaf, or when no page of the book has a size to give the leaf, and nothing is changed then. The change reaches the
- * browser as a ``pages-changed`` event, so the answer has no body.
+ * browser as a ``book-changed`` event, so the answer has no body.
  */
 export const fillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPost = <ThrowOnError extends boolean = false>(options: Options<FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostData, ThrowOnError>): RequestResult<FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostResponses, FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostErrors, ThrowOnError> => (options.client ?? client).post<FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostResponses, FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostErrors, ThrowOnError>({
     url: '/api/v1/projects/{project_id}/pages/blank-fill',
@@ -300,7 +300,7 @@ export const fillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPost = <ThrowOnEr
  * does too, and it leaves the pages the user set by hand and the covers, the endpapers and the blank pages alone. With
  * ``page_ids`` it goes over those pages whatever they have, and gives the ones the user set by hand back to the
  * detection. The answer is 409 while the content of the pages of the project is being detected. The change reaches the
- * browser as a ``pages-changed`` event.
+ * browser as a ``book-changed`` event.
  */
 export const detectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPost = <ThrowOnError extends boolean = false>(options: Options<DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostData, ThrowOnError>): RequestResult<DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostResponses, DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostErrors, ThrowOnError> => (options.client ?? client).post<DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostResponses, DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostErrors, ThrowOnError>({
     url: '/api/v1/projects/{project_id}/pages/content-types/detect',
@@ -320,7 +320,7 @@ export const detectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPost
  * the kinds to skip, and a section that does not count after the range, so the numbers follow the sections from then
  * on. Pages kept out of the book, and pages of the kinds to skip, take no number and keep their label. The pages the
  * range numbers give up the labels written by hand. The answer is 409 when the range runs backwards. The new labels
- * reach the browser as a ``pages-changed`` event.
+ * reach the browser as a ``book-changed`` event.
  */
 export const numberPagesApiV1ProjectsProjectIdPagesLabelsPost = <ThrowOnError extends boolean = false>(options: Options<NumberPagesApiV1ProjectsProjectIdPagesLabelsPostData, ThrowOnError>): RequestResult<NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponses, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostErrors, ThrowOnError> => (options.client ?? client).post<NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponses, NumberPagesApiV1ProjectsProjectIdPagesLabelsPostErrors, ThrowOnError>({
     url: '/api/v1/projects/{project_id}/pages/labels',
@@ -354,7 +354,7 @@ export const previewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPost = <T
  * Add several placeholders or blank leaves in one transaction, up to a thousand at once.
  *
  * Each page is placed as in ``POST /pages``. A page without a place stands after the page before it in the list, and
- * the first one at the end of the book. All pages are added or none is, and one ``pages-changed`` event follows. The
+ * the first one at the end of the book. All pages are added or none is, and one ``book-changed`` event follows. The
  * answer is 422 for a page whose body is invalid, with its index in the list in the location of the error, and 409
  * for a page whose place is no page of the book or a blank leaf without a size in a book with no page to take the
  * median of, with its index in the detail.
@@ -976,7 +976,7 @@ export const listProjectJobsApiV1ProjectsProjectIdJobsGet = <ThrowOnError extend
 /**
  * Project-Events
  *
- * Stream the project's events as they happen: jobs, imported sources, ready scans, pages, versions, description.
+ * Stream the project's events as they happen: the committed changes of the book, its jobs and its ready versions.
  *
  * A committed change of the book is a ``book-changed`` event whose id is the new version of the book. A browser that
  * connects is first sent ``book-version`` with the version now, so it knows which version it holds. The stream keeps

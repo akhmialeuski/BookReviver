@@ -1140,7 +1140,7 @@
           "sources"
         ],
         "summary": "Move Source Pages",
-        "description": "Put every page of one source in a run before or after a page, which places a missing part of the book at once.\n\nThe answer is 409 when the anchor is a page of the source. The new order reaches the browser as a ``pages-changed``\nevent, so the answer has no body.",
+        "description": "Put every page of one source in a run before or after a page, which places a missing part of the book at once.\n\nThe answer is 409 when the anchor is a page of the source. The new order reaches the browser as a ``book-changed``\nevent, so the answer has no body.",
         "operationId": "move_source_pages_api_v1_projects__project_id__sources__source_id__pages_move_post",
         "parameters": [
           {
@@ -1799,7 +1799,7 @@
           "pages"
         ],
         "summary": "Move Pages",
-        "description": "Put several pages in a run before or after another page, keeping the order they have in the book.\n\nThe answer is 409 when the anchor is one of the pages. The new order reaches the browser as a ``pages-changed``\nevent, so the answer has no body.",
+        "description": "Put several pages in a run before or after another page, keeping the order they have in the book.\n\nThe answer is 409 when the anchor is one of the pages. The new order reaches the browser as a ``book-changed``\nevent, so the answer has no body.",
         "operationId": "move_pages_api_v1_projects__project_id__pages_move_post",
         "parameters": [
           {
@@ -1880,7 +1880,7 @@
           "pages"
         ],
         "summary": "Fill Blank Pages",
-        "description": "Choose the image of one or more blank pages: their scan, a white leaf or a leaf of the paper of the book.\n\nA leaf stands in place of the scan of a page of kind blank that is cut from a scan, has the size of the pages of\nthe book and passes the stages after the page order without steps and without a mark of review. Its image is\nwritten by a job, so the pages show it once the job is done. The scan stays, and choosing it again, or changing the\nkind of the page, brings it back. The answer is 409 when a page is not cut from a scan, or is not blank and gets a\nleaf, or when no page of the book has a size to give the leaf, and nothing is changed then. The change reaches the\nbrowser as a ``pages-changed`` event, so the answer has no body.",
+        "description": "Choose the image of one or more blank pages: their scan, a white leaf or a leaf of the paper of the book.\n\nA leaf stands in place of the scan of a page of kind blank that is cut from a scan, has the size of the pages of\nthe book and passes the stages after the page order without steps and without a mark of review. Its image is\nwritten by a job, so the pages show it once the job is done. The scan stays, and choosing it again, or changing the\nkind of the page, brings it back. The answer is 409 when a page is not cut from a scan, or is not blank and gets a\nleaf, or when no page of the book has a size to give the leaf, and nothing is changed then. The change reaches the\nbrowser as a ``book-changed`` event, so the answer has no body.",
         "operationId": "fill_blank_pages_api_v1_projects__project_id__pages_blank_fill_post",
         "parameters": [
           {
@@ -1961,7 +1961,7 @@
           "pages"
         ],
         "summary": "Detect Content Types",
-        "description": "Detect what pages show in the background, and answer with the queued job.\n\nThe job reads the preview of the image of each page, tells text from a picture and a picture in colour from one in\nblack and white, and writes the answer into the page as its content type. Without ``page_ids`` it goes over the\npages of the book that have no content type yet, which a job queued by the end of the preparation of the images\ndoes too, and it leaves the pages the user set by hand and the covers, the endpapers and the blank pages alone. With\n``page_ids`` it goes over those pages whatever they have, and gives the ones the user set by hand back to the\ndetection. The answer is 409 while the content of the pages of the project is being detected. The change reaches the\nbrowser as a ``pages-changed`` event.",
+        "description": "Detect what pages show in the background, and answer with the queued job.\n\nThe job reads the preview of the image of each page, tells text from a picture and a picture in colour from one in\nblack and white, and writes the answer into the page as its content type. Without ``page_ids`` it goes over the\npages of the book that have no content type yet, which a job queued by the end of the preparation of the images\ndoes too, and it leaves the pages the user set by hand and the covers, the endpapers and the blank pages alone. With\n``page_ids`` it goes over those pages whatever they have, and gives the ones the user set by hand back to the\ndetection. The answer is 409 while the content of the pages of the project is being detected. The change reaches the\nbrowser as a ``book-changed`` event.",
         "operationId": "detect_content_types_api_v1_projects__project_id__pages_content_types_detect_post",
         "parameters": [
           {
@@ -2049,7 +2049,7 @@
           "pages"
         ],
         "summary": "Number Pages",
-        "description": "Make the pagination sections that number a range of pages, in the style and from the number given.\n\nThe range becomes a section of the main flow that starts at its first page, with a series that does not count for\nthe kinds to skip, and a section that does not count after the range, so the numbers follow the sections from then\non. Pages kept out of the book, and pages of the kinds to skip, take no number and keep their label. The pages the\nrange numbers give up the labels written by hand. The answer is 409 when the range runs backwards. The new labels\nreach the browser as a ``pages-changed`` event.",
+        "description": "Make the pagination sections that number a range of pages, in the style and from the number given.\n\nThe range becomes a section of the main flow that starts at its first page, with a series that does not count for\nthe kinds to skip, and a section that does not count after the range, so the numbers follow the sections from then\non. Pages kept out of the book, and pages of the kinds to skip, take no number and keep their label. The pages the\nrange numbers give up the labels written by hand. The answer is 409 when the range runs backwards. The new labels\nreach the browser as a ``book-changed`` event.",
         "operationId": "number_pages_api_v1_projects__project_id__pages_labels_post",
         "parameters": [
           {
@@ -2222,7 +2222,7 @@
           "pages"
         ],
         "summary": "Create Pages",
-        "description": "Add several placeholders or blank leaves in one transaction, up to a thousand at once.\n\nEach page is placed as in ``POST /pages``. A page without a place stands after the page before it in the list, and\nthe first one at the end of the book. All pages are added or none is, and one ``pages-changed`` event follows. The\nanswer is 422 for a page whose body is invalid, with its index in the list in the location of the error, and 409\nfor a page whose place is no page of the book or a blank leaf without a size in a book with no page to take the\nmedian of, with its index in the detail.",
+        "description": "Add several placeholders or blank leaves in one transaction, up to a thousand at once.\n\nEach page is placed as in ``POST /pages``. A page without a place stands after the page before it in the list, and\nthe first one at the end of the book. All pages are added or none is, and one ``book-changed`` event follows. The\nanswer is 422 for a page whose body is invalid, with its index in the list in the location of the error, and 409\nfor a page whose place is no page of the book or a blank leaf without a size in a book with no page to take the\nmedian of, with its index in the detail.",
         "operationId": "create_pages_api_v1_projects__project_id__pages_batch_post",
         "parameters": [
           {
@@ -7368,7 +7368,7 @@
           "jobs"
         ],
         "summary": "Project-Events",
-        "description": "Stream the project's events as they happen: jobs, imported sources, ready scans, pages, versions, description.\n\nA committed change of the book is a ``book-changed`` event whose id is the new version of the book. A browser that\nconnects is first sent ``book-version`` with the version now, so it knows which version it holds. The stream keeps\nno changes, so a browser that comes back with the id of another version is sent ``book-reset`` instead, and one that\ncomes back with the id of the version now is sent nothing.",
+        "description": "Stream the project's events as they happen: the committed changes of the book, its jobs and its ready versions.\n\nA committed change of the book is a ``book-changed`` event whose id is the new version of the book. A browser that\nconnects is first sent ``book-version`` with the version now, so it knows which version it holds. The stream keeps\nno changes, so a browser that comes back with the id of another version is sent ``book-reset`` instead, and one that\ncomes back with the id of the version now is sent nothing.",
         "operationId": "project_events_api_v1_projects__project_id__events_get",
         "parameters": [
           {

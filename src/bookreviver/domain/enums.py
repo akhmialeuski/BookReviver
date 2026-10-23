@@ -746,15 +746,6 @@ class BookResource(LabeledStrEnum):
     RECIPES = 'recipes', 'The recipes of the stages'
 
 
-class PageChange(LabeledStrEnum):
-    """What a use case did to the pages of a book, which the ``PagesChanged`` event reports."""
-
-    MOVED = 'moved', 'Moved'
-    EDITED = 'edited', 'Edited'
-    ADDED = 'added', 'Added'
-    REMOVED = 'removed', 'Removed'
-
-
 class NewPageOrigin(LabeledStrEnum):
     """Where the image of a page the user adds comes from.
 

@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import datetime
 
-    from bookreviver.domain.entities import Actor, Page, PageStage, Project
+    from bookreviver.domain.entities import Actor, Page, Project
     from bookreviver.domain.enums import RecipeKind, Stage
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.domain.step_values import ValueField
@@ -304,15 +304,15 @@ class PageSettingsService:
         """
         await self._library.open(actor, project_id)
 
-        def work(repos: BookRepositories, _project: Project) -> tuple[ValueChanges, Sequence[PageStage]]:
+        def work(repos: BookRepositories, _project: Project) -> ValueChanges:
             """Check the value on every page it reaches, and write it with the changes that made it.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
-            :returns: The batch and the changes written, and the stage records that became stale.
-            :rtype: tuple[ValueChanges, Sequence[PageStage]]
+            :returns: The batch and the changes written.
+            :rtype: ValueChanges
             :raises NotFoundError: If a page is not one of the project, no recipe of the
                                    stage has the step, or no page the target names is processed by it.
             :raises InvalidParametersError: If the processor has no such field, or the value is out of its range on a
@@ -344,9 +344,7 @@ class PageSettingsService:
                 own = {}
             return self._store(repos, scene, own=own, params=params)
 
-        changes, stale = await self._uow.change_book(project_id, work)
-        await self._records.announce(project_id, stale)
-        return changes
+        return await self._uow.change_book(project_id, work)
 
     async def reset(self, actor: Actor, project_id: ProjectId, field: ValueField) -> ValueChanges:
         """Take a field back from the pages the target names, so they take it from the next part, and mark them stale.
@@ -364,15 +362,15 @@ class PageSettingsService:
         """
         await self._library.open(actor, project_id)
 
-        def work(repos: BookRepositories, _project: Project) -> tuple[ValueChanges, Sequence[PageStage]]:
+        def work(repos: BookRepositories, _project: Project) -> ValueChanges:
             """Take the field back from the pages the target names, and write the changes that made it.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
-            :returns: The batch and the changes written, and the stage records that became stale.
-            :rtype: tuple[ValueChanges, Sequence[PageStage]]
+            :returns: The batch and the changes written.
+            :rtype: ValueChanges
             :raises NotFoundError: If a page is not one of the project, no recipe of the
                                    stage has the step, or none of the pages the target names has a value for the
                                    field.
@@ -395,16 +393,14 @@ class PageSettingsService:
                 own = {}
             return self._store(repos, scene, own=own, params=params)
 
-        changes, stale = await self._uow.change_book(project_id, work)
-        await self._records.announce(project_id, stale)
-        return changes
+        return await self._uow.change_book(project_id, work)
 
     def _store(
         self, repos: BookRepositories, scene: _Scene, *, own: Mapping[PageId, MetadataMap], params: MetadataMap | None
-    ) -> tuple[ValueChanges, Sequence[PageStage]]:
+    ) -> ValueChanges:
         """Write the new values, the changes that made them and the stale marks, in the work of the caller.
 
-        It opens no transaction, so the caller announces the stale marks once its own transaction has ended. A state
+        It opens no transaction, so the marks join the transaction of the caller. A state
         with neither a setting nor an edit left is deleted, and values with no field left are deleted. Values equal to
         the stored ones change nothing and write nothing. The stage of a page is marked stale only when what the step
         runs with on it changes, so a page that takes the field from a stronger part is left alone.
@@ -417,8 +413,8 @@ class PageSettingsService:
         :type own: Mapping[PageId, MetadataMap]
         :param params: The fields the part of the pages the target names changes from now on, for a target of a part.
         :type params: MetadataMap | None
-        :returns: The batch and the changes written, and the records that became stale.
-        :rtype: tuple[ValueChanges, Sequence[PageStage]]
+        :returns: The batch and the changes written.
+        :rtype: ValueChanges
         """
         batch = PageBatch(repos=repos, source=ChangeSource.USER, moment=scene.moment)
         reached: list[PageId] = []
@@ -435,7 +431,6 @@ class PageSettingsService:
             reached = [page.id for page in scene.pages if scene.effective(page, parts=after) != scene.effective(page)]
             batch.write_values(scene.holder, params or {}, reached)
         changes = batch.flush()
-        stale: list[PageStage] = []
         for page_id in reached:
-            stale.extend(self._records.mark_stale(repos, page_id, scene.field.stage))
-        return ValueChanges(batch_id=batch.batch_id, changes=tuple(changes)), stale
+            self._records.mark_stale(repos, page_id, scene.field.stage)
+        return ValueChanges(batch_id=batch.batch_id, changes=tuple(changes))

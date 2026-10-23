@@ -1,9 +1,8 @@
 """The pagination sections of a book, and the numbering of a range of pages that makes one.
 
 A section numbers the pages from the page it starts at, and the labels of the pages are computed from the sections when
-they are read, so a use case that changes a section writes no label. It watches the labels in the work of its
-``change_book`` and announces the pages whose label changed after the transaction, as one ``PagesChanged`` of kind
-``edited``.
+they are read, so a use case that changes a section writes no label, and the unit of work tells the browser that the
+pages changed once the transaction committed.
 
 ``number`` keeps the older way of numbering a range of pages, which is now a way of making sections. It makes a section
 of the main flow at the first page of the range, a series that does not count for the kinds to skip, and a section that
@@ -34,7 +33,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.domain.values import PageNumbering, PaginationSectionDraft, SliceRequest
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
-    from bookreviver.ports.runtime import Clock, EventPublisher
+    from bookreviver.ports.runtime import Clock
     from bookreviver.services.library import Library
 
 NUMBERED_PAGES: str = 'Numbered pages'
@@ -77,22 +76,20 @@ class NumberingPlan:
 class PaginationService:
     """Lists, makes, changes and removes the pagination sections of the acting account's projects."""
 
-    def __init__(self, *, uow: UnitOfWork, library: Library, publisher: EventPublisher, clock: Clock) -> None:
+    def __init__(self, *, uow: UnitOfWork, library: Library, clock: Clock) -> None:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request, whose ``change_book`` ends every changing use case.
         :type uow: UnitOfWork
         :param library: Library that opens the books of the acting account.
         :type library: Library
-        :param publisher: Publisher of the events the browser follows.
-        :type publisher: EventPublisher
         :param clock: Clock stamping the sections and pages it writes.
         :type clock: Clock
         """
         self._uow = uow
         self._library = library
         self._clock = clock
-        self._labels = PageLabels(publisher=publisher, clock=clock)
+        self._labels = PageLabels(clock=clock)
 
     async def sections(self, actor: Actor, project_id: ProjectId, request: SliceRequest) -> Slice[PaginationSection]:
         """List the sections of a project in book order, the order of the pages they start at.
@@ -151,29 +148,26 @@ class PaginationService:
             updated_at=moment,
         )
 
-        def work(repos: BookRepositories, _project: Project) -> tuple[PaginationSection, list[PageId]]:
-            """Store the section and find the pages it renumbers.
+        def work(repos: BookRepositories, _project: Project) -> PaginationSection:
+            """Store the section and check the numbers of the pages it renumbers.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it.
             :type _project: Project
-            :returns: The section as stored, and the pages whose label changed.
-            :rtype: tuple[PaginationSection, list[PageId]]
+            :returns: The section as stored.
+            :rtype: PaginationSection
             :raises NotFoundError: If the project has no such page.
             :raises ConflictError: If another section that takes the same pages starts at the page, or a number does
                                    not fit the style.
             """
             repos.pages.get(section.first_page_id)
             self._require_no_clash(repos, section)
-            with self._labels.watching(repos) as watch:
-                stored = repos.pagination_sections.add(section)
-                self._labels.settle(repos)
-            return stored, watch.renumbered
+            stored = repos.pagination_sections.add(section)
+            self._labels.settle(repos)
+            return stored
 
-        stored, renumbered = await self._uow.change_book(project_id, work)
-        await self._labels.announce(project_id, renumbered)
-        return stored
+        return await self._uow.change_book(project_id, work)
 
     async def update(
         self, actor: Actor, project_id: ProjectId, section_id: PaginationSectionId, draft: PaginationSectionDraft
@@ -196,15 +190,15 @@ class PaginationService:
         """
         await self._library.open(actor, project_id)
 
-        def work(repos: BookRepositories, _project: Project) -> tuple[PaginationSection, list[PageId]]:
-            """Replace the section and find the pages it renumbers.
+        def work(repos: BookRepositories, _project: Project) -> PaginationSection:
+            """Replace the section and check the numbers of the pages it renumbers.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it.
             :type _project: Project
-            :returns: The section as stored, and the pages whose label changed.
-            :rtype: tuple[PaginationSection, list[PageId]]
+            :returns: The section as stored.
+            :rtype: PaginationSection
             :raises NotFoundError: If the project has no such section or page.
             :raises ConflictError: If another section that takes the same pages starts at the page, or a number does
                                    not fit the style.
@@ -216,14 +210,11 @@ class PaginationService:
             )
             repos.pages.get(section.first_page_id)
             self._require_no_clash(repos, section)
-            with self._labels.watching(repos) as watch:
-                stored = repos.pagination_sections.update(section)
-                self._labels.settle(repos)
-            return stored, watch.renumbered
+            stored = repos.pagination_sections.update(section)
+            self._labels.settle(repos)
+            return stored
 
-        stored, renumbered = await self._uow.change_book(project_id, work)
-        await self._labels.announce(project_id, renumbered)
-        return stored
+        return await self._uow.change_book(project_id, work)
 
     async def remove(self, actor: Actor, project_id: ProjectId, section_id: PaginationSectionId) -> None:
         """Remove a section, and renumber the pages it numbered, which fall to the section before it.
@@ -239,26 +230,21 @@ class PaginationService:
         """
         await self._library.open(actor, project_id)
 
-        def work(repos: BookRepositories, _project: Project) -> list[PageId]:
-            """Delete the section and find the pages it renumbered.
+        def work(repos: BookRepositories, _project: Project) -> None:
+            """Delete the section and check the numbers of the pages it renumbered.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it.
             :type _project: Project
-            :returns: The pages whose label changed.
-            :rtype: list[PageId]
             :raises NotFoundError: If the project has no such section.
             :raises ConflictError: If the section before cannot write the numbers of the pages that fall to it.
             """
             section = repos.pagination_sections.get(section_id)
-            with self._labels.watching(repos) as watch:
-                repos.pagination_sections.delete(section.id)
-                self._labels.settle(repos)
-            return watch.renumbered
+            repos.pagination_sections.delete(section.id)
+            self._labels.settle(repos)
 
-        renumbered = await self._uow.change_book(project_id, work)
-        await self._labels.announce(project_id, renumbered)
+        await self._uow.change_book(project_id, work)
 
     async def number(self, actor: Actor, project_id: ProjectId, numbering: PageNumbering) -> None:
         """Make the sections that number a range of pages, and drop the manual labels of the pages they number.
@@ -275,15 +261,13 @@ class PaginationService:
         """
         await self._library.open(actor, project_id)
 
-        def work(repos: BookRepositories, _project: Project) -> list[PageId]:
-            """Replace the sections the numbering replaces, add the ones it makes, and find the pages it renumbers.
+        def work(repos: BookRepositories, _project: Project) -> None:
+            """Replace the sections the numbering replaces, and add the ones it makes.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it.
             :type _project: Project
-            :returns: The pages whose label changed.
-            :rtype: list[PageId]
             :raises NotFoundError: If the project lacks the first or the last page.
             :raises ReversedRangeError: If the range runs backwards.
             :raises ConflictError: If a number does not fit the style, such as 4000 in Roman numerals.
@@ -291,15 +275,12 @@ class PaginationService:
             plan = self._plan(repos, numbering)
             # A number that does not fit is found before anything is written
             plan.labels()
-            with self._labels.watching(repos) as watch:
-                for section_id in plan.removed:
-                    repos.pagination_sections.delete(section_id)
-                repos.pagination_sections.add_many(plan.added)
-                self._labels.settle(repos, unpin=plan.counted)
-            return watch.renumbered
+            for section_id in plan.removed:
+                repos.pagination_sections.delete(section_id)
+            repos.pagination_sections.add_many(plan.added)
+            self._labels.settle(repos, unpin=plan.counted)
 
-        renumbered = await self._uow.change_book(project_id, work)
-        await self._labels.announce(project_id, renumbered)
+        await self._uow.change_book(project_id, work)
 
     async def preview_numbers(
         self, actor: Actor, project_id: ProjectId, numbering: PageNumbering

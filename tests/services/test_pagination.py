@@ -9,9 +9,8 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.domain.changes import PageChanges
-from bookreviver.domain.enums import LabelStyle, NewPageOrigin, NumberDisplay, PageChange, PageKind, Side
+from bookreviver.domain.enums import BookResource, LabelStyle, NewPageOrigin, NumberDisplay, PageKind, Side
 from bookreviver.domain.errors import ConflictError, NotFoundError, ReversedRangeError
-from bookreviver.domain.events import PagesChanged
 from bookreviver.domain.values import (
     NewPage,
     NumberedPage,
@@ -195,9 +194,9 @@ class TestSections:
         fx_pagination: Callable[[], PaginationService],
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
-        fx_events: RecordingEventBus,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
-        """Verify the preface is numbered in Roman numerals, the text starts at 1, and each change is announced once.
+        """Verify the preface is numbered in Roman numerals, the text starts at 1, and each section is one change.
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
@@ -205,23 +204,18 @@ class TestSections:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_events: Recording event bus of the test.
-        :type fx_events: RecordingEventBus
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         project, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(5))
 
+        fx_book_changes.published.clear()
         await fx_pagination().add(fx_actor, project.id, _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
         expect(await _labels(fx_uow(), project.id, pages) == ['i', ROMAN_2, ROMAN_3, ROMAN_4, 'v'])
         await fx_pagination().add(fx_actor, project.id, _draft(pages[2]))
 
         expect(await _labels(fx_uow(), project.id, pages) == ['i', ROMAN_2, '1', '2', '3'])
-        expect(
-            fx_events.published
-            == [
-                PagesChanged(project_id=project.id, page_ids=[page.id for page in pages], change=PageChange.EDITED),
-                PagesChanged(project_id=project.id, page_ids=[page.id for page in pages[2:]], change=PageChange.EDITED),
-            ]
-        )
+        expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True, True])
         assert_expectations()
 
     async def test_a_page_counted_and_not_printed_shows_its_number_in_square_brackets(
@@ -318,15 +312,14 @@ class TestSections:
         expect(fx_page_writes.page_ids == set())
         assert_expectations()
 
-    async def test_nothing_is_written_or_announced_when_no_label_changes(
+    async def test_no_page_is_written_when_no_label_changes(
         self,
         fx_pagination: Callable[[], PaginationService],
         fx_uow: UnitOfWorkFactory,
         fx_page_writes: PageWrites,
         fx_actor: Actor,
-        fx_events: RecordingEventBus,
     ) -> None:
-        """Verify a series that takes no page of the book changes no row and publishes no event.
+        """Verify a series that takes no page of the book writes no row of a page.
 
         :param fx_pagination: Function building the service for one request.
         :type fx_pagination: Callable[[], PaginationService]
@@ -336,18 +329,14 @@ class TestSections:
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_events: Recording event bus of the test.
-        :type fx_events: RecordingEventBus
         """
         project, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(3))
         await fx_pagination().add(fx_actor, project.id, _draft(pages[0]))
-        published = len(fx_events.published)
         fx_page_writes.start()
 
         await fx_pagination().add(fx_actor, project.id, _draft(pages[0], kinds=PLATES))
 
         expect(fx_page_writes.page_ids == set())
-        expect(len(fx_events.published) == published)
         expect(len(await _sections(fx_uow(), project)) == 2)
         assert_expectations()
 
@@ -601,7 +590,7 @@ class TestNumberPages:
         fx_uow: UnitOfWorkFactory,
         fx_page_writes: PageWrites,
         fx_actor: Actor,
-        fx_events: RecordingEventBus,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
         """Verify a range in the middle leaves the pages outside it alone, and only the pages it numbers are written.
 
@@ -613,12 +602,13 @@ class TestNumberPages:
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_events: Recording event bus of the test.
-        :type fx_events: RecordingEventBus
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         project, pages = await _commit_book(fx_uow(), fx_actor, *LAYOUT, label=STALE_LABEL)
         fx_page_writes.start()
 
+        fx_book_changes.published.clear()
         await fx_pagination().number(
             fx_actor,
             project.id,
@@ -630,16 +620,7 @@ class TestNumberPages:
             == [STALE_LABEL, STALE_LABEL, '1', '2', '3', STALE_LABEL, STALE_LABEL]
         )
         expect(fx_page_writes.page_ids == {pages[2].id, pages[3].id, pages[4].id})
-        expect(
-            fx_events.published
-            == [
-                PagesChanged(
-                    project_id=project.id,
-                    page_ids=[pages[2].id, pages[3].id, pages[4].id],
-                    change=PageChange.EDITED,
-                )
-            ]
-        )
+        expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True])
         by_page = {section.first_page_id: section for section in await _sections(fx_uow(), project)}
         closing = by_page[pages[5].id]
         expect(set(by_page) == {pages[2].id, pages[5].id})
@@ -732,7 +713,7 @@ class TestNumberPages:
         fx_pagination: Callable[[], PaginationService],
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
-        fx_events: RecordingEventBus,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
         """Verify a first page after the last page is a conflict, and no section, label or event comes of it.
 
@@ -742,11 +723,12 @@ class TestNumberPages:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_events: Recording event bus of the test.
-        :type fx_events: RecordingEventBus
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         project, pages = await _commit_book(fx_uow(), fx_actor, *LAYOUT, label=STALE_LABEL)
 
+        fx_book_changes.published.clear()
         with pytest.raises(ReversedRangeError, match='from a later page to an earlier one'):
             await fx_pagination().number(
                 fx_actor,
@@ -755,7 +737,7 @@ class TestNumberPages:
             )
 
         expect(await _labels(fx_uow(), project.id, pages) == [STALE_LABEL] * len(pages))
-        expect((await _sections(fx_uow(), project), fx_events.published) == ([], []))
+        expect((await _sections(fx_uow(), project), fx_book_changes.published) == ([], []))
         assert_expectations()
 
     async def test_numbers_past_the_roman_limit_conflict_and_change_nothing(
@@ -825,7 +807,7 @@ class TestNumberPages:
         fx_uow: UnitOfWorkFactory,
         fx_page_writes: PageWrites,
         fx_actor: Actor,
-        fx_events: RecordingEventBus,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
         """Verify the preview lists the pages the numbering numbers with the labels it then writes.
 
@@ -837,8 +819,8 @@ class TestNumberPages:
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_events: Recording event bus of the test.
-        :type fx_events: RecordingEventBus
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         project, pages = await _commit_book(fx_uow(), fx_actor, *LAYOUT, label=STALE_LABEL)
         fx_page_writes.start()
@@ -850,9 +832,10 @@ class TestNumberPages:
             skip_kinds=frozenset({PageKind.COVER, PageKind.PLATE}),
         )
 
+        fx_book_changes.published.clear()
         previewed = await fx_pagination().preview_numbers(fx_actor, project.id, numbering)
         expect(fx_page_writes.page_ids == set())
-        expect((await _sections(fx_uow(), project), fx_events.published) == ([], []))
+        expect((await _sections(fx_uow(), project), fx_book_changes.published) == ([], []))
         await fx_pagination().number(fx_actor, project.id, numbering)
 
         counted = [pages[1], pages[2], pages[4], pages[6]]
@@ -949,7 +932,7 @@ class TestRecomputeInPageUseCases:
         fx_pagination: Callable[[], PaginationService],
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
-        fx_events: RecordingEventBus,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
         """Verify a placeholder inserted before the third page takes its number, and the pages after it move on by one.
 
@@ -961,11 +944,11 @@ class TestRecomputeInPageUseCases:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the services act for.
         :type fx_actor: Actor
-        :param fx_events: Recording event bus of the test.
-        :type fx_events: RecordingEventBus
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         project, pages = await self._numbered_book(fx_pagination, fx_uow(), fx_actor, 4)
-        fx_events.published.clear()
+        fx_book_changes.published.clear()
 
         added = await fx_service().add(
             fx_actor,
@@ -979,11 +962,7 @@ class TestRecomputeInPageUseCases:
 
         expect(added.label == '3')
         expect(await _labels(fx_uow(), project.id, pages) == ['1', '2', '4', '5'])
-        # The browser reads the whole book again for the added page, so the renumbered ones are not announced
-        expect(
-            fx_events.published
-            == [PagesChanged(project_id=project.id, page_ids=[added.page.id], change=PageChange.ADDED)]
-        )
+        expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True])
         assert_expectations()
 
     async def test_a_page_added_with_a_label_keeps_it_and_still_counts(
@@ -1029,7 +1008,7 @@ class TestRecomputeInPageUseCases:
         fx_pagination: Callable[[], PaginationService],
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
-        fx_events: RecordingEventBus,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
         """Verify the pages after a deleted page take the numbers it leaves free, and only the deletion is announced.
 
@@ -1041,20 +1020,16 @@ class TestRecomputeInPageUseCases:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the services act for.
         :type fx_actor: Actor
-        :param fx_events: Recording event bus of the test.
-        :type fx_events: RecordingEventBus
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         project, pages = await self._numbered_book(fx_pagination, fx_uow(), fx_actor, 4)
-        fx_events.published.clear()
+        fx_book_changes.published.clear()
 
         await fx_service().delete(fx_actor, project.id, pages[1].id)
 
         expect(await _labels(fx_uow(), project.id, [pages[0], pages[2], pages[3]]) == ['1', '2', '3'])
-        # The browser reads the whole book again for the deleted page, so the renumbered ones are not announced
-        expect(
-            fx_events.published
-            == [PagesChanged(project_id=project.id, page_ids=[pages[1].id], change=PageChange.REMOVED)]
-        )
+        expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True])
         assert_expectations()
 
     async def test_deleting_the_first_page_of_a_section_hands_the_section_to_the_next_page(
@@ -1150,7 +1125,7 @@ class TestRecomputeInPageUseCases:
         fx_pagination: Callable[[], PaginationService],
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
-        fx_events: RecordingEventBus,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
         """Verify a moved page takes the number of its new place, a label typed on another page stays, and one event follows.
 
@@ -1162,8 +1137,8 @@ class TestRecomputeInPageUseCases:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the services act for.
         :type fx_actor: Actor
-        :param fx_events: Recording event bus of the test.
-        :type fx_events: RecordingEventBus
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         project, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(5))
         await fx_uow().change_book(
@@ -1171,7 +1146,7 @@ class TestRecomputeInPageUseCases:
             lambda repos, _project: repos.pages.update(evolve(pages[1], manual_label=HAND_WRITTEN)),
         )
         await fx_pagination().add(fx_actor, project.id, _draft(pages[0]))
-        fx_events.published.clear()
+        fx_book_changes.published.clear()
 
         moved = await fx_service().move(
             fx_actor, project.id, pages[4].id, PageAnchor(page_id=pages[1].id, side=Side.BEFORE)
@@ -1180,10 +1155,7 @@ class TestRecomputeInPageUseCases:
         order = [pages[0], pages[4], pages[1], pages[2], pages[3]]
         expect(await _labels(fx_uow(), project.id, order) == ['1', '2', HAND_WRITTEN, '4', '5'])
         expect(moved.label == '2')
-        expect(
-            fx_events.published
-            == [PagesChanged(project_id=project.id, page_ids=[pages[4].id], change=PageChange.MOVED)]
-        )
+        expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True])
         assert_expectations()
 
     async def test_moving_a_group_of_pages_renumbers_the_book(

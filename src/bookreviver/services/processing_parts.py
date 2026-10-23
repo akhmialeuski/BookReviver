@@ -313,7 +313,7 @@ class ProcessingParts:
             recipes=RecipeBook(
                 uow=uow, catalogue=catalogue, defaults=defaults, clock=runtime.clock, order=RecipeOrder(catalogue)
             ),
-            records=StageRecords(publisher=runtime.publisher, clock=runtime.clock),
+            records=StageRecords(clock=runtime.clock),
             starter=JobStarter(runtime=runtime, config=config),
             clock=runtime.clock,
         )

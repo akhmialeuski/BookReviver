@@ -11,7 +11,6 @@ from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyR
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobKind, JobState, PageKind, RecipeKind, Stage, StageState
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
-from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import (
     PageStageKey,
@@ -364,7 +363,7 @@ class TestSaveRecipe:
             )
 
     async def test_pages_the_recipe_processed_are_marked_stale_and_nothing_is_run(self, fx_kit: ProcessingKit) -> None:
-        """Verify editing a recipe marks its pages stale, announces them and queues no job.
+        """Verify editing a recipe marks its pages stale and queues no job.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -377,7 +376,6 @@ class TestSaveRecipe:
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})])
         await fx_kit.service().save_recipe(actor, project.id, RecipeKey(Stage.GEOMETRY, recipe.id), draft)
         expect(await geometry_state(fx_kit, project.id, page) is StageState.STALE)
-        expect(any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
         expect(fx_kit.board.put_jobs == [])
         assert_expectations()
 

@@ -16,6 +16,7 @@ from bookreviver.adapters.imaging.common import FactKey
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyScanRepository
 from bookreviver.domain.entities import Actor, VersionInputs
 from bookreviver.domain.enums import (
+    BookResource,
     ColorMode,
     ContributorRole,
     DjvuDocumentKind,
@@ -25,7 +26,6 @@ from bookreviver.domain.enums import (
     JobState,
     LabelStyle,
     NumberDisplay,
-    PageChange,
     PageOrigin,
     RecipeKind,
     RejectionReason,
@@ -43,14 +43,7 @@ from bookreviver.domain.errors import (
     UnsupportedSourceError,
     UploadRejectedError,
 )
-from bookreviver.domain.events import (
-    DomainEvent,
-    JobChanged,
-    PagesChanged,
-    ProjectChanged,
-    ScanReady,
-    SourceImported,
-)
+from bookreviver.domain.events import BookChanged, DomainEvent, JobChanged
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import Contributor, JobEnd, StageRun
 from bookreviver.plugins.split_none import SplitNone
@@ -109,6 +102,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.storage import AssetStore, IncomingFile
     from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 
@@ -557,6 +551,17 @@ def _events_of[EventT: DomainEvent](rig: ImportRig, kind: type[EventT]) -> list[
     :rtype: list[EventT]
     """
     return [event for event in rig.fakes.events.published if isinstance(event, kind)]
+
+
+def _cuts_a_scan(event: DomainEvent) -> bool:
+    """Tell whether an event is the committed change that stored the images of a scan, the one change that writes versions.
+
+    :param event: An event the unit of work announced.
+    :type event: DomainEvent
+    :returns: Whether it is such a change.
+    :rtype: bool
+    """
+    return isinstance(event, BookChanged) and BookResource.VERSIONS in event.resources
 
 
 class UploadCase(NamedTuple):
@@ -1229,10 +1234,15 @@ class TestRunImport:
             ]
         )
 
-    async def test_announces_each_source_and_scan_and_the_end_of_the_job(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_book_files: list[UploadFile]
+    async def test_commits_each_source_before_any_scan_and_announces_the_end_of_the_job(
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_project: Project,
+        fx_book_files: list[UploadFile],
+        fx_book_changes: RecordingEventBus,
     ) -> None:
-        """Verify the events a browser follows: the job, each source with its pages, each scan, and the end of the job.
+        """Verify each source is one change before the first scan is, each scan one change, and the job ends last.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
@@ -1242,19 +1252,20 @@ class TestRunImport:
         :type fx_project: Project
         :param fx_book_files: A book of two PDF parts and a cover, uploaded out of order.
         :type fx_book_files: list[UploadFile]
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
+        fx_book_changes.published.clear()
         job = await _import(fx_rig, fx_owner, fx_project.id, fx_book_files)
 
         published = fx_rig.fakes.events.published
         jobs = _events_of(fx_rig, JobChanged)
-        first_scan = next(index for index, event in enumerate(published) if isinstance(event, ScanReady))
-        last_source = max(index for index, event in enumerate(published) if isinstance(event, SourceImported))
-        expect(len(_events_of(fx_rig, SourceImported)) == len(_events_of(fx_rig, PagesChanged)) == SOURCE_COUNT)
-        expect(len(_events_of(fx_rig, ScanReady)) == SCAN_COUNT)
-        expect({event.change for event in _events_of(fx_rig, PagesChanged)} == {PageChange.ADDED})
-        expect(sum(len(event.page_ids) for event in _events_of(fx_rig, PagesChanged)) == SCAN_COUNT)
-        # Every source is announced before the first image is, so the browser knows the book before it is cut
-        expect(last_source < first_scan)
+        changes = fx_book_changes.changed_parts()
+        sources = [index for index, parts in enumerate(changes) if BookResource.PAGES in parts]
+        cuts = [index for index, parts in enumerate(changes) if BookResource.VERSIONS in parts]
+        expect((len(sources), len(cuts)) == (SOURCE_COUNT, SCAN_COUNT))
+        # Every source is committed before the first image is, so the browser knows the book before it is cut
+        expect(max(sources) < min(cuts))
         expect(jobs[0].job.state is JobState.RUNNING)
         expect(jobs[-1].job == job and job.state is JobState.SUCCEEDED)
         expect(published[-1] == jobs[-1])
@@ -1691,7 +1702,12 @@ class TestRunImportChecks:
         assert_expectations()
 
     async def test_fills_empty_fields_of_the_description_from_the_first_source_that_has_them(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_project: Project,
+        fx_samples: Path,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
         """Verify a source fills the empty author, a later source does not replace it, and the title stays.
 
@@ -1703,7 +1719,10 @@ class TestRunImportChecks:
         :type fx_project: Project
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
+        fx_book_changes.published.clear()
         await _import(
             fx_rig,
             fx_owner,
@@ -1717,11 +1736,16 @@ class TestRunImportChecks:
         project = await _project(fx_rig, fx_project.id)
         expect(project.details.title == fx_project.details.title)
         expect(project.details.contributors == (Contributor(name=FIRST_AUTHOR, role=ContributorRole.AUTHOR),))
-        expect(len(_events_of(fx_rig, ProjectChanged)) == 1)
+        expect([BookResource.PROJECT in parts for parts in fx_book_changes.changed_parts()].count(True) == 1)
         assert_expectations()
 
     async def test_fills_the_lists_of_the_description_from_the_xmp_of_a_source(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_project: Project,
+        fx_samples: Path,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
         """Verify the languages, identifiers and subjects of an XMP packet reach an empty description, in one change.
 
@@ -1733,6 +1757,8 @@ class TestRunImportChecks:
         :type fx_project: Project
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         packet = xmp_packet(
             '<dc:language><rdf:Bag><rdf:li>be</rdf:li></rdf:Bag></dc:language>'
@@ -1742,15 +1768,18 @@ class TestRunImportChecks:
 
         path = add_xmp(write_pdf(fx_samples / PDF_NAME, pages=[PdfPage()]), packet=packet)
 
+        fx_book_changes.published.clear()
         await _import(fx_rig, fx_owner, fx_project.id, [upload(PDF_NAME, content=path.read_bytes())])
 
         details = (await _project(fx_rig, fx_project.id)).details
         expect((details.languages, details.subjects) == (('bel',), ('Folklore',)))
         expect([item.value for item in details.identifiers] == ['0306406152'])
-        expect(len(_events_of(fx_rig, ProjectChanged)) == 1)
+        expect([BookResource.PROJECT in parts for parts in fx_book_changes.changed_parts()].count(True) == 1)
         assert_expectations()
 
-    async def test_leaves_a_described_book_alone(self, fx_rig: ImportRig, fx_owner: Actor, fx_samples: Path) -> None:
+    async def test_leaves_a_described_book_alone(
+        self, fx_rig: ImportRig, fx_owner: Actor, fx_samples: Path, fx_book_changes: RecordingEventBus
+    ) -> None:
         """Verify a field the owner filled is never replaced, and no change is announced when nothing was filled.
 
         :param fx_rig: Adapters of the import.
@@ -1759,11 +1788,14 @@ class TestRunImportChecks:
         :type fx_owner: Actor
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         project = make_project()
         owner_author = (Contributor(name='Owner Author', role=ContributorRole.AUTHOR),)
         described = evolve(project, details=evolve(project.details, contributors=owner_author))
         await commit_project(fx_rig.database, fx_rig.open_uow(), described, owner=fx_owner.account_id)
+        fx_book_changes.published.clear()
 
         await _import(
             fx_rig,
@@ -1773,7 +1805,7 @@ class TestRunImportChecks:
         )
 
         expect((await _project(fx_rig, project.id)).details == described.details)
-        expect(_events_of(fx_rig, ProjectChanged) == [])
+        expect(not any(BookResource.PROJECT in parts for parts in fx_book_changes.changed_parts()))
         assert_expectations()
 
 
@@ -1812,7 +1844,6 @@ class TestRunImportLifecycle:
         expect(sorted(fx_rig.rasterizer.extracted) == list(range(LONG_BOOK_PAGES)))
         expect(len(scans) == LONG_BOOK_PAGES and all(scan.renditions.ready for scan in scans))
         expect((job.progress.done, job.progress.total) == (LONG_BOOK_PAGES + 1, LONG_BOOK_PAGES + 1))
-        expect(len(_events_of(fx_rig, ScanReady)) == LONG_BOOK_PAGES)
         assert_expectations()
 
     async def test_job_cancelled_between_sources_keeps_the_source_it_committed_and_skips_the_rest(
@@ -1909,7 +1940,12 @@ class TestRunImportLifecycle:
         assert_expectations()
 
     async def test_job_cancelled_between_scans_stops_before_the_next_scan_and_the_next_job_cuts_the_rest(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_project: Project,
+        fx_samples: Path,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
         """Verify scans left without renditions by a cancelled job are cut first by the project's next import.
 
@@ -1924,6 +1960,8 @@ class TestRunImportLifecycle:
         :type fx_project: Project
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         one_at_a_time = _tuned(fx_rig, parallel_scans=1)
         job = await one_at_a_time.service().start_import(
@@ -1936,11 +1974,11 @@ class TestRunImportLifecycle:
             :param event: Event just delivered.
             :type event: DomainEvent
             """
-            if isinstance(event, ScanReady):
-                fx_rig.events.after_publish = None
+            if _cuts_a_scan(event):
+                fx_book_changes.after_publish = None
                 await one_at_a_time.fakes.board.cancel(job.id)
 
-        fx_rig.events.after_publish = cancel_after_the_first_scan
+        fx_book_changes.after_publish = cancel_after_the_first_scan
 
         await one_at_a_time.fakes.board.run_queued()
 
@@ -2124,7 +2162,12 @@ class TestRunImportQueue:
     """Tests for the scans cut at once, whose changes of the book queue in front of one unit of work of the job."""
 
     async def test_job_cancelled_while_scans_are_cut_stops_every_cutter_and_keeps_the_scans_written(
-        self, fx_rig: ImportRig, fx_owner: Actor, fx_project: Project, fx_samples: Path
+        self,
+        fx_rig: ImportRig,
+        fx_owner: Actor,
+        fx_project: Project,
+        fx_samples: Path,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
         """Verify a cancellation stops both cutters and the next scans, and leaves the scan that was stored stored.
 
@@ -2141,6 +2184,8 @@ class TestRunImportQueue:
         :type fx_project: Project
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         job = await fx_rig.service().start_import(
             fx_owner, fx_project.id, [pdf_upload(fx_samples, QUEUE_PDF, pages=FOUR_PAGES)]
@@ -2162,13 +2207,13 @@ class TestRunImportQueue:
             :param event: Event just delivered.
             :type event: DomainEvent
             """
-            if isinstance(event, ScanReady):
-                fx_rig.events.after_publish = None
+            if _cuts_a_scan(event):
+                fx_book_changes.after_publish = None
                 await fx_rig.fakes.board.cancel(job.id)
                 cancelled.set()
 
         fx_rig.rasterizer.before_extract = hold_second_scan
-        fx_rig.events.after_publish = cancel_after_the_first_scan
+        fx_book_changes.after_publish = cancel_after_the_first_scan
 
         with anyio.fail_after(IMPORT_TIMEOUT_SECONDS):
             await fx_rig.fakes.board.run_queued()
@@ -2178,7 +2223,6 @@ class TestRunImportQueue:
         expect(sorted(fx_rig.rasterizer.extracted) == [0, 1])
         expect(fx_rig.rasterizer.running == 0)
         expect([scan.renditions.ready for scan in await _scans(fx_rig, fx_project.id)] == [True] + [False] * 3)
-        expect(len(_events_of(fx_rig, ScanReady)) == 1)
         expect(len(await _pages(fx_rig, fx_project.id)) == FOUR_PAGES)
         assert_expectations()
 
@@ -2228,7 +2272,6 @@ class TestRunImportQueue:
                     proceed.set()
                     await anyio.wait_all_tasks_blocked()
                     expect(not any(scan.renditions.ready for scan in await _scans(fx_rig, fx_project.id)))
-                    expect(not _events_of(fx_rig, ScanReady))
 
         stored = fx_rig.stored_job(job)
         expect((stored.state, stored.error) == (JobState.SUCCEEDED, ''))
@@ -2537,7 +2580,6 @@ class TestRunImportApplyStep:
         )
         # The progress counts the file of the upload, and the scan counted one less to cut
         expect((job.state, job.progress.done, job.progress.total) == (JobState.SUCCEEDED, 1, 1))
-        expect(not _events_of(fx_rig, ScanReady))
         expect(not versions)
         expect(not await _is_stored(fx_rig.assets, ProjectKeys(fx_project.id).scan_directory(cut[0])))
         assert_expectations()

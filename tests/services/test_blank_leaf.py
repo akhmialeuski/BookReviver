@@ -16,11 +16,11 @@ from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.enums import (
     BlankFill,
     BlankParam,
+    BookResource,
     JobKind,
     JobState,
     NewPageOrigin,
     NormalizeParam,
-    PageChange,
     PageKind,
     PageOrigin,
     PaperFill,
@@ -32,7 +32,7 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.events import PagesChanged, PageVersionReady
+from bookreviver.domain.events import BookChanged, PageVersionReady
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import NewPage, ProcessorRef, Renditions, Step
@@ -277,14 +277,6 @@ class LeafDesk:
         await board.run_queued()
         return board.get(job.id)
 
-    def announced(self) -> list[PagesChanged]:
-        """Read the announcements of changed pages the service published, without the events of its jobs.
-
-        :returns: The ``PagesChanged`` events, in the order they were published.
-        :rtype: list[PagesChanged]
-        """
-        return [event for event in self.events.published if isinstance(event, PagesChanged)]
-
     async def page(self, project_id: ProjectId, page: Page) -> Page:
         """Read the committed state of a page.
 
@@ -393,7 +385,7 @@ class TestChooseALeaf:
     async def test_a_white_leaf_is_a_pending_version_of_the_page_order_of_the_size_of_the_book(
         self, fx_desk: LeafDesk
     ) -> None:
-        """Verify the page keeps its scan and gets a pending leaf of the median size, one job and one event.
+        """Verify the page keeps its scan and gets a pending leaf of the median size and one job.
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
@@ -409,10 +401,6 @@ class TestChooseALeaf:
         expect((leaf.stage, leaf.state, leaf.input_id) == (Stage.PAGE_ORDER, VersionState.PENDING, None))
         expect(leaf.params == leaf_params(SCAN_WIDTH_PX, SCAN_HEIGHT_PX))
         expect(len(fx_desk.prepare_jobs()) == 1)
-        expect(
-            fx_desk.announced()
-            == [PagesChanged(project_id=book.project.id, page_ids=[blank.id], change=PageChange.EDITED)]
-        )
         # The base version of the scan stays as it was
         expect(book.versions[1] in await fx_desk.versions(book.project.id, blank))
         assert_expectations()
@@ -460,40 +448,48 @@ class TestChooseALeaf:
         expect(same_colour(pixel(image, (0, 0)), PAPER) and same_colour(pixel(image, (SCAN_WIDTH_PX - 1, 5)), PAPER))
         assert_expectations()
 
-    async def test_several_pages_change_in_one_transaction_with_one_event_and_one_job(self, fx_desk: LeafDesk) -> None:
-        """Verify every page gets its leaf, and the browser is told once.
+    async def test_several_pages_change_in_one_transaction_with_one_change_and_one_job(
+        self, fx_desk: LeafDesk, fx_book_changes: RecordingEventBus
+    ) -> None:
+        """Verify every page gets its leaf in one change of the book, which the browser is told of once.
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         book = await fx_desk.book([PageKind.BLANK, PageKind.TEXT, PageKind.BLANK])
+        fx_book_changes.published.clear()
 
         await fx_desk.choose(book, [0, 2], BlankFill.WHITE)
 
-        [event] = fx_desk.announced()
-        expect(set(event.page_ids) == {book.pages[0].id, book.pages[2].id})
+        [change] = fx_book_changes.published
+        expect(isinstance(change, BookChanged) and BookResource.PAGES in change.resources)
         expect([len(await fx_desk.leaves(book.project.id, book.pages[position])) for position in range(3)] == [1, 0, 1])
         expect(len(fx_desk.prepare_jobs()) == 1)
         assert_expectations()
 
     async def test_a_page_that_has_the_choice_already_is_left_alone(
-        self, fx_desk: LeafDesk, fx_page_writes: PageWrites
+        self, fx_desk: LeafDesk, fx_page_writes: PageWrites, fx_book_changes: RecordingEventBus
     ) -> None:
-        """Verify a repeated choice writes nothing, announces nothing and queues no second job.
+        """Verify a repeated choice writes nothing, changes nothing the browser is told of and queues no second job.
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
         :param fx_page_writes: Record of the pages the page repository writes.
         :type fx_page_writes: PageWrites
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK])
         await fx_desk.choose(book, [1], BlankFill.WHITE)
         fx_page_writes.start()
+        fx_book_changes.published.clear()
 
         await fx_desk.choose(book, [1], BlankFill.WHITE)
 
         expect(fx_page_writes.page_ids == set())
-        expect(len(fx_desk.announced()) == 1)
+        expect(fx_book_changes.published == [])
         expect(len(fx_desk.prepare_jobs()) == 1)
         assert_expectations()
 

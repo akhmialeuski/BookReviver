@@ -10,12 +10,12 @@ from bookreviver.adapters.storage import LocalSourceStore
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.events import JobChanged, ProjectChanged
+from bookreviver.domain.events import JobChanged
 from bookreviver.domain.ids import JobId
 from bookreviver.domain.values import SliceRequest
 from bookreviver.services.jobs import JobService
 from bookreviver.services.library import Library
-from tests.helpers.builders import make_job, make_project, new_account_id
+from tests.helpers.builders import make_book_change, make_job, make_project, new_account_id
 from tests.helpers.fakes_jobs import JobFakes
 from tests.helpers.seeding import commit_project
 from tests.helpers.storage import upload
@@ -386,9 +386,9 @@ class TestEvents:
         other = make_project()
         async with await fx_job_service.events(fx_owner, fx_project.id) as stream:
             # Published before anything reads the stream, as while the response headers are still being sent
-            await fx_fakes.events.publish(ProjectChanged(project_id=other.id))
-            await fx_fakes.events.publish(ProjectChanged(project_id=fx_project.id))
-            expect(await anext(stream) == ProjectChanged(project_id=fx_project.id))
+            await fx_fakes.events.publish(make_book_change(project_id=other.id))
+            await fx_fakes.events.publish(make_book_change(project_id=fx_project.id))
+            expect(await anext(stream) == make_book_change(project_id=fx_project.id))
         expect(fx_fakes.events.open_subscriptions == 0)
         assert_expectations()
 

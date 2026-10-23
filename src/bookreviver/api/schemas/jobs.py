@@ -1,8 +1,9 @@
 """Schemas of background jobs and of the events streamed to the browser.
 
 Each server-sent event carries a name from ``EventName`` and exactly the data TanStack Query needs to patch or
-invalidate the query it affects: the whole job for ``job-changed``, and only identifiers for every other event, since
-the client reads again the project, the sources, the scan, the page manifest or the page version they name.
+invalidate the queries it affects: the whole job for ``job-changed``, the version and the parts written for
+``book-changed``, the version alone for ``book-version`` and ``book-reset``, and the identifiers of a ready version for
+``page-version-ready``.
 """
 
 import enum
@@ -12,20 +13,15 @@ from fastapi import Query
 from fastapi_pagination import Params
 
 from bookreviver.api.schemas.base import ResponseModel
-from bookreviver.domain.enums import BookResource, JobKind, JobState, PageChange, Stage, StageState
-from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
+from bookreviver.domain.enums import BookResource, JobKind, JobState, Stage
+from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId
 
 
 class EventName(enum.StrEnum):
     """Name of a server-sent event, which the browser listens to with ``addEventListener``."""
 
     JOB_CHANGED = 'job-changed'
-    SOURCE_IMPORTED = 'source-imported'
-    SCAN_READY = 'scan-ready'
-    PAGES_CHANGED = 'pages-changed'
     PAGE_VERSION_READY = 'page-version-ready'
-    PAGE_STAGE_CHANGED = 'page-stage-changed'
-    PROJECT_CHANGED = 'project-changed'
     BOOK_CHANGED = 'book-changed'
     BOOK_RESET = 'book-reset'
     BOOK_VERSION = 'book-version'
@@ -113,50 +109,6 @@ class BookVersionSchema(ResponseModel):
     version: int
 
 
-class ProjectChangedSchema(ResponseModel):
-    """A project whose description changed; the data of a ``project-changed`` event.
-
-    :ivar project_id: Identifier of the project to read again.
-    """
-
-    project_id: ProjectId
-
-
-class SourceImportedSchema(ResponseModel):
-    """A source committed with its scans; the data of a ``source-imported`` event.
-
-    :ivar project_id: Identifier of the project whose sources and counts to read again.
-    :ivar source_id: Identifier of the new source.
-    """
-
-    project_id: ProjectId
-    source_id: SourceId
-
-
-class ScanReadySchema(ResponseModel):
-    """A scan whose renditions can be shown; the data of a ``scan-ready`` event.
-
-    :ivar project_id: Identifier of the project owning the scan.
-    :ivar scan_id: Identifier of the scan to read again.
-    """
-
-    project_id: ProjectId
-    scan_id: ScanId
-
-
-class PagesChangedSchema(ResponseModel):
-    """A book whose pages were added, removed, moved, numbered or given a kind; the data of a ``pages-changed`` event.
-
-    :ivar project_id: Identifier of the project whose page manifest to read again.
-    :ivar page_ids: Pages the change touched, one event naming all of them whatever the size of the group.
-    :ivar change: What was done to them.
-    """
-
-    project_id: ProjectId
-    page_ids: list[PageId]
-    change: PageChange
-
-
 class PageVersionReadySchema(ResponseModel):
     """A page version with its result; the data of a ``page-version-ready`` event.
 
@@ -168,25 +120,3 @@ class PageVersionReadySchema(ResponseModel):
     project_id: ProjectId
     page_id: PageId
     version_id: PageVersionId
-
-
-class PageStageChangedSchema(ResponseModel):
-    """A stage of a page whose current version or state changed; the data of a ``page-stage-changed`` event.
-
-    :ivar project_id: Identifier of the project owning the page.
-    :ivar page_id: Identifier of the page.
-    :ivar stage: The stage that changed.
-    :ivar recipe_id: Recipe the page was processed by, or None.
-    :ivar head_version_id: The current version of the stage, or None.
-    :ivar state: Whether the current version matches the inputs of the stage.
-    :ivar through_step: Index in the recipe of the last step the page was run through when that is before the last step
-                        that is on, or None.
-    """
-
-    project_id: ProjectId
-    page_id: PageId
-    stage: Stage
-    recipe_id: RecipeId | None
-    head_version_id: PageVersionId | None
-    state: StageState
-    through_step: int | None

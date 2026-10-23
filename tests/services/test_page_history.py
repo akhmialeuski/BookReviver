@@ -20,7 +20,7 @@ from bookreviver.domain.enums import (
     StepLayer,
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.events import JobChanged, PageStageChanged
+from bookreviver.domain.events import JobChanged
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import ChangeBatchId, PageHistoryEntryId, StepId
 from bookreviver.domain.keys import ProjectKeys
@@ -301,8 +301,8 @@ class TestUndo:
         expect(back is not None and (back.edit_hash, back.geometry) == (saved.edit_hash, saved.geometry))
         assert_expectations()
 
-    async def test_the_stage_goes_stale_and_the_change_is_announced(self, fx_kit: ProcessingKit) -> None:
-        """Verify an undo marks the stage of the page stale and publishes it, like the change it takes back.
+    async def test_the_stage_goes_stale(self, fx_kit: ProcessingKit) -> None:
+        """Verify an undo marks the stage of the page stale, like the change it takes back.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -323,14 +323,11 @@ class TestUndo:
             repos.page_stages.save(evolve(record, state=StageState.FRESH))
 
         await fx_kit.uow().change_book(project.id, make_fresh)
-        fx_kit.events.published.clear()
         await fx_kit.page_history().undo(actor, project.id, key, None)
         stored = await fx_kit.uow().read_book(
             project.id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         )
-        expect(stored.state is StageState.STALE)
-        expect(any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
-        assert_expectations()
+        assert stored.state is StageState.STALE
 
     async def test_a_layer_that_changed_since_cannot_be_taken_back(self, fx_kit: ProcessingKit) -> None:
         """Verify an undo that would write over a later change is a conflict and changes nothing.
@@ -510,23 +507,18 @@ class TestClear:
         expect(await fx_kit.uow().read_book(project.id, lambda repos: repos.page_versions.find(version.id)) is None)
         assert_expectations()
 
-    async def test_the_stage_stands_on_what_the_step_read_stale_and_the_change_is_announced(
-        self, fx_kit: ProcessingKit
-    ) -> None:
-        """Verify a clear of the second step puts the stage back on the result of the first, stale, and announces it.
+    async def test_the_stage_stands_on_what_the_step_read_stale(self, fx_kit: ProcessingKit) -> None:
+        """Verify a clear of the second step puts the stage back on the result of the first, stale.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
         actor, project, page, step_ids, made = await ran_two_steps(fx_kit)
-        fx_kit.events.published.clear()
         await fx_kit.page_history().clear(actor, project.id, PageStepKey(page.id, Stage.GEOMETRY, step_ids[1]))
         stored = await fx_kit.uow().read_book(
             project.id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         )
-        expect((stored.head_version_id, stored.state, stored.through_step) == (made[0].id, StageState.STALE, 0))
-        expect(any(isinstance(event, PageStageChanged) for event in fx_kit.events.published))
-        assert_expectations()
+        assert (stored.head_version_id, stored.state, stored.through_step) == (made[0].id, StageState.STALE, 0)
 
     async def test_the_version_the_stage_stands_on_gets_its_pyramid_cut_since_the_page_is_shown_by_it(
         self, fx_kit: ProcessingKit

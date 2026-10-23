@@ -16,9 +16,9 @@ from delayed_assert import assert_expectations, expect
 from PIL import Image
 
 from bookreviver.domain.entities import Page
-from bookreviver.domain.enums import JobState, PageChange, Stage, StageState, ValueScope, VersionState
+from bookreviver.domain.enums import JobState, Stage, StageState, ValueScope, VersionState
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.events import PagesChanged, PageVersionReady
+from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.geometry import Line, Point
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.keys import ProjectKeys
@@ -172,8 +172,8 @@ class TestSplit:
         expect((await stage_of(fx_cv_kit, project.id, left, Stage.PAGE_SPLIT)).state is StageState.FRESH)
         assert_expectations()
 
-    async def test_the_events_name_the_new_page_and_both_versions(self, fx_cv_kit: ProcessingKit) -> None:
-        """Verify the browser is told of the page that was added and of the two versions that became ready.
+    async def test_both_versions_are_announced_ready(self, fx_cv_kit: ProcessingKit) -> None:
+        """Verify the browser is told of the two versions that became ready, one for each half.
 
         :param fx_cv_kit: The processing kit with the OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
@@ -181,13 +181,9 @@ class TestSplit:
         actor, project, _ = await seed_spreads(fx_cv_kit)
         await use_recipe(fx_cv_kit, actor, project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
-        _left, right = await book_of(fx_cv_kit, project)
-        published = fx_cv_kit.events.published
-        added = [event for event in published if isinstance(event, PagesChanged) and event.change is PageChange.ADDED]
-        ready = [event.version.page_id for event in published if isinstance(event, PageVersionReady)]
-        expect([event.page_ids for event in added] == [[right.id]])
-        expect(len(ready) == 2)
-        assert_expectations()
+        left, right = await book_of(fx_cv_kit, project)
+        ready = [event.version.page_id for event in fx_cv_kit.events.published if isinstance(event, PageVersionReady)]
+        assert sorted(ready) == sorted([left.id, right.id])
 
     async def test_a_second_run_with_the_same_line_finds_the_versions_and_adds_no_page(
         self, fx_cv_kit: ProcessingKit
@@ -261,14 +257,12 @@ class TestSplit:
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
         [stored] = await book_of(fx_cv_kit, project)
         versions = await versions_of(fx_cv_kit, project.id, page)
-        added = [event for event in fx_cv_kit.events.published if isinstance(event, PagesChanged)]
         expect((stored.id, stored.slot) == (page.id, Page.WHOLE_SCAN))
         expect(
             [(version.state, version.processor.key) for version in versions] == [(VersionState.FAILED, SPLIT_SPREAD)]
         )
         expect('cannot be read' in versions[0].data['error'])
         expect((await stage_of(fx_cv_kit, project.id, page, Stage.PAGE_SPLIT)).state is StageState.FAILED)
-        expect(not added)
         assert_expectations()
 
     async def test_a_split_that_failed_is_made_again_by_the_next_run(self, fx_cv_kit: ProcessingKit) -> None:
@@ -388,7 +382,7 @@ class TestUnsplit:
     async def test_after_a_confirmation_the_right_half_is_deleted_with_its_files(
         self, fx_cv_kit: ProcessingKit
     ) -> None:
-        """Verify a confirmed run deletes the right page, makes the left one the whole scan, and tells the browser.
+        """Verify a confirmed run deletes the right page with its files, and makes the left one the whole scan.
 
         :param fx_cv_kit: The processing kit with the OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
@@ -400,15 +394,9 @@ class TestUnsplit:
         await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT, confirm_unsplit=True))
         [remaining] = await book_of(fx_cv_kit, project)
         head = await head_of(fx_cv_kit, project.id, remaining, Stage.PAGE_SPLIT)
-        removed = [
-            event
-            for event in fx_cv_kit.events.published
-            if isinstance(event, PagesChanged) and event.change is PageChange.REMOVED
-        ]
         expect((remaining.id, remaining.slot) == (left.id, Page.WHOLE_SCAN))
         expect((head.processor.key, head.state) == ('split.none', VersionState.READY))
         expect((await stage_of(fx_cv_kit, project.id, remaining, Stage.PAGE_SPLIT)).state is StageState.FRESH)
-        expect([event.page_ids for event in removed] == [[right.id]])
         with pytest.raises(NotFoundError):
             async with fx_cv_kit.assets.readable(stored):
                 pass
@@ -497,7 +485,7 @@ class TestSplitApplyStep:
         """Verify a change that lands while the scan is cut stores no page, no version and no head, and no file.
 
         The change lands after the step ran and before the change that stores the halves. The job ends as succeeded
-        with no page made, and the browser is told of no page and no version.
+        with no page made, and the browser is told of no version.
 
         :param fx_cv_kit: The processing kit with the OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
@@ -530,12 +518,7 @@ class TestSplitApplyStep:
 
         versions, record = await fx_cv_kit.uow().read_book(project.id, read_what_is_stored)
         stored = stored_job(fx_cv_kit, job.id)
-        told = [
-            event
-            for event in fx_cv_kit.events.published
-            if isinstance(event, PageVersionReady)
-            or (isinstance(event, PagesChanged) and event.change is PageChange.ADDED)
-        ]
+        told = [event for event in fx_cv_kit.events.published if isinstance(event, PageVersionReady)]
         expect((stored.state, stored.progress.total) == (JobState.SUCCEEDED, 1))
         expect(len(await book_of(fx_cv_kit, project)) == pages_left)
         expect(record is None)
