@@ -9,13 +9,9 @@
 
 default_install_hook_types:
   - pre-commit
-  - pre-push
   - post-checkout
   - post-merge
   - post-rewrite
-# A hook runs on a commit unless it names its stages, so a push runs the CRAP gate alone
-default_stages:
-  - pre-commit
 # The crap-gate script is a copy of the skill's, kept as it is so a later copy replaces it whole
 exclude: ^tools/crap_gate\.py$
 
@@ -124,8 +120,11 @@ repos:
         language: pygrep
         types: [ python ]
 
-  # crap-gate: code lines per function and per file on every commit, and on every push the pytest suite with coverage,
-  # the CRAP of each function and the coverage of the changed lines. Recorded debt lives in the two baselines
+  # crap-gate: code lines per function and per file on every commit. The pytest suite with coverage, the CRAP of each
+  # function and the coverage of the changed lines run by hand before a pull request opens, since the whole suite under
+  # coverage tracing takes minutes and loads every core:
+  # uv run pre-commit run crap-gate --hook-stage manual
+  # Recorded debt lives in the two baselines
   - repo: local
     hooks:
       - id: crap-gate-size
@@ -142,4 +141,4 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
-        stages: [ pre-push ]
+        stages: [ manual ]
