@@ -12,7 +12,7 @@ from fastapi import Query
 from fastapi_pagination import Params
 
 from bookreviver.api.schemas.base import ResponseModel
-from bookreviver.domain.enums import JobKind, JobState, PageChange, Stage, StageState
+from bookreviver.domain.enums import BookResource, JobKind, JobState, PageChange, Stage, StageState
 from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId, RecipeId, ScanId, SourceId
 
 
@@ -26,6 +26,8 @@ class EventName(enum.StrEnum):
     PAGE_VERSION_READY = 'page-version-ready'
     PAGE_STAGE_CHANGED = 'page-stage-changed'
     PROJECT_CHANGED = 'project-changed'
+    BOOK_CHANGED = 'book-changed'
+    BOOK_RESET = 'book-reset'
 
 
 class ProgressSchema(ResponseModel):
@@ -80,6 +82,32 @@ class JobQuery(Params):
     """
 
     active: bool = Query(default=False, description='List only the jobs that are queued or running')
+
+
+class BookChangedSchema(ResponseModel):
+    """A committed change of a book; the data of a ``book-changed`` event, whose id is the version.
+
+    :ivar project_id: Identifier of the project whose reads to repeat.
+    :ivar version: The version of the book after the change.
+    :ivar resources: The parts of the book the change wrote, whose reads are the ones to repeat.
+    """
+
+    project_id: ProjectId
+    version: int
+    resources: list[BookResource]
+
+
+class BookResetSchema(ResponseModel):
+    """A book that changed while the browser was not listening; the data of a ``book-reset`` event.
+
+    The stream keeps no changes for a browser that comes back, so every read of the book is to be repeated.
+
+    :ivar project_id: Identifier of the project whose reads to repeat.
+    :ivar version: The version of the book now.
+    """
+
+    project_id: ProjectId
+    version: int
 
 
 class ProjectChangedSchema(ResponseModel):

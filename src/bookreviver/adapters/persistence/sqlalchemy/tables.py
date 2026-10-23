@@ -100,6 +100,8 @@ VERSION_ID_LENGTH: Final = 16
 EMPTY_OBJECT: Final = '{}'
 # The rows of the partial unique index of ``sources``: the imported sources, which are the ones that join the book
 IMPORTED_SOURCE: Final = text(f"status = '{SourceStatus.IMPORTED}'")
+# The version of a book no change has written yet
+FIRST_VERSION: Final = text('0')
 # The key of the one row of ``book_places``
 BOOK_PLACE_ID: Final = 1
 # A manual label is a label, so the empty label is never one; null leaves the number to the sections
@@ -173,6 +175,8 @@ class ProjectRow(BookTable):
     :ivar image_policy: How the images of the project's scans and page versions are stored, stored by value.
     :ivar created_at: Time the project was created.
     :ivar updated_at: Time of the last change, set by the domain through its ``Clock``.
+    :ivar version: Number of the changes of the book committed so far, which only the unit of work raises, by one for
+                   every change that wrote a part of the book a reader asks for.
     """
 
     __tablename__ = PROJECTS_TABLE
@@ -208,6 +212,7 @@ class ProjectRow(BookTable):
     image_policy: Mapped[ImagePolicy] = mapped_column(enum_by_value(ImagePolicy))
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
+    version: Mapped[int] = mapped_column(server_default=FIRST_VERSION)
 
 
 class SourceRow(BookTable):

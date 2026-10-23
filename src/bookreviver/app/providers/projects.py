@@ -9,6 +9,7 @@ from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
 from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
 from bookreviver.services.base_versions import BaseVersions
+from bookreviver.services.freshness import BookFreshness
 from bookreviver.services.library import Library
 from bookreviver.services.pages import PageImaging, PageRuntime, PageService
 from bookreviver.services.pagination import PaginationService
@@ -36,6 +37,21 @@ class ProjectsProvider(Provider):
         :rtype: StageSummaries
         """
         return StageSummaries(catalogue=catalogue, board=board)
+
+    @provide
+    def freshness(self, uow: UnitOfWork, library: Library, board: JobBoard) -> BookFreshness:
+        """Build the freshness of the reads of the books of a request.
+
+        :param uow: Unit of work of the request.
+        :type uow: UnitOfWork
+        :param library: Library of the request.
+        :type library: Library
+        :param board: Board of the jobs of the books.
+        :type board: JobBoard
+        :returns: The freshness of the reads of the books.
+        :rtype: BookFreshness
+        """
+        return BookFreshness(uow=uow, library=library, board=board)
 
     @provide
     def library(self, uow: UnitOfWork) -> Library:

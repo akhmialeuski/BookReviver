@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Path, Query
 from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
+from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.routers.processing import StagePath
 from bookreviver.api.schemas.page_history import PageHistoryEntrySchema
@@ -34,7 +35,9 @@ from bookreviver.services.page_settings import PageSettingsService
 if TYPE_CHECKING:
     from bookreviver.domain.step_values import ValueTarget
 
-router = APIRouter(prefix='/projects', tags=['page-settings'], route_class=DishkaRoute)
+router = APIRouter(
+    prefix='/projects', tags=['page-settings'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)]
+)
 
 
 @dataclass(frozen=True)

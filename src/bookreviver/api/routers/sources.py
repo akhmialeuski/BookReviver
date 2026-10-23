@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request, status
 from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
+from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.pages import PageAnchorBody
 from bookreviver.api.schemas.sources import ScanQuery, ScanSchema, SourceSchema
@@ -31,7 +32,7 @@ STATUS_DESCRIPTION: str = 'List the files in these statuses; the imported source
 # The statuses the list shows when it is asked for none, which are the sources of the book and not the import report
 IMPORTED_ONLY: frozenset[SourceStatus] = frozenset({SourceStatus.IMPORTED})
 
-router = APIRouter(prefix='/projects', tags=['sources'], route_class=DishkaRoute)
+router = APIRouter(prefix='/projects', tags=['sources'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 
 # The statuses are a parameter of their own beside the page parameters, not a field of a query model: a list field of a

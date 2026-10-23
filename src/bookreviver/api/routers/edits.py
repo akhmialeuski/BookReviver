@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Form, Path, Request, status
 from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
+from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.edits import CarryForm, CarryOverSchema, EditForm, PageEditSchema
 from bookreviver.api.schemas.page_history import PageHistoryEntrySchema
@@ -23,7 +24,7 @@ from bookreviver.domain.values import PageStepKey, Slice
 from bookreviver.services.edits import EditService
 from bookreviver.services.page_carry import CarryOverService
 
-router = APIRouter(prefix='/projects', tags=['edits'], route_class=DishkaRoute)
+router = APIRouter(prefix='/projects', tags=['edits'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 # The form may hold a file, so the schema says it is a multipart form, and the generated client sends it as one
 MULTIPART_FORM: str = 'multipart/form-data'

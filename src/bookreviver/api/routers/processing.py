@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Path, Request, status
 from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
+from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.routers.pages import PagePath
 from bookreviver.api.schemas.jobs import JobSchema
@@ -45,7 +46,7 @@ STAGE_DESCRIPTION: str = 'Stage of the pipeline'
 RECIPE_ID_DESCRIPTION: str = 'Identifier of the recipe'
 VERSION_ID_DESCRIPTION: str = 'Identifier of the page version'
 
-router = APIRouter(prefix='/projects', tags=['processing'], route_class=DishkaRoute)
+router = APIRouter(prefix='/projects', tags=['processing'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 
 @dataclass(frozen=True)

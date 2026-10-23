@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 from attrs import evolve
 
-from bookreviver.domain.enums import Stage, StageState, VersionState
+from bookreviver.domain.enums import BookResource, Stage, StageState, VersionState
+from bookreviver.domain.events import BookChanged
 from bookreviver.domain.values import PageStageKey, Renditions
 from tests.helpers.builders import (
     make_page,
@@ -148,7 +149,7 @@ class TestStart:
         """Verify the geometry record is stale once the application runs, and the record of the base version is not.
 
         The running application is only started, and no request is made, so the mark can only come from the start
-        itself, and it is announced to nobody.
+        itself. No service announces it, and the unit of work announces the change of the stages of the book.
 
         :param fx_fakes: Adapters of the test, whose event bus records what is announced.
         :type fx_fakes: JobFakes
@@ -165,4 +166,10 @@ class TestStart:
             ],
         )
 
-        assert (states, fx_fakes.events.published) == ([StageState.FRESH, StageState.STALE], [])
+        announced = [event for event in fx_fakes.events.published if not isinstance(event, BookChanged)]
+        changes = [event.resources for event in fx_fakes.events.published if isinstance(event, BookChanged)]
+        assert (states, announced, changes) == (
+            [StageState.FRESH, StageState.STALE],
+            [],
+            [frozenset({BookResource.STAGES})],
+        )

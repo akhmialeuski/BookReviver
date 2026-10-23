@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Path
 from fastapi_pagination import Page, Params
 
 from bookreviver.api.auth import ActorDep
+from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.page_history import ClearedSchema, PageHistoryEntrySchema, UndoForm, UndoneSchema
 from bookreviver.domain.entities import PageHistoryEntry
@@ -22,7 +23,9 @@ from bookreviver.domain.ids import PageId, ProjectId, StepId
 from bookreviver.domain.values import PageStepKey, Slice
 from bookreviver.services.page_history import PageHistoryService
 
-router = APIRouter(prefix='/projects', tags=['page-history'], route_class=DishkaRoute)
+router = APIRouter(
+    prefix='/projects', tags=['page-history'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)]
+)
 
 
 @dataclass(frozen=True)
