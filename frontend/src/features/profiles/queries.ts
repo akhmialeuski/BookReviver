@@ -15,8 +15,7 @@ import {
   putRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutMutation,
   renameProfileApiV1RecipeProfilesProfileIdPatchMutation,
 } from '@/api/@tanstack/react-query.gen';
-import { refreshStage } from '@/features/processing/queries';
-import { invalidateJobs } from '@/features/projects/queries';
+import { invalidateAllRecipes } from '@/features/projects/queries';
 
 /**
  * The queries and changes behind the recipe profiles of the account: the list of them, by stage or all, and the saving,
@@ -74,11 +73,11 @@ export function useReplaceProfile() {
  * Record which profile a recipe of a book was made from. The steps of the recipe do not change, so no page goes stale,
  * but the recipes are read again, since they carry the link.
  */
-export function useLinkProfile(projectId: string, stage: Stage) {
+export function useLinkProfile(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...putRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutMutation(),
-    onSettled: () => refreshStage(queryClient, projectId, stage),
+    onSettled: () => invalidateAllRecipes(queryClient, projectId),
   });
 }
 
@@ -122,16 +121,12 @@ export function useUnsetDefaultProfile() {
  * Put the steps of a profile into the recipe of one kind of page of a book. The pages that recipe made go out of date, and
  * the profile is linked to the recipe.
  */
-export function useApplyProfile(projectId: string, stage: Stage) {
+export function useApplyProfile(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     ...applyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostMutation(),
     onSettled: () =>
-      Promise.all([
-        refreshStage(queryClient, projectId, stage),
-        refreshProfiles(queryClient),
-        invalidateJobs(queryClient, projectId),
-      ]),
+      Promise.all([invalidateAllRecipes(queryClient, projectId), refreshProfiles(queryClient)]),
   });
 }
 

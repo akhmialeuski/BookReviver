@@ -37,7 +37,7 @@ export function StageBanners({
   items: readonly StripItem[];
 }): React.JSX.Element | null {
   const { projectId, stage, recipe } = processing;
-  const run = useRunStage(projectId, stage);
+  const run = useRunStage(projectId);
   const activeJobs = useActiveJobs(projectId);
   const scans = useAllScans(projectId, stage === 'page-split');
   const [dismissed, setDismissed] = useState(false);

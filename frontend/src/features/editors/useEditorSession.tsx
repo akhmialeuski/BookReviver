@@ -20,7 +20,7 @@ import type { PageContext } from '@/features/editors/types';
 import { useHeld } from '@/features/editors/useHeld';
 import { usePictureSize } from '@/features/editors/usePictureSize';
 import { type ImageSource, sourceOfPreview } from '@/features/processing/compare';
-import { invalidateHistory, useUndo } from '@/features/processing/historyQueries';
+import { useUndo } from '@/features/processing/historyQueries';
 import { settingsOf } from '@/features/processing/pageSettings';
 import type { PreviewRequest } from '@/features/processing/preview';
 import {
@@ -34,11 +34,6 @@ import { bodyOf, draftOf } from '@/features/processing/recipe';
 import { readResult } from '@/features/processing/results';
 import { usePreview } from '@/features/processing/usePreview';
 import type { Processing } from '@/features/processing/useProcessing';
-import {
-  invalidateStageRows,
-  invalidateStageSummary,
-  invalidateVersions,
-} from '@/features/projects/queries';
 import { isTypingTarget } from '@/features/viewer/keys';
 import { useActiveJobs } from '@/features/workspace/queries';
 import type { StripItem } from '@/features/workspace/strip';
@@ -128,8 +123,8 @@ export function useEditorSession({
   const { projectId, stage, catalogue } = processing;
   const queryClient = useQueryClient();
   const { save, remove } = useEditChanges(projectId);
-  const run = useRunStage(projectId, stage);
-  const { mutate: takeBack } = useUndo(projectId, stage);
+  const run = useRunStage(projectId);
+  const { mutate: takeBack } = useUndo(projectId);
   const { mutate: startRun } = run;
   const activeJobs = useActiveJobs(projectId);
   const [wanted, setWanted] = useState<WantedRun | null>(null);
@@ -180,7 +175,7 @@ export function useEditorSession({
   // The settings the open page has for the step, which the editor of the content box reads and sets besides its shape
   const sets = kind === 'content-box';
   const pageSettings = usePageSettings(projectId, current?.page.id, stage, sets);
-  const setting = useSetValue(projectId, stage);
+  const setting = useSetValue(projectId);
   const pageSettingsOfStep = settingsOf(pageSettings.data, step?.step_id ?? null);
   // Until the row of the page arrives it is not known whether the step has made a result on it, so nothing is shown or
   // previewed for the page: a frame drawn from the fallback would be replaced by the one the step found
@@ -351,15 +346,7 @@ export function useEditorSession({
     } catch (failure) {
       setError(describeError(failure));
     } finally {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: editsKey(projectId, owner.id, stage) }),
-        // A saved or deleted edit is a change of the history of the step, and the results of the page are read again
-        // with it, as after every other change of a version
-        invalidateHistory(queryClient),
-        invalidateVersions(queryClient, projectId, owner.id),
-        invalidateStageRows(queryClient, projectId, stage),
-        invalidateStageSummary(queryClient, projectId),
-      ]);
+      await queryClient.invalidateQueries({ queryKey: editsKey(projectId, owner.id, stage) });
       // The server has the shape and the edit is read again, so the draft is no longer needed. A shape held meanwhile is
       // another draft, and a save that did not go through keeps its draft on screen beside the error
       if (taken) {

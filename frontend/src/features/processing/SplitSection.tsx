@@ -51,7 +51,7 @@ export function SplitSection({
   current: StripItem;
 }): React.JSX.Element | null {
   const { projectId, stage } = processing;
-  const run = useRunStage(projectId, stage);
+  const run = useRunStage(projectId);
   const saveEdit = useSaveEdit(projectId, stage);
   const deleteEdit = useDeleteEdit(projectId, stage);
   const activeJobs = useActiveJobs(projectId);

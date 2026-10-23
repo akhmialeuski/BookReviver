@@ -39,7 +39,7 @@ export function ResetSteps({
   rows: readonly StagePageSchema[];
 }): React.JSX.Element | null {
   const { projectId, stage, recipe } = processing;
-  const reset = useResetRecipe(projectId, stage);
+  const reset = useResetRecipe(projectId);
   const [open, setOpen] = useState(false);
   if (recipe === undefined) {
     return null;

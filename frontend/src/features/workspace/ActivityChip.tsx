@@ -1,9 +1,8 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { ActivityIcon, AlertCircleIcon, CheckCircle2Icon, Loader2Icon, XIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { JobSchema } from '@/api';
 import { cancelJobApiV1JobsJobIdDeleteMutation } from '@/api/@tanstack/react-query.gen';
-import { invalidateJobs } from '@/features/projects/queries';
 import {
   formatTime,
   isStoppable,
@@ -28,12 +27,8 @@ import { Progress } from '@/shared/ui/progress';
  * which cancels it through the jobs route.
  */
 
-function JobRow({ job, projectId }: { job: JobSchema; projectId: string }): React.JSX.Element {
-  const queryClient = useQueryClient();
-  const stop = useMutation({
-    ...cancelJobApiV1JobsJobIdDeleteMutation(),
-    onSuccess: () => invalidateJobs(queryClient, projectId),
-  });
+function JobRow({ job }: { job: JobSchema }): React.JSX.Element {
+  const stop = useMutation(cancelJobApiV1JobsJobIdDeleteMutation());
   const labels = MESSAGES.activity;
   const time = formatTime(jobMoment(job));
   const percent = Math.round(job.progress.fraction * 100);
@@ -125,7 +120,7 @@ export function ActivityChip({ projectId }: { projectId: string }): React.JSX.El
         ) : (
           <ul className="max-h-96 divide-y overflow-y-auto">
             {recent.data.map((job) => (
-              <JobRow key={job.id} job={job} projectId={projectId} />
+              <JobRow key={job.id} job={job} />
             ))}
           </ul>
         )}

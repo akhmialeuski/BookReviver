@@ -53,8 +53,8 @@ export function CarryOver({
   onResult: (result: CarryOverSchema | null) => void;
 }): React.JSX.Element {
   const { projectId, stage } = processing;
-  const carry = useCarryShape(projectId, stage, onResult);
-  const undo = useUndo(projectId, stage);
+  const carry = useCarryShape(projectId, onResult);
+  const undo = useUndo(projectId);
   const others = [...selected].filter((id) => id !== pageId);
   const first = result?.changes[0];
 

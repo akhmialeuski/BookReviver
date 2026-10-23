@@ -459,38 +459,36 @@ describe('useEditorSession', () => {
     });
   });
 
-  it('reads the history and the results of the page again once an edit is saved, without a reload', async () => {
+  it('reads the edits of the page again once an edit is saved, so the saved edit takes the place of the draft', async () => {
     await render();
-    const historyReads = sdk.history.mock.calls.length;
-    const versionReads = sdk.versions.mock.calls.length;
+    const editReads = sdk.edits.mock.calls.length;
 
     await typeAngle('2.5');
 
     expect(sdk.put).toHaveBeenCalledTimes(1);
-    expect(sdk.history.mock.calls.length).toBeGreaterThan(historyReads);
-    expect(sdk.versions.mock.calls.length).toBeGreaterThan(versionReads);
+    expect(sdk.edits.mock.calls.length).toBeGreaterThan(editReads);
   });
 
-  it('reads the history again when the edit is deleted too', async () => {
+  it('reads the edits of the page again when the edit is deleted too', async () => {
     sdk.edits.mockResolvedValue(listOf(edit({})));
     await render();
-    const historyReads = sdk.history.mock.calls.length;
+    const editReads = sdk.edits.mock.calls.length;
 
     await act(async () => session?.auto());
     await settle();
 
     expect(sdk.remove).toHaveBeenCalledTimes(1);
-    expect(sdk.history.mock.calls.length).toBeGreaterThan(historyReads);
+    expect(sdk.edits.mock.calls.length).toBeGreaterThan(editReads);
   });
 
-  it('reads the history again when a save is refused, since the write may have changed it', async () => {
+  it('reads the edits of the page again when a save is refused, since the write may have reached the server', async () => {
     sdk.put.mockRejectedValue(new ProblemError('Broken.', 500, null, []));
     await render();
-    const historyReads = sdk.history.mock.calls.length;
+    const editReads = sdk.edits.mock.calls.length;
 
     await typeAngle('2.5');
 
-    expect(sdk.history.mock.calls.length).toBeGreaterThan(historyReads);
+    expect(sdk.edits.mock.calls.length).toBeGreaterThan(editReads);
   });
 
   it('saves nothing for text that is not an angle or for the angle it already has', async () => {

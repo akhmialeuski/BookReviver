@@ -93,8 +93,8 @@ export function PageTimeline({
   // follows the recipe the page was run by, which may have had other steps than the recipe of the open step
   const ofStage = useVersions(projectId, unsaved ? undefined : pageId, stage);
   const versions = stepId === null ? ofStage : ofStep;
-  const undo = useUndo(projectId, stage);
-  const clear = useClearHistory(projectId, stage);
+  const undo = useUndo(projectId);
+  const clear = useClearHistory(projectId);
   const choose = useChooseVersion(projectId, stage);
   const [filter, setFilter] = useState<TimelineFilter>(TimelineFilter.All);
   const [shown, setShown] = useState(ROWS_AT_A_TIME);
