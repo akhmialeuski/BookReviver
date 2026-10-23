@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { JobSchema } from '@/api';
 import {
-  readJobApiV1JobsJobIdGetQueryKey,
+  readJobApiV1BooksBookIdJobsJobIdGetQueryKey,
   uploadSourcesApiV1BooksBookIdSourcesPostMutation,
 } from '@/api/@tanstack/react-query.gen';
 import { invalidateJobs } from '@/features/books/queries';
@@ -26,7 +26,9 @@ export function useUpload(bookId: string, onSent?: () => void) {
     onSuccess: (job) => {
       // An event of the job can arrive before this answer, and it is newer, so it is not overwritten
       queryClient.setQueryData(
-        readJobApiV1JobsJobIdGetQueryKey({ path: { job_id: job.id } }),
+        readJobApiV1BooksBookIdJobsJobIdGetQueryKey({
+          path: { book_id: job.book_id, job_id: job.id },
+        }),
         (existing: JobSchema | undefined) => existing ?? job,
       );
       void invalidateJobs(queryClient, bookId);

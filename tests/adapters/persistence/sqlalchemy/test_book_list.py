@@ -16,7 +16,6 @@ from bookreviver.adapters.storage import LocalAssetStore, LocalBookArchive, Loca
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.values import SliceRequest
 from bookreviver.services.books import BooksService, BookStores
-from bookreviver.services.library import Library
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import EPOCH, make_job, make_page, make_page_stage, make_record
 from tests.helpers.clock import FixedClock
@@ -95,7 +94,6 @@ async def _statements_of_list(uow: UnitOfWork, board: JobBoard, owner_id: Accoun
     """
     service = BooksService(
         uow=uow,
-        library=Library(uow=uow),
         clock=FixedClock(EPOCH),
         files=BookStores(
             sources=LocalSourceStore(root=root), assets=LocalAssetStore(root=root), archive=LocalBookArchive(root=root)

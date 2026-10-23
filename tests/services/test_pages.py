@@ -20,6 +20,7 @@ from tests.helpers.builders import (
     make_scan,
     make_source,
     new_account_id,
+    open_for,
 )
 from tests.helpers.seeding import commit_record, store_book
 
@@ -106,7 +107,7 @@ class TestManifest:
         book_record = make_record()
         pages, versions = await _commit_book(fx_database, fx_uow(), book_record, fx_actor.account_id)
 
-        manifest = await fx_service().manifest(fx_actor, book_record.id, SliceRequest())
+        manifest = await fx_service().manifest(open_for(fx_actor, book_record.id), SliceRequest())
 
         expect([overview.page for overview in manifest.items] == [pages[index] for index in BOOK_ORDER])
         expect([overview.position for overview in manifest.items] == [0, 1, 2])
@@ -135,7 +136,7 @@ class TestManifest:
         book_record = make_record()
         pages, _ = await _commit_book(fx_database, fx_uow(), book_record, fx_actor.account_id)
 
-        manifest = await fx_service().manifest(fx_actor, book_record.id, WINDOW)
+        manifest = await fx_service().manifest(open_for(fx_actor, book_record.id), WINDOW)
 
         expect([(overview.page, overview.position) for overview in manifest.items] == [(pages[2], 1)])
         expect(manifest.total == len(pages))
@@ -158,7 +159,7 @@ class TestManifest:
         old, new = make_page_version(page_id=page.id, minutes=1), make_page_version(page_id=page.id, minutes=2)
         await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, versions=[new, old])
 
-        manifest = await fx_service().manifest(fx_actor, book_record.id, SliceRequest())
+        manifest = await fx_service().manifest(open_for(fx_actor, book_record.id), SliceRequest())
 
         assert [overview.image_version for overview in manifest.items] == [new]
 
@@ -200,7 +201,7 @@ class TestManifest:
 
         await fx_uow().change_book(book_record.id, save_heads)
 
-        manifest = await fx_service().manifest(fx_actor, book_record.id, SliceRequest())
+        manifest = await fx_service().manifest(open_for(fx_actor, book_record.id), SliceRequest())
 
         assert [overview.image_version for overview in manifest.items] == [deskewed]
 
@@ -230,33 +231,9 @@ class TestManifest:
             ),
         )
 
-        manifest = await fx_service().manifest(fx_actor, book_record.id, SliceRequest())
+        manifest = await fx_service().manifest(open_for(fx_actor, book_record.id), SliceRequest())
 
         assert [overview.image_version for overview in manifest.items] == [chosen]
-
-    async def test_another_accounts_book_is_not_found(
-        self,
-        fx_service: Callable[[], PageService],
-        fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
-        fx_actor: Actor,
-    ) -> None:
-        """Verify the pages of another account's book cannot be listed.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        """
-        book_record = make_record()
-        await _commit_book(fx_database, fx_uow(), book_record, new_account_id())
-
-        with pytest.raises(NotFoundError):
-            await fx_service().manifest(fx_actor, book_record.id, SliceRequest())
 
     async def test_included_only_leaves_out_the_pages_kept_out_and_numbers_the_rest(
         self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
@@ -275,7 +252,7 @@ class TestManifest:
         pages[1] = evolve(pages[1], included=False)
         await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id)
 
-        manifest = await fx_service().manifest(fx_actor, book_record.id, SliceRequest(), included_only=True)
+        manifest = await fx_service().manifest(open_for(fx_actor, book_record.id), SliceRequest(), included_only=True)
 
         expect([overview.page for overview in manifest.items] == [pages[0], pages[2]])
         expect([overview.position for overview in manifest.items] == [0, 1])
@@ -304,7 +281,7 @@ class TestManifest:
         await _commit_book(fx_database, fx_uow(), book_record, fx_actor.account_id)
         [source, *_] = await fx_uow().read_book(book_record.id, lambda repos: repos.sources.list_all())
 
-        manifest = await fx_service().manifest(fx_actor, book_record.id, SliceRequest())
+        manifest = await fx_service().manifest(open_for(fx_actor, book_record.id), SliceRequest())
 
         assert [overview.source_id for overview in manifest.items] == [None, source.id, source.id]
 
@@ -333,7 +310,7 @@ class TestGet:
         book_record = make_record()
         pages, versions = await _commit_book(fx_database, fx_uow(), book_record, fx_actor.account_id)
 
-        overview = await fx_service().get(fx_actor, book_record.id, pages[0].id)
+        overview = await fx_service().get(open_for(fx_actor, book_record.id), pages[0].id)
 
         expect(overview.page == pages[0])
         expect(overview.position == len(pages) - 1)
@@ -358,32 +335,7 @@ class TestGet:
         await store_book(fx_uow(), holder, page, owner=fx_actor.account_id)
 
         with pytest.raises(NotFoundError):
-            await fx_service().get(fx_actor, book_record.id, page.id)
-
-    async def test_page_of_another_accounts_book_is_not_found(
-        self,
-        fx_service: Callable[[], PageService],
-        fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
-        fx_actor: Actor,
-    ) -> None:
-        """Verify the actor cannot read a page through the book of another account.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        """
-        holder = make_record()
-        page = make_page()
-        await commit_record(fx_database, fx_uow(), holder, page, owner=new_account_id())
-
-        with pytest.raises(NotFoundError):
-            await fx_service().get(fx_actor, holder.id, page.id)
+            await fx_service().get(open_for(fx_actor, book_record.id), page.id)
 
     async def test_missing_page_is_not_found(
         self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
@@ -401,13 +353,13 @@ class TestGet:
         await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
 
         with pytest.raises(NotFoundError):
-            await fx_service().get(fx_actor, book_record.id, PageId(uuid4()))
+            await fx_service().get(open_for(fx_actor, book_record.id), PageId(uuid4()))
 
 
 class TestOpenAsset:
     """Tests for PageService.open_asset()."""
 
-    async def test_gives_the_path_of_a_file_of_the_actors_book(
+    async def test_gives_the_path_of_a_stored_file(
         self,
         fx_service: Callable[[], PageService],
         fx_uow: UnitOfWorkFactory,
@@ -431,18 +383,17 @@ class TestOpenAsset:
         async with fx_asset_store.writable(key) as target:
             target.write_bytes(FILE_CONTENT)
 
-        async with fx_service().open_asset(fx_actor, key) as path:
+        async with fx_service().open_asset(key) as path:
             assert path.read_bytes() == FILE_CONTENT
 
-    async def test_another_accounts_file_is_not_found(
+    async def test_gives_a_file_of_another_accounts_book_with_no_owner_checked(
         self,
         fx_service: Callable[[], PageService],
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_asset_store: LocalAssetStore,
-        fx_actor: Actor,
     ) -> None:
-        """Verify a stored file of another account's book is reported like a missing one.
+        """Verify a stored derived file is read by its key alone, whoever owns its book.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -452,8 +403,6 @@ class TestOpenAsset:
         :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Local asset store over the test's storage root.
         :type fx_asset_store: LocalAssetStore
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
         """
         book_record = make_record()
         await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id())
@@ -461,9 +410,8 @@ class TestOpenAsset:
         async with fx_asset_store.writable(key) as target:
             target.write_bytes(FILE_CONTENT)
 
-        with pytest.raises(NotFoundError):
-            async with fx_service().open_asset(fx_actor, key):
-                pytest.fail('The file of another account was opened.')
+        async with fx_service().open_asset(key) as path:
+            assert path.read_bytes() == FILE_CONTENT
 
     @pytest.mark.parametrize(
         'area', [KeySegment.SOURCES, KeySegment.INCOMING, 'notes'], ids=['sources', 'incoming', 'unknown-area']
@@ -486,9 +434,7 @@ class TestOpenAsset:
         await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
 
         with pytest.raises(NotFoundError):
-            async with fx_service().open_asset(
-                fx_actor, StorageKey(f'{BookKeys(book_record.id).prefix}{area}/{uuid4()}')
-            ):
+            async with fx_service().open_asset(StorageKey(f'{BookKeys(book_record.id).prefix}{area}/{uuid4()}')):
                 pytest.fail('A key outside the assets was opened.')
 
     async def test_key_without_a_file_is_not_found(
@@ -507,7 +453,7 @@ class TestOpenAsset:
         await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
 
         with pytest.raises(NotFoundError):
-            async with fx_service().open_asset(fx_actor, BookKeys(book_record.id).book):
+            async with fx_service().open_asset(BookKeys(book_record.id).book):
                 pytest.fail('A file that is not stored was opened.')
 
 

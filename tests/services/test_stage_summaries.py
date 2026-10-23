@@ -35,7 +35,7 @@ from bookreviver.domain.values import (
     StageRun,
     Step,
 )
-from tests.helpers.builders import make_page, make_page_stage, make_page_version
+from tests.helpers.builders import make_page, make_page_stage, make_page_version, open_for
 from tests.helpers.page_batches import PageValues
 from tests.helpers.processors import MEASURING_KEY, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import run_stage
@@ -330,7 +330,7 @@ class TestOfBook:
         recipes = {
             recipe.kind: recipe
             for recipe in (
-                await fx_kit.service().recipes(actor, book_record.id, Stage.GEOMETRY, SliceRequest(limit=10))
+                await fx_kit.service().recipes(open_for(actor, book_record.id), Stage.GEOMETRY, SliceRequest(limit=10))
             ).items
         }
         after = (await summaries_of(fx_kit, book_record))[Stage.GEOMETRY].recipes
@@ -498,7 +498,9 @@ class TestWithProgress:
         """
         actor, book_record, _ = await seed_book(fx_kit)
         _, other = await fx_kit.seed_record()
-        await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        await fx_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
         mine, theirs = await books_with_progress(fx_kit, book_record, other)
         assert mine.progress is not None
         assert theirs.progress is not None
@@ -535,7 +537,7 @@ async def seed_text_and_leaf(kit: ProcessingKit) -> tuple[Actor, BookRecord, Pag
     steps = [Step(processor_key=FAKE_KEY), Step(processor_key=FAKE_KEY)]
     recipe = await kit.recipe_of(actor, book_record, Stage.GEOMETRY)
     await kit.service().save_recipe(
-        actor, book_record.id, RecipeKey(Stage.GEOMETRY, recipe.id), RecipeDraft(steps=steps)
+        open_for(actor, book_record.id), RecipeKey(Stage.GEOMETRY, recipe.id), RecipeDraft(steps=steps)
     )
     return actor, book_record, text, leaf
 
@@ -634,7 +636,9 @@ class TestStepRows:
         """
         actor, book_record, text, _ = await seed_text_and_leaf(fx_kit)
         first, second = await step_ids_of(fx_kit, book_record)
-        await fx_kit.edits().save(actor, book_record.id, PageStepKey(text.id, Stage.GEOMETRY, first), ROTATION, None)
+        await fx_kit.edits().save(
+            open_for(actor, book_record.id), PageStepKey(text.id, Stage.GEOMETRY, first), ROTATION, None
+        )
         by_first = await stage_rows(fx_kit, book_record, Stage.GEOMETRY, SliceRequest(), first)
         by_second = await stage_rows(fx_kit, book_record, Stage.GEOMETRY, SliceRequest(), second)
         expect([row.step.state for row in by_first.items if row.step] == [FigureState.BY_HAND, FigureState.DEFAULT])
@@ -724,8 +728,7 @@ async def seed_measured_book(kit: ProcessingKit) -> tuple[BookRecord, StepId]:
         pages.append(page)
     recipe = await kit.recipe_of(actor, book_record, Stage.GEOMETRY)
     await kit.service().save_recipe(
-        actor,
-        book_record.id,
+        open_for(actor, book_record.id),
         RecipeKey(Stage.GEOMETRY, recipe.id),
         RecipeDraft(steps=[Step(processor_key=MEASURING_KEY)]),
     )

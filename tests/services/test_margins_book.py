@@ -16,6 +16,7 @@ from bookreviver.domain.enums import NormalizeParam, SpanName, Stage, TransformK
 from bookreviver.domain.geometry import ContentBox, Rect
 from bookreviver.domain.margins import NOMINAL_BLOCK_MM
 from bookreviver.domain.values import NewPageEdit, Progress, RecipeDraft, StageRun, Step
+from tests.helpers.builders import open_for
 from tests.helpers.page_batches import PageValues
 from tests.helpers.processing import stored_job
 from tests.helpers.samples import PAPER, png_bytes, text_page
@@ -155,7 +156,9 @@ class TestOnePageSizeForTheBook:
         """
         actor, book_record, pages = await seed_book(fx_cv_kit)
         fx_cv_kit.tracer.finished.clear()
-        job = await fx_cv_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        job = await fx_cv_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
         await fx_cv_kit.work_queue()
         tasks = len(pages) * TASKS_PER_PAGE
         expect(stored_job(fx_cv_kit, job.id).progress == Progress(done=tasks, total=tasks))
@@ -189,7 +192,7 @@ class TestOnePageSizeForTheBook:
         before = size_of(await margins_of(fx_cv_kit, book_record.id, pages[CHANGED]))
         key = await fx_cv_kit.edit_key(book_record.id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
         await fx_cv_kit.edits().save(
-            actor, book_record.id, key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
+            open_for(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
         )
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY, page_ids=(pages[CHANGED].id,)))
         changed = await margins_of(fx_cv_kit, book_record.id, pages[CHANGED])
@@ -210,7 +213,7 @@ class TestWhatTheUserSetsOnAPage:
         actor, book_record, pages = await seed_book(fx_cv_kit)
         key = await fx_cv_kit.edit_key(book_record.id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
         await fx_cv_kit.edits().save(
-            actor, book_record.id, key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
+            open_for(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
         )
         await PageValues(fx_cv_kit, actor, book_record.id).set(key, NormalizeParam.MARGIN_TOP.value, MARGIN_TOP_BY_HAND)
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
@@ -220,7 +223,7 @@ class TestWhatTheUserSetsOnAPage:
         expect(changed.params[NormalizeParam.MARGIN_TOP] == MARGIN_TOP_BY_HAND)
         expect(other.params[NormalizeParam.MARGIN_TOP] != MARGIN_TOP_BY_HAND)
         expect(size_of(changed) == size_of(other))
-        expect(await fx_cv_kit.edits().list(actor, book_record.id, pages[CHANGED].id, Stage.GEOMETRY))
+        expect(await fx_cv_kit.edits().list(open_for(actor, book_record.id), pages[CHANGED].id, Stage.GEOMETRY))
         assert_expectations()
 
     async def test_a_small_box_of_the_user_leaves_the_pages_of_the_book_of_one_size(
@@ -234,7 +237,7 @@ class TestWhatTheUserSetsOnAPage:
         actor, book_record, pages = await seed_book(fx_cv_kit)
         key = await fx_cv_kit.edit_key(book_record.id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
         await fx_cv_kit.edits().save(
-            actor, book_record.id, key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
+            open_for(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
         )
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
         versions = [await margins_of(fx_cv_kit, book_record.id, page) for page in pages]
@@ -259,7 +262,7 @@ class TestWhatTheUserSetsOnAPage:
         before = size_of(await margins_of(fx_cv_kit, book_record.id, pages[LARGEST]))
         key = await fx_cv_kit.edit_key(book_record.id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
         await fx_cv_kit.edits().save(
-            actor, book_record.id, key, NewPageEdit(kind=ContentBox.editor, geometry=LARGE_BOX), None
+            open_for(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=LARGE_BOX), None
         )
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
         sizes = [size_of(await margins_of(fx_cv_kit, book_record.id, page)) for page in pages]
@@ -339,7 +342,7 @@ class TestMarginsAfterSelectContent:
         actor, book_record, pages = await TestMarginsAfterSelectContent.seed_two_steps(fx_cv_kit)
         key = await fx_cv_kit.edit_key(book_record.id, pages[CHANGED], Stage.GEOMETRY, CROP)
         await fx_cv_kit.edits().save(
-            actor, book_record.id, key, NewPageEdit(kind=Rect.editor, geometry=HAND_FRAME), None
+            open_for(actor, book_record.id), key, NewPageEdit(kind=Rect.editor, geometry=HAND_FRAME), None
         )
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
         margins = await margins_of(fx_cv_kit, book_record.id, pages[CHANGED])

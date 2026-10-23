@@ -13,14 +13,15 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Path
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.auth import ActorDep
+from bookreviver.api.book import open_book
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.page_history import ClearedSchema, PageHistoryEntrySchema, UndoForm, UndoneSchema
 from bookreviver.domain.entities import PageHistoryEntry
 from bookreviver.domain.enums import Stage
-from bookreviver.domain.ids import BookId, PageId, StepId
+from bookreviver.domain.ids import PageId, StepId
 from bookreviver.domain.values import PageStepKey, Slice
+from bookreviver.services.book import Book
 from bookreviver.services.page_history import PageHistoryService
 
 router = APIRouter(prefix='/books', tags=['page-history'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
@@ -30,13 +31,11 @@ router = APIRouter(prefix='/books', tags=['page-history'], route_class=DishkaRou
 class StepPath:
     """The identifiers in the address of the history of one step on one page.
 
-    :ivar book_id: Identifier of the book.
     :ivar page_id: Identifier of the page.
     :ivar stage: Stage of the step.
     :ivar step_id: Identifier of the step of a recipe.
     """
 
-    book_id: Annotated[BookId, Path(description='Identifier of the book')]
     page_id: Annotated[PageId, Path(description='Identifier of the page')]
     stage: Annotated[Stage, Path(description='Stage of the step')]
     step_id: Annotated[StepId, Path(description='Identifier of the step of a recipe')]
@@ -49,26 +48,26 @@ class StepPath:
 
 @router.get('/{book_id}/pages/{page_id}/history/{stage}/{step_id}')
 async def list_history(
+    book: Annotated[Book, Depends(open_book)],
     address: Annotated[StepPath, Depends()],
     params: Annotated[Params, Depends()],
-    actor: ActorDep,
     history: FromDishka[PageHistoryService],
 ) -> Page[PageHistoryEntrySchema]:
     """List the changes of a step on a page, the newest first, with which of them were taken back.
 
     \N{FORM FEED}
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param address: Identifiers of the book, the page, the stage and the step.
     :type address: StepPath
     :param params: Page number and size from the query.
     :type params: Params
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param history: Page history service of the request.
     :type history: PageHistoryService
     :returns: One page of the changes.
     :rtype: Page[PageHistoryEntrySchema]
     """
-    found = await history.list(actor, address.book_id, address.key)
+    found = await history.list(book, address.key)
     undone = found.undone
 
     def to_schema(change: PageHistoryEntry) -> PageHistoryEntrySchema:
@@ -89,9 +88,9 @@ async def list_history(
 
 @router.post('/{book_id}/pages/{page_id}/history/{stage}/{step_id}/undo')
 async def undo_change(
+    book: Annotated[Book, Depends(open_book)],
     address: Annotated[StepPath, Depends()],
     form: UndoForm,
-    actor: ActorDep,
     history: FromDishka[PageHistoryService],
 ) -> UndoneSchema:
     """Take back the newest change of a step on a page, or every change back to a chosen one, and mark the stage stale.
@@ -101,25 +100,25 @@ async def undo_change(
     back.
 
     \N{FORM FEED}
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param address: Identifiers of the book, the page, the stage and the step.
     :type address: StepPath
     :param form: The oldest change to take back, or none for the newest change alone.
     :type form: UndoForm
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param history: Page history service of the request.
     :type history: PageHistoryService
     :returns: The undos that were written.
     :rtype: UndoneSchema
     """
-    written = await history.undo(actor, address.book_id, address.key, form.change_id)
+    written = await history.undo(book, address.key, form.change_id)
     return UndoneSchema(changes=[PageHistoryEntrySchema.model_validate(change) for change in written])
 
 
 @router.delete('/{book_id}/pages/{page_id}/history/{stage}/{step_id}')
 async def clear_history(
+    book: Annotated[Book, Depends(open_book)],
     address: Annotated[StepPath, Depends()],
-    actor: ActorDep,
     history: FromDishka[PageHistoryService],
 ) -> ClearedSchema:
     """Return a step to its initial state on a page: delete its history, its settings, its edit and its results.
@@ -132,10 +131,10 @@ async def clear_history(
     404 when no recipe of the stage has the step.
 
     \N{FORM FEED}
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param address: Identifiers of the book, the page, the stage and the step.
     :type address: StepPath
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param history: Page history service of the request.
     :type history: PageHistoryService
     :returns: How many changes and how many versions were deleted.
@@ -145,5 +144,5 @@ async def clear_history(
     :raises ConflictError: If a run, a measure of the book, a tile cutting or a collection of the book is queued or
                            running.
     """
-    cleared = await history.clear(actor, address.book_id, address.key)
+    cleared = await history.clear(book, address.key)
     return ClearedSchema(changes=cleared.changes, versions=len(cleared.versions))

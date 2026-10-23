@@ -7,7 +7,6 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import (
     CarryScope,
     ChangeSource,
@@ -21,13 +20,13 @@ from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import StepId
 from bookreviver.domain.values import CarryRequest, NewPageEdit, StageRun
-from tests.helpers.builders import new_account_id
+from tests.helpers.builders import open_for
 from tests.helpers.page_batches import PageValues, carry_over
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import run_stage, stage_of
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import BookRecord, Page
+    from bookreviver.domain.entities import Actor, BookRecord, Page
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import PageStepKey
     from tests.helpers.processing import ProcessingKit
@@ -123,8 +122,8 @@ class TestShapeSetByHand:
         """
         actor, book_record, pages, keys = await carry_book(fx_kit)
         await PageValues(fx_kit, actor, book_record.id).set(keys[2], FAILING_PARAMETER, NOT_FAILING)
-        await fx_kit.edits().save(actor, book_record.id, keys[SOURCE_INDEX], SHAPE, None)
-        carried = await carry_over(fx_kit).carry(actor, book_record.id, shape_of(keys[SOURCE_INDEX]))
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[SOURCE_INDEX], SHAPE, None)
+        carried = await carry_over(fx_kit).carry(open_for(actor, book_record.id), shape_of(keys[SOURCE_INDEX]))
         expect(sorted(change.page_id for change in carried.changes) == sorted(page.id for page in pages[2:]))
         expect(
             [await angle_of(fx_kit, book_record.id, key) for key in keys]
@@ -144,9 +143,9 @@ class TestShapeSetByHand:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, pages, keys = await carry_book(fx_kit)
-        await fx_kit.edits().save(actor, book_record.id, keys[SOURCE_INDEX], SHAPE, None)
-        await fx_kit.edits().save(actor, book_record.id, keys[2], OWN_SHAPE, None)
-        carried = await carry_over(fx_kit).carry(actor, book_record.id, shape_of(keys[SOURCE_INDEX]))
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[SOURCE_INDEX], SHAPE, None)
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[2], OWN_SHAPE, None)
+        carried = await carry_over(fx_kit).carry(open_for(actor, book_record.id), shape_of(keys[SOURCE_INDEX]))
         expect(carried.skipped == (pages[2].id,))
         expect([change.page_id for change in carried.changes] == [pages[3].id])
         expect([await angle_of(fx_kit, book_record.id, key) for key in keys[2:]] == [OWN_ANGLE, SHAPE_ANGLE])
@@ -159,9 +158,9 @@ class TestShapeSetByHand:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, pages, keys = await carry_book(fx_kit)
-        await fx_kit.edits().save(actor, book_record.id, keys[SOURCE_INDEX], SHAPE, None)
-        await fx_kit.edits().save(actor, book_record.id, keys[2], SHAPE, None)
-        carried = await carry_over(fx_kit).carry(actor, book_record.id, shape_of(keys[SOURCE_INDEX]))
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[SOURCE_INDEX], SHAPE, None)
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[2], SHAPE, None)
+        carried = await carry_over(fx_kit).carry(open_for(actor, book_record.id), shape_of(keys[SOURCE_INDEX]))
         expect(carried.skipped == ())
         expect([change.page_id for change in carried.changes] == [pages[3].id])
         assert_expectations()
@@ -175,9 +174,11 @@ class TestShapeSetByHand:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, pages, keys = await carry_book(fx_kit)
-        await fx_kit.edits().save(actor, book_record.id, keys[SOURCE_INDEX], SHAPE, None)
-        await fx_kit.edits().save(actor, book_record.id, keys[2], OWN_SHAPE, None)
-        carried = await carry_over(fx_kit).carry(actor, book_record.id, shape_of(keys[SOURCE_INDEX], overwrite=True))
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[SOURCE_INDEX], SHAPE, None)
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[2], OWN_SHAPE, None)
+        carried = await carry_over(fx_kit).carry(
+            open_for(actor, book_record.id), shape_of(keys[SOURCE_INDEX], overwrite=True)
+        )
         written = next(change for change in carried.changes if change.page_id == pages[2].id)
         expect(carried.skipped == ())
         expect(written.before is not None and written.after is not None and written.before != written.after)
@@ -191,8 +192,8 @@ class TestShapeSetByHand:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, _, keys = await carry_book(fx_kit)
-        await fx_kit.edits().save(actor, book_record.id, keys[SOURCE_INDEX], SHAPE, None)
-        await carry_over(fx_kit).carry(actor, book_record.id, shape_of(keys[SOURCE_INDEX], CarryScope.KIND))
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[SOURCE_INDEX], SHAPE, None)
+        await carry_over(fx_kit).carry(open_for(actor, book_record.id), shape_of(keys[SOURCE_INDEX], CarryScope.KIND))
         assert [await angle_of(fx_kit, book_record.id, key) for key in keys] == [SHAPE_ANGLE] * len(keys)
 
     async def test_the_pages_of_other_kinds_do_not_take_the_shape(self, fx_kit: ProcessingKit) -> None:
@@ -205,8 +206,8 @@ class TestShapeSetByHand:
         text = [(await fx_kit.seed_scan_page(book_record, order_key=order_key))[0] for order_key in ('a0', 'a2')]
         plate, _ = await fx_kit.seed_scan_page(book_record, order_key='a1', kind=PageKind.PLATE)
         keys = [await fx_kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY) for page in (*text, plate)]
-        await fx_kit.edits().save(actor, book_record.id, keys[0], SHAPE, None)
-        await carry_over(fx_kit).carry(actor, book_record.id, shape_of(keys[0], CarryScope.KIND))
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[0], SHAPE, None)
+        await carry_over(fx_kit).carry(open_for(actor, book_record.id), shape_of(keys[0], CarryScope.KIND))
         assert [await angle_of(fx_kit, book_record.id, key) for key in keys] == [SHAPE_ANGLE, SHAPE_ANGLE, None]
 
     async def test_one_undo_takes_the_shape_back_from_every_page(self, fx_kit: ProcessingKit) -> None:
@@ -216,12 +217,14 @@ class TestShapeSetByHand:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, pages, keys = await carry_book(fx_kit)
-        await fx_kit.edits().save(actor, book_record.id, keys[SOURCE_INDEX], SHAPE, None)
-        await fx_kit.edits().save(actor, book_record.id, keys[2], OWN_SHAPE, None)
-        carried = await carry_over(fx_kit).carry(actor, book_record.id, shape_of(keys[SOURCE_INDEX], overwrite=True))
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[SOURCE_INDEX], SHAPE, None)
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[2], OWN_SHAPE, None)
+        carried = await carry_over(fx_kit).carry(
+            open_for(actor, book_record.id), shape_of(keys[SOURCE_INDEX], overwrite=True)
+        )
         # The undo is asked on the last page, so it names the change written there
         last = next(change for change in carried.changes if change.page_id == pages[3].id)
-        undone = await fx_kit.page_history().undo(actor, book_record.id, keys[3], last.id)
+        undone = await fx_kit.page_history().undo(open_for(actor, book_record.id), keys[3], last.id)
         expect(sorted(undo.page_id for undo in undone) == sorted(page.id for page in pages[2:]))
         expect([await angle_of(fx_kit, book_record.id, key) for key in keys] == [None, SHAPE_ANGLE, OWN_ANGLE, None])
         assert_expectations()
@@ -235,9 +238,9 @@ class TestShapeSetByHand:
         actor, book_record, pages, keys = await carry_book(fx_kit)
         for page in pages:
             await fx_kit.seed_base_version(book_record.id, page)
-        await fx_kit.edits().save(actor, book_record.id, keys[SOURCE_INDEX], SHAPE, None)
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[SOURCE_INDEX], SHAPE, None)
         await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        await carry_over(fx_kit).carry(actor, book_record.id, shape_of(keys[SOURCE_INDEX]))
+        await carry_over(fx_kit).carry(open_for(actor, book_record.id), shape_of(keys[SOURCE_INDEX]))
         states = [(await stage_of(fx_kit, book_record.id, page, Stage.GEOMETRY)).state for page in pages]
         assert states == [StageState.FRESH, StageState.FRESH, StageState.STALE, StageState.STALE]
 
@@ -249,7 +252,7 @@ class TestShapeSetByHand:
         """
         actor, book_record, _, keys = await carry_book(fx_kit)
         with pytest.raises(NotFoundError):
-            await carry_over(fx_kit).carry(actor, book_record.id, shape_of(keys[SOURCE_INDEX]))
+            await carry_over(fx_kit).carry(open_for(actor, book_record.id), shape_of(keys[SOURCE_INDEX]))
 
 
 class TestSelected:
@@ -262,13 +265,13 @@ class TestSelected:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, pages, keys = await carry_book(fx_kit)
-        await fx_kit.edits().save(actor, book_record.id, keys[SOURCE_INDEX], SHAPE, None)
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[SOURCE_INDEX], SHAPE, None)
         request = CarryRequest(
             key=keys[SOURCE_INDEX],
             scope=CarryScope.SELECTED,
             page_ids=(pages[0].id, pages[SOURCE_INDEX].id, pages[3].id),
         )
-        carried = await carry_over(fx_kit).carry(actor, book_record.id, request)
+        carried = await carry_over(fx_kit).carry(open_for(actor, book_record.id), request)
         expect(sorted(change.page_id for change in carried.changes) == sorted([pages[0].id, pages[3].id]))
         expect(
             [await angle_of(fx_kit, book_record.id, key) for key in keys]
@@ -283,9 +286,11 @@ class TestSelected:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, _, keys = await carry_book(fx_kit)
-        await fx_kit.edits().save(actor, book_record.id, keys[SOURCE_INDEX], SHAPE, None)
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[SOURCE_INDEX], SHAPE, None)
         with pytest.raises(InvalidParametersError):
-            await carry_over(fx_kit).carry(actor, book_record.id, shape_of(keys[SOURCE_INDEX], CarryScope.SELECTED))
+            await carry_over(fx_kit).carry(
+                open_for(actor, book_record.id), shape_of(keys[SOURCE_INDEX], CarryScope.SELECTED)
+            )
 
     async def test_a_page_of_another_book_is_not_found_and_nothing_is_written(self, fx_kit: ProcessingKit) -> None:
         """Verify a selected page the book does not have is refused before any page takes the shape.
@@ -294,31 +299,29 @@ class TestSelected:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, pages, keys = await carry_book(fx_kit)
-        await fx_kit.edits().save(actor, book_record.id, keys[SOURCE_INDEX], SHAPE, None)
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[SOURCE_INDEX], SHAPE, None)
         _, other_record = await fx_kit.seed_record()
         stranger_page, _ = await fx_kit.seed_scan_page(other_record)
         request = CarryRequest(
             key=keys[SOURCE_INDEX], scope=CarryScope.SELECTED, page_ids=(pages[3].id, stranger_page.id)
         )
         with pytest.raises(NotFoundError):
-            await carry_over(fx_kit).carry(actor, book_record.id, request)
+            await carry_over(fx_kit).carry(open_for(actor, book_record.id), request)
         assert await angle_of(fx_kit, book_record.id, keys[3]) is None
 
 
 class TestRefusals:
     """Tests for the requests a carry-over refuses."""
 
-    async def test_a_stranger_and_a_step_no_recipe_has_are_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Verify the book of another account and a step of no recipe are refused, and nothing is written.
+    async def test_a_step_no_recipe_has_is_not_found(self, fx_kit: ProcessingKit) -> None:
+        """Verify a step of no recipe is refused, and nothing is written.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
         actor, book_record, _, keys = await carry_book(fx_kit)
-        await fx_kit.edits().save(actor, book_record.id, keys[SOURCE_INDEX], SHAPE, None)
+        await fx_kit.edits().save(open_for(actor, book_record.id), keys[SOURCE_INDEX], SHAPE, None)
         unknown = evolve(keys[SOURCE_INDEX], step_id=StepId(uuid4()))
-        attempts = ((Actor(account_id=new_account_id()), keys[SOURCE_INDEX]), (actor, unknown))
-        for who, key in attempts:
-            with pytest.raises(NotFoundError):
-                await carry_over(fx_kit).carry(who, book_record.id, shape_of(key))
+        with pytest.raises(NotFoundError):
+            await carry_over(fx_kit).carry(open_for(actor, book_record.id), shape_of(unknown))
         assert [await angle_of(fx_kit, book_record.id, key) for key in keys] == [None, SHAPE_ANGLE, None, None]

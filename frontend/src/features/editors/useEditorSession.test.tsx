@@ -70,7 +70,7 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   putValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePut: sdk.putSetting,
   listHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGet: sdk.history,
   previewStepApiV1BooksBookIdStagesStagePreviewPost: sdk.preview,
-  readJobApiV1JobsJobIdGet: sdk.job,
+  readJobApiV1BooksBookIdJobsJobIdGet: sdk.job,
 }));
 
 // A stand-in for the canvas of the split line, which needs a real viewer: it shows the shape it was given and lets a

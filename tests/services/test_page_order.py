@@ -18,6 +18,7 @@ from tests.helpers.builders import (
     make_scan,
     make_source,
     new_account_id,
+    open_for,
 )
 from tests.helpers.page_services import make_page_service
 from tests.helpers.seeding import ensure_account, store_book
@@ -167,7 +168,7 @@ async def _book_order(service: PageService, actor: Actor, book_id: BookId) -> li
     :returns: The identifiers of every page, first page first.
     :rtype: list[PageId]
     """
-    manifest = await service.manifest(actor, book_id, SliceRequest(limit=100))
+    manifest = await service.manifest(open_for(actor, book_id), SliceRequest(limit=100))
     return [overview.page.id for overview in manifest.items]
 
 
@@ -208,7 +209,7 @@ class TestMove:
         fx_page_writes.start()
 
         moved = await fx_service().move(
-            fx_actor, book.book_record.id, book.pages[4].id, PageAnchor(page_id=book.pages[0].id, side=side)
+            open_for(fx_actor, book.book_record.id), book.pages[4].id, PageAnchor(page_id=book.pages[0].id, side=side)
         )
 
         expect(
@@ -241,7 +242,9 @@ class TestMove:
         fx_clock.moment = LATER
 
         await fx_service().move(
-            fx_actor, book.book_record.id, book.pages[2].id, PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)
+            open_for(fx_actor, book.book_record.id),
+            book.pages[2].id,
+            PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE),
         )
 
         stored = await fx_uow().read_book(book.book_record.id, lambda repos: repos.pages.get(book.pages[2].id))
@@ -272,7 +275,9 @@ class TestMove:
 
         fx_book_changes.published.clear()
         await fx_service().move(
-            fx_actor, book.book_record.id, book.pages[3].id, PageAnchor(page_id=book.pages[0].id, side=Side.AFTER)
+            open_for(fx_actor, book.book_record.id),
+            book.pages[3].id,
+            PageAnchor(page_id=book.pages[0].id, side=Side.AFTER),
         )
 
         assert [BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True]
@@ -304,7 +309,9 @@ class TestMove:
         fx_book_changes.published.clear()
         with pytest.raises(AnchorInsideMovedPagesError):
             await fx_service().move(
-                fx_actor, book.book_record.id, book.pages[1].id, PageAnchor(page_id=book.pages[1].id, side=Side.AFTER)
+                open_for(fx_actor, book.book_record.id),
+                book.pages[1].id,
+                PageAnchor(page_id=book.pages[1].id, side=Side.AFTER),
             )
 
         expect(fx_page_writes.page_ids == set())
@@ -334,19 +341,21 @@ class TestMove:
 
         with pytest.raises(ConflictError):
             await service.move(
-                fx_actor, book.book_record.id, book.pages[4].id, PageAnchor(page_id=book.pages[0].id, side=Side.AFTER)
+                open_for(fx_actor, book.book_record.id),
+                book.pages[4].id,
+                PageAnchor(page_id=book.pages[0].id, side=Side.AFTER),
             )
 
         assert fx_runtime[0].published == []
 
-    async def test_missing_page_anchor_and_foreign_book_are_not_found(
+    async def test_missing_page_and_anchor_are_not_found(
         self,
         fx_service: Callable[[], PageService],
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
     ) -> None:
-        """Verify an unknown page, an unknown anchor and another account's book all answer not found.
+        """Verify a page and an anchor that are not pages of the book both answer not found.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -365,11 +374,9 @@ class TestMove:
         missing = PageAnchor(page_id=stranger.pages[0].id, side=Side.BEFORE)
 
         with pytest.raises(NotFoundError):
-            await fx_service().move(fx_actor, book.book_record.id, stranger.pages[1].id, known)
+            await fx_service().move(open_for(fx_actor, book.book_record.id), stranger.pages[1].id, known)
         with pytest.raises(NotFoundError):
-            await fx_service().move(fx_actor, book.book_record.id, book.pages[1].id, missing)
-        with pytest.raises(NotFoundError):
-            await fx_service().move(fx_actor, stranger.book_record.id, stranger.pages[1].id, missing)
+            await fx_service().move(open_for(fx_actor, book.book_record.id), book.pages[1].id, missing)
 
 
 class TestMoveGroup:
@@ -412,8 +419,7 @@ class TestMoveGroup:
         fx_page_writes.start()
 
         await fx_service().move_group(
-            fx_actor,
-            book.book_record.id,
+            open_for(fx_actor, book.book_record.id),
             [book.pages[index].id for index in chosen],
             PageAnchor(page_id=book.pages[anchor_index].id, side=side),
         )
@@ -447,8 +453,7 @@ class TestMoveGroup:
 
         fx_book_changes.published.clear()
         await fx_service().move_group(
-            fx_actor,
-            book.book_record.id,
+            open_for(fx_actor, book.book_record.id),
             [book.pages[3].id, book.pages[1].id],
             PageAnchor(page_id=book.pages[4].id, side=Side.AFTER),
         )
@@ -482,8 +487,7 @@ class TestMoveGroup:
         fx_book_changes.published.clear()
         with pytest.raises(AnchorInsideMovedPagesError):
             await fx_service().move_group(
-                fx_actor,
-                book.book_record.id,
+                open_for(fx_actor, book.book_record.id),
                 [book.pages[1].id, book.pages[2].id],
                 PageAnchor(page_id=book.pages[2].id, side=Side.BEFORE),
             )
@@ -516,8 +520,7 @@ class TestMoveGroup:
 
         with pytest.raises(NotFoundError):
             await fx_service().move_group(
-                fx_actor,
-                book.book_record.id,
+                open_for(fx_actor, book.book_record.id),
                 [book.pages[1].id, other.pages[0].id],
                 PageAnchor(page_id=book.pages[4].id, side=Side.AFTER),
             )
@@ -554,7 +557,9 @@ class TestMoveSource:
 
         fx_book_changes.published.clear()
         await fx_service().move_source(
-            fx_actor, book.book_record.id, book.first.id, PageAnchor(page_id=book.pages[4].id, side=Side.AFTER)
+            open_for(fx_actor, book.book_record.id),
+            book.first.id,
+            PageAnchor(page_id=book.pages[4].id, side=Side.AFTER),
         )
 
         group = [book.pages[index].id for index in range(FIRST_SOURCE_PAGES)]
@@ -589,7 +594,7 @@ class TestMoveSource:
 
         fx_book_changes.published.clear()
         await fx_service().move_source(
-            fx_actor, book.book_record.id, bare.id, PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)
+            open_for(fx_actor, book.book_record.id), bare.id, PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)
         )
 
         assert fx_book_changes.published == []
@@ -610,7 +615,9 @@ class TestMoveSource:
 
         with pytest.raises(AnchorInsideMovedPagesError):
             await fx_service().move_source(
-                fx_actor, book.book_record.id, book.first.id, PageAnchor(page_id=book.pages[1].id, side=Side.AFTER)
+                open_for(fx_actor, book.book_record.id),
+                book.first.id,
+                PageAnchor(page_id=book.pages[1].id, side=Side.AFTER),
             )
 
     async def test_source_of_another_book_is_not_found(
@@ -630,5 +637,7 @@ class TestMoveSource:
 
         with pytest.raises(NotFoundError):
             await fx_service().move_source(
-                fx_actor, book.book_record.id, other.first.id, PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)
+                open_for(fx_actor, book.book_record.id),
+                other.first.id,
+                PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE),
             )

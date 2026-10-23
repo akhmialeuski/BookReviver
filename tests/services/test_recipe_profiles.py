@@ -10,7 +10,7 @@ from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import RecipeKind, Stage, StageState
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.values import PageStageKey, ProfileDraft, SliceRequest, Step
-from tests.helpers.builders import make_page_stage, make_recipe_profile, make_record
+from tests.helpers.builders import make_page_stage, make_recipe_profile, make_record, open_for
 from tests.helpers.processors import FakeProcessor
 from tests.helpers.seeding import commit_account, store_book
 
@@ -188,7 +188,7 @@ class TestChangeProfile:
         """
         actor, book_record = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(actor, book_record.id, profile.id, kind=RecipeKind.TEXT)
+        applied = await fx_kit.profiles().apply(open_for(actor, book_record.id), profile.id, kind=RecipeKind.TEXT)
         await fx_kit.profiles().remove(actor, profile.id)
         kept = await fx_kit.uow().read_book(book_record.id, lambda repos: repos.recipes.get(applied.recipe.id))
         assert kept.steps == profile.steps
@@ -211,7 +211,7 @@ class TestChangeProfile:
         with pytest.raises(NotFoundError):
             await service.remove(stranger, profile.id)
         with pytest.raises(NotFoundError):
-            await service.apply(stranger, stranger_record.id, profile.id, kind=RecipeKind.TEXT)
+            await service.apply(open_for(stranger, stranger_record.id), profile.id, kind=RecipeKind.TEXT)
         assert await fx_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id)) == profile
 
 
@@ -229,7 +229,7 @@ class TestApplyProfile:
         actor, book_record = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
         other = await second_record(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(actor, other.id, profile.id, kind=RecipeKind.BW_PICTURE)
+        applied = await fx_kit.profiles().apply(open_for(actor, other.id), profile.id, kind=RecipeKind.BW_PICTURE)
         picture = await fx_kit.recipe_of(actor, other, Stage.GEOMETRY, RecipeKind.BW_PICTURE)
         text = await fx_kit.recipe_of(actor, other, Stage.GEOMETRY)
         expect(applied.recipe.steps == profile.steps)
@@ -252,7 +252,7 @@ class TestApplyProfile:
         seeded = make_page_stage(page_id=page.id, recipe_id=recipe.id)
         await fx_kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.page_stages.save(seeded))
         profile = await saved(fx_kit, actor)
-        await fx_kit.profiles().apply(actor, book_record.id, profile.id, kind=RecipeKind.TEXT)
+        await fx_kit.profiles().apply(open_for(actor, book_record.id), profile.id, kind=RecipeKind.TEXT)
         record = await fx_kit.uow().read_book(
             book_record.id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         )
@@ -276,7 +276,7 @@ class TestApplyProfile:
                 ),
             ),
         )
-        applied = await fx_kit.profiles().apply(actor, book_record.id, profile.id, kind=RecipeKind.TEXT)
+        applied = await fx_kit.profiles().apply(open_for(actor, book_record.id), profile.id, kind=RecipeKind.TEXT)
         assert [step.processor_key for step in applied.recipe.steps] == [FAKE_KEY]
         assert applied.missing_processors == (MISSING_KEY,)
 
@@ -292,19 +292,7 @@ class TestApplyProfile:
             make_recipe_profile(account_id=actor.account_id, steps=(Step(processor_key=MISSING_KEY),)),
         )
         with pytest.raises(InvalidParametersError, match=MISSING_KEY):
-            await fx_kit.profiles().apply(actor, book_record.id, profile.id, kind=RecipeKind.TEXT)
-
-    async def test_a_book_of_another_account_is_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Reject applying a profile to a book the account does not own.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        actor, _ = await fx_kit.seed_record()
-        _, foreign_record = await fx_kit.seed_record()
-        profile = await saved(fx_kit, actor)
-        with pytest.raises(NotFoundError):
-            await fx_kit.profiles().apply(actor, foreign_record.id, profile.id, kind=RecipeKind.TEXT)
+            await fx_kit.profiles().apply(open_for(actor, book_record.id), profile.id, kind=RecipeKind.TEXT)
 
 
 class TestDefaultProfileOfANewBook:
@@ -322,7 +310,7 @@ class TestDefaultProfileOfANewBook:
         profile = await saved(fx_kit, actor)
         await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
         fresh = await second_record(fx_kit, actor)
-        listed = await fx_kit.service().recipes(actor, fresh.id, Stage.GEOMETRY, EVERYTHING)
+        listed = await fx_kit.service().recipes(open_for(actor, fresh.id), Stage.GEOMETRY, EVERYTHING)
         assert [(recipe.kind, recipe.steps == profile.steps, recipe.profile_id) for recipe in listed.items] == [
             (RecipeKind.TEXT, True, profile.id),
             (RecipeKind.COLOR_PICTURE, False, None),
@@ -343,7 +331,7 @@ class TestDefaultProfileOfANewBook:
         profile = await fx_cv_kit.profiles().save(actor, Stage.GEOMETRY, deskew)
         await fx_cv_kit.profiles().set_default(actor, profile.id, is_default=True)
         fresh = await second_record(fx_cv_kit, actor)
-        listed = await fx_cv_kit.service().recipes(actor, fresh.id, Stage.GEOMETRY, EVERYTHING)
+        listed = await fx_cv_kit.service().recipes(open_for(actor, fresh.id), Stage.GEOMETRY, EVERYTHING)
         picture = next(recipe for recipe in listed.items if recipe.kind is RecipeKind.COLOR_PICTURE)
         expect([step.processor_key for step in listed.items[0].steps] == [DESKEW_KEY])
         expect(len(picture.steps) > 1)

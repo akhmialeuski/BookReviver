@@ -11,6 +11,7 @@ from bookreviver.domain.enums import ContentType, PageKind, RecipeKind, Stage, S
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.values import PageStageKey, ProfileDraft, RecipeDraft, RecipeKey, SliceRequest, StageRun, Step
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
+from tests.helpers.builders import open_for
 from tests.helpers.page_services import make_page_service
 from tests.helpers.processing import ProcessingKit
 from tests.helpers.processors import FakeProcessor
@@ -91,10 +92,12 @@ async def tune_recipes(kit: ProcessingKit, actor: Actor, book_record: BookRecord
     """
     service = kit.service()
     tuned: dict[RecipeKind, Recipe] = {}
-    for recipe in (await service.recipes(actor, book_record.id, Stage.GEOMETRY, SliceRequest(limit=10))).items:
+    for recipe in (
+        await service.recipes(open_for(actor, book_record.id), Stage.GEOMETRY, SliceRequest(limit=10))
+    ).items:
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAM: STRENGTHS[recipe.kind]})])
         tuned[recipe.kind] = await service.save_recipe(
-            actor, book_record.id, RecipeKey(Stage.GEOMETRY, recipe.id), draft
+            open_for(actor, book_record.id), RecipeKey(Stage.GEOMETRY, recipe.id), draft
         )
     return tuned
 
@@ -144,7 +147,7 @@ class TestRecipesOfAStage:
         :type stage: Stage
         """
         actor, book_record = await fx_kit.seed_record()
-        found = (await fx_kit.service().recipes(actor, book_record.id, stage, SliceRequest(limit=10))).items
+        found = (await fx_kit.service().recipes(open_for(actor, book_record.id), stage, SliceRequest(limit=10))).items
         step_ids = [step.step_id for recipe in found for step in recipe.steps]
         expect([recipe.kind for recipe in found] == list(RecipeKind))
         expect(len({recipe.id for recipe in found}) == len(RecipeKind))
@@ -168,7 +171,9 @@ class TestRecipesOfAStage:
             fx_database, fx_uow, fx_asset_store, defaults=DefaultRecipes({Stage.GEOMETRY: {RecipeKind.TEXT: template}})
         )
         actor, book_record = await kit.seed_record()
-        found = (await kit.service().recipes(actor, book_record.id, Stage.GEOMETRY, SliceRequest(limit=10))).items
+        found = (
+            await kit.service().recipes(open_for(actor, book_record.id), Stage.GEOMETRY, SliceRequest(limit=10))
+        ).items
         expect([recipe.kind for recipe in found] == list(RecipeKind))
         expect({step.params[STRENGTH_PARAM] for recipe in found for step in recipe.steps} == {TEMPLATE_STRENGTH})
         expect(len({step.step_id for recipe in found for step in recipe.steps}) == 1)
@@ -189,7 +194,9 @@ class TestRecipesOfAStage:
             ),
         )
         await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
-        found = (await fx_kit.service().recipes(actor, book_record.id, Stage.GEOMETRY, SliceRequest(limit=10))).items
+        found = (
+            await fx_kit.service().recipes(open_for(actor, book_record.id), Stage.GEOMETRY, SliceRequest(limit=10))
+        ).items
         assert {recipe.kind: (recipe.steps[0].params[STRENGTH_PARAM], recipe.profile_id) for recipe in found} == {
             RecipeKind.TEXT: (TEMPLATE_STRENGTH, profile.id),
             RecipeKind.COLOR_PICTURE: (1, None),
@@ -295,7 +302,7 @@ class TestRecipeOfAPage:
         before = await record_of(fx_kit, book_record.id, page_id)
         pages = make_page_service(fx_kit.uow(), fx_kit.assets, (fx_kit.events, fx_kit.clock, fx_kit.board))
 
-        await pages.update(actor, book_record.id, page_id, PageChanges(content_type=ContentType.BW_PICTURE))
+        await pages.update(open_for(actor, book_record.id), page_id, PageChanges(content_type=ContentType.BW_PICTURE))
         stale = await record_of(fx_kit, book_record.id, page_id)
         await run_all(fx_kit, actor, book_record)
         after = await record_of(fx_kit, book_record.id, page_id)
@@ -318,7 +325,7 @@ class TestRecipeOfAPage:
         await run_all(fx_kit, actor, book_record)
         pages = make_page_service(fx_kit.uow(), fx_kit.assets, (fx_kit.events, fx_kit.clock, fx_kit.board))
 
-        await pages.update(actor, book_record.id, page_id, PageChanges(kind=PageKind.BLANK))
+        await pages.update(open_for(actor, book_record.id), page_id, PageChanges(kind=PageKind.BLANK))
         stale = await record_of(fx_kit, book_record.id, page_id)
         await run_all(fx_kit, actor, book_record)
 
@@ -342,7 +349,7 @@ class TestResetToTheDefaultSteps:
         recipes = await tune_recipes(fx_kit, actor, book_record)
         soft = recipes[RecipeKind.COLOR_PICTURE]
         await run_all(fx_kit, actor, book_record)
-        reset = await fx_kit.profiles().reset(actor, book_record.id, RecipeKey(Stage.GEOMETRY, soft.id))
+        reset = await fx_kit.profiles().reset(open_for(actor, book_record.id), RecipeKey(Stage.GEOMETRY, soft.id))
         record = await record_of(fx_kit, book_record.id, plate)
         expect((reset.id, reset.kind) == (soft.id, RecipeKind.COLOR_PICTURE))
         expect(
@@ -370,11 +377,15 @@ class TestResetToTheDefaultSteps:
             ),
         )
         await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
-        found = (await fx_kit.service().recipes(actor, book_record.id, Stage.GEOMETRY, SliceRequest(limit=10))).items
+        found = (
+            await fx_kit.service().recipes(open_for(actor, book_record.id), Stage.GEOMETRY, SliceRequest(limit=10))
+        ).items
         picture = next(recipe for recipe in found if recipe.kind is RecipeKind.BW_PICTURE)
         text = next(recipe for recipe in found if recipe.kind is RecipeKind.TEXT)
-        reset_text = await fx_kit.profiles().reset(actor, book_record.id, RecipeKey(Stage.GEOMETRY, text.id))
-        reset_picture = await fx_kit.profiles().reset(actor, book_record.id, RecipeKey(Stage.GEOMETRY, picture.id))
+        reset_text = await fx_kit.profiles().reset(open_for(actor, book_record.id), RecipeKey(Stage.GEOMETRY, text.id))
+        reset_picture = await fx_kit.profiles().reset(
+            open_for(actor, book_record.id), RecipeKey(Stage.GEOMETRY, picture.id)
+        )
         expect([step.params[STRENGTH_PARAM] for step in reset_text.steps] == [TEMPLATE_STRENGTH])
         expect(reset_text.profile_id == profile.id)
         expect([step.params[STRENGTH_PARAM] for step in reset_picture.steps] == [1])
@@ -403,31 +414,29 @@ class TestResetToTheDefaultSteps:
         )
         kit = ProcessingKit(fx_database, fx_uow, fx_asset_store, defaults=templates)
         actor, book_record = await kit.seed_record()
-        found = (await kit.service().recipes(actor, book_record.id, Stage.GEOMETRY, SliceRequest(limit=10))).items
+        found = (
+            await kit.service().recipes(open_for(actor, book_record.id), Stage.GEOMETRY, SliceRequest(limit=10))
+        ).items
         strengths = {}
         for recipe in found:
             await kit.service().save_recipe(
-                actor,
-                book_record.id,
+                open_for(actor, book_record.id),
                 RecipeKey(Stage.GEOMETRY, recipe.id),
                 RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAM: TEMPLATE_STRENGTH})]),
             )
-            reset = await kit.profiles().reset(actor, book_record.id, RecipeKey(Stage.GEOMETRY, recipe.id))
+            reset = await kit.profiles().reset(open_for(actor, book_record.id), RecipeKey(Stage.GEOMETRY, recipe.id))
             strengths[recipe.kind] = reset.steps[0].params[STRENGTH_PARAM]
         assert strengths == STRENGTHS
 
-    async def test_a_recipe_of_another_book_or_stage_is_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Verify the recipe of another account's book and the recipe named under another stage are refused.
+    async def test_a_recipe_named_under_another_stage_is_not_found(self, fx_kit: ProcessingKit) -> None:
+        """Verify a recipe named under a stage it does not belong to is refused.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
         actor, book_record = await fx_kit.seed_record()
-        stranger, _ = await fx_kit.seed_record()
-        recipe = (await fx_kit.service().recipes(actor, book_record.id, Stage.GEOMETRY, SliceRequest(limit=10))).items[
-            0
-        ]
+        recipe = (
+            await fx_kit.service().recipes(open_for(actor, book_record.id), Stage.GEOMETRY, SliceRequest(limit=10))
+        ).items[0]
         with pytest.raises(NotFoundError):
-            await fx_kit.profiles().reset(stranger, book_record.id, RecipeKey(Stage.GEOMETRY, recipe.id))
-        with pytest.raises(NotFoundError):
-            await fx_kit.profiles().reset(actor, book_record.id, RecipeKey(Stage.CLEANUP, recipe.id))
+            await fx_kit.profiles().reset(open_for(actor, book_record.id), RecipeKey(Stage.CLEANUP, recipe.id))

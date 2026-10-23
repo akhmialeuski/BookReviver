@@ -17,14 +17,14 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka, inject
-from fastapi import APIRouter, Depends, Path, Request, UploadFile, status
+from fastapi import APIRouter, Depends, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
-from bookreviver.api.auth import ActorDep
+from bookreviver.api.book import open_book
 from bookreviver.api.schemas.imports import UploadForm
 from bookreviver.api.schemas.jobs import JobSchema
-from bookreviver.domain.ids import BookId
+from bookreviver.services.book import Book
 from bookreviver.services.imports import ImportService
 
 # Starlette's parser takes a float limit, and infinity leaves the count of files to the service
@@ -35,28 +35,25 @@ FILES_FIELD: str = 'files'
 
 @inject
 async def read_upload(
+    book: Annotated[Book, Depends(open_book)],
     request: Request,
-    book_id: Annotated[BookId, Path(description='Identifier of the book')],
-    actor: ActorDep,
     imports: FromDishka[ImportService],
 ) -> AsyncIterator[list[UploadFile]]:
     """Read the uploaded files of the request, once the caller may import into the book.
 
     The form is closed when the response has been sent, which removes the temporary files it spooled.
 
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param request: The request, whose multipart body holds the files.
     :type request: Request
-    :param book_id: Identifier of the book.
-    :type book_id: BookId
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param imports: Import service of the request.
     :type imports: ImportService
     :returns: Iterator yielding once the uploaded files, and closing the form afterwards.
     :rtype: AsyncIterator[list[UploadFile]]
     :raises RequestValidationError: If the form holds no file, or a ``files`` field that is not one.
     """
-    await imports.authorize_upload(actor, book_id)
+    await imports.authorize_upload(book)
     form = await request.form(max_files=MULTIPART_FILES_UNLIMITED)
     # try/finally rather than a context manager around the yield, because FastAPI drives this generator
     try:
@@ -82,9 +79,8 @@ router = APIRouter(prefix='/books', tags=['imports'], route_class=DishkaRoute)
     },
 )
 async def upload_sources(
-    book_id: Annotated[BookId, Path(description='Identifier of the book')],
+    book: Annotated[Book, Depends(open_book)],
     files: Annotated[list[UploadFile], Depends(read_upload)],
-    actor: ActorDep,
     imports: FromDishka[ImportService],
 ) -> JobSchema:
     """Receive the files of an upload and import them in the background, each one as a source of the book.
@@ -94,15 +90,13 @@ async def upload_sources(
     reader closes the report. A book imports one upload at a time.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the book.
-    :type book_id: BookId
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param files: The uploaded files, read once the caller was checked.
     :type files: list[UploadFile]
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param imports: Import service of the request.
     :type imports: ImportService
     :returns: The queued import job.
     :rtype: JobSchema
     """
-    return JobSchema.model_validate(await imports.start_import(actor, book_id, files))
+    return JobSchema.model_validate(await imports.start_import(book, files))

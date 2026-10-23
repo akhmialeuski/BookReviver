@@ -64,7 +64,6 @@ pytestmark = pytest.mark.anyio
 
 BOOKS_PATH: str = '/api/v1/books'
 PROCESSORS_PATH: str = '/api/v1/processors'
-JOBS_PATH: str = '/api/v1/jobs'
 MEASURE_SUFFIX: str = '/stages/geometry/measure'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
@@ -536,7 +535,7 @@ class TestRunAndVersions:
         version_id = (await fx_client.get(f'{fx_book.page_path}/versions')).json()[ITEMS][0]['id']
         preview = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
         chosen = await fx_client.put(f'{fx_book.page_path}/stages/page-split', json={'version_id': version_id})
-        job = await fx_client.get(f'{JOBS_PATH}/{preview.json()["id"]}')
+        job = await fx_client.get(f'{fx_book.path}/jobs/{preview.json()["id"]}')
         expect(preview.status_code == status.HTTP_202_ACCEPTED)
         expect(chosen.status_code == status.HTTP_200_OK)
         expect(job.json()['state'] == JobState.CANCELLED.value)
@@ -644,7 +643,7 @@ class TestRunAndVersions:
         await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         preview = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
         response = await fx_client.post(f'{fx_book.path}/versions/collect')
-        job = await fx_client.get(f'{JOBS_PATH}/{preview.json()["id"]}')
+        job = await fx_client.get(f'{fx_book.path}/jobs/{preview.json()["id"]}')
         expect(response.status_code == status.HTTP_202_ACCEPTED)
         expect(JobSchema.model_validate_json(response.content).kind is JobKind.COLLECT_VERSIONS)
         expect(job.json()['state'] == JobState.CANCELLED.value)
@@ -1053,7 +1052,7 @@ class TestPageHistory:
         preview = await fx_client.post(f'{fx_book.path}/stages/geometry/preview', json=preview_body(fx_book))
         cleared = await fx_client.delete(history)
         listed = await fx_client.get(history)
-        job = await fx_client.get(f'{JOBS_PATH}/{preview.json()["id"]}')
+        job = await fx_client.get(f'{fx_book.path}/jobs/{preview.json()["id"]}')
         expect(preview.status_code == status.HTTP_202_ACCEPTED)
         # The clear goes on and deletes the one change of the step; the results it deletes are not what this checks
         expect((cleared.status_code, cleared.json()['changes']) == (status.HTTP_200_OK, 1))

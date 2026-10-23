@@ -21,7 +21,7 @@ from bookreviver.domain.values import (
 )
 from bookreviver.services.page_labels import PageLabels
 from tests.helpers.book_hold import hold_book_in_thread
-from tests.helpers.builders import make_page, make_record, new_account_id
+from tests.helpers.builders import make_page, make_record, new_account_id, open_for
 from tests.helpers.seeding import ensure_account, store_book
 
 if TYPE_CHECKING:
@@ -210,9 +210,9 @@ class TestSections:
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(5))
 
         fx_book_changes.published.clear()
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
         expect(await _labels(fx_uow(), book_record.id, pages) == ['i', ROMAN_2, ROMAN_3, ROMAN_4, 'v'])
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[2]))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[2]))
 
         expect(await _labels(fx_uow(), book_record.id, pages) == ['i', ROMAN_2, '1', '2', '3'])
         expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True, True])
@@ -233,9 +233,10 @@ class TestSections:
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(5))
 
         await fx_pagination().add(
-            fx_actor, book_record.id, _draft(pages[0], style=LabelStyle.ROMAN_LOWER, display=NumberDisplay.COUNTED)
+            open_for(fx_actor, book_record.id),
+            _draft(pages[0], style=LabelStyle.ROMAN_LOWER, display=NumberDisplay.COUNTED),
         )
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[3]))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[3]))
 
         assert await _labels(fx_uow(), book_record.id, pages) == ['[i]', '[ii]', '[iii]', '1', '2']
 
@@ -253,8 +254,10 @@ class TestSections:
         """
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(4))
 
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0], display=NumberDisplay.NOT_COUNTED))
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[2]))
+        await fx_pagination().add(
+            open_for(fx_actor, book_record.id), _draft(pages[0], display=NumberDisplay.NOT_COUNTED)
+        )
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[2]))
 
         assert await _labels(fx_uow(), book_record.id, pages) == ['', '', '1', '2']
 
@@ -273,9 +276,10 @@ class TestSections:
         layout = [(kind, True) for kind in (PageKind.FRONTISPIECE, TEXT, TEXT, PageKind.PLATE, TEXT, PageKind.PLATE)]
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *layout)
 
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0]))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0]))
         await fx_pagination().add(
-            fx_actor, book_record.id, _draft(pages[0], style=LabelStyle.ROMAN_UPPER, prefix=PLATE_PREFIX, kinds=PLATES)
+            open_for(fx_actor, book_record.id),
+            _draft(pages[0], style=LabelStyle.ROMAN_UPPER, prefix=PLATE_PREFIX, kinds=PLATES),
         )
 
         assert await _labels(fx_uow(), book_record.id, pages) == ['Plate I', '1', '2', 'Plate II', '3', 'Plate III']
@@ -305,7 +309,7 @@ class TestSections:
         )
         fx_page_writes.start()
 
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0]))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0]))
 
         expect(await _labels(fx_uow(), book_record.id, pages) == ['1', HAND_WRITTEN, '3'])
         # The numbers of the section are computed on read, so making it writes no page
@@ -331,10 +335,10 @@ class TestSections:
         :type fx_actor: Actor
         """
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(3))
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0]))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0]))
         fx_page_writes.start()
 
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0], kinds=PLATES))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0], kinds=PLATES))
 
         expect(fx_page_writes.page_ids == set())
         expect(len(await _sections(fx_uow(), book_record)) == 2)
@@ -353,12 +357,14 @@ class TestSections:
         :type fx_actor: Actor
         """
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(4))
-        preface = await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
-        body = await fx_pagination().add(fx_actor, book_record.id, _draft(pages[2]))
+        preface = await fx_pagination().add(
+            open_for(fx_actor, book_record.id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER)
+        )
+        body = await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[2]))
 
-        await fx_pagination().remove(fx_actor, book_record.id, body.id)
+        await fx_pagination().remove(open_for(fx_actor, book_record.id), body.id)
         expect(await _labels(fx_uow(), book_record.id, pages) == ['i', ROMAN_2, ROMAN_3, ROMAN_4])
-        await fx_pagination().remove(fx_actor, book_record.id, preface.id)
+        await fx_pagination().remove(open_for(fx_actor, book_record.id), preface.id)
 
         expect(await _labels(fx_uow(), book_record.id, pages) == [''] * len(pages))
         expect(await _sections(fx_uow(), book_record) == [])
@@ -377,11 +383,11 @@ class TestSections:
         :type fx_actor: Actor
         """
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(5))
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
-        body = await fx_pagination().add(fx_actor, book_record.id, _draft(pages[2]))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
+        body = await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[2]))
 
         updated = await fx_pagination().update(
-            fx_actor, book_record.id, body.id, _draft(pages[3], start=5, name=SECTION_NAME)
+            open_for(fx_actor, book_record.id), body.id, _draft(pages[3], start=5, name=SECTION_NAME)
         )
 
         expect(await _labels(fx_uow(), book_record.id, pages) == ['i', ROMAN_2, ROMAN_3, '5', '6'])
@@ -403,13 +409,17 @@ class TestSections:
         :type fx_actor: Actor
         """
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(3))
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0]))
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0], kinds=PLATES))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0]))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0], kinds=PLATES))
 
         with pytest.raises(ConflictError, match=CLASH_MESSAGE):
-            await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
+            await fx_pagination().add(
+                open_for(fx_actor, book_record.id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER)
+            )
         with pytest.raises(ConflictError, match=CLASH_MESSAGE):
-            await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0], kinds=frozenset({PageKind.PLATE})))
+            await fx_pagination().add(
+                open_for(fx_actor, book_record.id), _draft(pages[0], kinds=frozenset({PageKind.PLATE}))
+            )
 
         assert len(await _sections(fx_uow(), book_record)) == 2
 
@@ -435,16 +445,16 @@ class TestSections:
         owner = evolve(fx_actor, account_id=new_account_id())
         await ensure_account(fx_database, owner.account_id)
         stranger, strangers_pages = await _commit_book(fx_uow(), owner, *_text_book(1))
-        own = await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0]))
+        own = await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0]))
 
         with pytest.raises(NotFoundError):
-            await fx_pagination().add(fx_actor, book_record.id, _draft(strangers_pages[0]))
+            await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(strangers_pages[0]))
         with pytest.raises(NotFoundError):
-            await fx_pagination().add(fx_actor, stranger.id, _draft(pages[0]))
+            await fx_pagination().add(open_for(fx_actor, stranger.id), _draft(pages[0]))
         with pytest.raises(NotFoundError):
-            await fx_pagination().update(fx_actor, stranger.id, own.id, _draft(pages[1]))
+            await fx_pagination().update(open_for(fx_actor, stranger.id), own.id, _draft(pages[1]))
         with pytest.raises(NotFoundError):
-            await fx_pagination().remove(fx_actor, stranger.id, own.id)
+            await fx_pagination().remove(open_for(fx_actor, stranger.id), own.id)
 
         assert await _sections(fx_uow(), book_record) == [own]
 
@@ -461,12 +471,12 @@ class TestSections:
         :type fx_actor: Actor
         """
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(4))
-        late = await fx_pagination().add(fx_actor, book_record.id, _draft(pages[3]))
-        series = await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0], kinds=PLATES))
-        flow = await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0]))
+        late = await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[3]))
+        series = await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0], kinds=PLATES))
+        flow = await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0]))
 
-        listed = await fx_pagination().sections(fx_actor, book_record.id, SliceRequest())
-        window = await fx_pagination().sections(fx_actor, book_record.id, SliceRequest(offset=1, limit=1))
+        listed = await fx_pagination().sections(open_for(fx_actor, book_record.id), SliceRequest())
+        window = await fx_pagination().sections(open_for(fx_actor, book_record.id), SliceRequest(offset=1, limit=1))
 
         expect(listed.items == [flow, series, late])
         expect(listed.total == len(listed.items))
@@ -489,7 +499,8 @@ class TestSections:
 
         with pytest.raises(ConflictError, match=str(ROMAN_LIMIT + 1)):
             await fx_pagination().add(
-                fx_actor, book_record.id, _draft(pages[0], style=LabelStyle.ROMAN_UPPER, start=ROMAN_LIMIT - 1)
+                open_for(fx_actor, book_record.id),
+                _draft(pages[0], style=LabelStyle.ROMAN_UPPER, start=ROMAN_LIMIT - 1),
             )
 
         expect(await _sections(fx_uow(), book_record) == [])
@@ -533,7 +544,7 @@ class TestNumberPages:
             skip_kinds=frozenset({PageKind.COVER, PageKind.PLATE}),
         )
 
-        await fx_pagination().number(fx_actor, book_record.id, numbering)
+        await fx_pagination().number(open_for(fx_actor, book_record.id), numbering)
 
         # The cover, the plate and the page kept out keep their label; the other four pages take 10 to 13
         first, second, third, fourth = case.labels
@@ -563,8 +574,7 @@ class TestNumberPages:
         skipped = frozenset({PageKind.COVER, PageKind.PLATE})
 
         await fx_pagination().number(
-            fx_actor,
-            book_record.id,
+            open_for(fx_actor, book_record.id),
             PageNumbering(
                 first_page_id=pages[1].id,
                 last_page_id=pages[-1].id,
@@ -610,8 +620,7 @@ class TestNumberPages:
 
         fx_book_changes.published.clear()
         await fx_pagination().number(
-            fx_actor,
-            book_record.id,
+            open_for(fx_actor, book_record.id),
             PageNumbering(first_page_id=pages[2].id, last_page_id=pages[4].id, style=LabelStyle.ARABIC),
         )
 
@@ -643,7 +652,7 @@ class TestNumberPages:
         """
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(4))
         first = PageNumbering(first_page_id=pages[0].id, last_page_id=pages[-1].id, style=LabelStyle.ROMAN_LOWER)
-        await fx_pagination().number(fx_actor, book_record.id, first)
+        await fx_pagination().number(open_for(fx_actor, book_record.id), first)
         await fx_uow().change_book(
             book_record.id,
             lambda repos, _book_record: repos.pages.update(
@@ -652,7 +661,7 @@ class TestNumberPages:
         )
 
         await fx_pagination().number(
-            fx_actor, book_record.id, evolve(first, style=LabelStyle.ARABIC, start=FIRST_NUMBER)
+            open_for(fx_actor, book_record.id), evolve(first, style=LabelStyle.ARABIC, start=FIRST_NUMBER)
         )
 
         expect(await _labels(fx_uow(), book_record.id, pages) == ['10', '11', '12', '13'])
@@ -676,12 +685,13 @@ class TestNumberPages:
         :type fx_actor: Actor
         """
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(6))
-        before = await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[3]))
+        before = await fx_pagination().add(
+            open_for(fx_actor, book_record.id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER)
+        )
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[3]))
 
         await fx_pagination().number(
-            fx_actor,
-            book_record.id,
+            open_for(fx_actor, book_record.id),
             PageNumbering(first_page_id=pages[2].id, last_page_id=pages[-1].id, style=LabelStyle.ARABIC),
         )
 
@@ -705,8 +715,7 @@ class TestNumberPages:
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *LAYOUT, label=STALE_LABEL)
 
         await fx_pagination().number(
-            fx_actor,
-            book_record.id,
+            open_for(fx_actor, book_record.id),
             PageNumbering(first_page_id=pages[4].id, last_page_id=pages[4].id, style=LabelStyle.ROMAN_LOWER, start=7),
         )
 
@@ -735,8 +744,7 @@ class TestNumberPages:
         fx_book_changes.published.clear()
         with pytest.raises(ReversedRangeError, match='from a later page to an earlier one'):
             await fx_pagination().number(
-                fx_actor,
-                book_record.id,
+                open_for(fx_actor, book_record.id),
                 PageNumbering(first_page_id=pages[4].id, last_page_id=pages[1].id, style=LabelStyle.ARABIC),
             )
 
@@ -767,8 +775,7 @@ class TestNumberPages:
 
         with pytest.raises(ConflictError, match=str(ROMAN_LIMIT + 1)):
             await fx_pagination().number(
-                fx_actor,
-                book_record.id,
+                open_for(fx_actor, book_record.id),
                 PageNumbering(
                     first_page_id=pages[0].id,
                     last_page_id=pages[2].id,
@@ -798,8 +805,7 @@ class TestNumberPages:
 
         with pytest.raises(NotFoundError):
             await fx_pagination().number(
-                fx_actor,
-                book_record.id,
+                open_for(fx_actor, book_record.id),
                 PageNumbering(first_page_id=pages[0].id, last_page_id=others[-1].id, style=LabelStyle.ARABIC),
             )
 
@@ -837,10 +843,10 @@ class TestNumberPages:
         )
 
         fx_book_changes.published.clear()
-        previewed = await fx_pagination().preview_numbers(fx_actor, book_record.id, numbering)
+        previewed = await fx_pagination().preview_numbers(open_for(fx_actor, book_record.id), numbering)
         expect(fx_page_writes.page_ids == set())
         expect((await _sections(fx_uow(), book_record), fx_book_changes.published) == ([], []))
-        await fx_pagination().number(fx_actor, book_record.id, numbering)
+        await fx_pagination().number(open_for(fx_actor, book_record.id), numbering)
 
         counted = [pages[1], pages[2], pages[4], pages[6]]
         labels = await _labels(fx_uow(), book_record.id, counted)
@@ -890,7 +896,7 @@ class TestNumberPages:
         async with anyio.create_task_group() as group, hold_book_in_thread(fx_uow(), book_record.id):
             group.start_soon(fx_uow().change_book, book_record.id, label_a_page)
             await anyio.wait_all_tasks_blocked()
-            group.start_soon(fx_pagination_over(fx_uow()).number, fx_actor, book_record.id, numbering)
+            group.start_soon(fx_pagination_over(fx_uow()).number, open_for(fx_actor, book_record.id), numbering)
             await anyio.wait_all_tasks_blocked()
             expect(fx_page_writes.page_ids == set())
 
@@ -927,7 +933,7 @@ class TestRecomputeInPageUseCases:
         :rtype: tuple[BookRecord, list[Page]]
         """
         book_record, pages = await _commit_book(uow, owner, *_text_book(count))
-        await pagination().add(owner, book_record.id, _draft(pages[0], **section))
+        await pagination().add(open_for(owner, book_record.id), _draft(pages[0], **section))
         return book_record, pages
 
     async def test_a_page_added_in_the_middle_renumbers_the_pages_after_it(
@@ -955,8 +961,7 @@ class TestRecomputeInPageUseCases:
         fx_book_changes.published.clear()
 
         added = await fx_service().add(
-            fx_actor,
-            book_record.id,
+            open_for(fx_actor, book_record.id),
             NewPage(
                 origin=NewPageOrigin.PLACEHOLDER,
                 kind=TEXT,
@@ -990,8 +995,7 @@ class TestRecomputeInPageUseCases:
         book_record, pages = await self._numbered_book(fx_pagination, fx_uow(), fx_actor, 3)
 
         [added] = await fx_service().add_many(
-            fx_actor,
-            book_record.id,
+            open_for(fx_actor, book_record.id),
             [
                 NewPage(
                     origin=NewPageOrigin.PLACEHOLDER,
@@ -1030,7 +1034,7 @@ class TestRecomputeInPageUseCases:
         book_record, pages = await self._numbered_book(fx_pagination, fx_uow(), fx_actor, 4)
         fx_book_changes.published.clear()
 
-        await fx_service().delete(fx_actor, book_record.id, pages[1].id)
+        await fx_service().delete(open_for(fx_actor, book_record.id), pages[1].id)
 
         expect(await _labels(fx_uow(), book_record.id, [pages[0], pages[2], pages[3]]) == ['1', '2', '3'])
         expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True])
@@ -1055,10 +1059,10 @@ class TestRecomputeInPageUseCases:
         :type fx_actor: Actor
         """
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(5))
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
-        body = await fx_pagination().add(fx_actor, book_record.id, _draft(pages[2]))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
+        body = await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[2]))
 
-        await fx_service().delete(fx_actor, book_record.id, pages[2].id)
+        await fx_service().delete(open_for(fx_actor, book_record.id), pages[2].id)
 
         survivors = [pages[0], pages[1], pages[3], pages[4]]
         expect(await _labels(fx_uow(), book_record.id, survivors) == ['i', ROMAN_2, '1', '2'])
@@ -1085,10 +1089,10 @@ class TestRecomputeInPageUseCases:
         :type fx_actor: Actor
         """
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(3))
-        kept = await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0]))
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[2], style=LabelStyle.ROMAN_LOWER))
+        kept = await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0]))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[2], style=LabelStyle.ROMAN_LOWER))
 
-        await fx_service().delete(fx_actor, book_record.id, pages[2].id)
+        await fx_service().delete(open_for(fx_actor, book_record.id), pages[2].id)
 
         assert await _sections(fx_uow(), book_record) == [kept]
 
@@ -1111,11 +1115,11 @@ class TestRecomputeInPageUseCases:
         :type fx_actor: Actor
         """
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(4))
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
-        doomed = await fx_pagination().add(fx_actor, book_record.id, _draft(pages[2], start=FIRST_NUMBER))
-        body = await fx_pagination().add(fx_actor, book_record.id, _draft(pages[3]))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
+        doomed = await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[2], start=FIRST_NUMBER))
+        body = await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[3]))
 
-        await fx_service().delete(fx_actor, book_record.id, pages[2].id)
+        await fx_service().delete(open_for(fx_actor, book_record.id), pages[2].id)
 
         sections = {section.id: section for section in await _sections(fx_uow(), book_record)}
         expect(doomed.id not in sections)
@@ -1149,11 +1153,11 @@ class TestRecomputeInPageUseCases:
             book_record.id,
             lambda repos, _book_record: repos.pages.update(evolve(pages[1], manual_label=HAND_WRITTEN)),
         )
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0]))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0]))
         fx_book_changes.published.clear()
 
         moved = await fx_service().move(
-            fx_actor, book_record.id, pages[4].id, PageAnchor(page_id=pages[1].id, side=Side.BEFORE)
+            open_for(fx_actor, book_record.id), pages[4].id, PageAnchor(page_id=pages[1].id, side=Side.BEFORE)
         )
 
         order = [pages[0], pages[4], pages[1], pages[2], pages[3]]
@@ -1183,7 +1187,9 @@ class TestRecomputeInPageUseCases:
         book_record, pages = await self._numbered_book(fx_pagination, fx_uow(), fx_actor, 4)
 
         await fx_service().move_group(
-            fx_actor, book_record.id, [pages[2].id, pages[3].id], PageAnchor(page_id=pages[0].id, side=Side.BEFORE)
+            open_for(fx_actor, book_record.id),
+            [pages[2].id, pages[3].id],
+            PageAnchor(page_id=pages[0].id, side=Side.BEFORE),
         )
 
         # The section starts at the first page of the book once more, which is page 3 now, where it began at page 1
@@ -1208,10 +1214,12 @@ class TestRecomputeInPageUseCases:
         :type fx_actor: Actor
         """
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(4))
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[2]))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0], style=LabelStyle.ROMAN_LOWER))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[2]))
 
-        await fx_service().move(fx_actor, book_record.id, pages[2].id, PageAnchor(page_id=pages[3].id, side=Side.AFTER))
+        await fx_service().move(
+            open_for(fx_actor, book_record.id), pages[2].id, PageAnchor(page_id=pages[3].id, side=Side.AFTER)
+        )
 
         assert await _labels(fx_uow(), book_record.id, [pages[0], pages[1], pages[3], pages[2]]) == [
             'i',
@@ -1239,10 +1247,14 @@ class TestRecomputeInPageUseCases:
         :type fx_actor: Actor
         """
         book_record, pages = await _commit_book(fx_uow(), fx_actor, *_text_book(4))
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0]))
-        await fx_pagination().add(fx_actor, book_record.id, _draft(pages[0], prefix=PLATE_PREFIX, kinds=PLATES))
+        await fx_pagination().add(open_for(fx_actor, book_record.id), _draft(pages[0]))
+        await fx_pagination().add(
+            open_for(fx_actor, book_record.id), _draft(pages[0], prefix=PLATE_PREFIX, kinds=PLATES)
+        )
 
-        updated = await fx_service().update(fx_actor, book_record.id, pages[1].id, PageChanges(kind=PageKind.PLATE))
+        updated = await fx_service().update(
+            open_for(fx_actor, book_record.id), pages[1].id, PageChanges(kind=PageKind.PLATE)
+        )
 
         expect(updated.label == FIRST_PLATE)
         expect(await _labels(fx_uow(), book_record.id, pages) == ['1', FIRST_PLATE, '2', '3'])
@@ -1268,9 +1280,9 @@ class TestRecomputeInPageUseCases:
         """
         book_record, pages = await self._numbered_book(fx_pagination, fx_uow(), fx_actor, 3)
 
-        await fx_service().update(fx_actor, book_record.id, pages[1].id, PageChanges(included=False))
+        await fx_service().update(open_for(fx_actor, book_record.id), pages[1].id, PageChanges(included=False))
         expect(await _labels(fx_uow(), book_record.id, pages) == ['1', '', '2'])
-        await fx_service().update(fx_actor, book_record.id, pages[1].id, PageChanges(included=True))
+        await fx_service().update(open_for(fx_actor, book_record.id), pages[1].id, PageChanges(included=True))
 
         expect(await _labels(fx_uow(), book_record.id, pages) == ['1', '2', '3'])
         assert_expectations()
@@ -1295,11 +1307,13 @@ class TestRecomputeInPageUseCases:
         """
         book_record, pages = await self._numbered_book(fx_pagination, fx_uow(), fx_actor, 3)
 
-        typed = await fx_service().update(fx_actor, book_record.id, pages[1].id, PageChanges(label=HAND_WRITTEN))
-        await fx_service().delete(fx_actor, book_record.id, pages[0].id)
+        typed = await fx_service().update(
+            open_for(fx_actor, book_record.id), pages[1].id, PageChanges(label=HAND_WRITTEN)
+        )
+        await fx_service().delete(open_for(fx_actor, book_record.id), pages[0].id)
         expect((typed.label, typed.page.manual_label) == (HAND_WRITTEN, HAND_WRITTEN))
         expect(await _labels(fx_uow(), book_record.id, [pages[1], pages[2]]) == [HAND_WRITTEN, '2'])
-        cleared = await fx_service().update(fx_actor, book_record.id, pages[1].id, PageChanges(label=''))
+        cleared = await fx_service().update(open_for(fx_actor, book_record.id), pages[1].id, PageChanges(label=''))
 
         expect((cleared.label, cleared.page.manual_label) == ('1', None))
         expect(await _labels(fx_uow(), book_record.id, [pages[1], pages[2]]) == ['1', '2'])
@@ -1327,9 +1341,9 @@ class TestRecomputeInPageUseCases:
         fx_page_writes.start()
 
         await fx_service().move(
-            fx_actor, book_record.id, pages[2].id, PageAnchor(page_id=pages[0].id, side=Side.BEFORE)
+            open_for(fx_actor, book_record.id), pages[2].id, PageAnchor(page_id=pages[0].id, side=Side.BEFORE)
         )
-        await fx_service().delete(fx_actor, book_record.id, pages[1].id)
+        await fx_service().delete(open_for(fx_actor, book_record.id), pages[1].id)
 
         expect(await _labels(fx_uow(), book_record.id, [pages[0], pages[2]]) == [STALE_LABEL] * 2)
         expect(fx_page_writes.page_ids == {pages[2].id})

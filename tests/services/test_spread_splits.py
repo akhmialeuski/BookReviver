@@ -23,7 +23,7 @@ from bookreviver.domain.geometry import Line, Point
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import NewPageEdit, PageStageKey, SliceRequest, StageRun, Step, StepPreview
-from tests.helpers.builders import EPOCH, make_page_stage, make_step_values
+from tests.helpers.builders import EPOCH, make_page_stage, make_step_values, open_for
 from tests.helpers.meanwhile import change_while_writing
 from tests.helpers.processing import stored_job
 from tests.helpers.samples import png_bytes, spread
@@ -241,7 +241,7 @@ class TestSplit:
         before = [await head_of(fx_cv_kit, book_record.id, page, Stage.PAGE_SPLIT) for page in (left, right)]
         key = await fx_cv_kit.edit_key(book_record.id, left, Stage.PAGE_SPLIT, SPLIT_SPREAD)
         await fx_cv_kit.edits().save(
-            actor, book_record.id, key, NewPageEdit(kind=CUT_LINE.editor, geometry=CUT_LINE), None
+            open_for(actor, book_record.id), key, NewPageEdit(kind=CUT_LINE.editor, geometry=CUT_LINE), None
         )
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT))
         after = [await head_of(fx_cv_kit, book_record.id, page, Stage.PAGE_SPLIT) for page in (left, right)]
@@ -307,7 +307,7 @@ class TestSplit:
         preview = StepPreview(
             page_id=page.id, stage=Stage.PAGE_SPLIT, steps=(Step(processor_key=SPLIT_SPREAD),), step_index=0
         )
-        job = await fx_cv_kit.service().start_preview(actor, book_record.id, preview)
+        job = await fx_cv_kit.service().start_preview(open_for(actor, book_record.id), preview)
         await fx_cv_kit.work_queue()
         stored = stored_job(fx_cv_kit, job.id)
         expect(stored.state is JobState.FAILED)
@@ -455,7 +455,7 @@ async def draw_the_cut_line(kit: ProcessingKit, book: SplitBook) -> None:
     """
     key = await kit.edit_key(book.book_record.id, book.page, Stage.PAGE_SPLIT, SPLIT_SPREAD)
     await kit.edits().save(
-        book.actor, book.book_record.id, key, NewPageEdit(kind=CUT_LINE.editor, geometry=CUT_LINE), None
+        open_for(book.actor, book.book_record.id), key, NewPageEdit(kind=CUT_LINE.editor, geometry=CUT_LINE), None
     )
 
 
@@ -508,7 +508,7 @@ class TestSplitApplyStep:
         book = SplitBook(actor, book_record, page)
         await use_recipe(fx_cv_kit, actor, book_record, Stage.PAGE_SPLIT, SPLIT_SPREAD)
         job = await fx_cv_kit.service().start_run(
-            actor, book_record.id, Stage.PAGE_SPLIT, StageRun(stage=Stage.PAGE_SPLIT)
+            open_for(actor, book_record.id), Stage.PAGE_SPLIT, StageRun(stage=Stage.PAGE_SPLIT)
         )
         change_while_writing(fx_cv_kit, monkeypatch, partial(change, fx_cv_kit, book))
         await fx_cv_kit.work_queue()

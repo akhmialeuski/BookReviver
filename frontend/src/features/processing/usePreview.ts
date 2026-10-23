@@ -7,7 +7,7 @@ import {
 } from '@/api';
 import {
   getVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGetOptions,
-  readJobApiV1JobsJobIdGetOptions,
+  readJobApiV1BooksBookIdJobsJobIdGetOptions,
 } from '@/api/@tanstack/react-query.gen';
 import { type VersionReady, versionReadyKey } from '@/features/books/queries';
 import {
@@ -260,7 +260,9 @@ export function usePreview(
   // The job ends, which is the end of the ask even when no event named a version. The events of the job keep it
   // current, and a break of the stream reads it again, which finds a job a restarted server no longer has
   const job = useQuery({
-    ...readJobApiV1JobsJobIdGetOptions({ path: { job_id: inflight?.jobId ?? '' } }),
+    ...readJobApiV1BooksBookIdJobsJobIdGetOptions({
+      path: { book_id: bookId, job_id: inflight?.jobId ?? '' },
+    }),
     enabled: inflight !== null,
   });
   const jobState = job.data?.state;

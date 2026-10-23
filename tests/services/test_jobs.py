@@ -1,6 +1,7 @@
 """Tests for the job service: reading and cancelling jobs on the board, and the event stream of a book."""
 
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import anyio
 import pytest
@@ -11,11 +12,10 @@ from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.events import JobChanged
-from bookreviver.domain.ids import JobId
+from bookreviver.domain.ids import BookId, JobId
 from bookreviver.domain.values import SliceRequest
 from bookreviver.services.jobs import JobService
-from bookreviver.services.library import Library
-from tests.helpers.builders import make_book_change, make_job, make_record, new_account_id
+from tests.helpers.builders import make_book_change, make_job, make_record, new_account_id, open_for
 from tests.helpers.fakes_jobs import JobFakes
 from tests.helpers.seeding import commit_record
 from tests.helpers.storage import upload
@@ -58,34 +58,22 @@ def fx_sources(tmp_path: Path) -> LocalSourceStore:
 
 
 @pytest.fixture
-def fx_job_service(fx_fakes: JobFakes, fx_uow: UnitOfWorkFactory, fx_sources: LocalSourceStore) -> JobService:
+def fx_job_service(fx_fakes: JobFakes, fx_sources: LocalSourceStore) -> JobService:
     """Build the job service of a request over the board and the event bus of the fakes.
 
     :param fx_fakes: Adapters of the service.
     :type fx_fakes: JobFakes
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
     :param fx_sources: Store of the uploads, which a cancelled import that never began is removed from.
     :type fx_sources: LocalSourceStore
     :returns: The job service.
     :rtype: JobService
     """
-    return JobService(library=Library(uow=fx_uow()), board=fx_fakes.board, stream=fx_fakes.events, sources=fx_sources)
+    return JobService(board=fx_fakes.board, stream=fx_fakes.events, sources=fx_sources)
 
 
 @pytest.fixture
 def fx_owner() -> Actor:
     """Build the account that owns the book.
-
-    :returns: Actor with a fresh account identifier.
-    :rtype: Actor
-    """
-    return Actor(account_id=new_account_id())
-
-
-@pytest.fixture
-def fx_stranger() -> Actor:
-    """Build an account that owns nothing.
 
     :returns: Actor with a fresh account identifier.
     :rtype: Actor
@@ -129,25 +117,25 @@ class TestGet:
         :type fx_book: BookRecord
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.RUN_STAGE))
-        assert await fx_job_service.get(fx_owner, job.id) == job
+        assert await fx_job_service.get(open_for(fx_owner, job.book_id), job.id) == job
 
-    async def test_job_of_another_account_is_not_found(
-        self, fx_fakes: JobFakes, fx_job_service: JobService, fx_stranger: Actor, fx_book: BookRecord
+    async def test_job_of_another_book_is_not_found(
+        self, fx_fakes: JobFakes, fx_job_service: JobService, fx_owner: Actor, fx_book: BookRecord
     ) -> None:
-        """Verify an account cannot read, or learn about, a job of a book it does not own.
+        """Verify a job is read only through the book it works on, so an open book tells nothing of other jobs.
 
         :param fx_fakes: Adapters of the service.
         :type fx_fakes: JobFakes
         :param fx_job_service: Job service of the request.
         :type fx_job_service: JobService
-        :param fx_stranger: Account owning nothing.
-        :type fx_stranger: Actor
-        :param fx_book: Book of another account.
+        :param fx_owner: Account owning the books.
+        :type fx_owner: Actor
+        :param fx_book: Book the job works on.
         :type fx_book: BookRecord
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id))
         with pytest.raises(NotFoundError):
-            await fx_job_service.get(fx_stranger, job.id)
+            await fx_job_service.get(open_for(fx_owner, BookId(uuid4())), job.id)
 
     async def test_job_the_board_does_not_hold_is_not_found(self, fx_job_service: JobService, fx_owner: Actor) -> None:
         """Verify a job the process does not hold, such as one of before a restart, is reported as missing.
@@ -158,7 +146,7 @@ class TestGet:
         :type fx_owner: Actor
         """
         with pytest.raises(NotFoundError):
-            await fx_job_service.get(fx_owner, UNKNOWN_JOB)
+            await fx_job_service.get(open_for(fx_owner, BookId(uuid4())), UNKNOWN_JOB)
 
 
 class TestList:
@@ -182,28 +170,13 @@ class TestList:
         await fx_fakes.board.run_queued()
         queued = fx_fakes.board.put(make_job(book_id=fx_book.id, minutes=1))
         elsewhere = fx_fakes.board.put(make_job(book_id=make_record().id, minutes=2))
-        everything = await fx_job_service.list_for_book(fx_owner, fx_book.id, WINDOW, active=False)
-        active = await fx_job_service.list_for_book(fx_owner, fx_book.id, WINDOW, active=True)
+        everything = await fx_job_service.list_for_book(open_for(fx_owner, fx_book.id), WINDOW, active=False)
+        active = await fx_job_service.list_for_book(open_for(fx_owner, fx_book.id), WINDOW, active=True)
         expect([job.id for job in everything.items] == [queued.id, ended.id])
         expect(everything.total == len(everything.items))
         expect([job.id for job in active.items] == [queued.id])
         expect(elsewhere.id not in {job.id for job in everything.items})
         assert_expectations()
-
-    async def test_book_of_another_account_is_not_found(
-        self, fx_job_service: JobService, fx_stranger: Actor, fx_book: BookRecord
-    ) -> None:
-        """Verify an account cannot list the jobs of a book it does not own.
-
-        :param fx_job_service: Job service of the request.
-        :type fx_job_service: JobService
-        :param fx_stranger: Account owning nothing.
-        :type fx_stranger: Actor
-        :param fx_book: Book of another account.
-        :type fx_book: BookRecord
-        """
-        with pytest.raises(NotFoundError):
-            await fx_job_service.list_for_book(fx_stranger, fx_book.id, WINDOW, active=False)
 
 
 class TestCancel:
@@ -224,7 +197,7 @@ class TestCancel:
         :type fx_book: BookRecord
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.RUN_STAGE))
-        cancelled = await fx_job_service.cancel(fx_owner, job.id)
+        cancelled = await fx_job_service.cancel(open_for(fx_owner, job.book_id), job.id)
         await fx_fakes.board.run_queued()
         expect((cancelled.state, cancelled.finished_at) == (JobState.CANCELLED, fx_fakes.clock.now()))
         expect(fx_fakes.board.get(job.id) == cancelled)
@@ -253,7 +226,7 @@ class TestCancel:
             group.start_soon(fx_fakes.board.run_queued)
             await anyio.wait_all_tasks_blocked()
             running = fx_fakes.board.get(job.id).state
-            cancelled = await fx_job_service.cancel(fx_owner, job.id)
+            cancelled = await fx_job_service.cancel(open_for(fx_owner, job.book_id), job.id)
             release.set()
         expect(running is JobState.RUNNING)
         expect(cancelled is not None and cancelled.state is JobState.CANCELLED)
@@ -284,7 +257,7 @@ class TestCancel:
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.IMPORT_SOURCE))
         await fx_sources.stage(fx_book.id, job.id, [upload(STAGED_UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
-        await fx_job_service.cancel(fx_owner, job.id)
+        await fx_job_service.cancel(open_for(fx_owner, job.book_id), job.id)
         with pytest.raises(NotFoundError):
             async with fx_sources.staged_files(fx_book.id, job.id):
                 pass
@@ -317,7 +290,7 @@ class TestCancel:
         async with anyio.create_task_group() as group:
             group.start_soon(fx_fakes.board.run_queued)
             await anyio.wait_all_tasks_blocked()
-            await fx_job_service.cancel(fx_owner, job.id)
+            await fx_job_service.cancel(open_for(fx_owner, job.book_id), job.id)
             async with fx_sources.staged_files(fx_book.id, job.id) as staged:
                 names.extend(staged)
             release.set()
@@ -341,29 +314,10 @@ class TestCancel:
         await fx_fakes.board.run_queued()
         published = list(fx_fakes.events.published)
         with pytest.raises(ConflictError):
-            await fx_job_service.cancel(fx_owner, job.id)
+            await fx_job_service.cancel(open_for(fx_owner, job.book_id), job.id)
         expect(fx_fakes.board.get(job.id).state is JobState.SUCCEEDED)
         expect(fx_fakes.events.published == published)
         assert_expectations()
-
-    async def test_job_of_another_account_cannot_be_cancelled(
-        self, fx_fakes: JobFakes, fx_job_service: JobService, fx_stranger: Actor, fx_book: BookRecord
-    ) -> None:
-        """Verify an account cannot cancel a job of a book it does not own.
-
-        :param fx_fakes: Adapters of the service.
-        :type fx_fakes: JobFakes
-        :param fx_job_service: Job service of the request.
-        :type fx_job_service: JobService
-        :param fx_stranger: Account owning nothing.
-        :type fx_stranger: Actor
-        :param fx_book: Book of another account.
-        :type fx_book: BookRecord
-        """
-        job = fx_fakes.board.put(make_job(book_id=fx_book.id))
-        with pytest.raises(NotFoundError):
-            await fx_job_service.cancel(fx_stranger, job.id)
-        assert fx_fakes.board.get(job.id).state is JobState.QUEUED
 
 
 class TestEvents:
@@ -384,29 +338,10 @@ class TestEvents:
         :type fx_book: BookRecord
         """
         other = make_record()
-        async with await fx_job_service.events(fx_owner, fx_book.id) as stream:
+        async with await fx_job_service.events(open_for(fx_owner, fx_book.id)) as stream:
             # Published before anything reads the stream, as while the response headers are still being sent
             await fx_fakes.events.publish(make_book_change(book_id=other.id))
             await fx_fakes.events.publish(make_book_change(book_id=fx_book.id))
             expect(await anext(stream) == make_book_change(book_id=fx_book.id))
         expect(fx_fakes.events.open_subscriptions == 0)
-        assert_expectations()
-
-    async def test_book_of_another_account_is_not_found(
-        self, fx_fakes: JobFakes, fx_job_service: JobService, fx_stranger: Actor, fx_book: BookRecord
-    ) -> None:
-        """Verify an account cannot listen to a book it does not own, and that no subscription is made for it.
-
-        :param fx_fakes: Adapters of the service.
-        :type fx_fakes: JobFakes
-        :param fx_job_service: Job service of the request.
-        :type fx_job_service: JobService
-        :param fx_stranger: Account owning nothing.
-        :type fx_stranger: Actor
-        :param fx_book: Book of another account.
-        :type fx_book: BookRecord
-        """
-        with pytest.raises(NotFoundError):
-            await fx_job_service.events(fx_stranger, fx_book.id)
-        expect(not fx_fakes.events.subscribed.is_set())
         assert_expectations()

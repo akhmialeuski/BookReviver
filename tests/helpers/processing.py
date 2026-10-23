@@ -29,7 +29,6 @@ from bookreviver.domain.values import PageStageKey, PageStepKey, RecipeKey, Rend
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog, StepExecutor
 from bookreviver.services.edits import EditService
-from bookreviver.services.library import Library
 from bookreviver.services.page_history import PageHistoryService
 from bookreviver.services.page_settings import PageSettingsService
 from bookreviver.services.processing import ProcessingService
@@ -48,6 +47,7 @@ from tests.helpers.builders import (
     make_record,
     make_scan,
     make_source,
+    open_for,
 )
 from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
@@ -190,9 +190,7 @@ class ProcessingKit:
         """
         if uow is None:
             uow = self.uow()
-        return ProcessingService(
-            uow=uow, library=Library(uow=uow), assets=self.assets, catalogue=self.catalogue, parts=self.parts(uow)
-        )
+        return ProcessingService(uow=uow, assets=self.assets, catalogue=self.catalogue, parts=self.parts(uow))
 
     def profiles(self) -> RecipeProfiles:
         """Build the service of the recipe profiles over a new unit of work.
@@ -202,12 +200,8 @@ class ProcessingKit:
         """
         uow = self.uow()
         parts = self.parts(uow)
-        processing = ProcessingService(
-            uow=uow, library=Library(uow=uow), assets=self.assets, catalogue=self.catalogue, parts=parts
-        )
-        return RecipeProfiles(
-            uow=uow, library=Library(uow=uow), recipes=parts.recipes, processing=processing, clock=self.clock
-        )
+        processing = ProcessingService(uow=uow, assets=self.assets, catalogue=self.catalogue, parts=parts)
+        return RecipeProfiles(uow=uow, recipes=parts.recipes, processing=processing, clock=self.clock)
 
     async def recipe_of(
         self, actor: Actor, book_record: BookRecord, stage: Stage, kind: RecipeKind = RecipeKind.TEXT
@@ -225,7 +219,9 @@ class ProcessingKit:
         :returns: The recipe.
         :rtype: Recipe
         """
-        listed = await self.service().recipes(actor, book_record.id, stage, SliceRequest(limit=len(RecipeKind)))
+        listed = await self.service().recipes(
+            open_for(actor, book_record.id), stage, SliceRequest(limit=len(RecipeKind))
+        )
         return next(recipe for recipe in listed.items if recipe.kind is kind)
 
     async def edit_recipe(
@@ -252,7 +248,7 @@ class ProcessingKit:
         :rtype: Recipe
         """
         recipe = await self.recipe_of(actor, book_record, stage, kind)
-        return await self.service().save_recipe(actor, book_record.id, RecipeKey(stage, recipe.id), draft)
+        return await self.service().save_recipe(open_for(actor, book_record.id), RecipeKey(stage, recipe.id), draft)
 
     def stages(self) -> StageSummaries:
         """Build the sums of the stages of books, which read through the repositories their caller hands them.
@@ -330,7 +326,6 @@ class ProcessingKit:
         uow = self.uow()
         return PageSettingsService(
             uow=uow,
-            library=Library(uow=uow),
             catalogue=self.catalogue,
             records=self.parts(uow).records,
             clock=self.clock,

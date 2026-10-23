@@ -22,13 +22,13 @@ from bookreviver.services.page_batches import PageBatch
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bookreviver.domain.entities import Actor, BookRecord, Page, PageHistoryEntry, PageStage, PageStepState, Recipe
+    from bookreviver.domain.entities import BookRecord, Page, PageHistoryEntry, PageStage, PageStepState, Recipe
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import BookId, PageId, PageVersionId, StepId
     from bookreviver.domain.values import StageRun
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
-    from bookreviver.services.library import Library
+    from bookreviver.services.book import Book
     from bookreviver.services.recipes import RecipeBook
 
 
@@ -305,37 +305,31 @@ class RunPlan:
 class RunImpactService:
     """Counts the pages a run would take work from, for the user to confirm before the run is sent."""
 
-    def __init__(self, *, uow: UnitOfWork, library: Library, recipes: RecipeBook, clock: Clock) -> None:
+    def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, clock: Clock) -> None:
         """Count over the ports of one request.
 
         :param uow: Unit of work of the request.
         :type uow: UnitOfWork
-        :param library: Library that opens the books of the acting account.
-        :type library: Library
         :param recipes: The recipes of the book.
         :type recipes: RecipeBook
         :param clock: Clock the plan of the run is built with.
         :type clock: Clock
         """
         self._uow = uow
-        self._library = library
         self._recipes = recipes
         self._clock = clock
 
-    async def impact(self, actor: Actor, book_id: BookId, run: StageRun) -> RunImpact:
+    async def impact(self, book: Book, run: StageRun) -> RunImpact:
         """Count the pages a run would take work from, which is what a run asks the user to confirm.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param run: The run, with its mode.
         :type run: StageRun
         :returns: How many pages the run goes over, how many of them have settings and edits on its steps, and how many
                   lose work to its mode.
         :rtype: RunImpact
-        :raises NotFoundError: If the actor has no such book or page, or the stage has no recipe.
+        :raises NotFoundError: If the book has no such page, or the stage has no recipe.
         """
-        await self._library.open(actor, book_id)
-        plan = RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, book_id=book_id, run=run)
+        plan = RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, book_id=book.id, run=run)
         return await plan.impact()

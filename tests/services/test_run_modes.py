@@ -5,13 +5,12 @@ from typing import TYPE_CHECKING
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import ChangeSource, EditorKind, RunMode, Stage, StepLayer
-from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.values import NewPageEdit, PageStageKey, StageRun
 from bookreviver.services.run_plans import RunPlan
-from tests.helpers.builders import new_account_id
+from tests.helpers.builders import open_for
 from tests.helpers.page_batches import PageValues, run_impact
 from tests.helpers.processors import STRENGTH_PARAMETER, FakeProcessor
 from tests.helpers.spreads import run_stage
@@ -19,7 +18,7 @@ from tests.helpers.spreads import run_stage
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import BookRecord, Page, PageHistoryEntry, PageStepState, PageVersion
+    from bookreviver.domain.entities import Actor, BookRecord, Page, PageHistoryEntry, PageStepState, PageVersion
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import PageStepKey
     from tests.helpers.processing import ProcessingKit
@@ -51,7 +50,7 @@ async def worked_book(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[Page]
     keys = [await kit.edit_key(book_record.id, page, Stage.GEOMETRY, FAKE_KEY) for page in pages]
     for key in keys[:WORKED_PAGES]:
         await PageValues(kit, actor, book_record.id).set(key, STRENGTH_PARAMETER, STRONGER)
-    await kit.edits().save(actor, book_record.id, keys[0], ROTATION, None)
+    await kit.edits().save(open_for(actor, book_record.id), keys[0], ROTATION, None)
     return actor, book_record, pages, keys
 
 
@@ -142,7 +141,9 @@ class TestRunImpact:
         :type affected: int
         """
         actor, book_record, _, _ = await worked_book(fx_kit)
-        impact = await run_impact(fx_kit).impact(actor, book_record.id, StageRun(stage=Stage.GEOMETRY, mode=mode))
+        impact = await run_impact(fx_kit).impact(
+            open_for(actor, book_record.id), StageRun(stage=Stage.GEOMETRY, mode=mode)
+        )
         expect(impact.affected == affected)
         expect(
             (impact.pages, impact.own_pages) == (3 - (WORKED_PAGES if mode is RunMode.SKIP_OWN else 0), WORKED_PAGES)
@@ -159,7 +160,9 @@ class TestRunImpact:
         """
         actor, book_record, _, _ = await worked_book(fx_kit)
         counted = {
-            mode: await run_impact(fx_kit).impact(actor, book_record.id, StageRun(stage=Stage.GEOMETRY, mode=mode))
+            mode: await run_impact(fx_kit).impact(
+                open_for(actor, book_record.id), StageRun(stage=Stage.GEOMETRY, mode=mode)
+            )
             for mode in (RunMode.KEEP, RunMode.SKIP_OWN, RunMode.DROP_OWN)
         }
         own = counted[RunMode.KEEP].own_pages
@@ -177,20 +180,9 @@ class TestRunImpact:
         """
         actor, book_record, pages, _ = await worked_book(fx_kit)
         run = StageRun(stage=Stage.GEOMETRY, mode=RunMode.DROP_OWN, page_ids=(pages[1].id,))
-        impact = await run_impact(fx_kit).impact(actor, book_record.id, run)
+        impact = await run_impact(fx_kit).impact(open_for(actor, book_record.id), run)
         expect((impact.pages, impact.affected) == (1, 1))
         assert_expectations()
-
-    async def test_a_stranger_is_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Verify the count of a book of another account is refused like a missing book.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        _, book_record, _, _ = await worked_book(fx_kit)
-        stranger = Actor(account_id=new_account_id())
-        with pytest.raises(NotFoundError):
-            await run_impact(fx_kit).impact(stranger, book_record.id, StageRun(stage=Stage.GEOMETRY))
 
 
 class TestKeep:
@@ -237,7 +229,7 @@ class TestConfirmation:
         actor, book_record, _, keys = await worked_book(fx_kit)
         run = StageRun(stage=Stage.GEOMETRY, mode=RunMode.DROP_OWN)
         with pytest.raises(ConflictError, match=r'takes the work of \d+ pages away'):
-            await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, run)
+            await fx_kit.service().start_run(open_for(actor, book_record.id), Stage.GEOMETRY, run)
         expect(fx_kit.board.put_jobs == [])
         expect(await states_of(fx_kit, book_record.id, keys[:1]) != [None])
         assert_expectations()
@@ -252,7 +244,7 @@ class TestConfirmation:
         page, _ = await fx_kit.seed_scan_page(book_record)
         await fx_kit.seed_base_version(book_record.id, page)
         job = await fx_kit.service().start_run(
-            actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY, mode=RunMode.DROP_OWN)
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY, mode=RunMode.DROP_OWN)
         )
         assert job.params[MODE_KEY] == RunMode.DROP_OWN.value
 
@@ -289,10 +281,10 @@ class TestDropOwn:
         removals = [
             change
             for key in keys[:WORKED_PAGES]
-            for change in (await fx_kit.page_history().list(actor, book_record.id, key)).changes
+            for change in (await fx_kit.page_history().list(open_for(actor, book_record.id), key)).changes
             if change.source is ChangeSource.RUN
         ]
-        undone = await fx_kit.page_history().undo(actor, book_record.id, keys[1], None)
+        undone = await fx_kit.page_history().undo(open_for(actor, book_record.id), keys[1], None)
         restored = [await state_of(fx_kit, book_record.id, key) for key in keys[:WORKED_PAGES]]
         expect(len({removal.batch_id for removal in removals}) == 1 and removals[0].batch_id is not None)
         expect({removal.layer for removal in removals} == {StepLayer.HAND, StepLayer.SETTINGS})

@@ -8,7 +8,6 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyRecipeRepository
-from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobKind, JobState, PageKind, RecipeKind, Stage, StageState
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import PageId
@@ -21,13 +20,13 @@ from bookreviver.domain.values import (
     Step,
     StepPreview,
 )
-from tests.helpers.builders import make_page_stage
+from tests.helpers.builders import make_page_stage, open_for
 from tests.helpers.processors import FAILING_PARAMETER, STRENGTH_PARAMETER, FakeProcessor
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from bookreviver.domain.entities import BookRecord, Page, PageStage, Recipe
+    from bookreviver.domain.entities import Actor, BookRecord, Page, PageStage, Recipe
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from tests.helpers.processing import ProcessingKit
@@ -84,7 +83,7 @@ async def recipes_of(
     :returns: The recipe of each kind.
     :rtype: dict[RecipeKind, Recipe]
     """
-    listed = await kit.service().recipes(actor, book_record.id, stage, EVERYTHING)
+    listed = await kit.service().recipes(open_for(actor, book_record.id), stage, EVERYTHING)
     return {recipe.kind: recipe for recipe in listed.items}
 
 
@@ -305,18 +304,7 @@ class TestRecipes:
         """
         actor, book_record = await fx_kit.seed_record()
         with pytest.raises(NotFoundError):
-            await fx_kit.service().recipes(actor, book_record.id, Stage.IMPORT, EVERYTHING)
-
-    async def test_book_of_another_account_is_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Verify a book of another account is reported like a missing one.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        _, book_record = await fx_kit.seed_record()
-        stranger = Actor(account_id=(await fx_kit.seed_record())[0].account_id)
-        with pytest.raises(NotFoundError):
-            await fx_kit.service().recipes(stranger, book_record.id, Stage.GEOMETRY, EVERYTHING)
+            await fx_kit.service().recipes(open_for(actor, book_record.id), Stage.IMPORT, EVERYTHING)
 
 
 class TestSaveRecipe:
@@ -331,7 +319,9 @@ class TestSaveRecipe:
         actor, book_record = await fx_kit.seed_record()
         text = (await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY))[RecipeKind.TEXT]
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 5})])
-        saved = await fx_kit.service().save_recipe(actor, book_record.id, RecipeKey(Stage.GEOMETRY, text.id), draft)
+        saved = await fx_kit.service().save_recipe(
+            open_for(actor, book_record.id), RecipeKey(Stage.GEOMETRY, text.id), draft
+        )
         expect((saved.id, saved.kind) == (text.id, RecipeKind.TEXT))
         expect(dict(saved.steps[0].params) == {STRENGTH_PARAMETER: 5, FAILING_PARAMETER: False})
         assert_expectations()
@@ -363,7 +353,7 @@ class TestSaveRecipe:
         text = (await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY))[RecipeKind.TEXT]
         with pytest.raises(InvalidParametersError, match=match):
             await fx_kit.service().save_recipe(
-                actor, book_record.id, RecipeKey(Stage.GEOMETRY, text.id), RecipeDraft(steps=steps)
+                open_for(actor, book_record.id), RecipeKey(Stage.GEOMETRY, text.id), RecipeDraft(steps=steps)
             )
 
     async def test_pages_the_recipe_processed_are_marked_stale_and_nothing_is_run(self, fx_kit: ProcessingKit) -> None:
@@ -378,7 +368,7 @@ class TestSaveRecipe:
         recipe = (await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY))[RecipeKind.TEXT]
         await save_stage_records(fx_kit, book_record, make_page_stage(page_id=page.id, recipe_id=recipe.id))
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 2})])
-        await fx_kit.service().save_recipe(actor, book_record.id, RecipeKey(Stage.GEOMETRY, recipe.id), draft)
+        await fx_kit.service().save_recipe(open_for(actor, book_record.id), RecipeKey(Stage.GEOMETRY, recipe.id), draft)
         expect(await geometry_state(fx_kit, book_record.id, page) is StageState.STALE)
         expect(fx_kit.board.put_jobs == [])
         assert_expectations()
@@ -401,7 +391,7 @@ class TestSaveRecipe:
         )
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 9})])
         await fx_kit.service().save_recipe(
-            actor, book_record.id, RecipeKey(Stage.GEOMETRY, recipes[RecipeKind.TEXT].id), draft
+            open_for(actor, book_record.id), RecipeKey(Stage.GEOMETRY, recipes[RecipeKind.TEXT].id), draft
         )
         states = [await geometry_state(fx_kit, book_record.id, page) for page in (first, second)]
         assert states == [StageState.STALE, StageState.FRESH]
@@ -424,7 +414,7 @@ class TestSaveRecipe:
             Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 9}, enabled=False),
         ]
         await fx_kit.service().save_recipe(
-            actor, book_record.id, RecipeKey(Stage.GEOMETRY, recipe.id), RecipeDraft(steps=steps)
+            open_for(actor, book_record.id), RecipeKey(Stage.GEOMETRY, recipe.id), RecipeDraft(steps=steps)
         )
         stored = (await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY))[RecipeKind.TEXT]
         expect([(step.enabled, step.params[STRENGTH_PARAMETER]) for step in stored.steps] == [(True, 1), (False, 9)])
@@ -441,7 +431,9 @@ class TestSaveRecipe:
         recipe = (await recipes_of(fx_kit, actor, book_record, Stage.GEOMETRY))[RecipeKind.TEXT]
         hijacked = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: 9})])
         with pytest.raises(NotFoundError):
-            await fx_kit.service().save_recipe(actor, book_record.id, RecipeKey(Stage.CLEANUP, recipe.id), hijacked)
+            await fx_kit.service().save_recipe(
+                open_for(actor, book_record.id), RecipeKey(Stage.CLEANUP, recipe.id), hijacked
+            )
         assert (
             await fx_kit.uow().read_book(book_record.id, lambda repos: repos.recipes.get(recipe.id))
         ).steps == recipe.steps
@@ -459,7 +451,7 @@ class TestStartRun:
         actor, book_record = await fx_kit.seed_record()
         page, _ = await fx_kit.seed_scan_page(book_record)
         run = StageRun(stage=Stage.GEOMETRY, page_ids=(page.id,))
-        job = await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, run)
+        job = await fx_kit.service().start_run(open_for(actor, book_record.id), Stage.GEOMETRY, run)
         held = fx_kit.board.get(job.id)
         expect((held.kind, held.state) == (JobKind.RUN_STAGE, JobState.QUEUED))
         expect(StageRun.from_map(held.params) == run)
@@ -473,9 +465,13 @@ class TestStartRun:
         :type fx_kit: ProcessingKit
         """
         actor, book_record = await fx_kit.seed_record()
-        await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        await fx_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
         with pytest.raises(ConflictError, match=BUSY_REASON):
-            await fx_kit.service().start_run(actor, book_record.id, Stage.CLEANUP, StageRun(stage=Stage.CLEANUP))
+            await fx_kit.service().start_run(
+                open_for(actor, book_record.id), Stage.CLEANUP, StageRun(stage=Stage.CLEANUP)
+            )
 
     async def test_preview_and_collection_are_refused_while_a_run_is_active(self, fx_kit: ProcessingKit) -> None:
         """Reject a preview and a collection while a run of the book is queued, since the book processes one thing.
@@ -485,14 +481,16 @@ class TestStartRun:
         """
         actor, book_record = await fx_kit.seed_record()
         page, _ = await fx_kit.seed_scan_page(book_record)
-        await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        await fx_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
         preview = StepPreview(
             page_id=page.id, stage=Stage.GEOMETRY, steps=(Step(processor_key=FAKE_KEY),), step_index=0
         )
         with pytest.raises(ConflictError, match=BUSY_REASON):
-            await fx_kit.service().start_preview(actor, book_record.id, preview)
+            await fx_kit.service().start_preview(open_for(actor, book_record.id), preview)
         with pytest.raises(ConflictError, match=BUSY_REASON):
-            await fx_kit.service().start_collection(actor, book_record.id)
+            await fx_kit.service().start_collection(open_for(actor, book_record.id))
 
     async def test_run_waits_while_a_collection_is_active(self, fx_kit: ProcessingKit) -> None:
         """Queue a run asked for during a collection behind it, so the board starts it when the collection has ended.
@@ -501,8 +499,10 @@ class TestStartRun:
         :type fx_kit: ProcessingKit
         """
         actor, book_record = await fx_kit.seed_record()
-        collection = await fx_kit.service().start_collection(actor, book_record.id)
-        run = await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        collection = await fx_kit.service().start_collection(open_for(actor, book_record.id))
+        run = await fx_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
         expect(run.state is JobState.QUEUED)
         expect(fx_kit.board.put_jobs == [collection, run])
         assert_expectations()
@@ -516,7 +516,9 @@ class TestStartRun:
         :type fx_kit: ProcessingKit
         """
         actor, book_record = await fx_kit.seed_record()
-        await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        await fx_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
         starter = fx_kit.parts(fx_kit.uow()).starter
         expect(await starter.enqueue_collection(book_record.id) is None)
         expect([job.kind for job in fx_kit.board.put_jobs] == [JobKind.RUN_STAGE])
@@ -531,7 +533,7 @@ class TestStartRun:
         actor, book_record = await fx_kit.seed_record()
         run = StageRun(stage=Stage.GEOMETRY, page_ids=(PageId(book_record.id),))
         with pytest.raises(NotFoundError):
-            await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, run)
+            await fx_kit.service().start_run(open_for(actor, book_record.id), Stage.GEOMETRY, run)
 
 
 class ReadGate:

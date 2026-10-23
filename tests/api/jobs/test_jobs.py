@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
-JOB_PATH: str = '/api/v1/jobs/{job_id}'
+JOB_PATH: str = '/api/v1/books/{book_id}/jobs/{job_id}'
 BOOK_PATH: str = '/api/v1/books/{book_id}'
 NOTES_FIELD: str = 'notes'
 CHANGED_NOTES: str = 'Read again'
@@ -101,7 +101,7 @@ async def fx_strangers_job(fx_fakes: JobFakes, fx_database: SqlDatabase, fx_uow:
 
 
 class TestReadJob:
-    """Tests for GET /jobs/{job_id}."""
+    """Tests for GET /books/{book_id}/jobs/{job_id}."""
 
     async def test_owner_reads_job(self, fx_client: httpx.AsyncClient, fx_queued_job: Job) -> None:
         """Verify the owner reads the job's state and progress.
@@ -111,7 +111,7 @@ class TestReadJob:
         :param fx_queued_job: Queued job of the signed-in account.
         :type fx_queued_job: Job
         """
-        response = await fx_client.get(JOB_PATH.format(job_id=fx_queued_job.id))
+        response = await fx_client.get(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.id))
         expect(response.status_code == HTTPStatus.OK)
         body = response.json()
         expect((body[JOB_ID_FIELD], body[JOB_STATE_FIELD]) == (str(fx_queued_job.id), JobState.QUEUED))
@@ -144,8 +144,10 @@ class TestReadJob:
         run = fx_fakes.board.put(
             make_job(book_id=book_record.id, kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.GEOMETRY).to_map())
         )
-        run_body = (await fx_client.get(JOB_PATH.format(job_id=run.id))).json()
-        import_body = (await fx_client.get(JOB_PATH.format(job_id=fx_queued_job.id))).json()
+        run_body = (await fx_client.get(JOB_PATH.format(book_id=run.book_id, job_id=run.id))).json()
+        import_body = (
+            await fx_client.get(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.id))
+        ).json()
         expect((run_body[KIND_FIELD], run_body[STAGE_FIELD]) == (JobKind.RUN_STAGE, Stage.GEOMETRY))
         expect((import_body[KIND_FIELD], import_body[STAGE_FIELD]) == (JobKind.IMPORT_SOURCE, None))
         assert_expectations()
@@ -160,16 +162,20 @@ class TestReadJob:
         :param fx_strangers_job: Job of another account.
         :type fx_strangers_job: Job
         """
-        response = await fx_client.get(JOB_PATH.format(job_id=fx_strangers_job.id))
+        response = await fx_client.get(JOB_PATH.format(book_id=fx_strangers_job.book_id, job_id=fx_strangers_job.id))
         assert response.status_code == HTTPStatus.NOT_FOUND
 
-    async def test_job_the_process_does_not_hold_is_a_404_problem(self, fx_client: httpx.AsyncClient) -> None:
+    async def test_job_the_process_does_not_hold_is_a_404_problem(
+        self, fx_client: httpx.AsyncClient, fx_queued_job: Job
+    ) -> None:
         """Verify a job the board does not hold, such as one of before a restart, answers 404 as a problem document.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
+        :param fx_queued_job: Queued job of the signed-in account, whose book the missing job is asked under.
+        :type fx_queued_job: Job
         """
-        response = await fx_client.get(JOB_PATH.format(job_id=uuid4()))
+        response = await fx_client.get(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=uuid4()))
         expect(response.status_code == HTTPStatus.NOT_FOUND)
         expect(response.headers[CONTENT_TYPE_HEADER] == PROBLEM_MEDIA_TYPE)
         assert_expectations()
@@ -201,7 +207,7 @@ class TestListJobs:
 
 
 class TestCancelJob:
-    """Tests for DELETE /jobs/{job_id}."""
+    """Tests for DELETE /books/{book_id}/jobs/{job_id}."""
 
     async def test_queued_job_is_cancelled(self, fx_client: httpx.AsyncClient, fx_queued_job: Job) -> None:
         """Verify cancelling a queued job answers with the job in its cancelled state.
@@ -211,7 +217,7 @@ class TestCancelJob:
         :param fx_queued_job: Queued job of the signed-in account.
         :type fx_queued_job: Job
         """
-        response = await fx_client.delete(JOB_PATH.format(job_id=fx_queued_job.id))
+        response = await fx_client.delete(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.id))
         expect(response.status_code == HTTPStatus.OK)
         expect(response.json()[JOB_STATE_FIELD] == JobState.CANCELLED)
         assert_expectations()
@@ -224,8 +230,8 @@ class TestCancelJob:
         :param fx_queued_job: Queued job of the signed-in account.
         :type fx_queued_job: Job
         """
-        await fx_client.delete(JOB_PATH.format(job_id=fx_queued_job.id))
-        response = await fx_client.delete(JOB_PATH.format(job_id=fx_queued_job.id))
+        await fx_client.delete(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.id))
+        response = await fx_client.delete(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.id))
         expect(response.status_code == HTTPStatus.CONFLICT)
         expect(response.headers[CONTENT_TYPE_HEADER] == PROBLEM_MEDIA_TYPE)
         assert_expectations()
@@ -242,7 +248,7 @@ class TestCancelJob:
         :param fx_strangers_job: Job of another account.
         :type fx_strangers_job: Job
         """
-        response = await fx_client.delete(JOB_PATH.format(job_id=fx_strangers_job.id))
+        response = await fx_client.delete(JOB_PATH.format(book_id=fx_strangers_job.book_id, job_id=fx_strangers_job.id))
         expect(response.status_code == HTTPStatus.NOT_FOUND)
         expect(fx_fakes.board.get(fx_strangers_job.id).state is JobState.QUEUED)
         assert_expectations()
@@ -273,7 +279,7 @@ class TestStreamBookEvents:
             group.start_soon(reader.read, fx_app, fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=book_id))
             # Change things only once the stream has subscribed, which happens before the endpoint runs
             await fx_fakes.events.subscribed.wait()
-            await fx_client.delete(JOB_PATH.format(job_id=fx_queued_job.id))
+            await fx_client.delete(JOB_PATH.format(book_id=fx_queued_job.book_id, job_id=fx_queued_job.id))
             await fx_fakes.events.publish(make_book_change(book_id=book_id))
 
         expect((reader.status, reader.content_type.split(';')[0]) == (HTTPStatus.OK, EVENT_STREAM_TYPE))

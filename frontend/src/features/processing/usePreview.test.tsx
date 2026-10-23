@@ -28,7 +28,7 @@ const sdk = vi.hoisted(() => ({
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
   previewStepApiV1BooksBookIdStagesStagePreviewPost: sdk.preview,
-  readJobApiV1JobsJobIdGet: sdk.job,
+  readJobApiV1BooksBookIdJobsJobIdGet: sdk.job,
   getVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGet: sdk.version,
   listBookJobsApiV1BooksBookIdJobsGet: sdk.jobs,
   listVersionsApiV1BooksBookIdPagesPageIdVersionsGet: sdk.versions,

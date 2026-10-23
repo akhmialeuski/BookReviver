@@ -6,9 +6,9 @@ from attrs import frozen
 
 from bookreviver.domain.enums import ValueScope
 from bookreviver.domain.step_values import ValueField, ValueTarget
-from bookreviver.services.library import Library
 from bookreviver.services.page_carry import CarryOverService
 from bookreviver.services.run_plans import RunImpactService
+from tests.helpers.builders import open_for
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor
@@ -27,7 +27,7 @@ def carry_over(kit: ProcessingKit) -> CarryOverService:
     :rtype: CarryOverService
     """
     uow = kit.uow()
-    return CarryOverService(uow=uow, library=Library(uow=uow), records=kit.parts(uow).records, clock=kit.clock)
+    return CarryOverService(uow=uow, records=kit.parts(uow).records, clock=kit.clock)
 
 
 def run_impact(kit: ProcessingKit) -> RunImpactService:
@@ -39,7 +39,7 @@ def run_impact(kit: ProcessingKit) -> RunImpactService:
     :rtype: RunImpactService
     """
     uow = kit.uow()
-    return RunImpactService(uow=uow, library=Library(uow=uow), recipes=kit.parts(uow).recipes, clock=kit.clock)
+    return RunImpactService(uow=uow, recipes=kit.parts(uow).recipes, clock=kit.clock)
 
 
 def _page_field(key: PageStepKey, name: str) -> ValueField:
@@ -85,7 +85,7 @@ class PageValues:
         :returns: The batch and the changes written.
         :rtype: ValueChanges
         """
-        return await self.kit.page_settings().change(self.actor, self.book_id, _page_field(key, name), value)
+        return await self.kit.page_settings().change(open_for(self.actor, self.book_id), _page_field(key, name), value)
 
     async def take_back(self, key: PageStepKey, name: str) -> ValueChanges:
         """Take the value the page uses for a field of a step back.
@@ -97,4 +97,4 @@ class PageValues:
         :returns: The batch and the changes written.
         :rtype: ValueChanges
         """
-        return await self.kit.page_settings().reset(self.actor, self.book_id, _page_field(key, name))
+        return await self.kit.page_settings().reset(open_for(self.actor, self.book_id), _page_field(key, name))

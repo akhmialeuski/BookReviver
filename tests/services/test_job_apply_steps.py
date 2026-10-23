@@ -19,6 +19,7 @@ from bookreviver.domain.values import StageRun
 from bookreviver.services.processing_jobs import NO_PAGE_PROCESSED
 from bookreviver.services.stage_runs import RecipeRun
 from bookreviver.services.steps import StepRunner
+from tests.helpers.builders import open_for
 from tests.helpers.processing import change_versions, stored_job
 
 if TYPE_CHECKING:
@@ -199,7 +200,9 @@ class TestRunPage:
             raise ConflictError(STEP_FAILURE)
 
         monkeypatch.setattr(RecipeRun, 'run', delete_the_page_and_fail)
-        job = await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        job = await fx_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
 
         await fx_kit.work_queue()
 

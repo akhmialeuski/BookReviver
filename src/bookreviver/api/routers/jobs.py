@@ -1,8 +1,8 @@
 """Background job state, cancellation and the event stream of a book.
 
-The job routes live under ``/jobs`` and the event stream under ``/books/{book_id}/events``, so the module holds
-one router per prefix and joins them under the ``jobs`` tag. The jobs live in the memory of the API process, so a job
-the process does not hold, such as one that ended before the process started, is answered with 404.
+The jobs of a book live under ``/books/{book_id}/jobs`` and its event stream under ``/books/{book_id}/events``, and
+every route opens the book with ``open_book``. The jobs live in the memory of the API process, so a job the process does
+not hold, such as one that ended before the process started, is answered with 404, and so is a job of another book.
 
 The subscription is held by a dependency with ``yield`` rather than inside the endpoint. FastAPI sends the response
 headers as soon as a streaming endpoint starts, so a refusal raised inside it could no longer become a problem
@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, Header, Path
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from fastapi_pagination import Page
 
-from bookreviver.api.auth import ActorDep
+from bookreviver.api.book import open_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import (
@@ -33,94 +33,90 @@ from bookreviver.api.schemas.jobs import (
 )
 from bookreviver.domain.entities import Job
 from bookreviver.domain.events import BookChanged, DomainEvent, JobChanged, PageVersionReady
-from bookreviver.domain.ids import BookId, JobId
+from bookreviver.domain.ids import JobId
+from bookreviver.services.book import Book
 from bookreviver.services.freshness import BookFreshness
 from bookreviver.services.jobs import JobService
 
 # Module-level aliases: FastAPI and dishka read route annotations at runtime
 JobIdPath = Annotated[JobId, Path(description='Identifier of the job')]
-BookIdPath = Annotated[BookId, Path(description='Identifier of the book')]
 JobServiceDep = FromDishka[JobService]
 BookEvents = AsyncIterator[DomainEvent]
 
-jobs = APIRouter(prefix='/jobs', route_class=DishkaRoute)
-book_events = APIRouter(prefix='/books', route_class=DishkaRoute)
+router = APIRouter(prefix='/books', tags=['jobs'], route_class=DishkaRoute)
 
 
-@jobs.get('/{job_id}')
-async def read_job(job_id: JobIdPath, actor: ActorDep, service: JobServiceDep) -> JobSchema:
+@router.get('/{book_id}/jobs/{job_id}')
+async def read_job(book: Annotated[Book, Depends(open_book)], job_id: JobIdPath, service: JobServiceDep) -> JobSchema:
     """Return the state and progress of a job.
 
     \N{FORM FEED}
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param job_id: Identifier of the job.
     :type job_id: JobId
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param service: Job service of the request.
     :type service: JobService
     :returns: The job.
     :rtype: JobSchema
     """
-    return JobSchema.model_validate(await service.get(actor, job_id))
+    return JobSchema.model_validate(await service.get(book, job_id))
 
 
-@jobs.delete('/{job_id}')
-async def cancel_job(job_id: JobIdPath, actor: ActorDep, service: JobServiceDep) -> JobSchema:
+@router.delete('/{book_id}/jobs/{job_id}')
+async def cancel_job(book: Annotated[Book, Depends(open_book)], job_id: JobIdPath, service: JobServiceDep) -> JobSchema:
     """Cancel a queued or running job and return it; a running job stops at the boundary of its current task.
 
     \N{FORM FEED}
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param job_id: Identifier of the job.
     :type job_id: JobId
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param service: Job service of the request.
     :type service: JobService
     :returns: The job in the cancelled state.
     :rtype: JobSchema
     """
-    return JobSchema.model_validate(await service.cancel(actor, job_id))
+    return JobSchema.model_validate(await service.cancel(book, job_id))
 
 
-@book_events.get('/{book_id}/jobs')
+@router.get('/{book_id}/jobs')
 async def list_book_jobs(
-    book_id: BookIdPath,
+    book: Annotated[Book, Depends(open_book)],
     query: Annotated[JobQuery, Depends()],
-    actor: ActorDep,
     service: JobServiceDep,
 ) -> Page[JobSchema]:
     """List the jobs of a book, the newest first, or only the ones queued or running with ``active=true``.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the book.
-    :type book_id: BookId
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param query: Page number and size, and whether to list running jobs alone.
     :type query: JobQuery
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param service: Job service of the request.
     :type service: JobService
     :returns: One page of the book's jobs.
     :rtype: Page[JobSchema]
     """
     pager = Pager[Job, JobSchema](query, JobSchema.model_validate)
-    return pager.page(await service.list_for_book(actor, book_id, pager.request, active=query.active))
+    return pager.page(await service.list_for_book(book, pager.request, active=query.active))
 
 
 @inject
-async def open_event_stream(book_id: BookIdPath, actor: ActorDep, service: JobServiceDep) -> AsyncIterator[BookEvents]:
+async def open_event_stream(
+    book: Annotated[Book, Depends(open_book)], service: JobServiceDep
+) -> AsyncIterator[BookEvents]:
     """Subscribe to the book's events for as long as the response streams, or refuse before it starts.
 
-    :param book_id: Identifier of the book.
-    :type book_id: BookId
-    :param actor: The signed-in account.
-    :type actor: Actor
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param service: Job service of the request.
     :type service: JobService
     :returns: Iterator yielding once the book's events published since subscribing, and unsubscribing afterwards.
     :rtype: AsyncIterator[BookEvents]
     """
     subscription = AsyncExitStack()
-    events = await subscription.enter_async_context(await service.events(actor, book_id))
+    events = await subscription.enter_async_context(await service.events(book))
     # try/finally rather than `async with` around the yield: FastAPI drives this generator (ASYNC119)
     try:
         yield events
@@ -128,11 +124,10 @@ async def open_event_stream(book_id: BookIdPath, actor: ActorDep, service: JobSe
         await subscription.aclose()
 
 
-@book_events.get('/{book_id}/events', response_class=EventSourceResponse, name=RouteName.BOOK_EVENTS)
+@router.get('/{book_id}/events', response_class=EventSourceResponse, name=RouteName.BOOK_EVENTS)
 async def stream_book_events(
-    book_id: BookIdPath,
+    book: Annotated[Book, Depends(open_book)],
     events: Annotated[BookEvents, Depends(open_event_stream)],
-    actor: ActorDep,
     freshness: FromDishka[BookFreshness],
     last_event_id: Annotated[str | None, Header()] = None,
 ) -> AsyncIterator[ServerSentEvent]:
@@ -144,12 +139,10 @@ async def stream_book_events(
     comes back with the id of the version now is sent nothing.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the book.
-    :type book_id: BookId
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param events: The book's events, subscribed to by ``open_event_stream`` before the version is read.
     :type events: BookEvents
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param freshness: Freshness of the reads of the books of the request, which knows the version of the book.
     :type freshness: BookFreshness
     :param last_event_id: The id of the last event the browser received before it reconnected, or None.
@@ -157,12 +150,12 @@ async def stream_book_events(
     :returns: Iterator yielding one server-sent event per domain event the browser listens to.
     :rtype: AsyncIterator[ServerSentEvent]
     """
-    current = await freshness.version(actor, book_id)
+    current = await freshness.version(book)
     if last_event_id is None:
-        named = BookVersionSchema(book_id=book_id, version=current)
+        named = BookVersionSchema(book_id=book.id, version=current)
         yield ServerSentEvent(event=EventName.BOOK_VERSION, id=str(current), data=named)
     elif last_event_id != str(current):
-        reset = BookVersionSchema(book_id=book_id, version=current)
+        reset = BookVersionSchema(book_id=book.id, version=current)
         yield ServerSentEvent(event=EventName.BOOK_RESET, id=str(current), data=reset)
     async for event in events:
         match event:
@@ -174,13 +167,8 @@ async def stream_book_events(
                 )
             case JobChanged(job=job):
                 yield ServerSentEvent(event=EventName.JOB_CHANGED, data=JobSchema.model_validate(job))
-            case PageVersionReady(book_id=book_id, version=version):
+            case PageVersionReady(book_id=ready_id, version=version):
                 yield ServerSentEvent(
                     event=EventName.PAGE_VERSION_READY,
-                    data=PageVersionReadySchema(book_id=book_id, page_id=version.page_id, version_id=version.id),
+                    data=PageVersionReadySchema(book_id=ready_id, page_id=version.page_id, version_id=version.id),
                 )
-
-
-router = APIRouter(tags=['jobs'])
-router.include_router(jobs)
-router.include_router(book_events)

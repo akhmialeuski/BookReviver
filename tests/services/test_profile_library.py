@@ -9,7 +9,7 @@ from bookreviver.domain.enums import OrderMode, RecipeKind, Stage
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.values import ProfileDraft, SliceRequest, Step
 from bookreviver.services.recipe_profiles import COPY_NAME
-from tests.helpers.builders import make_record
+from tests.helpers.builders import make_record, open_for
 from tests.helpers.processors import FakeProcessor, SecondProcessor, ThirdProcessor
 from tests.helpers.seeding import store_book
 
@@ -84,7 +84,7 @@ class TestBooksOfAProfile:
         other = await another_book(fx_kit, actor)
         profile = await save_profile(fx_kit, actor)
         for target in (book_record, other, book_record):
-            await fx_kit.profiles().apply(actor, target.id, profile.id, kind=RecipeKind.TEXT)
+            await fx_kit.profiles().apply(open_for(actor, target.id), profile.id, kind=RecipeKind.TEXT)
         listed = await fx_kit.profiles().library(actor, None, EVERYTHING)
         assert [(item.profile.id, item.books) for item in listed.items] == [(profile.id, BOOKS_OF_ONE_PROFILE)]
 
@@ -97,7 +97,7 @@ class TestBooksOfAProfile:
         actor, book_record = await fx_kit.seed_record()
         used = await save_profile(fx_kit, actor)
         unused = await fx_kit.profiles().duplicate(actor, used.id)
-        await fx_kit.profiles().apply(actor, book_record.id, used.id, kind=RecipeKind.TEXT)
+        await fx_kit.profiles().apply(open_for(actor, book_record.id), used.id, kind=RecipeKind.TEXT)
         listed = await fx_kit.profiles().library(actor, None, EVERYTHING)
         assert {item.profile.id: item.books for item in listed.items} == {used.id: 1, unused.id: 0}
 
@@ -122,7 +122,7 @@ class TestBooksOfAProfile:
         """
         actor, book_record = await fx_kit.seed_record()
         profile = await save_profile(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(actor, book_record.id, profile.id, kind=RecipeKind.TEXT)
+        applied = await fx_kit.profiles().apply(open_for(actor, book_record.id), profile.id, kind=RecipeKind.TEXT)
         await fx_kit.profiles().remove(actor, profile.id)
         listed = await fx_kit.profiles().library(actor, None, EVERYTHING)
         kept = await fx_kit.uow().read_book(book_record.id, lambda repos: repos.recipes.get(applied.recipe.id))
@@ -138,7 +138,7 @@ class TestBooksOfAProfile:
         other = await another_book(fx_kit, actor)
         profile = await save_profile(fx_kit, actor)
         applied = [
-            await fx_kit.profiles().apply(actor, target.id, profile.id, kind=RecipeKind.TEXT)
+            await fx_kit.profiles().apply(open_for(actor, target.id), profile.id, kind=RecipeKind.TEXT)
             for target in (book_record, other)
         ]
 

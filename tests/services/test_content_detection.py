@@ -26,7 +26,7 @@ from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import ContentDetection, PageStageKey
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.services.content_detection import ContentDetector
-from tests.helpers.builders import make_page, make_page_stage
+from tests.helpers.builders import make_page, make_page_stage, open_for
 from tests.helpers.page_services import make_page_service
 from tests.helpers.processing import ProcessingKit, stored_job
 from tests.helpers.processors import FakeContentProbe
@@ -177,7 +177,7 @@ async def detect(
     :returns: The job as it stands when the board is done.
     :rtype: Job
     """
-    job = await pages_of(kit).start_detection(actor, book_record.id, page_ids)
+    job = await pages_of(kit).start_detection(open_for(actor, book_record.id), page_ids)
     await kit.work_queue()
     return stored_job(kit, job.id)
 
@@ -382,7 +382,7 @@ class TestDetectionJob:
         """
         kit, probe = fx_probe_kit([ContentType.TEXT])
         actor, book_record, pages = await book_of(kit, [PageKind.TEXT])
-        job = await pages_of(kit).start_detection(actor, book_record.id, None)
+        job = await pages_of(kit).start_detection(open_for(actor, book_record.id), None)
         await kit.board.cancel(job.id)
 
         await kit.work_queue()
@@ -404,7 +404,7 @@ class TestStartDetection:
         kit, _ = fx_probe_kit([])
         actor, book_record, pages = await book_of(kit, [PageKind.TEXT, PageKind.TEXT])
 
-        job = await pages_of(kit).start_detection(actor, book_record.id, [pages[1].id])
+        job = await pages_of(kit).start_detection(open_for(actor, book_record.id), [pages[1].id])
 
         expect((job.kind, job.state) == (JobKind.DETECT_CONTENT, JobState.QUEUED))
         expect(ContentDetection.from_map(job.params) == ContentDetection(page_ids=(pages[1].id,)))
@@ -421,7 +421,7 @@ class TestStartDetection:
         actor, book_record, _ = await book_of(kit, [PageKind.TEXT])
 
         with pytest.raises(NotFoundError):
-            await pages_of(kit).start_detection(actor, book_record.id, [PageId(uuid4())])
+            await pages_of(kit).start_detection(open_for(actor, book_record.id), [PageId(uuid4())])
 
         expect(not kit.board.put_jobs)
         assert_expectations()
@@ -434,10 +434,10 @@ class TestStartDetection:
         """
         kit, _ = fx_probe_kit([])
         actor, book_record, pages = await book_of(kit, [PageKind.TEXT])
-        await pages_of(kit).start_detection(actor, book_record.id, None)
+        await pages_of(kit).start_detection(open_for(actor, book_record.id), None)
 
         with pytest.raises(ConflictError, match='being detected'):
-            await pages_of(kit).start_detection(actor, book_record.id, [pages[0].id])
+            await pages_of(kit).start_detection(open_for(actor, book_record.id), [pages[0].id])
 
     async def test_the_detection_of_new_pages_is_queued_once_while_one_waits(
         self, fx_probe_kit: ProbeKitFactory
@@ -475,7 +475,7 @@ class TestChangeOfContent:
         await geometry_records(kit, book_record, pages)
 
         overview = await pages_of(kit).update(
-            actor, book_record.id, pages[0].id, PageChanges(content_type=ContentType.COLOR_PICTURE)
+            open_for(actor, book_record.id), pages[0].id, PageChanges(content_type=ContentType.COLOR_PICTURE)
         )
 
         expect((overview.page.content_type, overview.page.content_by_hand) == (ContentType.COLOR_PICTURE, True))
@@ -495,7 +495,9 @@ class TestChangeOfContent:
         actor, book_record, pages = await book_of(kit, [PageKind.TEXT])
         await geometry_records(kit, book_record, pages)
 
-        await pages_of(kit).update(actor, book_record.id, pages[0].id, PageChanges(content_type=ContentType.TEXT))
+        await pages_of(kit).update(
+            open_for(actor, book_record.id), pages[0].id, PageChanges(content_type=ContentType.TEXT)
+        )
 
         assert await geometry_state(kit, book_record.id, pages[0]) is StageState.FRESH
 
