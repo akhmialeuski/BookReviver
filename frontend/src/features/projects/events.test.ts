@@ -98,11 +98,8 @@ describe('applyProjectEvent', () => {
     ['settings', BY_PREDICATE],
     ['history', BY_PREDICATE],
     ['recipes', 'listRecipesApiV1ProjectsProjectIdStagesStageRecipesGet'],
-  ] as const)('reads %s again once the burst of a change of it ends', (resource, read) => {
+  ] as const)('reads %s again at once when a change of it arrives alone', (resource, read) => {
     applyProjectEvent(queryClient, PROJECT_ID, change([resource]), sync);
-    expect(invalidated()).toEqual([]);
-
-    vi.advanceTimersByTime(BURST_DELAY_MS);
 
     expect(invalidated()).toContain(read);
     expect(sync.version).toBe(2);
@@ -126,15 +123,17 @@ describe('applyProjectEvent', () => {
     expect(queryClient.getQueryState(collectable)?.isInvalidated).toBe(true);
   });
 
-  it('reads a part once for a burst of changes of it, one per page of a run', () => {
+  it('reads a part at the start and at the end of a burst of changes of it, one per page of a run', () => {
+    const stageReads = () =>
+      invalidated().filter((read) => read === 'listStagesApiV1ProjectsProjectIdStagesGet');
     for (let version = 2; version <= 20; version += 1) {
       applyProjectEvent(queryClient, PROJECT_ID, change(['stages'], version), sync);
     }
+    expect(stageReads()).toHaveLength(1);
+
     vi.advanceTimersByTime(BURST_DELAY_MS);
 
-    expect(
-      invalidated().filter((read) => read === 'listStagesApiV1ProjectsProjectIdStagesGet'),
-    ).toHaveLength(1);
+    expect(stageReads()).toHaveLength(2);
   });
 
   it('leaves the pages alone while a change of the reader is in flight, and reads what depends on them', () => {
@@ -165,12 +164,13 @@ describe('applyProjectEvent', () => {
     expect(sync.version).toBe(3);
   });
 
-  it('takes the first change it sees as it is when it knows no version yet', () => {
+  it('takes the first change it sees as it is when it knows no version yet, and reads only what it names', () => {
     sync = { version: null };
 
     applyProjectEvent(queryClient, PROJECT_ID, change(['project'], 7), sync);
 
-    expect(invalidated()).toEqual([]);
+    expect(invalidated()).toContain('projectApiV1ProjectsProjectIdGet');
+    expect(invalidated()).not.toContain('listRecipesApiV1ProjectsProjectIdStagesStageRecipesGet');
     expect(sync.version).toBe(7);
   });
 
@@ -247,7 +247,8 @@ describe('applyProjectEvent', () => {
     ]);
   });
 
-  it('marks the jobs stale once for a burst of progress events of a running job', () => {
+  it('marks the jobs stale at the start and at the end of a burst of progress events of a running job', () => {
+    const JOBS_READ = 'listProjectJobsApiV1ProjectsProjectIdJobsGet';
     for (let done = 1; done <= 20; done += 1) {
       applyProjectEvent(
         queryClient,
@@ -256,11 +257,11 @@ describe('applyProjectEvent', () => {
         sync,
       );
     }
-    expect(invalidated()).toEqual([]);
+    expect(invalidated()).toEqual([JOBS_READ]);
 
     vi.advanceTimersByTime(BURST_DELAY_MS);
 
-    expect(invalidated()).toEqual(['listProjectJobsApiV1ProjectsProjectIdJobsGet']);
+    expect(invalidated()).toEqual([JOBS_READ, JOBS_READ]);
   });
 
   it('keeps the version a page-version-ready event names and reads nothing', () => {
