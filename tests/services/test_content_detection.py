@@ -40,8 +40,9 @@ if TYPE_CHECKING:
     from bookreviver.adapters.storage.local import LocalAssetStore
     from bookreviver.domain.entities import Actor, Job, Page, PageVersion, Project
     from bookreviver.domain.ids import ProjectId
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.pages import PageService
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -51,11 +52,15 @@ ANSWERS: tuple[ContentType, ...] = (ContentType.TEXT, ContentType.COLOR_PICTURE,
 
 
 @pytest.fixture
-def fx_probe_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) -> ProbeKitFactory:
+def fx_probe_kit(
+    fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore
+) -> ProbeKitFactory:
     """Return a function building the processing kit with the fake processor that tells what an image shows.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_asset_store: Local asset store of the test.
     :type fx_asset_store: LocalAssetStore
     :returns: Function taking what the pages are found to show, in the order they are read, and returning the kit and
@@ -72,7 +77,7 @@ def fx_probe_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) -> P
         :rtype: tuple[ProcessingKit, FakeContentProbe]
         """
         probe = FakeContentProbe(answers)
-        return ProcessingKit(fx_database, fx_asset_store, processors=[SplitNone(), probe]), probe
+        return ProcessingKit(fx_database, fx_uow, fx_asset_store, processors=[SplitNone(), probe]), probe
 
     return build
 
@@ -140,11 +145,11 @@ async def geometry_records(kit: ProcessingKit, project: Project, pages: list[Pag
     :type pages: list[Page]
     """
 
-    def save_records(repos: Repositories, _project: Project) -> None:
+    def save_records(repos: BookRepositories, _project: Project) -> None:
         """Save the records.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: Project of the book, which the work does not need.
         :type _project: Project
         """
@@ -183,7 +188,7 @@ async def stored(kit: ProcessingKit, page: Page) -> Page:
     :returns: The page as the database holds it now.
     :rtype: Page
     """
-    return await kit.uow().read(lambda repos: repos.pages.get(page.id))
+    return await kit.uow().read_book(page.project_id, lambda repos: repos.pages.get(page.id))
 
 
 async def geometry_state(kit: ProcessingKit, page: Page) -> StageState:
@@ -196,7 +201,11 @@ async def geometry_state(kit: ProcessingKit, page: Page) -> StageState:
     :returns: The state of the record.
     :rtype: StageState
     """
-    return (await kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)))).state
+    return (
+        await kit.uow().read_book(
+            page.project_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        )
+    ).state
 
 
 class TestDetectionJob:
@@ -310,16 +319,18 @@ class TestDetectionJob:
         assert_expectations()
 
     async def test_a_machine_without_the_processor_leaves_the_pages_to_their_kind(
-        self, fx_database: SqlDatabase, fx_asset_store: LocalAssetStore
+        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore
     ) -> None:
         """Verify a catalogue without the processor, as a machine without OpenCV has, gives a job that reads nothing.
 
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Local asset store of the test.
         :type fx_asset_store: LocalAssetStore
         """
-        kit = ProcessingKit(fx_database, fx_asset_store, processors=[SplitNone()])
+        kit = ProcessingKit(fx_database, fx_uow, fx_asset_store, processors=[SplitNone()])
         actor, project, pages = await book_of(kit, [PageKind.TEXT])
 
         job = await detect(kit, actor, project)

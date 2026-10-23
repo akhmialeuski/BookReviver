@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Actor, Job, Page, PageStage, Project, Recipe
     from bookreviver.domain.ids import ProjectId
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -120,11 +120,11 @@ async def placed_page(
         data=data,
     )
 
-    def add_normalize(repos: Repositories, _project: Project) -> None:
+    def add_normalize(repos: BookRepositories, _project: Project) -> None:
         """Add the normalize version and the record of the Geometry stage that has it as its current version.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: Project of the book, which the work does not need.
         :type _project: Project
         """
@@ -190,7 +190,9 @@ async def geometry_record(kit: ProcessingKit, page: Page) -> PageStage:
     :returns: The record.
     :rtype: PageStage
     """
-    return await kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)))
+    return await kit.uow().read_book(
+        page.project_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+    )
 
 
 async def normalize_params(
@@ -425,13 +427,13 @@ class TestMeasureBook:
         recipe = await fx_cv_kit.recipe_of(actor, project, Stage.GEOMETRY)
         page = await placed_page(fx_cv_kit, project, recipe, FIRST_KEY, block_data(300, 600, 30))
         await measure(fx_cv_kit, actor, project)
-        written = await fx_cv_kit.uow().read(lambda repos: repos.recipes.get(recipe.id))
+        written = await fx_cv_kit.uow().read_book(page.project_id, lambda repos: repos.recipes.get(recipe.id))
 
-        def make_fresh(repos: Repositories, _project: Project) -> None:
+        def make_fresh(repos: BookRepositories, _project: Project) -> None:
             """Make the record of the Geometry stage of the page fresh again.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: Project of the book, which the work does not need.
             :type _project: Project
             """
@@ -441,7 +443,7 @@ class TestMeasureBook:
 
         await fx_cv_kit.uow().change_book(project.id, make_fresh)
         job = await measure(fx_cv_kit, actor, project)
-        again = await fx_cv_kit.uow().read(lambda repos: repos.recipes.get(recipe.id))
+        again = await fx_cv_kit.uow().read_book(project.id, lambda repos: repos.recipes.get(recipe.id))
         record = await geometry_record(fx_cv_kit, page)
         expect(job.state is JobState.SUCCEEDED)
         expect(again.steps == written.steps)
@@ -685,7 +687,7 @@ class TestMeasureApplyStep:
         saved = False
 
         async def save_then_change_book[T](
-            uow: SqlAlchemyUnitOfWork, project_id: ProjectId, work: Callable[[Repositories, Project], T]
+            uow: SqlAlchemyUnitOfWork, project_id: ProjectId, work: Callable[[BookRepositories, Project], T]
         ) -> T:
             """Save the recipe of a kind through the form's use case before the first change of a book, then change.
 
@@ -694,7 +696,7 @@ class TestMeasureApplyStep:
             :param project_id: Project whose book is changed.
             :type project_id: ProjectId
             :param work: Function over the repositories of the transaction and the project.
-            :type work: Callable[[Repositories, Project], T]
+            :type work: Callable[[BookRepositories, Project], T]
             :returns: What the work returns.
             :rtype: T
             """

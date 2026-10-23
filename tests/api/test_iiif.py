@@ -12,8 +12,8 @@ from bookreviver.api.schemas.iiif import IIIF_INFO_FILE, IIIF_INFO_MEDIA_TYPE
 from bookreviver.domain.enums import Rendition
 from bookreviver.domain.ids import JobId, SourceId, StorageKey
 from bookreviver.domain.keys import ProjectKeys
-from tests.helpers.builders import make_page, make_page_version, make_project, new_account_id
-from tests.helpers.seeding import commit_project
+from tests.helpers.builders import make_page, make_page_version, make_project
+from tests.helpers.seeding import commit_account, store_project
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
@@ -21,7 +21,10 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, PageVersion, Project
+    from bookreviver.domain.ids import AccountId
+    from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.storage import AssetStore, SourceStore
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -54,22 +57,22 @@ class Book(NamedTuple):
         return ProjectKeys(self.project.id).version_rendition(self.version, Rendition.TILES)
 
 
-async def _store_book(database: SqlDatabase, assets: AssetStore, owner: Actor | None) -> Book:
+async def _store_book(uow: UnitOfWork, assets: AssetStore, owner: AccountId) -> Book:
     """Store a project with a page whose pyramid holds an ``info.json`` and one tile, and whose thumbnail exists.
 
-    :param database: Database of the test, which the application runs on.
-    :type database: SqlDatabase
+    :param uow: Unit of work over the catalogue and the books of the test.
+    :type uow: UnitOfWork
     :param assets: Asset store of the application.
     :type assets: AssetStore
-    :param owner: Account owning the project, or None for one that is not the signed-in account.
-    :type owner: Actor | None
+    :param owner: Committed account that owns the project.
+    :type owner: AccountId
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project(owner_id=new_account_id() if owner is None else owner.account_id)
+    project = make_project()
     page = make_page(project_id=project.id)
     version = make_page_version(page_id=page.id)
-    await commit_project(database, project, page, versions=[version])
+    await store_project(uow, project, page, owner=owner, versions=[version])
     keys = ProjectKeys(project.id)
     for key, content in (
         (f'{keys.version_rendition(version, Rendition.TILES)}/{IIIF_INFO_FILE}', INFO_CONTENT),
@@ -86,20 +89,24 @@ class TestIiifFile:
     """Tests for GET /iiif/{key}."""
 
     async def test_info_json_is_served_exactly_as_the_pyramid_stores_it(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_asset_store: AssetStore, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_asset_store: AssetStore,
+        fx_actor: Actor,
     ) -> None:
         """Verify the document reaches the viewer byte for byte, with the IIIF media type and an eternal cache.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        book = await _store_book(fx_database, fx_asset_store, fx_actor)
+        book = await _store_book(fx_uow(), fx_asset_store, fx_actor.account_id)
 
         response = await fx_client.get(f'{IIIF_PATH}/{book.pyramid}/{IIIF_INFO_FILE}')
 
@@ -113,7 +120,7 @@ class TestIiifFile:
     async def test_streams_other_files_unchanged_as_immutable(
         self,
         fx_client: httpx.AsyncClient,
-        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_asset_store: AssetStore,
         fx_actor: Actor,
         rendition: Rendition,
@@ -122,8 +129,8 @@ class TestIiifFile:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         :param fx_actor: The signed-in account.
@@ -131,7 +138,7 @@ class TestIiifFile:
         :param rendition: Rendition whose file is requested, a tile being a file inside the pyramid.
         :type rendition: Rendition
         """
-        book = await _store_book(fx_database, fx_asset_store, fx_actor)
+        book = await _store_book(fx_uow(), fx_asset_store, fx_actor.account_id)
         key = ProjectKeys(book.project.id).version_rendition(book.version, rendition)
         address = f'{key}/{TILE_PATH}' if rendition is Rendition.TILES else key
 
@@ -146,7 +153,7 @@ class TestIiifFile:
     async def test_key_without_a_file_is_not_found(
         self,
         fx_client: httpx.AsyncClient,
-        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_asset_store: AssetStore,
         fx_actor: Actor,
         name: str,
@@ -155,8 +162,8 @@ class TestIiifFile:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         :param fx_actor: The signed-in account.
@@ -164,7 +171,7 @@ class TestIiifFile:
         :param name: File or directory inside the version's directory that is requested.
         :type name: str
         """
-        book = await _store_book(fx_database, fx_asset_store, fx_actor)
+        book = await _store_book(fx_uow(), fx_asset_store, fx_actor.account_id)
         directory = ProjectKeys(book.project.id).version_directory(book.version)
 
         response = await fx_client.get(f'{IIIF_PATH}/{directory}/{name}')
@@ -172,7 +179,11 @@ class TestIiifFile:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_another_accounts_file_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_asset_store: AssetStore
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_asset_store: AssetStore,
     ) -> None:
         """Verify a stored file of another account's project answers exactly like a missing one.
 
@@ -180,31 +191,33 @@ class TestIiifFile:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         """
-        book = await _store_book(fx_database, fx_asset_store, None)
+        book = await _store_book(fx_uow(), fx_asset_store, await commit_account(fx_database))
 
         response = await fx_client.get(f'{IIIF_PATH}/{book.pyramid}/{IIIF_INFO_FILE}')
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_source_and_upload_files_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_source_store: SourceStore, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_source_store: SourceStore, fx_actor: Actor
     ) -> None:
         """Verify a stored source file and a staged upload of the account's own project answer 404, not 500.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_source_store: Source store of the application.
         :type fx_source_store: SourceStore
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         keys = ProjectKeys(project.id)
         promoted, staged = JobId(uuid4()), JobId(uuid4())
         source_id = SourceId(uuid4())
@@ -220,20 +233,24 @@ class TestIiifFile:
         assert [response.status_code for response in responses] == [status.HTTP_404_NOT_FOUND] * 2
 
     async def test_dot_segment_is_rejected(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_asset_store: AssetStore, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_asset_store: AssetStore,
+        fx_actor: Actor,
     ) -> None:
         """Verify a key climbing with an encoded ``..`` is refused by validation before any lookup.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        book = await _store_book(fx_database, fx_asset_store, fx_actor)
+        book = await _store_book(fx_uow(), fx_asset_store, fx_actor.account_id)
 
         response = await fx_client.get(f'{IIIF_PATH}/{book.pyramid}/%2E%2E/{Rendition.THUMBNAIL}')
 

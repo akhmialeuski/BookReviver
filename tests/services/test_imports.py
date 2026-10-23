@@ -57,6 +57,7 @@ from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.runtime import JobControl
 from bookreviver.services.base_versions import SPLIT_NONE
 from bookreviver.services.imports import IMPORT_ACTIVE, NO_SOURCE_IMPORTED, ImportRun
+from bookreviver.services.library import Library
 from bookreviver.services.recipes import DefaultRecipes, RecipeTemplate
 from bookreviver.services.sources import SOURCE_IMPORTING, SourceService
 from tests.adapters.imaging.samples import (
@@ -259,8 +260,8 @@ async def fx_project(fx_rig: ImportRig, fx_owner: Actor) -> Project:
     :returns: The stored project.
     :rtype: Project
     """
-    project = make_project(owner_id=fx_owner.account_id)
-    await commit_project(fx_rig.database, project)
+    project = make_project()
+    await commit_project(fx_rig.database, fx_rig.open_uow(), project, owner=fx_owner.account_id)
     return project
 
 
@@ -398,7 +399,7 @@ async def _report(rig: ImportRig, project_id: ProjectId) -> list[Source]:
     :returns: The files, in the order the imports recorded them.
     :rtype: list[Source]
     """
-    return list(await rig.open_uow().read(lambda repos: repos.sources.list_unimported(project_id)))
+    return list(await rig.open_uow().read_book(project_id, lambda repos: repos.sources.list_unimported(project_id)))
 
 
 async def _sources(rig: ImportRig, project_id: ProjectId) -> list[Source]:
@@ -453,18 +454,21 @@ async def _sections(rig: ImportRig, project_id: ProjectId) -> list[PaginationSec
     return (await stored_book(rig.open_uow(), project_id)).sections
 
 
-async def _versions(rig: ImportRig, page_ids: Collection[PageId]) -> list[PageVersion]:
+async def _versions(rig: ImportRig, project_id: ProjectId, page_ids: Collection[PageId]) -> list[PageVersion]:
     """Read the versions of some pages as committed, page by page in the order the versions were created.
 
     :param rig: Adapters of the import.
     :type rig: ImportRig
+    :param project_id: Project owning the pages.
+    :type project_id: ProjectId
     :param page_ids: Pages owning the versions.
     :type page_ids: Collection[PageId]
     :returns: The versions.
     :rtype: list[PageVersion]
     """
-    return await rig.open_uow().read(
-        lambda repos: [version for page_id in page_ids for version in repos.page_versions.list_for_page(page_id)]
+    return await rig.open_uow().read_book(
+        project_id,
+        lambda repos: [version for page_id in page_ids for version in repos.page_versions.list_for_page(page_id)],
     )
 
 
@@ -478,7 +482,7 @@ async def _project(rig: ImportRig, project_id: ProjectId) -> Project:
     :returns: The project.
     :rtype: Project
     """
-    return await rig.open_uow().read(lambda repos: repos.projects.get(project_id))
+    return await rig.open_uow().read_book(project_id, lambda repos: repos.projects.get(project_id))
 
 
 async def _is_stored(assets: AssetStore, key: StorageKey) -> bool:
@@ -510,8 +514,8 @@ async def _project_with(rig: ImportRig, owner: Actor, policy: ImagePolicy) -> Pr
     :returns: The stored project.
     :rtype: Project
     """
-    project = evolve(make_project(owner_id=owner.account_id), image_policy=policy)
-    await commit_project(rig.database, project)
+    project = evolve(make_project(), image_policy=policy)
+    await commit_project(rig.database, rig.open_uow(), project, owner=owner.account_id)
     return project
 
 
@@ -1161,7 +1165,7 @@ class TestRunImport:
                 for rendition in (scan.renditions.full, *DERIVED)
                 if not await _is_stored(fx_rig.assets, key := keys.scan_rendition(scan, rendition))
             ]
-        versions = await _versions(fx_rig, [page.id for page in pages])
+        versions = await _versions(fx_rig, fx_project.id, [page.id for page in pages])
         for version in versions:
             missing += [
                 key
@@ -1202,7 +1206,7 @@ class TestRunImport:
         keys = ProjectKeys(fx_project.id)
         [scan] = await _scans(fx_rig, fx_project.id)
         [page] = await _pages(fx_rig, fx_project.id)
-        [version] = await _versions(fx_rig, [page.id])
+        [version] = await _versions(fx_rig, page.project_id, [page.id])
         assert sorted(fx_rig.tiler.resource_ids) == sorted(
             [
                 f'{IIIF_ROOT}/{keys.scan_rendition(scan, Rendition.TILES)}',
@@ -1324,7 +1328,7 @@ class TestRunImportFullFormat:
         keys = ProjectKeys(project.id)
         [scan] = await _scans(fx_rig, project.id)
         [page] = await _pages(fx_rig, project.id)
-        [version] = await _versions(fx_rig, [page.id])
+        [version] = await _versions(fx_rig, page.project_id, [page.id])
         other = Rendition.FULL_JPEG if case.expected is Rendition.FULL_PNG else Rendition.FULL_PNG
         expect(fx_rig.rasterizer.formats == [case.expected])
         expect(scan.renditions.full is case.expected)
@@ -1406,7 +1410,7 @@ class TestRunImportDjvu:
             wanted = DJVU_FULL_IMAGES[policy, scan.facts.color_mode]
             expect(await _stored_image(fx_rig, keys.scan_rendition(scan, scan.renditions.full)) == wanted)
         for page in await _pages(fx_rig, project.id):
-            [version] = await _versions(fx_rig, [page.id])
+            [version] = await _versions(fx_rig, page.project_id, [page.id])
             scan = next(scan for scan in scans if scan.id == page.scan_id)
             wanted = DJVU_FULL_IMAGES[policy, scan.facts.color_mode]
             expect(version.renditions is not None and version.renditions.full is scan.renditions.full)
@@ -1741,10 +1745,10 @@ class TestRunImportChecks:
         :param fx_samples: Directory the sample files are built in.
         :type fx_samples: Path
         """
-        project = make_project(owner_id=fx_owner.account_id)
+        project = make_project()
         owner_author = (Contributor(name='Owner Author', role=ContributorRole.AUTHOR),)
         described = evolve(project, details=evolve(project.details, contributors=owner_author))
-        await commit_project(fx_rig.database, described)
+        await commit_project(fx_rig.database, fx_rig.open_uow(), described, owner=fx_owner.account_id)
 
         await _import(
             fx_rig,
@@ -2513,8 +2517,8 @@ class TestRunImportApplyStep:
         job = await _import(fx_rig, fx_owner, fx_project.id, [image_upload(fx_samples, IMAGE_NAME)])
 
         pages = await _pages(fx_rig, fx_project.id)
-        versions = await fx_rig.open_uow().read(
-            lambda repos: repos.page_versions.list_base_versions([page.id for page in pages])
+        versions = await fx_rig.open_uow().read_book(
+            fx_project.id, lambda repos: repos.page_versions.list_base_versions([page.id for page in pages])
         )
         # The progress counts the file of the upload, and the scan counted one less to cut
         expect((job.state, job.progress.done, job.progress.total) == (JobState.SUCCEEDED, 1, 1))
@@ -2616,7 +2620,10 @@ def fx_sources(fx_rig: ImportRig) -> SourceService:
     :returns: The source service of a new request.
     :rtype: SourceService
     """
-    return SourceService(uow=fx_rig.open_uow(), board=fx_rig.fakes.board, sources=fx_rig.sources, assets=fx_rig.assets)
+    uow = fx_rig.open_uow()
+    return SourceService(
+        uow=uow, library=Library(uow=uow), board=fx_rig.fakes.board, sources=fx_rig.sources, assets=fx_rig.assets
+    )
 
 
 @pytest.fixture
@@ -2646,7 +2653,7 @@ async def fx_files(fx_rig: ImportRig, fx_project: Project) -> list[Source]:
         status=SourceStatus.SKIPPED,
     )
     files = [imported, rejected, skipped]
-    await fx_rig.open_uow().change(lambda repos: repos.sources.add_many(files))
+    await fx_rig.open_uow().change_book(fx_project.id, lambda repos, _project: repos.sources.add_many(files))
     return files
 
 

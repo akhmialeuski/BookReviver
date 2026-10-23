@@ -14,11 +14,11 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from sqlalchemy import text
 
-from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
+from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ChangeWaitSettings
-from tests.helpers.builders import make_project
+from bookreviver.domain.entities import LibraryEntry
+from tests.helpers.builders import EPOCH, make_project
 from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.ids import AccountId
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -120,24 +121,24 @@ class TestSqlDatabase:
     """Tests for the engines SqlDatabase opens."""
 
     async def test_update_stores_the_updated_at_of_the_domain(
-        self, fx_database: SqlDatabase, fx_owner_id: AccountId
+        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId
     ) -> None:
         """Verify a project updated with a new title keeps the ``updated_at`` the domain gave it, and no other.
 
         advanced-alchemy's touch listener, on by default, replaces an ``updated_at`` the flush does not change with
         the wall clock, which is not the ``Clock`` of the domain.
 
-        :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        project = make_project(owner_id=fx_owner_id)
+        project = make_project()
         renamed = evolve(project, details=evolve(project.details, title=NEW_TITLE))
-        uow = SqlAlchemyUnitOfWork(fx_database)
-        await store_project(uow, project)
-        await uow.change(lambda repos: repos.projects.update(renamed))
-        stored = await uow.read(lambda repos: repos.projects.get(project.id))
+        uow = fx_uow()
+        await store_project(uow, project, owner=fx_owner_id)
+        await uow.change_book(project.id, lambda repos, _project: repos.projects.update(renamed))
+        stored = await uow.read_book(project.id, lambda repos: repos.projects.get(project.id))
         assert stored.updated_at == renamed.updated_at
 
     async def test_url_of_the_async_driver_gets_the_driver_of_the_standard_library(self, tmp_path: Path) -> None:
@@ -149,7 +150,9 @@ class TestSqlDatabase:
         :param tmp_path: Temporary directory of the test, holding the file the URL names.
         :type tmp_path: Path
         """
-        database = SqlDatabase(ASYNC_DRIVER_URL.format(path=tmp_path / 'driver.db'), tracer=NullTracer())
+        database = SqlDatabase(
+            ASYNC_DRIVER_URL.format(path=tmp_path / 'driver.db'), schema=Schema.CATALOGUE, tracer=NullTracer()
+        )
         expect(database.engine.url.drivername == SYNC_DRIVER, 'the writer')
         expect(database.read_engine.url.drivername == SYNC_DRIVER, 'the readers')
         assert_expectations()
@@ -157,7 +160,7 @@ class TestSqlDatabase:
     async def test_database_other_than_sqlite_is_refused(self) -> None:
         """Verify a URL that names PostgreSQL is refused with an error that says the data lives in SQLite."""
         with pytest.raises(ValueError, match='SQLite'):
-            SqlDatabase(POSTGRESQL_URL, tracer=NullTracer())
+            SqlDatabase(POSTGRESQL_URL, schema=Schema.CATALOGUE, tracer=NullTracer())
 
     async def test_connections_leave_transactions_to_the_engine(self, fx_database: SqlDatabase) -> None:
         """Verify the driver connection of each engine begins no transaction by itself.
@@ -210,22 +213,30 @@ class TestSqlDatabase:
 class TestSqliteTransactions:
     """Tests for the transactions the engines put around the work of a unit of work."""
 
-    async def test_change_begins_immediate_and_ends_with_commit(self, fx_database: SqlDatabase) -> None:
+    async def test_change_begins_immediate_and_ends_with_commit(
+        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+    ) -> None:
         """Verify a change takes the write lock of SQLite when it begins and commits when it ends, and no more.
 
-        :param fx_database: Fresh SQLite database with every table created.
+        :param fx_database: Fresh catalogue with every table created, whose statements are traced.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
-        uow = SqlAlchemyUnitOfWork(fx_database, wait_seconds=WAIT_SECONDS)
+        uow = fx_uow(wait_seconds=WAIT_SECONDS)
         with traced_sql(fx_database.engine) as statements:
             await uow.change(lambda _repos: None)
         assert statements == [BEGIN_WRITE, COMMIT_STATEMENT]
 
-    async def test_change_left_by_an_exception_ends_with_rollback(self, fx_database: SqlDatabase) -> None:
+    async def test_change_left_by_an_exception_ends_with_rollback(
+        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+    ) -> None:
         """Verify a change whose work raises rolls the transaction back, so it holds the lock no longer.
 
-        :param fx_database: Fresh SQLite database with every table created.
+        :param fx_database: Fresh catalogue with every table created, whose statements are traced.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
 
         def leave_by_exception(_repos: object) -> None:
@@ -237,68 +248,68 @@ class TestSqliteTransactions:
             """
             raise ValueError
 
-        uow = SqlAlchemyUnitOfWork(fx_database, wait_seconds=WAIT_SECONDS)
+        uow = fx_uow(wait_seconds=WAIT_SECONDS)
         with traced_sql(fx_database.engine) as statements, pytest.raises(ValueError, match=r'^$'):
             await uow.change(leave_by_exception)
         assert statements == [BEGIN_WRITE, ROLLBACK_STATEMENT]
 
     async def test_read_begins_deferred_and_ends_with_rollback_on_a_connection_of_the_readers(
-        self, fx_database: SqlDatabase, fx_owner_id: AccountId
+        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify a read begins a deferred transaction on the engine of the readers and ends it with a rollback.
 
         The read takes no write lock, since its transaction is not ``BEGIN IMMEDIATE``, and commits nothing, and the
         engine of the writer sees no statement of it.
 
-        :param fx_database: Fresh SQLite database with every table created.
+        :param fx_database: Fresh catalogue with every table created, whose statements are traced.
         :type fx_database: SqlDatabase
-        :param fx_owner_id: Committed account owning the project.
-        :type fx_owner_id: AccountId
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
-        project = make_project(owner_id=fx_owner_id)
-        uow = SqlAlchemyUnitOfWork(fx_database)
-        await store_project(uow, project)
+        uow = fx_uow()
         with traced_sql(fx_database.read_engine) as reading, traced_sql(fx_database.engine) as writing:
-            await uow.read(lambda repos: repos.projects.get(project.id))
+            await uow.read(lambda repos: repos.library.list_all())
         assert (transaction_statements(reading), writing) == ([BEGIN_READ, ROLLBACK_STATEMENT], [])
 
     async def test_change_commits_while_a_reader_sits_in_a_read_transaction(
-        self, fx_database: SqlDatabase, fx_owner_id: AccountId
+        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId
     ) -> None:
         """Verify a change commits at once while another connection holds a read transaction open.
 
         In the rollback journal a commit waits for every reader to leave the file, so this one would wait for the wait
         limit and fail. In the write-ahead log the reader keeps its snapshot and the commit appends to the log.
 
-        :param fx_database: Fresh SQLite database with every table created.
+        :param fx_database: Fresh catalogue with every table created, which a plain connection holds a read on.
         :type fx_database: SqlDatabase
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_owner_id: Committed account the entry of the change names.
         :type fx_owner_id: AccountId
         """
-        project = make_project(owner_id=fx_owner_id)
-        uow = SqlAlchemyUnitOfWork(fx_database)
+        entry = LibraryEntry(project_id=make_project().id, owner_id=fx_owner_id, added_at=EPOCH)
+        uow = fx_uow()
         path = fx_database.engine.url.database
         assert path is not None
         with closing(sqlite3.connect(path, autocommit=True)) as reader:
             reader.execute(BEGIN_READ)
             reader.execute(SELECT_SCHEMA).fetchall()
-            await store_project(uow, project)
-        assert await uow.read(lambda repos: repos.projects.get(project.id)) == project
+            await uow.change(lambda repos: repos.library.add(entry))
+        assert await uow.read(lambda repos: repos.library.get(entry.project_id)) == entry
 
     async def test_change_book_hands_the_work_the_project_as_the_last_change_committed_it(
-        self, fx_database: SqlDatabase, fx_owner_id: AccountId
+        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId
     ) -> None:
         """Verify a ``change_book`` reads the project row at its start, so it sees the title another change stored.
 
-        :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        project = make_project(owner_id=fx_owner_id)
+        project = make_project()
         renamed = evolve(project, details=evolve(project.details, title=NEW_TITLE))
-        uow = SqlAlchemyUnitOfWork(fx_database)
-        await store_project(uow, project)
-        await uow.change(lambda repos: repos.projects.update(renamed))
+        uow = fx_uow()
+        await store_project(uow, project, owner=fx_owner_id)
+        await uow.change_book(project.id, lambda repos, _project: repos.projects.update(renamed))
         held = await uow.change_book(project.id, lambda _repos, current: current)
         assert held.details.title == NEW_TITLE

@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Actor, Page, PageVersion, Project
     from bookreviver.domain.enums import RunOutcome
+    from bookreviver.domain.ids import ProjectId
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -49,41 +50,47 @@ async def untiled_version(kit: ProcessingKit) -> tuple[Actor, Project, PageVersi
     base = await kit.seed_base_version(page)
     untiled = evolve(base, id=UNTILED_VERSION_ID, tiles_ready=False)
     await kit.uow().change_book(project.id, lambda repos, _project: repos.page_versions.add(untiled))
-    await kit.store_files(untiled)
+    await kit.store_files(untiled, project.id)
     return actor, project, untiled
 
 
-async def delete_the_version(kit: ProcessingKit, version: PageVersion) -> None:
+async def delete_the_version(kit: ProcessingKit, project_id: ProjectId, version: PageVersion) -> None:
     """Delete the version in a change of its own, as the removal of a page would.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Project whose book holds the version.
+    :type project_id: ProjectId
     :param version: The version to delete.
     :type version: PageVersion
     """
-    await change_versions(kit, version, lambda versions: versions.delete(version.id))
+    await change_versions(kit, project_id, lambda versions: versions.delete(version.id))
 
 
-async def fail_the_version(kit: ProcessingKit, version: PageVersion) -> None:
+async def fail_the_version(kit: ProcessingKit, project_id: ProjectId, version: PageVersion) -> None:
     """Mark the version failed in a change of its own, as the collection of old versions would.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Project whose book holds the version.
+    :type project_id: ProjectId
     :param version: The version to mark.
     :type version: PageVersion
     """
-    await change_versions(kit, version, lambda versions: versions.update(evolve(version, state=VersionState.FAILED)))
+    await change_versions(kit, project_id, lambda versions: versions.update(evolve(version, state=VersionState.FAILED)))
 
 
-async def cut_the_tiles_elsewhere(kit: ProcessingKit, version: PageVersion) -> None:
+async def cut_the_tiles_elsewhere(kit: ProcessingKit, project_id: ProjectId, version: PageVersion) -> None:
     """Mark the pyramid of the version cut in a change of its own, as the end of a run would.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
+    :param project_id: Project whose book holds the version.
+    :type project_id: ProjectId
     :param version: The version to mark.
     :type version: PageVersion
     """
-    await change_versions(kit, version, lambda versions: versions.update(evolve(version, tiles_ready=True)))
+    await change_versions(kit, project_id, lambda versions: versions.update(evolve(version, tiles_ready=True)))
 
 
 class TestCutTiles:
@@ -101,7 +108,7 @@ class TestCutTiles:
         self,
         fx_kit: ProcessingKit,
         monkeypatch: pytest.MonkeyPatch,
-        change: Callable[[ProcessingKit, PageVersion], Awaitable[None]],
+        change: Callable[[ProcessingKit, ProjectId, PageVersion], Awaitable[None]],
         kept: tuple[VersionState, bool] | None,
     ) -> None:
         """Verify a version changed after its pyramid was cut keeps the change, and the viewer is not told it is cut.
@@ -111,7 +118,7 @@ class TestCutTiles:
         :param monkeypatch: Fixture putting the change between the cut and the change that marks the version.
         :type monkeypatch: pytest.MonkeyPatch
         :param change: What another request does to the version while its pyramid is cut.
-        :type change: Callable[[ProcessingKit, PageVersion], Awaitable[None]]
+        :type change: Callable[[ProcessingKit, ProjectId, PageVersion], Awaitable[None]]
         :param kept: The state of the version afterwards and whether it holds a cut pyramid, or None for a version that
                      is gone.
         :type kept: tuple[VersionState, bool] | None
@@ -134,14 +141,14 @@ class TestCutTiles:
             :rtype: PageVersion
             """
             cut_version = await cut(self, keys, version)
-            await change(fx_kit, version)
+            await change(fx_kit, project.id, version)
             return cut_version
 
         monkeypatch.setattr(StepRunner, 'cut_tiles', cut_then_change)
 
         await fx_kit.work_queue()
 
-        stored = await fx_kit.uow().read(lambda repos: repos.page_versions.find(untiled.id))
+        stored = await fx_kit.uow().read_book(project.id, lambda repos: repos.page_versions.find(untiled.id))
         expect(stored_job(fx_kit, job.id).state is JobState.SUCCEEDED)
         expect((stored and (stored.state, stored.tiles_ready)) == kept)
         expect(not any(isinstance(event, PageVersionReady) for event in fx_kit.events.published))

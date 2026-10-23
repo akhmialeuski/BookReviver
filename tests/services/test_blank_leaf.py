@@ -60,10 +60,10 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Job, Page, PageOverview, PageStage, PageVersion, Project
-    from bookreviver.domain.ids import PageId
+    from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.domain.values import JobEnd
     from bookreviver.ports.imaging import RenditionWriter
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
     from tests.helpers.clock import FixedClock
@@ -171,7 +171,7 @@ class LeafDesk:
         :returns: The stored book.
         :rtype: LeafBook
         """
-        project = make_project(owner_id=self.actor.account_id)
+        project = make_project()
         source = make_source(project_id=project.id)
         scans, pages, versions = [], [], []
         for number, kind in enumerate(kinds):
@@ -182,13 +182,21 @@ class LeafDesk:
             scans.append(scan)
             pages.append(page)
             versions.append(BaseVersions.split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH))
-        await store_project(self.open_uow(), project, *pages, sources=[source], scans=scans, versions=versions)
+        await store_project(
+            self.open_uow(),
+            project,
+            *pages,
+            owner=self.actor.account_id,
+            sources=[source],
+            scans=scans,
+            versions=versions,
+        )
 
-        def save_heads(repos: Repositories, _project: Project) -> None:
+        def save_heads(repos: BookRepositories, _project: Project) -> None:
             """Make the base version of each page the current version of the page split, as the import does.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             """
@@ -285,7 +293,7 @@ class LeafDesk:
         :returns: The page as committed.
         :rtype: Page
         """
-        return await self.open_uow().read(lambda repos: repos.pages.get(page.id))
+        return await self.open_uow().read_book(page.project_id, lambda repos: repos.pages.get(page.id))
 
     async def versions(self, page: Page) -> list[PageVersion]:
         """Read every committed version of a page, the earliest first.
@@ -295,7 +303,9 @@ class LeafDesk:
         :returns: Its versions.
         :rtype: list[PageVersion]
         """
-        return list(await self.open_uow().read(lambda repos: repos.page_versions.list_for_page(page.id)))
+        return list(
+            await self.open_uow().read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id))
+        )
 
     async def leaves(self, page: Page) -> list[PageVersion]:
         """Read the committed versions of a page that ``pages.blank`` made, the earliest first.
@@ -316,7 +326,9 @@ class LeafDesk:
         :returns: Its records by stage.
         :rtype: dict[Stage, PageStage]
         """
-        records = await self.open_uow().read(lambda repos: repos.page_stages.list_for_page(page.id))
+        records = await self.open_uow().read_book(
+            page.project_id, lambda repos: repos.page_stages.list_for_page(page.id)
+        )
         return {record.stage: record for record in records}
 
     def image(self, book: LeafBook, version: PageVersion) -> Image.Image:
@@ -573,11 +585,11 @@ class TestGetTheScanBack:
             state=VersionState.READY,
         )
 
-        def add_geometry(repos: Repositories, _project: Project) -> None:
+        def add_geometry(repos: BookRepositories, _project: Project) -> None:
             """Add the version of the geometry stage and the record that names it as current.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             """
@@ -722,11 +734,11 @@ class TestRemakeOutdatedLeaves:
         )
         stale = evolve((await desk.heads(page))[Stage.PAGE_ORDER], head_version_id=old.id, state=StageState.STALE)
 
-        def replace_leaf(repos: Repositories, _project: Project) -> None:
+        def replace_leaf(repos: BookRepositories, _project: Project) -> None:
             """Add the old leaf, point the record of the stage at it, and delete the leaf the job made.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             """
@@ -872,9 +884,9 @@ class TestRefusals:
         :type fx_desk: LeafDesk
         """
         book = await fx_desk.book([PageKind.BLANK])
-        other = make_project(owner_id=fx_desk.actor.account_id)
+        other = make_project()
         stranger = make_page(project_id=other.id, kind=PageKind.BLANK)
-        await store_project(fx_desk.open_uow(), other, stranger)
+        await store_project(fx_desk.open_uow(), other, stranger, owner=fx_desk.actor.account_id)
         foreign = evolve(fx_desk.actor, account_id=new_account_id())
 
         with pytest.raises(NotFoundError):
@@ -959,25 +971,27 @@ class TestJobsReCheckWhatTheyApply:
         await TestRemakeOutdatedLeaves().outdate(fx_desk, book, 1)
         queued, leaves = len(fx_desk.prepare_jobs()), await fx_desk.leaves(blank)
         uow = fx_desk.open_uow()
-        read = uow.read
+        read = uow.read_book
         raced = False
 
-        async def read_then_take_the_scan_back[T](work: Callable[[Repositories], T]) -> T:
+        async def read_then_take_the_scan_back[T](project_id: ProjectId, work: Callable[[BookRepositories], T]) -> T:
             """Read as the unit of work does, then choose the scan for the page in a change of another one, once.
 
+            :param project_id: Project whose book is read.
+            :type project_id: ProjectId
             :param work: Function over the repositories of the transaction.
-            :type work: Callable[[Repositories], T]
+            :type work: Callable[[BookRepositories], T]
             :returns: What the work returned, as it read before the choice.
             :rtype: T
             """
             nonlocal raced
-            result = await read(work)
+            result = await read(project_id, work)
             if not raced:
                 raced = True
                 await fx_desk.choose(book, [1], BlankFill.SCAN)
             return result
 
-        monkeypatch.setattr(uow, 'read', read_then_take_the_scan_back)
+        monkeypatch.setattr(uow, 'read_book', read_then_take_the_scan_back)
         await fx_desk.service(uow=uow).remake_outdated_leaves()
 
         expect(len(fx_desk.prepare_jobs()) == queued)

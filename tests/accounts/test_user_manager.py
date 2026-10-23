@@ -17,7 +17,6 @@ from bookreviver.domain.ids import AccountId
 from bookreviver.ports.persistence import UnitOfWork
 from bookreviver.ports.storage import AssetStore, SourceStore
 from tests.helpers.builders import make_page, make_project
-from tests.helpers.database import SharedDatabaseProvider
 from tests.helpers.fakes_accounts import PASSWORD
 from tests.helpers.seeding import commit_account, store_project
 from tests.helpers.storage import BookFiles
@@ -29,6 +28,7 @@ if TYPE_CHECKING:
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Project
+    from tests.helpers.database import SharedDatabaseProvider
 
 pytestmark = pytest.mark.anyio
 
@@ -37,23 +37,26 @@ OWNED_PROJECTS: int = 3
 
 
 @pytest.fixture
-async def fx_container(fx_settings: Settings, fx_database: SqlDatabase) -> AsyncIterator[AsyncContainer]:
-    """Yield the application's container on the database of the test, where the owner key of a project is checked.
+async def fx_container(
+    fx_settings: Settings, fx_shared_database: SharedDatabaseProvider
+) -> AsyncIterator[AsyncContainer]:
+    """Yield the application's container on the catalogue and the books of the test, where the library is checked.
 
     :param fx_settings: Settings pointing at a fresh data directory of the test.
     :type fx_settings: Settings
-    :param fx_database: Database of the test, which the container is given in place of one of its own.
-    :type fx_database: SqlDatabase
+    :param fx_shared_database: The catalogue and the books of the test, which the container is given in place of its
+                               own.
+    :type fx_shared_database: SharedDatabaseProvider
     :returns: Iterator yielding the container and closing it afterwards.
     :rtype: AsyncIterator[AsyncContainer]
     """
-    container = build_container(fx_settings, [SharedDatabaseProvider(fx_database)])
+    container = build_container(fx_settings, [fx_shared_database])
     yield container
     await container.close()
 
 
 async def _stored(container: AsyncContainer, project: Project) -> bool:
-    """Return whether the project's row is still stored.
+    """Return whether the project's book is still stored.
 
     :param container: The application's container.
     :type container: AsyncContainer
@@ -64,7 +67,7 @@ async def _stored(container: AsyncContainer, project: Project) -> bool:
     """
     async with container() as scope:
         try:
-            await (await scope.get(UnitOfWork)).read(lambda repos: repos.projects.get(project.id))
+            await (await scope.get(UnitOfWork)).read_book(project.id, lambda repos: repos.projects.get(project.id))
         except NotFoundError:
             return False
     return True
@@ -87,13 +90,14 @@ class TestDelete:
         """
         database = await fx_container.get(SqlDatabase)
         owner_id, neighbour_id = await commit_account(database), await commit_account(database)
-        owned = [make_project(owner_id=owner_id, minutes=minute) for minute in range(OWNED_PROJECTS)]
-        kept = make_project(owner_id=neighbour_id)
+        owned = [make_project(minutes=minute) for minute in range(OWNED_PROJECTS)]
+        kept = make_project()
         pages = {project.id: make_page(project_id=project.id) for project in (*owned, kept)}
         async with fx_container() as scope:
             uow = await scope.get(UnitOfWork)
             for project in (*owned, kept):
-                await store_project(uow, project, pages[project.id])
+                owner = neighbour_id if project is kept else owner_id
+                await store_project(uow, project, pages[project.id], owner=owner)
         files = BookFiles(
             sources=await fx_container.get(SourceStore),
             assets=await fx_container.get(AssetStore),

@@ -1,10 +1,11 @@
-"""Test of the connection pools during an import that cuts several scans at once, on one SQLite file.
+"""Test of the connection pools during an import that cuts several scans at once, on the SQLite file of a book.
 
 Up to ``parallel_scans`` coroutines cut the scans of a job, and all of them write through the one unit of work of the
 job. A change takes its connection only when it has the writer, and a change that waits for the writer holds none, so
 the pool of the writer, which holds one connection, is never asked for a second and no connection is left behind.
 """
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import anyio
@@ -14,7 +15,6 @@ from delayed_assert import assert_expectations, expect
 from sqlalchemy import event
 from sqlalchemy.pool import QueuePool
 
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.values import SliceRequest
@@ -30,8 +30,10 @@ if TYPE_CHECKING:
     from sqlalchemy.engine.interfaces import DBAPIConnection
     from sqlalchemy.pool import ConnectionPoolEntry, PoolProxiedConnection
 
+    from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.ids import AccountId
+    from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fakes_imports import ImportRig
 
 pytestmark = pytest.mark.anyio
@@ -81,20 +83,20 @@ class ConnectionPeak:
         self.checked_out -= 1
 
 
-@pytest.fixture
-def fx_connection_peak(fx_database: SqlDatabase) -> Iterator[ConnectionPeak]:
-    """Count the connections checked out of the pool of the database, until the test is over.
+@contextmanager
+def _counting_connections(database: SqlDatabase) -> Iterator[ConnectionPeak]:
+    """Count the connections checked out of the pool of the writer of a database, until the block ends.
 
     The count comes from the ``checkout`` and ``checkin`` events of the pool, so every moment is seen and not only the
     ones a test samples. The listeners are removed afterwards.
 
-    :param fx_database: Fresh SQLite database with every table created.
-    :type fx_database: SqlDatabase
+    :param database: SQLite database of a book, whose writer pool is counted.
+    :type database: SqlDatabase
     :returns: Iterator yielding the counter and removing its listeners afterwards.
     :rtype: Iterator[ConnectionPeak]
     """
     counter = ConnectionPeak()
-    pool = fx_database.engine.pool
+    pool = database.engine.pool
     event.listen(pool, POOL_CHECKOUT, counter.on_checkout)
     event.listen(pool, POOL_CHECKIN, counter.on_checkin)
     try:
@@ -109,9 +111,9 @@ class TestRunImportConnections:
 
     async def test_four_cutters_never_hold_more_than_one_pooled_connection(
         self,
-        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_books: BookDatabases,
         fx_owner_id: AccountId,
-        fx_connection_peak: ConnectionPeak,
         fx_import_rig: Callable[..., ImportRig],
         tmp_path: Path,
     ) -> None:
@@ -120,16 +122,16 @@ class TestRunImportConnections:
         The rasterizer holds every write until all four cutters are writing, so they leave their writes together and
         each of them then asks for its change of the one unit of work at the same moment. A pause would not do: a
         change on a SQLite file outlasts it, and the cutters would pass their writes one after another. The changes
-        queue for the writer, and a change that waits holds no connection, so the writer pool shows one connection in
-        use at a time. A change that opened its session before it had the writer would hold a connection while it
-        waits, and the peak assertion would fail.
+        queue for the writer of the book, and a change that waits holds no connection, so the writer pool of the book
+        shows one connection in use at a time. A change that opened its session before it had the writer would hold a
+        connection while it waits, and the peak assertion would fail.
 
-        :param fx_database: Fresh SQLite database with every table created, which gives a file its queue pool.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_books: Registry of the books of the test, which gives the database of the book whose pool is counted.
+        :type fx_books: BookDatabases
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
-        :param fx_connection_peak: Counter of the connections checked out of the pool of the writer.
-        :type fx_connection_peak: ConnectionPeak
         :param fx_import_rig: Function building the import rig whose board runs an import on the database.
         :type fx_import_rig: Callable[..., ImportRig]
         :param tmp_path: Temporary directory of the test, holding the sample file.
@@ -152,26 +154,30 @@ class TestRunImportConnections:
         samples = tmp_path / SAMPLES_DIRECTORY
         samples.mkdir()
         owner = Actor(account_id=fx_owner_id)
-        project = make_project(owner_id=fx_owner_id)
-        uow = SqlAlchemyUnitOfWork(fx_database)
-        await store_project(uow, project)
-        job = await rig.service(uow=uow).start_import(
-            owner, project.id, [pdf_upload(samples, BOOK_PDF, pages=PARALLEL_SCANS)]
-        )
-
-        with anyio.fail_after(IMPORT_TIMEOUT_SECONDS):
-            await rig.fakes.board.run_queued()
+        project = make_project()
+        uow = fx_uow()
+        await store_project(uow, project, owner=fx_owner_id)
+        async with fx_books.use(project.id) as book:
+            with _counting_connections(book) as peak:
+                job = await rig.service(uow=uow).start_import(
+                    owner, project.id, [pdf_upload(samples, BOOK_PDF, pages=PARALLEL_SCANS)]
+                )
+                with anyio.fail_after(IMPORT_TIMEOUT_SECONDS):
+                    await rig.fakes.board.run_queued()
+            in_use = checked_out_connections(book)
+            # A file database gets a queue pool, so the limit of the pool is the real one
+            queued = isinstance(book.engine.pool, QueuePool)
 
         stored = rig.stored_job(job)
-        scans = await uow.read(
-            lambda repos: repos.scans.list_for_project(project.id, SliceRequest(limit=PARALLEL_SCANS)).items
+        scans = await uow.read_book(
+            project.id, lambda repos: repos.scans.list_for_project(project.id, SliceRequest(limit=PARALLEL_SCANS)).items
         )
-        # A file database gets a queue pool, so the limit of the pool is the real one
-        expect(isinstance(fx_database.engine.pool, QueuePool))
+        expect(queued)
         expect(rig.rasterizer.peak == PARALLEL_SCANS)
         expect(stored.state is JobState.SUCCEEDED)
         expect(len(scans) == PARALLEL_SCANS and all(scan.renditions.ready for scan in scans))
-        expect(fx_connection_peak.peak == ONE_CONNECTION)
-        expect(fx_connection_peak.checked_out == 0)
-        expect(checked_out_connections(fx_database) == 0, 'a connection of either pool was left checked out')
+        expect(peak.peak == ONE_CONNECTION)
+        expect(peak.checked_out == 0)
+        expect(in_use == 0, 'a connection of either pool of the book was left checked out')
+        expect(checked_out_connections(rig.database) == 0, 'a connection of either pool of the catalogue was left')
         assert_expectations()

@@ -8,6 +8,7 @@ from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.values import JobEnd
 from bookreviver.plugins.split_none import SplitNone
+from bookreviver.services.library import Library
 from bookreviver.services.pagination import PaginationService
 from tests.helpers.builders import EPOCH
 from tests.helpers.clock import FixedClock
@@ -220,7 +221,7 @@ def fx_pagination_over(fx_events: RecordingEventBus, fx_clock: FixedClock) -> Ca
     :returns: Function building a service over the given unit of work.
     :rtype: Callable[[UnitOfWork], PaginationService]
     """
-    return lambda uow: PaginationService(uow=uow, publisher=fx_events, clock=fx_clock)
+    return lambda uow: PaginationService(uow=uow, library=Library(uow=uow), publisher=fx_events, clock=fx_clock)
 
 
 @pytest.fixture
@@ -240,25 +241,29 @@ def fx_pagination(
 
 
 @pytest.fixture
-def fx_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) -> ProcessingKit:
+def fx_kit(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore) -> ProcessingKit:
     """Build what the processing services of a test share, over the database and the asset store of the test.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :returns: The kit that builds the processing service, the jobs of the workers and the edit service.
     :rtype: ProcessingKit
     """
-    return ProcessingKit(fx_database, fx_asset_store)
+    return ProcessingKit(fx_database, fx_uow, fx_asset_store)
 
 
 @pytest.fixture
-def fx_cv_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) -> ProcessingKit:
+def fx_cv_kit(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore) -> ProcessingKit:
     """Build the processing kit with the real OpenCV plugins, or skip the test where OpenCV is not installed.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :returns: The kit whose catalogue has ``split.none``, ``split.spread``, ``split.auto``, the five geometry
@@ -278,6 +283,7 @@ def fx_cv_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) -> Proc
     eraser = pytest.importorskip('bookreviver.plugins.eraser', reason=CV_MISSING).Eraser()
     return ProcessingKit(
         fx_database,
+        fx_uow,
         fx_asset_store,
         processors=[
             SplitNone(),
@@ -298,11 +304,15 @@ def fx_cv_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) -> Proc
 
 
 @pytest.fixture
-def fx_ordered_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) -> ProcessingKit:
+def fx_ordered_kit(
+    fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore
+) -> ProcessingKit:
     """Build the processing kit over processors that declare a place.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :returns: The kit whose catalogue holds the fakes of the tests and the processors that ask for a place.
@@ -316,20 +326,27 @@ def fx_ordered_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) ->
         SecondProcessor(),
         ThirdProcessor(),
     ]
-    return ProcessingKit(fx_database, fx_asset_store, processors=processors)
+    return ProcessingKit(fx_database, fx_uow, fx_asset_store, processors=processors)
 
 
 @pytest.fixture
-def fx_measuring_kit(fx_database: SqlDatabase, fx_asset_store: LocalAssetStore) -> ProcessingKit:
+def fx_measuring_kit(
+    fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore
+) -> ProcessingKit:
     """Build the processing kit over a processor that finds an angle on each page.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :returns: The kit whose catalogue holds the fakes of the tests and ``geometry.measuring``.
     :rtype: ProcessingKit
     """
     return ProcessingKit(
-        fx_database, fx_asset_store, processors=[SplitNone(), FakeProcessor(), CleanupProcessor(), MeasuringProcessor()]
+        fx_database,
+        fx_uow,
+        fx_asset_store,
+        processors=[SplitNone(), FakeProcessor(), CleanupProcessor(), MeasuringProcessor()],
     )

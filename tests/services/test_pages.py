@@ -21,7 +21,7 @@ from tests.helpers.builders import (
     make_source,
     new_account_id,
 )
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import commit_project, store_project
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,7 +29,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, Page, PageVersion, Project
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.domain.ids import AccountId
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fake_board import FakeJobBoard
@@ -54,13 +55,19 @@ def _ready(version: PageVersion) -> PageVersion:
     return evolve(version, renditions=Renditions(ready=True), state=VersionState.READY)
 
 
-async def _commit_book(database: SqlDatabase, project: Project) -> tuple[list[Page], list[PageVersion]]:
+async def _commit_book(
+    database: SqlDatabase, uow: UnitOfWork, project: Project, owner: AccountId
+) -> tuple[list[Page], list[PageVersion]]:
     """Commit a book of three pages stored against the book order, the middle one in the book a placeholder.
 
-    :param database: Database of the test.
+    :param database: Catalogue of the test, which stores the owner when it does not already.
     :type database: SqlDatabase
+    :param uow: Unit of work over the catalogue and the books of the test.
+    :type uow: UnitOfWork
     :param project: Project of the book.
     :type project: Project
+    :param owner: Account owning the book.
+    :type owner: AccountId
     :returns: The pages in the order they were stored, and the base versions of the two that have one.
     :rtype: tuple[list[Page], list[PageVersion]]
     """
@@ -71,7 +78,7 @@ async def _commit_book(database: SqlDatabase, project: Project) -> tuple[list[Pa
         make_page(project_id=project.id, order_key=key, scan=scan) for key, scan in zip(STORED_KEYS, shown, strict=True)
     ]
     versions = [make_page_version(page_id=pages[index].id) for index in (0, 2)]
-    await commit_project(database, project, *pages, sources=[source], scans=scans, versions=versions)
+    await commit_project(database, uow, project, *pages, owner=owner, sources=[source], scans=scans, versions=versions)
     return pages, versions
 
 
@@ -79,78 +86,13 @@ class TestManifest:
     """Tests for PageService.manifest()."""
 
     async def test_lists_the_pages_in_book_order_with_their_positions_and_versions(
-        self, fx_service: Callable[[], PageService], fx_database: SqlDatabase, fx_actor: Actor
-    ) -> None:
-        """Verify pages come in the byte order of their keys, numbered from zero, each with its own base version.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        """
-        project = make_project(owner_id=fx_actor.account_id)
-        pages, versions = await _commit_book(fx_database, project)
-
-        manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
-
-        expect([overview.page for overview in manifest.items] == [pages[index] for index in BOOK_ORDER])
-        expect([overview.position for overview in manifest.items] == [0, 1, 2])
-        expect([overview.image_version for overview in manifest.items] == [None, versions[1], versions[0]])
-        expect(manifest.total == len(pages))
-        assert_expectations()
-
-    async def test_a_window_continues_the_positions_of_the_book(
-        self, fx_service: Callable[[], PageService], fx_database: SqlDatabase, fx_actor: Actor
-    ) -> None:
-        """Verify a window starting at an offset numbers its pages from that offset and reports the whole book.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        """
-        project = make_project(owner_id=fx_actor.account_id)
-        pages, _ = await _commit_book(fx_database, project)
-
-        manifest = await fx_service().manifest(fx_actor, project.id, WINDOW)
-
-        expect([(overview.page, overview.position) for overview in manifest.items] == [(pages[2], 1)])
-        expect(manifest.total == len(pages))
-        assert_expectations()
-
-    async def test_shows_the_newest_base_version_of_a_page(
-        self, fx_service: Callable[[], PageService], fx_database: SqlDatabase, fx_actor: Actor
-    ) -> None:
-        """Verify a page cut from its scan again shows the base version created last.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        """
-        project = make_project(owner_id=fx_actor.account_id)
-        page = make_page(project_id=project.id)
-        old, new = make_page_version(page_id=page.id, minutes=1), make_page_version(page_id=page.id, minutes=2)
-        await commit_project(fx_database, project, page, versions=[new, old])
-
-        manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
-
-        assert [overview.image_version for overview in manifest.items] == [new]
-
-    async def test_shows_the_current_version_of_the_latest_stage_that_has_an_image(
         self,
         fx_service: Callable[[], PageService],
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
     ) -> None:
-        """Verify the page shows its deskewed version, and not the base version it was made from or the regions without an image.
+        """Verify pages come in the byte order of their keys, numbered from zero, each with its own base version.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -161,18 +103,92 @@ class TestManifest:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
+        project = make_project()
+        pages, versions = await _commit_book(fx_database, fx_uow(), project, fx_actor.account_id)
+
+        manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
+
+        expect([overview.page for overview in manifest.items] == [pages[index] for index in BOOK_ORDER])
+        expect([overview.position for overview in manifest.items] == [0, 1, 2])
+        expect([overview.image_version for overview in manifest.items] == [None, versions[1], versions[0]])
+        expect(manifest.total == len(pages))
+        assert_expectations()
+
+    async def test_a_window_continues_the_positions_of_the_book(
+        self,
+        fx_service: Callable[[], PageService],
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+    ) -> None:
+        """Verify a window starting at an offset numbers its pages from that offset and reports the whole book.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_database: Database of the test.
+        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project()
+        pages, _ = await _commit_book(fx_database, fx_uow(), project, fx_actor.account_id)
+
+        manifest = await fx_service().manifest(fx_actor, project.id, WINDOW)
+
+        expect([(overview.page, overview.position) for overview in manifest.items] == [(pages[2], 1)])
+        expect(manifest.total == len(pages))
+        assert_expectations()
+
+    async def test_shows_the_newest_base_version_of_a_page(
+        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
+    ) -> None:
+        """Verify a page cut from its scan again shows the base version created last.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project()
+        page = make_page(project_id=project.id)
+        old, new = make_page_version(page_id=page.id, minutes=1), make_page_version(page_id=page.id, minutes=2)
+        await store_project(fx_uow(), project, page, owner=fx_actor.account_id, versions=[new, old])
+
+        manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
+
+        assert [overview.image_version for overview in manifest.items] == [new]
+
+    async def test_shows_the_current_version_of_the_latest_stage_that_has_an_image(
+        self,
+        fx_service: Callable[[], PageService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+    ) -> None:
+        """Verify the page shows its deskewed version, and not the base version it was made from or the regions without an image.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], PageService]
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        """
+        project = make_project()
         page = make_page(project_id=project.id)
         base = _ready(make_page_version(page_id=page.id, minutes=1))
         deskewed = evolve(_ready(make_page_version(page_id=page.id, minutes=2)), stage=Stage.GEOMETRY, input_id=base.id)
         regions = evolve(make_page_version(page_id=page.id, minutes=3), stage=Stage.LAYOUT, input_id=deskewed.id)
-        await commit_project(fx_database, project, page, versions=[base, deskewed, regions])
+        await store_project(fx_uow(), project, page, owner=fx_actor.account_id, versions=[base, deskewed, regions])
 
-        def save_heads(repos: Repositories, _project: Project) -> None:
+        def save_heads(repos: BookRepositories, _project: Project) -> None:
             """Save the records that name the base version and the deskewed one as current, and the regions too.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             """
@@ -191,7 +207,6 @@ class TestManifest:
     async def test_shows_the_current_version_even_when_a_newer_base_version_exists(
         self,
         fx_service: Callable[[], PageService],
-        fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
     ) -> None:
@@ -199,17 +214,15 @@ class TestManifest:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
+        project = make_project()
         page = make_page(project_id=project.id)
         chosen, newer = (_ready(make_page_version(page_id=page.id, minutes=minutes)) for minutes in (1, 2))
-        await commit_project(fx_database, project, page, versions=[chosen, newer])
+        await store_project(fx_uow(), project, page, owner=fx_actor.account_id, versions=[chosen, newer])
         await fx_uow().change_book(
             project.id,
             lambda repos, _project: repos.page_stages.save(
@@ -222,7 +235,11 @@ class TestManifest:
         assert [overview.image_version for overview in manifest.items] == [chosen]
 
     async def test_another_accounts_project_is_not_found(
-        self, fx_service: Callable[[], PageService], fx_database: SqlDatabase, fx_actor: Actor
+        self,
+        fx_service: Callable[[], PageService],
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
     ) -> None:
         """Verify the pages of another account's project cannot be listed.
 
@@ -230,31 +247,33 @@ class TestManifest:
         :type fx_service: Callable[[], PageService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=new_account_id())
-        await _commit_book(fx_database, project)
+        project = make_project()
+        await _commit_book(fx_database, fx_uow(), project, new_account_id())
 
         with pytest.raises(NotFoundError):
             await fx_service().manifest(fx_actor, project.id, SliceRequest())
 
     async def test_included_only_leaves_out_the_pages_kept_out_and_numbers_the_rest(
-        self, fx_service: Callable[[], PageService], fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify a listing of the included pages skips an excluded page, and numbers the listed pages among themselves.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
+        project = make_project()
         pages = [make_page(project_id=project.id, order_key=key) for key in ('a0', 'a1', 'a2')]
         pages[1] = evolve(pages[1], included=False)
-        await commit_project(fx_database, project, *pages)
+        await store_project(fx_uow(), project, *pages, owner=fx_actor.account_id)
 
         manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest(), included_only=True)
 
@@ -281,9 +300,9 @@ class TestManifest:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await _commit_book(fx_database, project)
-        [source, *_] = await fx_uow().read(lambda repos: repos.sources.list_for_project(project.id))
+        project = make_project()
+        await _commit_book(fx_database, fx_uow(), project, fx_actor.account_id)
+        [source, *_] = await fx_uow().read_book(project.id, lambda repos: repos.sources.list_for_project(project.id))
 
         manifest = await fx_service().manifest(fx_actor, project.id, SliceRequest())
 
@@ -294,7 +313,11 @@ class TestGet:
     """Tests for PageService.get()."""
 
     async def test_returns_the_page_with_its_position_and_base_version(
-        self, fx_service: Callable[[], PageService], fx_database: SqlDatabase, fx_actor: Actor
+        self,
+        fx_service: Callable[[], PageService],
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
     ) -> None:
         """Verify a page read by its identifier knows its place in the book and its base version.
 
@@ -302,11 +325,13 @@ class TestGet:
         :type fx_service: Callable[[], PageService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        pages, versions = await _commit_book(fx_database, project)
+        project = make_project()
+        pages, versions = await _commit_book(fx_database, fx_uow(), project, fx_actor.account_id)
 
         overview = await fx_service().get(fx_actor, project.id, pages[0].id)
 
@@ -316,27 +341,31 @@ class TestGet:
         assert_expectations()
 
     async def test_page_of_another_project_of_the_actor_is_not_found(
-        self, fx_service: Callable[[], PageService], fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify a page is found only through the project that holds it, even for an owner of both projects.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project, holder = (make_project(owner_id=fx_actor.account_id) for _ in range(2))
+        project, holder = (make_project() for _ in range(2))
         page = make_page(project_id=holder.id)
-        await commit_project(fx_database, project)
-        await commit_project(fx_database, holder, page)
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
+        await store_project(fx_uow(), holder, page, owner=fx_actor.account_id)
 
         with pytest.raises(NotFoundError):
             await fx_service().get(fx_actor, project.id, page.id)
 
     async def test_page_of_another_accounts_project_is_not_found(
-        self, fx_service: Callable[[], PageService], fx_database: SqlDatabase, fx_actor: Actor
+        self,
+        fx_service: Callable[[], PageService],
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
     ) -> None:
         """Verify the actor cannot read a page through the project of another account.
 
@@ -344,30 +373,32 @@ class TestGet:
         :type fx_service: Callable[[], PageService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        holder = make_project(owner_id=new_account_id())
+        holder = make_project()
         page = make_page(project_id=holder.id)
-        await commit_project(fx_database, holder, page)
+        await commit_project(fx_database, fx_uow(), holder, page, owner=new_account_id())
 
         with pytest.raises(NotFoundError):
             await fx_service().get(fx_actor, holder.id, page.id)
 
     async def test_missing_page_is_not_found(
-        self, fx_service: Callable[[], PageService], fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify an identifier no page has is reported as not found.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
 
         with pytest.raises(NotFoundError):
             await fx_service().get(fx_actor, project.id, PageId(uuid4()))
@@ -379,7 +410,7 @@ class TestOpenAsset:
     async def test_gives_the_path_of_a_file_of_the_actors_project(
         self,
         fx_service: Callable[[], PageService],
-        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
     ) -> None:
@@ -387,15 +418,15 @@ class TestOpenAsset:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Local asset store over the test's storage root.
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         key = ProjectKeys(project.id).book
         async with fx_asset_store.writable(key) as target:
             target.write_bytes(FILE_CONTENT)
@@ -407,6 +438,7 @@ class TestOpenAsset:
         self,
         fx_service: Callable[[], PageService],
         fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
     ) -> None:
@@ -416,13 +448,15 @@ class TestOpenAsset:
         :type fx_service: Callable[[], PageService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Local asset store over the test's storage root.
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=new_account_id())
-        await commit_project(fx_database, project)
+        project = make_project()
+        await commit_project(fx_database, fx_uow(), project, owner=new_account_id())
         key = ProjectKeys(project.id).book
         async with fx_asset_store.writable(key) as target:
             target.write_bytes(FILE_CONTENT)
@@ -435,21 +469,21 @@ class TestOpenAsset:
         'area', [KeySegment.SOURCES, KeySegment.INCOMING, 'notes'], ids=['sources', 'incoming', 'unknown-area']
     )
     async def test_key_outside_the_assets_is_not_found(
-        self, fx_service: Callable[[], PageService], fx_database: SqlDatabase, fx_actor: Actor, area: str
+        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor, area: str
     ) -> None:
         """Verify a key in the project's source area, its uploads or any other area is not found, not an error.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param area: Directory of the project the key lies in.
         :type area: str
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
 
         with pytest.raises(NotFoundError):
             async with fx_service().open_asset(
@@ -458,19 +492,19 @@ class TestOpenAsset:
                 pytest.fail('A key outside the assets was opened.')
 
     async def test_key_without_a_file_is_not_found(
-        self, fx_service: Callable[[], PageService], fx_database: SqlDatabase, fx_actor: Actor
+        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify a key of the actor's project with nothing stored behind it is not found.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await commit_project(fx_database, project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
 
         with pytest.raises(NotFoundError):
             async with fx_service().open_asset(fx_actor, ProjectKeys(project.id).book):
@@ -482,7 +516,7 @@ class TestJobsQueuedTogether:
 
     @pytest.mark.parametrize('requests', [2, 5], ids=['two', 'five'])
     async def test_requests_asking_for_the_detection_together_queue_one_job(
-        self, requests: int, fx_service: Callable[[], PageService], fx_board: FakeJobBoard, fx_actor: Actor
+        self, requests: int, fx_service: Callable[[], PageService], fx_board: FakeJobBoard
     ) -> None:
         """Verify the requests for the detection of one book put one job on the board and the others find it active.
 
@@ -494,10 +528,8 @@ class TestJobsQueuedTogether:
         :type fx_service: Callable[[], PageService]
         :param fx_board: Board that records the jobs put on it.
         :type fx_board: FakeJobBoard
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
+        project = make_project()
 
         for _ in range(requests):
             fx_service().detect_new_pages(project.id)

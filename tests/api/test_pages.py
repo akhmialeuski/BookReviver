@@ -15,7 +15,7 @@ from bookreviver.domain.enums import ImagePolicy, PageOrigin, Rendition
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import Renditions
 from tests.helpers.builders import make_page, make_page_version, make_project, make_scan, make_source, new_account_id
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import commit_project, store_project
 
 if TYPE_CHECKING:
     import httpx
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, PageVersion, Project
     from bookreviver.domain.entities import Page as BookPage
     from bookreviver.ports.storage import AssetStore
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -61,17 +62,17 @@ class Book(NamedTuple):
 
 
 @pytest.fixture
-async def fx_book(fx_database: SqlDatabase, fx_actor: Actor) -> Book:
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     """Commit the book of the signed-in account.
 
-    :param fx_database: Database of the test, which the application runs on.
-    :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project(owner_id=fx_actor.account_id)
+    project = make_project()
     source = make_source(project_id=project.id)
     scans = [make_scan(source=source, number=number) for number in range(2)]
     shown = [scans[0], None, scans[1]]
@@ -83,7 +84,9 @@ async def fx_book(fx_database: SqlDatabase, fx_actor: Actor) -> Book:
         evolve(make_page_version(page_id=pages[0].id), renditions=Renditions(ready=True)),
         make_page_version(page_id=pages[2].id),
     ]
-    await commit_project(fx_database, project, *pages, sources=[source], scans=scans, versions=versions)
+    await store_project(
+        fx_uow(), project, *pages, owner=fx_actor.account_id, sources=[source], scans=scans, versions=versions
+    )
     return Book(project, pages, versions)
 
 
@@ -172,7 +175,7 @@ class TestListPages:
 
     @pytest.mark.parametrize('full', [Rendition.FULL_JPEG, Rendition.FULL_PNG])
     async def test_full_image_path_has_the_extension_of_the_format_recorded_with_the_version(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_actor: Actor, full: Rendition
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, full: Rendition
     ) -> None:
         """Verify the path of the full image names the format its version was stored in, whatever the project's policy.
 
@@ -180,18 +183,18 @@ class TestListPages:
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param full: Format the base version of the page records for its full image.
         :type full: Rendition
         """
         policy = ImagePolicy.LOSSLESS if full is Rendition.FULL_JPEG else ImagePolicy.COMPACT
-        project = evolve(make_project(owner_id=fx_actor.account_id), image_policy=policy)
+        project = evolve(make_project(), image_policy=policy)
         page = make_page(project_id=project.id)
         version = evolve(make_page_version(page_id=page.id), renditions=Renditions(ready=True, full=full))
-        await commit_project(fx_database, project, page, versions=[version])
+        await store_project(fx_uow(), project, page, owner=fx_actor.account_id, versions=[version])
 
         response = await _list_pages(fx_client, f'{PROJECTS_PATH}/{project.id}/pages')
 
@@ -239,7 +242,7 @@ class TestListPages:
         assert (await _list_pages(fx_client, fx_book.path, **{PAGE_SIZE_PARAM: size})).status_code == expected
 
     async def test_another_accounts_project_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify the pages of another account's project cannot be listed.
 
@@ -247,9 +250,11 @@ class TestListPages:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
-        project = make_project(owner_id=new_account_id())
-        await commit_project(fx_database, project, make_page(project_id=project.id))
+        project = make_project()
+        await commit_project(fx_database, fx_uow(), project, make_page(project_id=project.id), owner=new_account_id())
 
         response = await fx_client.get(f'{PROJECTS_PATH}/{project.id}/pages')
 
@@ -298,29 +303,29 @@ class TestGetPage:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_missing_page_and_page_of_another_project_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_book: Book, fx_actor: Actor
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_book: Book, fx_actor: Actor
     ) -> None:
         """Verify an identifier no page has, and a page of another project of the account, both answer 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_database: Database of the test, which the application runs on.
-        :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        other = make_project(owner_id=fx_actor.account_id)
+        other = make_project()
         foreign = make_page(project_id=other.id)
-        await commit_project(fx_database, other, foreign)
+        await store_project(fx_uow(), other, foreign, owner=fx_actor.account_id)
 
         responses = [await fx_client.get(f'{fx_book.path}/{page_id}') for page_id in (uuid4(), foreign.id)]
 
         assert [response.status_code for response in responses] == [status.HTTP_404_NOT_FOUND] * 2
 
     async def test_page_of_another_accounts_project_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase
+        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
         """Verify a page of another account's project answers exactly like a missing one.
 
@@ -328,10 +333,12 @@ class TestGetPage:
         :type fx_client: httpx.AsyncClient
         :param fx_database: Database of the test, which the application runs on.
         :type fx_database: SqlDatabase
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         """
-        project = make_project(owner_id=new_account_id())
+        project = make_project()
         page = make_page(project_id=project.id)
-        await commit_project(fx_database, project, page)
+        await commit_project(fx_database, fx_uow(), project, page, owner=new_account_id())
 
         response = await fx_client.get(f'{PROJECTS_PATH}/{project.id}/pages/{page.id}')
 

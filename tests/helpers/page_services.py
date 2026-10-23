@@ -10,6 +10,7 @@ from bookreviver.plugins.blank import BlankPage
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import Tiler
 from bookreviver.services.base_versions import BaseVersions
+from bookreviver.services.library import Library
 from bookreviver.services.pages import PageImaging, PageRuntime, PageService
 from bookreviver.services.steps import StepRunner
 from tests.helpers.fake_processing import FakeCatalogue, FakeRenditionWriter
@@ -109,6 +110,7 @@ def make_page_service(
     tiler = FakeTiler()
     return PageService(
         uow=uow,
+        library=Library(uow=uow),
         assets=assets,
         runtime=PageRuntime(
             publisher=publisher, clock=clock, order_keys=order_keys or FractionalOrderKeys(), board=board

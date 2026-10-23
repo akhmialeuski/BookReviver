@@ -4,9 +4,9 @@ import pytest
 
 from bookreviver.domain.enums import RunMode, Stage
 from bookreviver.domain.values import THROUGH_STEP_KEY, RunImpact, StageRun
-from tests.helpers.builders import make_project, new_account_id
+from tests.helpers.builders import make_project
 
-PROJECT_ID = make_project(owner_id=new_account_id()).id
+PROJECT_ID = make_project().id
 THROUGH_THIRD_STEP: int = 2
 
 

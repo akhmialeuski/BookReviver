@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Job, Page, PageOverview, PageVersion, Project, Scan, Source
     from bookreviver.domain.enums import ColorMode
     from bookreviver.domain.values import RenditionInfo
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
     from tests.helpers.clock import FixedClock
@@ -149,7 +149,7 @@ async def _commit_book(
     :returns: The stored book.
     :rtype: BookOfScans
     """
-    project = make_project(owner_id=owner.account_id)
+    project = make_project()
     source = make_source(project_id=project.id)
     scans = []
     for number, (width, height, dpi) in enumerate(sizes):
@@ -161,7 +161,7 @@ async def _commit_book(
         BaseVersions.split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH)
         for page, scan in zip(pages, scans, strict=True)
     ]
-    await store_project(uow, project, *pages, sources=[source], scans=scans, versions=versions)
+    await store_project(uow, project, *pages, owner=owner.account_id, sources=[source], scans=scans, versions=versions)
     keys = ProjectKeys(project.id)
     for scan in scans:
         async with assets.writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
@@ -203,11 +203,11 @@ async def _spare_scan(uow: UnitOfWork, assets: LocalAssetStore, book: BookOfScan
     source = make_source(project_id=book.project.id, name='cover.jpg', minutes=5)
     scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True), source_label=SPARE_SCAN_LABEL)
 
-    def add_scan(repos: Repositories, _project: Project) -> None:
+    def add_scan(repos: BookRepositories, _project: Project) -> None:
         """Add the source and its scan.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: The project as the change finds it, which the work does not need.
         :type _project: Project
         """
@@ -230,7 +230,7 @@ async def _stored_versions(uow: UnitOfWork, page: Page) -> list[PageVersion]:
     :returns: Its versions, the earliest first.
     :rtype: list[PageVersion]
     """
-    return list(await uow.read(lambda repos: repos.page_versions.list_for_page(page.id)))
+    return list(await uow.read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id)))
 
 
 async def _stored_pages(uow: UnitOfWork, *projects: Project) -> list[Page]:
@@ -243,7 +243,18 @@ async def _stored_pages(uow: UnitOfWork, *projects: Project) -> list[Page]:
     :returns: The pages of each project in book order, one project after the other.
     :rtype: list[Page]
     """
-    return await uow.read(lambda repos: [page for project in projects for page in book_pages(repos.pages, project.id)])
+
+    async def pages_of(project: Project) -> list[Page]:
+        """Read the pages of one project in book order.
+
+        :param project: The project.
+        :type project: Project
+        :returns: Its pages.
+        :rtype: list[Page]
+        """
+        return await uow.read_book(project.id, lambda repos: book_pages(repos.pages, project.id))
+
+    return [page for project in projects for page in await pages_of(project)]
 
 
 @pytest.fixture
@@ -521,8 +532,8 @@ class TestAddBlank:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await store_project(fx_uow(), project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         size = PageSize(width_px=640, height_px=480, dpi=96.0)
 
         overview = await fx_service().add(
@@ -550,8 +561,8 @@ class TestAddBlank:
         :param fx_board: Board that records the jobs put on it.
         :type fx_board: FakeJobBoard
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await store_project(fx_uow(), project, make_page(project_id=project.id))
+        project = make_project()
+        await store_project(fx_uow(), project, make_page(project_id=project.id), owner=fx_actor.account_id)
 
         with pytest.raises(ConflictError):
             await fx_service().add(fx_actor, project.id, NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK))
@@ -632,11 +643,11 @@ class TestAttachScan:
         binding = make_page_service(fx_uow(), fx_asset_store, fx_runtime)
         bound: list[PageOverview] = []
 
-        def write_the_number(repos: Repositories, _project: Project) -> None:
+        def write_the_number(repos: BookRepositories, _project: Project) -> None:
             """Write a printed number of the placeholder.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             """
@@ -715,7 +726,7 @@ class TestAttachScan:
                 fx_actor, book.project.id, placeholder.id, make_scan(source=book.source, number=9).id
             )
 
-        assert await fx_uow().read(lambda repos: repos.pages.get(placeholder.id)) == placeholder
+        assert await fx_uow().read_book(book.project.id, lambda repos: repos.pages.get(placeholder.id)) == placeholder
 
     @pytest.mark.parametrize('origin', [PageOrigin.SCAN, PageOrigin.BLANK])
     async def test_page_that_is_not_a_placeholder_conflicts(
@@ -809,7 +820,11 @@ class TestAttachScan:
 
         expect(book.pages[0].id not in {page.id for page in await _stored_pages(fx_uow(), book.project)})
         expect(overview.page.scan_id == book.scans[0].id)
-        expect(not await fx_uow().read(lambda repos: repos.page_versions.list_by_ids([book.versions[0].id])))
+        expect(
+            not await fx_uow().read_book(
+                book.project.id, lambda repos: repos.page_versions.list_by_ids([book.versions[0].id])
+            )
+        )
         expect(not taken_directory.exists())
         assert_expectations()
 
@@ -907,8 +922,10 @@ class TestDelete:
 
         stored_ids = {page.id for page in await _stored_pages(fx_uow(), book.project)}
         versions = [*await _stored_versions(fx_uow(), doomed), *await _stored_versions(fx_uow(), kept)]
-        scans = await fx_uow().read(lambda repos: repos.scans.list_by_ids([book.scans[0].id]))
-        sources = await fx_uow().read(lambda repos: repos.sources.list_for_project(book.project.id))
+        scans = await fx_uow().read_book(book.project.id, lambda repos: repos.scans.list_by_ids([book.scans[0].id]))
+        sources = await fx_uow().read_book(
+            book.project.id, lambda repos: repos.sources.list_for_project(book.project.id)
+        )
         expect(doomed.id not in stored_ids and kept.id in stored_ids)
         expect([version.page_id for version in versions] == [kept.id])
         expect(not (fx_storage_root / keys.page(doomed.id)).exists())
@@ -1014,8 +1031,8 @@ class TestPrepareImages:
         :param fx_storage_root: Storage root of the test.
         :type fx_storage_root: Path
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await store_project(fx_uow(), project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         size = PageSize(width_px=64, height_px=48, dpi=150.0)
         overview = await fx_service().add(
             fx_actor, project.id, NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.ENDPAPER, size=size)
@@ -1089,8 +1106,8 @@ class TestPrepareImages:
         :param fx_events: Recording event bus of the test.
         :type fx_events: RecordingEventBus
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await store_project(fx_uow(), project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         size = PageSize(width_px=8, height_px=8)
         new = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=size)
         first = await fx_service().add(fx_actor, project.id, new)
@@ -1141,8 +1158,8 @@ class TestPrepareImages:
             return make_page_service(fx_uow(), fx_asset_store, (fx_events, fx_clock, board), renditions=flaky)
 
         board = _board_that_runs(service, fx_events, fx_clock)
-        project = make_project(owner_id=fx_actor.account_id)
-        await store_project(fx_uow(), project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         new = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=PageSize(width_px=8, height_px=8))
         first = await service().add(fx_actor, project.id, new)
 
@@ -1219,8 +1236,8 @@ class TestPrepareImages:
         :param fx_events: Recording event bus of the test.
         :type fx_events: RecordingEventBus
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await store_project(fx_uow(), project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         size = PageSize(width_px=8, height_px=8)
         overview = await fx_service().add(
             fx_actor, project.id, NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK, size=size)
@@ -1248,8 +1265,8 @@ class TestPrepareImages:
         :param fx_board: Board that records the jobs put on it.
         :type fx_board: FakeJobBoard
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await store_project(fx_uow(), project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         job = fx_board.put(make_job(project_id=project.id, kind=JobKind.PREPARE_PAGES))
 
         await fx_board.run_queued()
@@ -1316,8 +1333,8 @@ class TestPrepareImagesWhileTheBookChanges:
         :returns: The project, its two pages and the storage root.
         :rtype: TwoLeaves
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await store_project(fx_uow(), project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         pages = await _add_leaves(
             lambda: make_page_service(fx_uow(), fx_asset_store, fx_runtime),
             fx_actor,
@@ -1425,8 +1442,8 @@ class TestPrepareImagesWhileTheBookChanges:
             return make_page_service(fx_uow(), fx_asset_store, (fx_events, fx_clock, board), renditions=flaky)
 
         board = _board_that_runs(service, fx_events, fx_clock)
-        project = make_project(owner_id=fx_actor.account_id)
-        await store_project(fx_uow(), project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         [leaf] = await _add_leaves(service, fx_actor, project, 1)
 
         await board.run_queued()
@@ -1496,8 +1513,8 @@ class TestPrepareImagesWhileTheBookChanges:
             return make_page_service(fx_uow(), fx_asset_store, (fx_events, fx_clock, board), renditions=acting)
 
         board = _board_that_runs(job_service, fx_events, fx_clock)
-        project = make_project(owner_id=fx_actor.account_id)
-        await store_project(fx_uow(), project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         [first] = await _add_leaves(request_service, fx_actor, project, 1)
 
         await board.run_queued()
@@ -1529,8 +1546,8 @@ class TestPrepareImagesWhileTheBookChanges:
         :param fx_board: Board that records the jobs put on it.
         :type fx_board: FakeJobBoard
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await store_project(fx_uow(), project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
 
         await _add_leaves(fx_service, fx_actor, project, 3)
 
@@ -1798,8 +1815,8 @@ class TestAddMany:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await store_project(fx_uow(), project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         new = [_placeholder('1'), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)]
 
         with pytest.raises(ConflictError, match='index 1 of the list'):
@@ -1855,8 +1872,8 @@ class TestAddMany:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        project = make_project(owner_id=fx_actor.account_id)
-        await store_project(fx_uow(), project)
+        project = make_project()
+        await store_project(fx_uow(), project, owner=fx_actor.account_id)
         labels = [str(number) for number in range(fx_service().MAX_PAGES_PER_BATCH)]
 
         await fx_service().add_many(fx_actor, project.id, [_placeholder(label) for label in labels])

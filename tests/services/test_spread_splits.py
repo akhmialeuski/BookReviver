@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Actor, PageStage, PageVersion, Project
     from bookreviver.domain.values import Slice
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -84,7 +84,7 @@ async def versions_of(kit: ProcessingKit, page: Page) -> list[PageVersion]:
     :returns: Every version of the page.
     :rtype: list[PageVersion]
     """
-    return list(await kit.uow().read(lambda repos: repos.page_versions.list_for_page(page.id)))
+    return list(await kit.uow().read_book(page.project_id, lambda repos: repos.page_versions.list_for_page(page.id)))
 
 
 async def give_odd_pages_a_value(kit: ProcessingKit, project: Project, page: Page) -> None:
@@ -98,11 +98,11 @@ async def give_odd_pages_a_value(kit: ProcessingKit, project: Project, page: Pag
     :type page: Page
     """
 
-    def save_value_and_record(repos: Repositories, _project: Project) -> None:
+    def save_value_and_record(repos: BookRepositories, _project: Project) -> None:
         """Save the value of the odd pages and the fresh record of the geometry stage.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: The project as the change finds it, which the work does not need.
         :type _project: Project
         """
@@ -281,7 +281,7 @@ class TestSplit:
         keys = ProjectKeys(project.id)
         assert broken.scan_id is not None
         scan_id = broken.scan_id
-        scan = await fx_cv_kit.uow().read(lambda repos: repos.scans.get(scan_id))
+        scan = await fx_cv_kit.uow().read_book(project.id, lambda repos: repos.scans.get(scan_id))
         full = keys.scan_rendition(scan, scan.renditions.full)
         await fx_cv_kit.assets.delete_prefix(full)
         async with fx_cv_kit.assets.writable(full) as target:
@@ -512,11 +512,11 @@ class TestSplitApplyStep:
         change_while_writing(fx_cv_kit, monkeypatch, partial(change, fx_cv_kit, book))
         await fx_cv_kit.work_queue()
 
-        def read_what_is_stored(repos: Repositories) -> tuple[Slice[PageVersion], PageStage | None]:
+        def read_what_is_stored(repos: BookRepositories) -> tuple[Slice[PageVersion], PageStage | None]:
             """Read the versions of the page split and its record, in one snapshot.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: The window of the versions of the stage, and the record of the stage or None.
             :rtype: tuple[Slice[PageVersion], PageStage | None]
             """
@@ -525,7 +525,7 @@ class TestSplitApplyStep:
                 repos.page_stages.find(PageStageKey(page.id, Stage.PAGE_SPLIT)),
             )
 
-        versions, record = await fx_cv_kit.uow().read(read_what_is_stored)
+        versions, record = await fx_cv_kit.uow().read_book(project.id, read_what_is_stored)
         stored = stored_job(fx_cv_kit, job.id)
         told = [
             event

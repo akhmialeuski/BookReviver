@@ -2,8 +2,8 @@
 
 Every test runs against the SQL adapter, so it keeps the promises of the port: the steps come back in their order with
 their parameters and their switch, a profile keeps the order it was saved in, a listing holds the profiles of one
-account in the order of the stages, an account has one default profile for each stage, and a recipe that refers to a
-profile loses the reference when the profile is deleted.
+account in the order of the stages, an account has one default profile for each stage, and a recipe of a book keeps
+the identifier of the profile it was made from.
 """
 
 from typing import TYPE_CHECKING
@@ -11,14 +11,15 @@ from typing import TYPE_CHECKING
 import pytest
 from attrs import evolve
 
-from bookreviver.domain.enums import OrderMode, RecipeKind, Stage
+from bookreviver.domain.enums import OrderMode, Stage
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.values import Step
 from tests.helpers.builders import make_project, make_recipe, make_recipe_profile
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import RecipeProfile
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories, UnitOfWork
     from tests.contracts.conftest import OwnerFactory
     from tests.helpers.database import UnitOfWorkFactory
 
@@ -28,7 +29,6 @@ CLEAN_SCAN_NAME: str = 'Clean flatbed scan'
 FIRST_MINUTE: int = 1
 SECOND_MINUTE: int = 2
 THIRD_MINUTE: int = 3
-BOOKS_OF_A_PROFILE: int = 2
 # The profiles of the account in the test of the defaults: two defaults of two stages and two that are not
 ACCOUNT_PROFILE_COUNT: int = 4
 STRENGTH: str = 'strength'
@@ -42,7 +42,7 @@ STEPS: tuple[Step, ...] = (
 async def _store(uow_factory: UnitOfWorkFactory, *profiles: RecipeProfile) -> UnitOfWork:
     """Store profiles in one change, and open a new unit of work to read them back through.
 
-    :param uow_factory: Function opening a new unit of work over the database of the test.
+    :param uow_factory: Function opening a new unit of work over the catalogue and the books of the test.
     :type uow_factory: UnitOfWorkFactory
     :param profiles: The profiles to store.
     :type profiles: RecipeProfile
@@ -166,12 +166,12 @@ class TestRecipeProfileRepository:
         uow = await _store(fx_uow, chosen, make_recipe_profile(account_id=account_id))
 
         def find_defaults(
-            repos: Repositories,
+            repos: CatalogueRepositories,
         ) -> tuple[RecipeProfile | None, RecipeProfile | None, RecipeProfile | None]:
             """Look up the default of the account in its stage, of the account in another stage, and of another account.
 
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :param repos: CatalogueRepositories of the transaction.
+            :type repos: CatalogueRepositories
             :returns: The three profiles that were found, or None for each that was not.
             :rtype: tuple[RecipeProfile | None, RecipeProfile | None, RecipeProfile | None]
             """
@@ -199,11 +199,11 @@ class TestRecipeProfileRepository:
         new = make_recipe_profile(account_id=account_id, minutes=FIRST_MINUTE)
         uow = await _store(fx_uow, old, new)
 
-        def demote_and_promote(repos: Repositories) -> RecipeProfile:
+        def demote_and_promote(repos: CatalogueRepositories) -> RecipeProfile:
             """Demote the old default, then promote the other profile.
 
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :param repos: CatalogueRepositories of the transaction.
+            :type repos: CatalogueRepositories
             :returns: The promoted profile as stored.
             :rtype: RecipeProfile
             """
@@ -265,11 +265,11 @@ class TestRecipeProfileRepository:
         usual = make_recipe_profile(account_id=account_id, minutes=FIRST_MINUTE)
         uow = await _store(fx_uow, free, usual)
 
-        def orders(repos: Repositories) -> list[OrderMode]:
+        def orders(repos: CatalogueRepositories) -> list[OrderMode]:
             """Read the order of the two profiles.
 
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :param repos: CatalogueRepositories of the transaction.
+            :type repos: CatalogueRepositories
             :returns: The order of the free profile and of the usual one.
             :rtype: list[OrderMode]
             """
@@ -280,141 +280,33 @@ class TestRecipeProfileRepository:
     async def test_a_recipe_reads_back_with_the_profile_it_was_made_from(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the reference of a recipe to a profile is stored, and a recipe made from none reads back with none.
+        """Verify the profile a recipe of a book names is stored, and a recipe made from none reads back with none.
 
-        :param fx_uow: Function opening a new unit of work over the database of the test.
+        The profile lives in the catalogue and the recipe in the file of the book, so the recipe keeps the identifier
+        of the profile and no key between the two files checks it.
+
+        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the database accepts as an owner.
+        :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
         owner_id = await fx_new_owner()
         profile = make_recipe_profile(account_id=owner_id)
-        project = make_project(owner_id=owner_id)
+        project = make_project()
         linked = evolve(make_recipe(project_id=project.id), profile_id=profile.id)
         unlinked = make_recipe(project_id=project.id, stage=Stage.CLEANUP)
 
-        def add_profile_and_project(repos: Repositories) -> None:
-            """Add the profile and the project.
-
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            """
-            repos.recipe_profiles.add(profile)
-            repos.projects.add(project)
-
-        def profile_ids(repos: Repositories) -> list[object]:
+        def profile_ids(repos: BookRepositories) -> list[object]:
             """Read the profile each of the two recipes names.
 
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :param repos: CatalogueRepositories of the transaction.
+            :type repos: BookRepositories
             :returns: The profile identifier of the linked recipe and of the unlinked one.
             :rtype: list[object]
             """
             return [repos.recipes.get(recipe.id).profile_id for recipe in (linked, unlinked)]
 
-        uow = fx_uow()
-        await uow.change(add_profile_and_project)
+        uow = await _store(fx_uow, profile)
+        await store_project(uow, project, owner=owner_id)
         await uow.change_book(project.id, lambda repos, _project: repos.recipes.add_many([linked, unlinked]))
-        assert await fx_uow().read(profile_ids) == [profile.id, None]
-
-    async def test_a_recipe_cannot_refer_to_a_profile_that_is_not_stored(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Reject a recipe whose profile does not exist, as a foreign key does.
-
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the database accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        project = make_project(owner_id=await fx_new_owner())
-        stray = evolve(
-            make_recipe(project_id=project.id),
-            profile_id=make_recipe_profile(account_id=project.owner_id).id,
-        )
-        uow = fx_uow()
-        await uow.change(lambda repos: repos.projects.add(project))
-        with pytest.raises(NotFoundError):
-            await uow.change_book(project.id, lambda repos, _project: repos.recipes.add(stray))
-
-    async def test_deleting_a_profile_empties_the_reference_of_its_recipes_and_keeps_them(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify a recipe made from a profile outlives it, and no longer names it.
-
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the database accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        owner_id = await fx_new_owner()
-        profile = make_recipe_profile(account_id=owner_id)
-        project = make_project(owner_id=owner_id)
-        recipe = evolve(make_recipe(project_id=project.id), profile_id=profile.id)
-
-        def add_profile_and_project(repos: Repositories) -> None:
-            """Add the profile and the project.
-
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            """
-            repos.recipe_profiles.add(profile)
-            repos.projects.add(project)
-
-        uow = fx_uow()
-        await uow.change(add_profile_and_project)
-        await uow.change_book(project.id, lambda repos, _project: repos.recipes.add(recipe))
-        await fx_uow().change(lambda repos: repos.recipe_profiles.delete(profile.id))
-        stored = await fx_uow().read(lambda repos: repos.recipes.get(recipe.id))
-        assert stored == evolve(recipe, profile_id=None)
-
-    async def test_the_books_of_a_profile_are_counted_once_each(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
-    ) -> None:
-        """Verify a book with two recipes of a profile counts once, an unused profile has no entry, others are left out.
-
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_new_owner: Function creating an account the database accepts as an owner.
-        :type fx_new_owner: OwnerFactory
-        """
-        owner_id = await fx_new_owner()
-        used = make_recipe_profile(account_id=owner_id)
-        unused = make_recipe_profile(account_id=owner_id, minutes=FIRST_MINUTE)
-        other = make_recipe_profile(account_id=owner_id, minutes=SECOND_MINUTE)
-        first_book = make_project(owner_id=owner_id)
-        second_book = make_project(owner_id=owner_id, title='Second')
-        first_recipes = [
-            evolve(make_recipe(project_id=first_book.id), profile_id=used.id),
-            evolve(make_recipe(project_id=first_book.id, kind=RecipeKind.BLANK), profile_id=used.id),
-        ]
-        second_recipes = [
-            evolve(make_recipe(project_id=second_book.id), profile_id=used.id),
-            evolve(make_recipe(project_id=second_book.id, stage=Stage.CLEANUP), profile_id=other.id),
-            make_recipe(project_id=second_book.id, stage=Stage.PAGE_SPLIT),
-        ]
-
-        def add_profiles_and_books(repos: Repositories) -> None:
-            """Add the three profiles and the two books.
-
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            """
-            repos.recipe_profiles.add_many([used, unused, other])
-            repos.projects.add_many([first_book, second_book])
-
-        uow = fx_uow()
-        await uow.change(add_profiles_and_books)
-        await uow.change_book(first_book.id, lambda repos, _project: repos.recipes.add_many(first_recipes))
-        await uow.change_book(second_book.id, lambda repos, _project: repos.recipes.add_many(second_recipes))
-        counted = await fx_uow().read(lambda repos: repos.recipe_profiles.count_books([used.id, unused.id]))
-        assert dict(counted) == {used.id: BOOKS_OF_A_PROFILE}
-
-    async def test_counting_the_books_of_no_profile_gives_nothing(self, fx_uow: UnitOfWorkFactory) -> None:
-        """Verify an empty request is answered with an empty count rather than an error.
-
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        """
-        counted = await fx_uow().read(lambda repos: repos.recipe_profiles.count_books([]))
-        assert dict(counted) == {}
+        assert await fx_uow().read_book(project.id, profile_ids) == [profile.id, None]

@@ -12,6 +12,7 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import RecipeDraft, ResultNote, StageRun, Step
+from bookreviver.services.library import Library
 from bookreviver.services.result_marks import ResultMarksService
 from tests.helpers.builders import EPOCH
 from tests.helpers.processors import STRENGTH_PARAMETER
@@ -36,7 +37,8 @@ def _marks(kit: ProcessingKit) -> ResultMarksService:
     :returns: The service.
     :rtype: ResultMarksService
     """
-    return ResultMarksService(uow=kit.uow(), clock=kit.clock)
+    uow = kit.uow()
+    return ResultMarksService(uow=uow, library=Library(uow=uow), clock=kit.clock)
 
 
 class TestSet:
@@ -52,7 +54,7 @@ class TestSet:
         answered = await _marks(fx_kit).set(
             actor, project.id, page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
         )
-        stored = await fx_kit.stored_version(version.id)
+        stored = await fx_kit.stored_version(project.id, version.id)
         expect((answered.mark, answered.comment) == (ResultMark.BAD, COMMENT))
         expect((stored.mark, stored.comment) == (ResultMark.BAD, COMMENT))
         expect(stored == evolve(version, mark=ResultMark.BAD, comment=COMMENT))
@@ -154,7 +156,7 @@ class TestSet:
         stronger = RecipeDraft(steps=[Step(processor_key=fx_kit.fake.spec.key, params={STRENGTH_PARAMETER: 2})])
         await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, stronger)
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        kept = await fx_kit.stored_version(first.id)
+        kept = await fx_kit.stored_version(project.id, first.id)
         async with fx_kit.assets.readable(ProjectKeys(project.id).version_directory(first)):
             pass
         assert (kept.mark, kept.comment) == (ResultMark.BAD, COMMENT)

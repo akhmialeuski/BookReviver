@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import StepId
     from bookreviver.domain.stage_summaries import StageRow, StageSummary
     from bookreviver.domain.values import Slice, SliceRequest
-    from bookreviver.ports.persistence import Repositories
     from tests.helpers.processing import ProcessingKit
 
 
@@ -32,7 +31,7 @@ async def stage_rows(
     :raises NotFoundError: If no recipe of the stage has the step.
     """
     stages = kit.stages()
-    return await kit.uow().read(lambda repos: stages.rows(repos, project, stage, request, step_id))
+    return await kit.uow().read_book(project.id, lambda repos: stages.rows(repos, project, stage, request, step_id))
 
 
 async def book_summaries(kit: ProcessingKit, project: Project) -> list[StageSummary]:
@@ -46,7 +45,7 @@ async def book_summaries(kit: ProcessingKit, project: Project) -> list[StageSumm
     :rtype: list[StageSummary]
     """
     stages = kit.stages()
-    return await kit.uow().read(lambda repos: stages.of_book(repos, repos.projects.overview(project)))
+    return await kit.uow().read_book(project.id, lambda repos: stages.of_book(repos, repos.projects.overview(project)))
 
 
 async def books_with_progress(kit: ProcessingKit, *projects: Project) -> list[ProjectOverview]:
@@ -61,14 +60,16 @@ async def books_with_progress(kit: ProcessingKit, *projects: Project) -> list[Pr
     """
     stages = kit.stages()
 
-    def work(repos: Repositories) -> list[ProjectOverview]:
-        """Count each book and add its progress.
+    async def overview_of(project: Project) -> ProjectOverview:
+        """Read the overview of one book with its progress.
 
-        :param repos: Repositories of the transaction.
-        :type repos: Repositories
-        :returns: The overviews with their progress.
-        :rtype: list[ProjectOverview]
+        :param project: The book.
+        :type project: Project
+        :returns: The overview with the progress.
+        :rtype: ProjectOverview
         """
-        return stages.with_progress(repos, [repos.projects.overview(project) for project in projects])
+        return await kit.uow().read_book(
+            project.id, lambda repos: stages.with_progress(repos, repos.projects.overview(project))
+        )
 
-    return await kit.uow().read(work)
+    return [await overview_of(project) for project in projects]

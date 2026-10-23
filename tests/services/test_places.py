@@ -10,7 +10,8 @@ from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import PlaceMode, Stage, ViewMode
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import PageId
-from bookreviver.domain.values import BookPlaceKey, CanvasPosition, NewBookPlace
+from bookreviver.domain.values import CanvasPosition, NewBookPlace
+from bookreviver.services.library import Library
 from bookreviver.services.places import PlaceService
 from tests.helpers.builders import make_project, new_account_id
 from tests.helpers.seeding import commit_project
@@ -23,6 +24,20 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 MOVE: timedelta = timedelta(minutes=5)
+
+
+def _service(new_uow: UnitOfWorkFactory, clock: FixedClock) -> PlaceService:
+    """Build the place service for one request.
+
+    :param new_uow: Function opening a new unit of work over the database of the test.
+    :type new_uow: UnitOfWorkFactory
+    :param clock: Clock stamping the places.
+    :type clock: FixedClock
+    :returns: The service over a new unit of work.
+    :rtype: PlaceService
+    """
+    uow = new_uow()
+    return PlaceService(uow=uow, library=Library(uow=uow), clock=clock)
 
 
 def _place(stage: Stage = Stage.GEOMETRY) -> NewBookPlace:
@@ -58,9 +73,9 @@ class TestPlaceService:
         :type fx_clock: FixedClock
         """
         actor = Actor(account_id=new_account_id())
-        project = make_project(owner_id=actor.account_id)
-        await commit_project(fx_database, project)
-        places = PlaceService(uow=fx_uow(), clock=fx_clock)
+        project = make_project()
+        await commit_project(fx_database, fx_uow(), project, owner=actor.account_id)
+        places = _service(fx_uow, fx_clock)
         assert await places.find(actor, project.id) is None
 
     async def test_save_stores_the_place_with_the_time_of_the_write(
@@ -76,11 +91,11 @@ class TestPlaceService:
         :type fx_clock: FixedClock
         """
         actor = Actor(account_id=new_account_id())
-        project = make_project(owner_id=actor.account_id)
-        await commit_project(fx_database, project)
+        project = make_project()
+        await commit_project(fx_database, fx_uow(), project, owner=actor.account_id)
         new = _place()
-        saved = await PlaceService(uow=fx_uow(), clock=fx_clock).save(actor, project.id, new)
-        found = await PlaceService(uow=fx_uow(), clock=fx_clock).find(actor, project.id)
+        saved = await _service(fx_uow, fx_clock).save(actor, project.id, new)
+        found = await _service(fx_uow, fx_clock).find(actor, project.id)
         assert found == saved
         assert (found.updated_at, found.canvas, found.page_id) == (fx_clock.now(), new.canvas, new.page_id)
 
@@ -97,13 +112,13 @@ class TestPlaceService:
         :type fx_clock: FixedClock
         """
         actor = Actor(account_id=new_account_id())
-        project = make_project(owner_id=actor.account_id)
-        await commit_project(fx_database, project)
-        await PlaceService(uow=fx_uow(), clock=fx_clock).save(actor, project.id, _place())
+        project = make_project()
+        await commit_project(fx_database, fx_uow(), project, owner=actor.account_id)
+        await _service(fx_uow, fx_clock).save(actor, project.id, _place())
         fx_clock.moment += MOVE
         later = NewBookPlace(mode=PlaceMode.READING, stage=Stage.LAYOUT)
-        await PlaceService(uow=fx_uow(), clock=fx_clock).save(actor, project.id, later)
-        found = await PlaceService(uow=fx_uow(), clock=fx_clock).find(actor, project.id)
+        await _service(fx_uow, fx_clock).save(actor, project.id, later)
+        found = await _service(fx_uow, fx_clock).find(actor, project.id)
         assert found is not None
         assert (found.mode, found.stage, found.canvas, found.updated_at) == (
             PlaceMode.READING,
@@ -125,15 +140,15 @@ class TestPlaceService:
         :type fx_clock: FixedClock
         """
         actor = Actor(account_id=new_account_id())
-        project = make_project(owner_id=actor.account_id)
-        await commit_project(fx_database, project)
-        older_request = PlaceService(uow=fx_uow(), clock=fx_clock)
-        newer_request = PlaceService(uow=fx_uow(), clock=fx_clock)
+        project = make_project()
+        await commit_project(fx_database, fx_uow(), project, owner=actor.account_id)
+        older_request = _service(fx_uow, fx_clock)
+        newer_request = _service(fx_uow, fx_clock)
         fx_clock.moment += MOVE
         newer = await newer_request.save(actor, project.id, NewBookPlace(mode=PlaceMode.READING, stage=Stage.LAYOUT))
         fx_clock.moment -= MOVE
         answered = await older_request.save(actor, project.id, _place())
-        found = await PlaceService(uow=fx_uow(), clock=fx_clock).find(actor, project.id)
+        found = await _service(fx_uow, fx_clock).find(actor, project.id)
         assert (answered, found) == (newer, newer)
 
     async def test_the_book_of_another_account_is_not_found(
@@ -148,13 +163,12 @@ class TestPlaceService:
         :param fx_clock: Clock stopped at the epoch.
         :type fx_clock: FixedClock
         """
-        project = make_project(owner_id=new_account_id())
-        await commit_project(fx_database, project)
+        project = make_project()
+        await commit_project(fx_database, fx_uow(), project, owner=new_account_id())
         stranger = Actor(account_id=new_account_id())
-        places = PlaceService(uow=fx_uow(), clock=fx_clock)
+        places = _service(fx_uow, fx_clock)
         with pytest.raises(NotFoundError):
             await places.find(stranger, project.id)
         with pytest.raises(NotFoundError):
             await places.save(stranger, project.id, _place())
-        key = BookPlaceKey(stranger.account_id, project.id)
-        assert await fx_uow().read(lambda repos: repos.book_places.find(key)) is None
+        assert await fx_uow().read_book(project.id, lambda repos: repos.book_places.find(project.id)) is None

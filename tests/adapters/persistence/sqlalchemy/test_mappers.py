@@ -9,7 +9,6 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.persistence.sqlalchemy.mappers import ProjectMapper
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import (
     ColorMode,
     ContributorRole,
@@ -44,13 +43,12 @@ from tests.helpers.builders import (
     make_project,
     make_scan,
     make_source,
-    new_account_id,
 )
 from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.ids import AccountId
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -110,25 +108,25 @@ SOURCE_DETAIL: str = 'The file type is not accepted as a source.'
 class TestProjectMapper:
     """Tests for ProjectMapper."""
 
-    async def test_every_field_survives_the_database(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
+    async def test_every_field_survives_the_database(self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId) -> None:
         """Verify a project with a full description, a lossless policy and a cover page reads back unchanged.
 
         :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
+        :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        project = make_project(owner_id=fx_owner_id)
+        project = make_project()
         cover = make_page(project_id=project.id)
         described = evolve(project, details=FULL_DETAILS, image_policy=ImagePolicy.LOSSLESS, cover_page_id=cover.id)
-        uow = SqlAlchemyUnitOfWork(fx_database)
-        await store_project(uow, project, cover)
-        await uow.change(lambda repos: repos.projects.update(described))
-        assert await uow.read(lambda repos: repos.projects.get(project.id)) == described
+        uow = fx_uow()
+        await store_project(uow, project, cover, owner=fx_owner_id)
+        await uow.change_book(project.id, lambda repos, _project: repos.projects.update(described))
+        assert await uow.read_book(project.id, lambda repos: repos.projects.get(project.id)) == described
 
     async def test_lists_are_stored_as_json_of_plain_values(self) -> None:
         """Verify contributors and identifiers become lists of objects holding role and scheme values, not members."""
-        row = ProjectMapper().to_row(evolve(make_project(owner_id=new_account_id()), details=FULL_DETAILS))
+        row = ProjectMapper().to_row(evolve(make_project(), details=FULL_DETAILS))
         expect(
             row.contributors[:2]
             == [{NAME_KEY: 'Я. Карскі', ROLE_KEY: 'aut'}, {NAME_KEY: 'И. И. Ивановъ', ROLE_KEY: 'edt'}]
@@ -144,15 +142,15 @@ class TestProjectMapper:
 class TestPageMapper:
     """Tests for PageMapper."""
 
-    async def test_every_field_survives_the_database(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
+    async def test_every_field_survives_the_database(self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId) -> None:
         """Verify an excluded right half of a spread with its label, kind and notes reads back unchanged.
 
         :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
+        :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        project = make_project(owner_id=fx_owner_id)
+        project = make_project()
         source = make_source(project_id=project.id)
         scan = make_scan(source=source, number=11)
         page = evolve(
@@ -164,9 +162,9 @@ class TestPageMapper:
             notes='Colour chart of the scanner',
             updated_at=EPOCH + timedelta(minutes=5),
         )
-        uow = SqlAlchemyUnitOfWork(fx_database)
-        await store_project(uow, project, page, sources=[source], scans=[scan])
-        assert await uow.read(lambda repos: repos.pages.get(page.id)) == page
+        uow = fx_uow()
+        await store_project(uow, project, page, sources=[source], scans=[scan], owner=fx_owner_id)
+        assert await uow.read_book(project.id, lambda repos: repos.pages.get(page.id)) == page
 
 
 class TestPageVersionMapper:
@@ -178,18 +176,18 @@ class TestPageVersionMapper:
         ids=['ready', 'ready-png', 'not-ready', 'no-image'],
     )
     async def test_every_field_survives_the_database(
-        self, fx_database: SqlDatabase, fx_owner_id: AccountId, renditions: Renditions | None
+        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, renditions: Renditions | None
     ) -> None:
         """Verify a split version with its input, parameters, crop transform, data and renditions reads back unchanged.
 
         :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
+        :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         :param renditions: Renditions state of the version, None for a step without an image.
         :type renditions: Renditions | None
         """
-        project = make_project(owner_id=fx_owner_id)
+        project = make_project()
         page = make_page(project_id=project.id)
         base = make_page_version(page_id=page.id)
         version = evolve(
@@ -203,9 +201,9 @@ class TestPageVersionMapper:
             renditions=renditions,
             state=VersionState.READY,
         )
-        uow = SqlAlchemyUnitOfWork(fx_database)
-        await store_project(uow, project, page, versions=[base, version])
-        assert await uow.read(lambda repos: repos.page_versions.get(version.id)) == version
+        uow = fx_uow()
+        await store_project(uow, project, page, versions=[base, version], owner=fx_owner_id)
+        assert await uow.read_book(project.id, lambda repos: repos.page_versions.get(version.id)) == version
 
     @pytest.mark.parametrize(
         'transform',
@@ -218,37 +216,39 @@ class TestPageVersionMapper:
         ids=['rotate', 'crop', 'perspective', 'mesh'],
     )
     async def test_every_transform_survives_the_database(
-        self, fx_database: SqlDatabase, fx_owner_id: AccountId, transform: Transform
+        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, transform: Transform
     ) -> None:
         """Verify each kind of transform reads back with its argument.
 
         :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
+        :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         :param transform: Transform of the version.
         :type transform: Transform
         """
-        project = make_project(owner_id=fx_owner_id)
+        project = make_project()
         page = make_page(project_id=project.id)
         version = evolve(make_page_version(page_id=page.id), transform=transform)
-        uow = SqlAlchemyUnitOfWork(fx_database)
-        await store_project(uow, project, page, versions=[version])
-        assert (await uow.read(lambda repos: repos.page_versions.get(version.id))).transform == transform
+        uow = fx_uow()
+        await store_project(uow, project, page, versions=[version], owner=fx_owner_id)
+        assert (
+            await uow.read_book(project.id, lambda repos: repos.page_versions.get(version.id))
+        ).transform == transform
 
 
 class TestSourceMapper:
     """Tests for SourceMapper."""
 
-    async def test_every_field_survives_the_database(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
+    async def test_every_field_survives_the_database(self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId) -> None:
         """Verify an indirect DjVu source with its files, metadata and suggestion reads back unchanged.
 
         :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
+        :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        project = make_project(owner_id=fx_owner_id)
+        project = make_project()
         source = evolve(
             make_source(project_id=project.id),
             kind=SourceKind.DJVU,
@@ -261,9 +261,9 @@ class TestSourceMapper:
             metadata=FULL_METADATA,
             suggestion=FULL_SUGGESTION,
         )
-        uow = SqlAlchemyUnitOfWork(fx_database)
-        await store_project(uow, project, sources=[source])
-        assert await uow.read(lambda repos: repos.sources.get(source.id)) == source
+        uow = fx_uow()
+        await store_project(uow, project, sources=[source], owner=fx_owner_id)
+        assert await uow.read_book(project.id, lambda repos: repos.sources.get(source.id)) == source
 
     @pytest.mark.parametrize(
         ('status', 'rejection'),
@@ -271,7 +271,7 @@ class TestSourceMapper:
     )
     async def test_a_file_of_an_unknown_type_that_was_not_imported_survives_the_database(
         self,
-        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
         fx_owner_id: AccountId,
         status: SourceStatus,
         rejection: RejectionReason | None,
@@ -279,7 +279,7 @@ class TestSourceMapper:
         """Verify a rejected or skipped file with no kind and no type, a reason and a detail reads back unchanged.
 
         :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
+        :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         :param status: Whether the file was rejected or skipped.
@@ -287,7 +287,7 @@ class TestSourceMapper:
         :param rejection: The reason of a rejected file, and None for a skipped one.
         :type rejection: RejectionReason | None
         """
-        project = make_project(owner_id=fx_owner_id)
+        project = make_project()
         source = evolve(
             make_source(project_id=project.id),
             kind=None,
@@ -297,23 +297,23 @@ class TestSourceMapper:
             rejection=rejection,
             detail=SOURCE_DETAIL,
         )
-        uow = SqlAlchemyUnitOfWork(fx_database)
-        await store_project(uow, project, sources=[source])
-        assert await uow.read(lambda repos: repos.sources.get(source.id)) == source
+        uow = fx_uow()
+        await store_project(uow, project, sources=[source], owner=fx_owner_id)
+        assert await uow.read_book(project.id, lambda repos: repos.sources.get(source.id)) == source
 
 
 class TestScanMapper:
     """Tests for ScanMapper."""
 
-    async def test_every_field_survives_the_database(self, fx_database: SqlDatabase, fx_owner_id: AccountId) -> None:
+    async def test_every_field_survives_the_database(self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId) -> None:
         """Verify a scan with every fact, a label and ready renditions reads back equal to what was stored.
 
         :param fx_database: Fresh SQLite database with every table created.
-        :type fx_database: SqlDatabase
+        :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        project = make_project(owner_id=fx_owner_id)
+        project = make_project()
         source = make_source(project_id=project.id)
         scan = evolve(
             make_scan(source=source, number=11),
@@ -321,6 +321,6 @@ class TestScanMapper:
             facts=FULL_SCAN_FACTS,
             renditions=Renditions(ready=True, version=3, full=Rendition.FULL_PNG),
         )
-        uow = SqlAlchemyUnitOfWork(fx_database)
-        await store_project(uow, project, sources=[source], scans=[scan])
-        assert await uow.read(lambda repos: repos.scans.get(scan.id)) == scan
+        uow = fx_uow()
+        await store_project(uow, project, sources=[source], scans=[scan], owner=fx_owner_id)
+        assert await uow.read_book(project.id, lambda repos: repos.scans.get(scan.id)) == scan

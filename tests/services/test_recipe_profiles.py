@@ -12,7 +12,7 @@ from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.values import PageStageKey, ProfileDraft, SliceRequest, Step
 from tests.helpers.builders import make_page_stage, make_project, make_recipe_profile
 from tests.helpers.processors import FakeProcessor
-from tests.helpers.seeding import commit_account
+from tests.helpers.seeding import commit_account, store_project
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Project, RecipeProfile
@@ -58,8 +58,9 @@ async def second_project(kit: ProcessingKit, actor: Actor) -> Project:
     :returns: The project.
     :rtype: Project
     """
-    project = make_project(owner_id=actor.account_id, title='Another book')
-    return await kit.uow().change(lambda repos: repos.projects.add(project))
+    project = make_project(title='Another book')
+    await store_project(kit.uow(), project, owner=actor.account_id)
+    return project
 
 
 async def saved(kit: ProcessingKit, actor: Actor, name: str = PROFILE_NAME) -> RecipeProfile:
@@ -189,7 +190,7 @@ class TestChangeProfile:
         profile = await saved(fx_kit, actor)
         applied = await fx_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
         await fx_kit.profiles().remove(actor, profile.id)
-        kept = await fx_kit.uow().read(lambda repos: repos.recipes.get(applied.recipe.id))
+        kept = await fx_kit.uow().read_book(project.id, lambda repos: repos.recipes.get(applied.recipe.id))
         assert kept.steps == profile.steps
         assert (await fx_kit.profiles().profiles(actor, None, EVERYTHING)).total == 0
 
@@ -252,7 +253,9 @@ class TestApplyProfile:
         await fx_kit.uow().change_book(project.id, lambda repos, _project: repos.page_stages.save(seeded))
         profile = await saved(fx_kit, actor)
         await fx_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
-        record = await fx_kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)))
+        record = await fx_kit.uow().read_book(
+            project.id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+        )
         assert record.state is StageState.STALE
 
     async def test_a_step_of_a_missing_processor_is_left_out_and_named(self, fx_kit: ProcessingKit) -> None:

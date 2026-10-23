@@ -11,7 +11,6 @@ import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.api.route_names import RouteName
 from bookreviver.domain.events import ProjectChanged
 from tests.helpers.builders import make_project
@@ -26,6 +25,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Project
     from bookreviver.domain.ids import AccountId
+    from bookreviver.ports.persistence import UnitOfWork
+    from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fakes_jobs import JobFakes
 
 pytestmark = pytest.mark.anyio
@@ -34,46 +35,47 @@ pytestmark = pytest.mark.anyio
 OPEN_TABS: int = 3
 
 
-async def _store_project_of(database: SqlDatabase, owner_id: AccountId) -> Project:
-    """Commit a project of an account to the SQL database.
+async def _store_project_of(uow: UnitOfWork, owner_id: AccountId) -> Project:
+    """Commit a book of an account to the catalogue and the books of the test.
 
-    :param database: SQL database of the running application.
-    :type database: SqlDatabase
+    :param uow: Unit of work over the catalogue and the books of the running application.
+    :type uow: UnitOfWork
     :param owner_id: Committed account that owns the project.
     :type owner_id: AccountId
     :returns: The stored project.
     :rtype: Project
     """
-    project = make_project(owner_id=owner_id)
-    await store_project(SqlAlchemyUnitOfWork(database), project)
+    project = make_project()
+    await store_project(uow, project, owner=owner_id)
     return project
 
 
 @pytest.fixture
-async def fx_owned_project(fx_database: SqlDatabase, fx_actor: Actor) -> Project:
-    """Commit a project of the signed-in account, which ``fx_database`` stores.
+async def fx_owned_project(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Project:
+    """Commit a project of the signed-in account, which the catalogue of the test stores.
 
-    :param fx_database: SQL database of the test, which the running application runs on, whose pool a test counts the
-                        connections of.
-    :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :returns: The stored project of the signed-in account.
     :rtype: Project
     """
-    return await _store_project_of(fx_database, fx_actor.account_id)
+    return await _store_project_of(fx_uow(), fx_actor.account_id)
 
 
 @pytest.fixture
-async def fx_strangers_project(fx_database: SqlDatabase) -> Project:
+async def fx_strangers_project(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory) -> Project:
     """Commit a project of another account.
 
-    :param fx_database: SQL database of the test, which the running application runs on.
+    :param fx_database: Catalogue of the test, which the running application runs on.
     :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
+    :type fx_uow: UnitOfWorkFactory
     :returns: The stored project of the other account.
     :rtype: Project
     """
-    return await _store_project_of(fx_database, await commit_account(fx_database))
+    return await _store_project_of(fx_uow(), await commit_account(fx_database))
 
 
 class TestStreamConnections:

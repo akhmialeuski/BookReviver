@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Page, PaginationSection, Project
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from bookreviver.services.pagination import PaginationService
     from tests.helpers.database import UnitOfWorkFactory
@@ -103,7 +103,7 @@ async def _commit_book(
     :returns: The project and its pages in book order.
     :rtype: tuple[Project, list[Page]]
     """
-    project = make_project(owner_id=owner.account_id)
+    project = make_project()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(layout))
     pages = [
         evolve(
@@ -115,7 +115,7 @@ async def _commit_book(
         )
         for key, (kind, included) in zip(keys, layout, strict=True)
     ]
-    await store_project(uow, project, *pages)
+    await store_project(uow, project, *pages, owner=owner.account_id)
     return project, pages
 
 
@@ -140,7 +140,7 @@ async def _labels(uow: UnitOfWork, pages: list[Page]) -> list[str]:
     :returns: The label of each page as committed, in the order given.
     :rtype: list[str]
     """
-    return await uow.read(lambda repos: [repos.pages.get(page.id).label for page in pages])
+    return await uow.read_book(pages[0].project_id, lambda repos: [repos.pages.get(page.id).label for page in pages])
 
 
 async def _sections(uow: UnitOfWork, project: Project) -> list[PaginationSection]:
@@ -153,7 +153,7 @@ async def _sections(uow: UnitOfWork, project: Project) -> list[PaginationSection
     :returns: The sections of the project.
     :rtype: list[PaginationSection]
     """
-    found = await uow.read(lambda repos: repos.pagination_sections.list_for_project(project.id))
+    found = await uow.read_book(project.id, lambda repos: repos.pagination_sections.list_for_project(project.id))
     return sorted(found, key=lambda section: (section.created_at, section.id))
 
 
@@ -650,7 +650,9 @@ class TestNumberPages:
 
         expect(await _labels(fx_uow(), pages) == ['10', '11', '12', '13'])
         expect(len(await _sections(fx_uow(), project)) == 1)
-        stored = await fx_uow().read(lambda repos: repos.pages.list_by_ids(project.id, [page.id for page in pages]))
+        stored = await fx_uow().read_book(
+            project.id, lambda repos: repos.pages.list_by_ids(project.id, [page.id for page in pages])
+        )
         expect(len(stored) == len(pages) and all(not page.label_manual for page in stored))
         assert_expectations()
 
@@ -866,11 +868,11 @@ class TestNumberPages:
         numbering = PageNumbering(first_page_id=pages[2].id, last_page_id=pages[4].id, style=LabelStyle.ARABIC)
         fx_page_writes.start()
 
-        def label_a_page(repos: Repositories, _project: Project) -> None:
+        def label_a_page(repos: BookRepositories, _project: Project) -> None:
             """Write a hand label of the fifth page.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             """
@@ -884,7 +886,7 @@ class TestNumberPages:
             expect(fx_page_writes.page_ids == set())
 
         # The numbering drops the hand label of the pages it counts, so it ran after the label was written
-        stored = await fx_uow().read(lambda repos: repos.pages.get(pages[4].id))
+        stored = await fx_uow().read_book(project.id, lambda repos: repos.pages.get(pages[4].id))
         expect((stored.label_manual, stored.label != HAND_WRITTEN) == (False, True))
         assert_expectations()
 

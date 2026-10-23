@@ -47,7 +47,7 @@ from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import PageStageKey, Renditions, StageRun
 from tests.helpers.builders import make_page, make_project, make_scan, make_source, new_account_id
 from tests.helpers.processing import ProcessingFakesProvider
-from tests.helpers.seeding import commit_project
+from tests.helpers.seeding import store_project
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -55,9 +55,8 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Page, Project, Scan
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.storage import AssetStore
     from tests.helpers.board_idle import JobsIdle
     from tests.helpers.database import UnitOfWorkFactory
@@ -111,11 +110,11 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_book(fx_database: SqlDatabase, fx_asset_store: AssetStore, fx_actor: Actor) -> Book:
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_actor: Actor) -> Book:
     """Commit a book of one page and store the full image of its scan as a real JPEG.
 
-    :param fx_database: Database of the test, which the application runs on.
-    :type fx_database: SqlDatabase
+    :param fx_uow: Function opening a new unit of work over the database of the test.
+    :type fx_uow: UnitOfWorkFactory
     :param fx_asset_store: Asset store of the application.
     :type fx_asset_store: AssetStore
     :param fx_actor: The signed-in account.
@@ -123,14 +122,14 @@ async def fx_book(fx_database: SqlDatabase, fx_asset_store: AssetStore, fx_actor
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project(owner_id=fx_actor.account_id)
+    project = make_project()
     source = make_source(project_id=project.id)
     scan = evolve(
         make_scan(source=source, number=0),
         renditions=Renditions(ready=True),
     )
     page = make_page(project_id=project.id, scan=scan)
-    await commit_project(fx_database, project, page, sources=[source], scans=[scan])
+    await store_project(fx_uow(), project, page, owner=fx_actor.account_id, sources=[source], scans=[scan])
     await store_scan_images(fx_asset_store, project, scan)
     return Book(project=project, page=page)
 
@@ -675,12 +674,15 @@ class TestRunAndVersions:
         """
         await run_stage(fx_client, fx_idle, fx_book, 'page-split')
         uow = fx_uow()
-        record = await uow.read(lambda repos: repos.page_stages.get(PageStageKey(fx_book.page.id, Stage.PAGE_SPLIT)))
+        record = await uow.read_book(
+            fx_book.page.project_id,
+            lambda repos: repos.page_stages.get(PageStageKey(fx_book.page.id, Stage.PAGE_SPLIT)),
+        )
         assert record.head_version_id is not None
         head_id = record.head_version_id
         # A version made from the current one and left behind: it reads the head, and no current chain reads it
         old = evolve(
-            await uow.read(lambda repos: repos.page_versions.get(head_id)),
+            await uow.read_book(fx_book.page.project_id, lambda repos: repos.page_versions.get(head_id)),
             id=PageVersionId(OLD_VERSION_ID),
             input_id=head_id,
         )
@@ -697,7 +699,7 @@ class TestRunAndVersions:
         expect(
             first.json() == {'versions': 1, 'size_bytes': len(OLD_VERSION_CONTENT)} and second.json() == first.json()
         )
-        expect(await uow.read(lambda repos: repos.page_versions.find(old.id)) is not None)
+        expect(await uow.read_book(fx_book.project.id, lambda repos: repos.page_versions.find(old.id)) is not None)
         assert_expectations()
 
     async def test_collectable_versions_of_another_account_are_a_404(self, fx_client: httpx.AsyncClient) -> None:
@@ -1101,11 +1103,11 @@ async def add_page(uow: UnitOfWork, book: Book, order_key: str, kind: PageKind =
     scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
     page = make_page(project_id=book.project.id, order_key=order_key, scan=scan, kind=kind)
 
-    def add_scan_page(repos: Repositories, _project: Project) -> None:
+    def add_scan_page(repos: BookRepositories, _project: Project) -> None:
         """Add the source, its scan and the page that shows the scan.
 
         :param repos: Repositories of the transaction.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param _project: Project of the book, which the work does not need.
         :type _project: Project
         """

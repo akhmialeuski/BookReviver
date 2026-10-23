@@ -19,8 +19,8 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.domain.entities import Page, PageStage, PageVersion, Project
-    from bookreviver.domain.ids import PageVersionId
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.domain.ids import PageVersionId, ProjectId
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.page_stage_writes import PageStageWrites
     from tests.helpers.processing import ProcessingKit
 
@@ -103,11 +103,11 @@ class SeededPage:
         )
         record = make_page_stage(page_id=self.page.id, stage=stage, head_version_id=version.id, state=state)
 
-        def add_result(repos: Repositories, _project: Project) -> None:
+        def add_result(repos: BookRepositories, _project: Project) -> None:
             """Add the version and the record of the stage that has it as its current version.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: Project of the book, which the work does not need.
             :type _project: Project
             """
@@ -123,7 +123,11 @@ class SeededPage:
         :returns: The base version.
         :rtype: PageVersion
         """
-        return (await self.kit.uow().read(lambda repos: repos.page_versions.list_for_page(self.page.id)))[0]
+        return (
+            await self.kit.uow().read_book(
+                self.page.project_id, lambda repos: repos.page_versions.list_for_page(self.page.id)
+            )
+        )[0]
 
     async def stored(self, stage: Stage) -> PageStage:
         """Read the committed record of a stage of the page.
@@ -133,7 +137,9 @@ class SeededPage:
         :returns: The record.
         :rtype: PageStage
         """
-        return await self.kit.uow().read(lambda repos: repos.page_stages.get(PageStageKey(self.page.id, stage)))
+        return await self.kit.uow().read_book(
+            self.page.project_id, lambda repos: repos.page_stages.get(PageStageKey(self.page.id, stage))
+        )
 
 
 async def mark_stale(kit: ProcessingKit) -> list[PageStage]:
@@ -185,14 +191,14 @@ class TestMarkStale:
         record = await page.stored(Stage.GEOMETRY)
         left = meanwhile(record, (await page.base()).id)
         uow = fx_kit.uow()
-        read = uow.read
+        read = uow.read_book
         changed = False
 
-        def request_changes_record(repos: Repositories, _project: Project) -> None:
+        def request_changes_record(repos: BookRepositories, _project: Project) -> None:
             """Write the record as a request that came after the check found it outdated leaves it.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: Project of the book, which the work does not need.
             :type _project: Project
             """
@@ -201,27 +207,29 @@ class TestMarkStale:
             else:
                 repos.page_stages.save(left)
 
-        async def read_then_change[T](work: Callable[[Repositories], T]) -> T:
+        async def read_then_change[T](project_id: ProjectId, work: Callable[[BookRepositories], T]) -> T:
             """Read as the unit of work does, then let a request change the record in a change of its own, once.
 
+            :param project_id: Project whose book is read.
+            :type project_id: ProjectId
             :param work: Function over the repositories of the transaction.
-            :type work: Callable[[Repositories], T]
+            :type work: Callable[[BookRepositories], T]
             :returns: What the work returns.
             :rtype: T
             """
             nonlocal changed
-            found = await read(work)
+            found = await read(project_id, work)
             if not changed:
                 changed = True
                 await fx_kit.uow().change_book(page.page.project_id, request_changes_record)
             return found
 
-        monkeypatch.setattr(uow, 'read', read_then_change)
+        monkeypatch.setattr(uow, 'read_book', read_then_change)
         fx_kit.clock.moment = CHECKED_AT
 
         marked = await OutdatedResults(uow=uow, catalogue=fx_kit.catalogue, clock=fx_kit.clock).mark_stale()
 
-        stored = await fx_kit.uow().read(lambda repos: repos.page_stages.find(record.key))
+        stored = await fx_kit.uow().read_book(page.page.project_id, lambda repos: repos.page_stages.find(record.key))
         assert (marked, stored) == ([], left)
 
     async def test_fresh_stage_made_by_an_older_version_of_a_processor_becomes_stale(
