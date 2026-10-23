@@ -9,9 +9,9 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.domain.changes import PageChanges
-from bookreviver.domain.enums import ContentType, PageChange, PageKind, Side
+from bookreviver.domain.enums import BookResource, ContentType, PageKind, Side
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.events import PagesChanged
+from bookreviver.domain.events import BookChanged
 from bookreviver.domain.values import PageAnchor
 from bookreviver.services.projects import book_pages
 from tests.helpers.book_hold import hold_book_in_thread
@@ -122,15 +122,15 @@ async def _delete_page(service: PageService, actor: Actor, project_id: ProjectId
 class TestUpdate:
     """Tests for PageService.update()."""
 
-    async def test_changes_the_four_fields_stamped_and_announced_once(
+    async def test_changes_the_four_fields_stamped_in_one_change(
         self,
         fx_service: Callable[[], PageService],
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
         fx_clock: FixedClock,
-        fx_events: RecordingEventBus,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
-        """Verify the number, the kind, the inclusion and the notes change together, stamped, announced once.
+        """Verify the number, the kind, the inclusion and the notes change together, stamped, in one change of the book.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -140,11 +140,12 @@ class TestUpdate:
         :type fx_actor: Actor
         :param fx_clock: Clock the service stamps pages with.
         :type fx_clock: FixedClock
-        :param fx_events: Recording event bus of the test.
-        :type fx_events: RecordingEventBus
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         project, pages = await _commit_book(fx_uow(), fx_actor)
         fx_clock.moment = LATER
+        fx_book_changes.published.clear()
 
         updated = await fx_service().update(
             fx_actor,
@@ -162,10 +163,8 @@ class TestUpdate:
         expect((stored.id, stored.order_key, stored.scan_id) == (pages[2].id, pages[2].order_key, pages[2].scan_id))
         expect(updated.page == stored)
         expect(updated.position == 2)
-        expect(
-            fx_events.published
-            == [PagesChanged(project_id=project.id, page_ids=[pages[2].id], change=PageChange.EDITED)]
-        )
+        [change] = fx_book_changes.published
+        expect(isinstance(change, BookChanged) and BookResource.PAGES in change.resources)
         assert_expectations()
 
     async def test_an_update_writes_only_the_row_of_its_page(

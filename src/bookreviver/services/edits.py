@@ -12,7 +12,7 @@ earlier one.
 An edit computes nothing. It marks the stage of its page stale, and a run of the stage picks it up like any other.
 Saving and deleting an edit write the manual layer of the step to the history of the page, with the edit before and
 after as snapshots, so an undo can put either back. The rows of an edit are written by the work of one
-``change_book``, and the stale marks are announced after it.
+``change_book``, with the stale marks.
 
 A mask arrives as an upload. It is written to a scratch key while its digest is worked out, since its final key holds
 the hash of the whole edit, and then copied to that key and the scratch removed, all before the transaction opens.
@@ -37,7 +37,7 @@ from bookreviver.services.recipes import find_step
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Actor, PageStage, Project
+    from bookreviver.domain.entities import Actor, Project
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.domain.values import NewPageEdit, PageStepKey, ProcessorSpec
@@ -153,15 +153,13 @@ class EditService:
             updated_at=self._clock.now(),
         )
 
-        def work(repos: BookRepositories, _project: Project) -> list[PageStage]:
+        def work(repos: BookRepositories, _project: Project) -> None:
             """Check the request again, write the edit, and mark the stage stale.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it.
             :type _project: Project
-            :returns: The stage records that became stale.
-            :rtype: list[PageStage]
             :raises NotFoundError: If the project has no such page, or no recipe of the
                                    stage has such a step.
             :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its
@@ -173,11 +171,10 @@ class EditService:
                 page_id=key.page_id, stage=key.stage, step_id=key.step_id, updated_at=stored.updated_at
             )
             self._store(repos, state, evolve(state, edit=stored, updated_at=stored.updated_at))
-            return self._records.mark_stale(repos, key.page_id, key.stage)
+            self._records.mark_stale(repos, key.page_id, key.stage)
 
         # A mask stays when the change fails, since its key holds the hash of the edit and an equal edit finds it there
-        stale = await self._uow.change_book(project_id, work)
-        await self._records.announce(project_id, stale)
+        await self._uow.change_book(project_id, work)
         return stored
 
     async def list(self, actor: Actor, project_id: ProjectId, page_id: PageId, stage: Stage) -> Sequence[PageEdit]:
@@ -228,15 +225,13 @@ class EditService:
         """
         await self._library.open(actor, project_id)
 
-        def work(repos: BookRepositories, _project: Project) -> list[PageStage]:
+        def work(repos: BookRepositories, _project: Project) -> None:
             """Delete the edit from the state of the step, and mark the stage stale.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it.
             :type _project: Project
-            :returns: The stage records that became stale.
-            :rtype: list[PageStage]
             :raises NotFoundError: If the project has no such page, or the step has no
                                    edit there.
             """
@@ -245,10 +240,9 @@ class EditService:
             if state is None or state.edit is None:
                 raise NotFoundError(key)
             self._store(repos, state, evolve(state, edit=None, updated_at=self._clock.now()))
-            return self._records.mark_stale(repos, key.page_id, key.stage)
+            self._records.mark_stale(repos, key.page_id, key.stage)
 
-        stale = await self._uow.change_book(project_id, work)
-        await self._records.announce(project_id, stale)
+        await self._uow.change_book(project_id, work)
 
     @staticmethod
     def _store(repos: BookRepositories, state: PageStepState, changed: PageStepState) -> None:

@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from tests.helpers.clock import FixedClock
     from tests.helpers.database import UnitOfWorkFactory
-    from tests.helpers.fakes_jobs import RecordingEventBus
     from tests.helpers.page_stage_writes import PageStageWrites
 
 pytestmark = pytest.mark.anyio
@@ -61,7 +60,7 @@ class TestMarkRecipeStale:
     """Tests for ``StageRecords.mark_recipe_stale``."""
 
     async def test_the_fresh_records_of_the_recipe_end_stale_and_the_others_stay_as_they_were(
-        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_clock: FixedClock, fx_events: RecordingEventBus
+        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_clock: FixedClock
     ) -> None:
         """Verify the fresh records of the recipe are stamped stale together, and a failed one or one of no recipe stays.
 
@@ -71,8 +70,6 @@ class TestMarkRecipeStale:
         :type fx_uow: UnitOfWorkFactory
         :param fx_clock: Clock stopped at the epoch.
         :type fx_clock: FixedClock
-        :param fx_events: Recording event bus the records are announced through.
-        :type fx_events: RecordingEventBus
         """
         project = make_project()
         first, second, third = (make_page(order_key=key) for key in PAGE_ORDER_KEYS)
@@ -83,11 +80,11 @@ class TestMarkRecipeStale:
         failed = make_page_stage(page_id=third.id, recipe_id=recipe.id, state=StageState.FAILED)
         without_recipe = make_page_stage(page_id=first.id, stage=Stage.CLEANUP)
         uow = fx_uow()
-        records = StageRecords(publisher=fx_events, clock=fx_clock)
+        records = StageRecords(clock=fx_clock)
         await store_records(uow, project, recipe, [fresh_first, fresh_second, failed, without_recipe])
         fx_clock.moment = CHANGED_AT
 
-        marked = await uow.change_book(project.id, lambda repos, _project: records.mark_recipe_stale(repos, recipe.id))
+        await uow.change_book(project.id, lambda repos, _project: records.mark_recipe_stale(repos, recipe.id))
 
         stored = await uow.read_book(
             project.id, lambda repos: repos.page_stages.list_for_pages([first.id, second.id, third.id])
@@ -95,20 +92,15 @@ class TestMarkRecipeStale:
         stale = [
             evolve(record, state=StageState.STALE, updated_at=CHANGED_AT) for record in (fresh_first, fresh_second)
         ]
-        assert (
-            {record.key: record for record in marked},
-            {record.key: record for record in stored},
-        ) == (
-            {record.key: record for record in stale},
-            {record.key: record for record in (*stale, failed, without_recipe)},
-        )
+        assert {record.key: record for record in stored} == {
+            record.key: record for record in (*stale, failed, without_recipe)
+        }
 
     async def test_the_records_of_the_recipe_are_written_by_one_save_many_and_never_by_save(
         self,
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_clock: FixedClock,
-        fx_events: RecordingEventBus,
         fx_page_stage_writes: PageStageWrites,
     ) -> None:
         """Verify three fresh records are written by one ``save_many`` holding all three, and ``save`` is not called.
@@ -122,8 +114,6 @@ class TestMarkRecipeStale:
         :type fx_uow: UnitOfWorkFactory
         :param fx_clock: Clock stopped at the epoch.
         :type fx_clock: FixedClock
-        :param fx_events: Recording event bus the records are announced through.
-        :type fx_events: RecordingEventBus
         :param fx_page_stage_writes: Record of the writes of the page stage repository, not yet started.
         :type fx_page_stage_writes: PageStageWrites
         """
@@ -133,11 +123,12 @@ class TestMarkRecipeStale:
         recipe = make_recipe()
         fresh = [make_page_stage(page_id=page.id, recipe_id=recipe.id) for page in pages]
         uow = fx_uow()
-        records = StageRecords(publisher=fx_events, clock=fx_clock)
+        records = StageRecords(clock=fx_clock)
         await store_records(uow, project, recipe, fresh)
         fx_clock.moment = CHANGED_AT
         fx_page_stage_writes.start()
 
-        marked = await uow.change_book(project.id, lambda repos, _project: records.mark_recipe_stale(repos, recipe.id))
+        await uow.change_book(project.id, lambda repos, _project: records.mark_recipe_stale(repos, recipe.id))
 
-        assert (len(marked), fx_page_stage_writes.batches, fx_page_stage_writes.saves) == (3, [marked], [])
+        [batch] = fx_page_stage_writes.batches
+        assert ({record.key for record in batch}, fx_page_stage_writes.saves) == ({record.key for record in fresh}, [])

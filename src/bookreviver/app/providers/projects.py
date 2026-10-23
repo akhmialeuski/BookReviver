@@ -157,23 +157,19 @@ class ProjectsProvider(Provider):
         return PageService(uow=uow, library=library, assets=assets, runtime=runtime, imaging=imaging)
 
     @provide
-    def pagination(
-        self, uow: UnitOfWork, library: Library, publisher: EventPublisher, clock: Clock
-    ) -> PaginationService:
+    def pagination(self, uow: UnitOfWork, library: Library, clock: Clock) -> PaginationService:
         """Build the pagination service over the request's unit of work.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
         :param library: Library of the current request.
         :type library: Library
-        :param publisher: Publisher of the application's event bus.
-        :type publisher: EventPublisher
         :param clock: Clock of the application.
         :type clock: Clock
         :returns: The pagination service of the request.
         :rtype: PaginationService
         """
-        return PaginationService(uow=uow, library=library, publisher=publisher, clock=clock)
+        return PaginationService(uow=uow, library=library, clock=clock)
 
     @provide
     def places(self, uow: UnitOfWork, library: Library, clock: Clock) -> PlaceService:

@@ -3,7 +3,7 @@
 A section lasts until the next section of its flow starts, and a series by kind takes the pages of its kinds across the
 book, so the plates of a book can have their own numbers. The printed number of a page follows the sections, except a
 number written by hand, which stays. Every change of a section writes the numbers that change in its own transaction,
-and the pages renumbered reach the browser as a ``pages-changed`` event.
+and the pages renumbered reach the browser as a ``book-changed`` event.
 """
 
 from dataclasses import dataclass

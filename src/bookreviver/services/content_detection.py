@@ -21,7 +21,6 @@ from attrs import evolve
 
 from bookreviver.domain.enums import (
     ContentType,
-    PageChange,
     PageKind,
     PageOrigin,
     Rendition,
@@ -30,7 +29,6 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.events import PagesChanged
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import ContentDetection
 from bookreviver.services.projects import book_pages
@@ -39,7 +37,7 @@ from bookreviver.services.steps import StepRun
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Job, Page, PageStage, PageVersion, Project
+    from bookreviver.domain.entities import Job, Page, PageVersion, Project
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import JobControl
@@ -65,7 +63,7 @@ class ContentDetector:
 
         :param uow: Unit of work whose ``change_book`` holds the write of each page.
         :type uow: UnitOfWork
-        :param runtime: The runner of the processor that finds the content of an image, the publisher and the clock.
+        :param runtime: The runner of the processor that finds the content of an image, and the clock.
         :type runtime: StageRuntime
         :param records: Writer of the stage records, which marks the stages of a page stale.
         :type records: StageRecords
@@ -73,15 +71,13 @@ class ContentDetector:
         self._uow = uow
         self._runner = runtime.runner
         self._catalogue = runtime.catalogue
-        self._publisher = runtime.publisher
         self._clock = runtime.clock
         self._records = records
 
     async def run(self, job: Job, control: JobControl) -> tuple[int, int]:
         """Detect the content of the pages of a running job, a task for each page.
 
-        The pages written are announced when the job stops too, whether it ran to the end or was cancelled, since what
-        a page was given stays.
+        Each page is written in a ``change_book`` of its own, so what a page was given stays when the job is cancelled.
 
         :param job: The running job.
         :type job: Job
@@ -99,25 +95,15 @@ class ContentDetector:
             return 0, 0
         pages = await self._pages(job.project_id, detection)
         control.plan(len(pages))
-        changed: list[PageId] = []
         read = failed = 0
-        try:
-            for window in batched(pages, self.WINDOW, strict=False):
-                bases = await self._bases(job.project_id, window)
-                for page in window:
-                    if (base := bases.get(page.id)) is not None:
-                        outcome = await self._detect(
-                            job.project_id, page.id, base, forced=detection.page_ids is not None
-                        )
-                        read += outcome is not None
-                        failed += outcome is None
-                        if outcome:
-                            changed.append(page.id)
-                    await control.task_done()
-        finally:
-            if changed:
-                event = PagesChanged(project_id=job.project_id, page_ids=changed, change=PageChange.EDITED)
-                await self._publisher.publish(event)
+        for window in batched(pages, self.WINDOW, strict=False):
+            bases = await self._bases(job.project_id, window)
+            for page in window:
+                if (base := bases.get(page.id)) is not None:
+                    outcome = await self._detect(job.project_id, page.id, base, forced=detection.page_ids is not None)
+                    read += outcome is not None
+                    failed += outcome is None
+                await control.task_done()
         return read, failed
 
     async def _detect(self, project_id: ProjectId, page_id: PageId, base: PageVersion, *, forced: bool) -> bool | None:
@@ -245,30 +231,28 @@ class ContentDetector:
         :rtype: bool
         """
 
-        def work(repos: BookRepositories, _project: Project) -> list[PageStage] | None:
+        def work(repos: BookRepositories, _project: Project) -> bool:
             """Write the content type into the page, and mark its later stages stale when its kind changed.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it, which the write does not read.
             :type _project: Project
-            :returns: The records that became stale, or None when nothing was written.
-            :rtype: list[PageStage] | None
+            :returns: Whether the content type was written.
+            :rtype: bool
             """
             try:
                 before = repos.pages.get(page_id)
             except NotFoundError:
-                return None
+                return False
             if before.content_by_hand and not forced:
-                return None
+                return False
             after = evolve(before, content_type=content, content_by_hand=False, updated_at=self._clock.now())
             if after == evolve(before, updated_at=after.updated_at):
-                return None
+                return False
             repos.pages.update(after)
-            shown = before.recipe_kind is not after.recipe_kind
-            return self._records.mark_content_stale(repos, page_id) if shown else []
+            if before.recipe_kind is not after.recipe_kind:
+                self._records.mark_content_stale(repos, page_id)
+            return True
 
-        if (stale := await self._uow.change_book(project_id, work)) is None:
-            return False
-        await self._records.announce(project_id, stale)
-        return True
+        return await self._uow.change_book(project_id, work)

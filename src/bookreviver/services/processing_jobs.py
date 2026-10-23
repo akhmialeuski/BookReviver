@@ -52,7 +52,7 @@ from bookreviver.services.version_clearing import VersionClearing
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bookreviver.domain.entities import Job, Page, PageStage, PageVersion, Project, Recipe
+    from bookreviver.domain.entities import Job, Page, PageVersion, Project, Recipe
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import JobControl
@@ -325,26 +325,22 @@ class ProcessingJobs:
             except Exception:
                 logger.exception('The stage %s failed on page %s', recipe.stage, page.id)
 
-                def fail(repos: BookRepositories, _project: Project) -> PageStage | None:
+                def fail(repos: BookRepositories, _project: Project) -> None:
                     """Record that the stage failed on the page, unless the page was deleted meanwhile.
 
                     :param repos: Repositories of the transaction.
                     :type repos: BookRepositories
                     :param _project: The project as the change finds it, which the record does not read.
                     :type _project: Project
-                    :returns: The record of the failed stage, or None when the page is gone.
-                    :rtype: PageStage | None
                     """
                     try:
                         repos.pages.get(page.id)
                     except NotFoundError:
                         logger.warning('Page %s was deleted while its stage %s ran', page.id, recipe.stage)
-                        return None
-                    return self._records.mark_failed(repos, page.id, recipe.stage, recipe_id=recipe.id)
+                        return
+                    self._records.mark_failed(repos, page.id, recipe.stage, recipe_id=recipe.id)
 
-                record = await self._uow.change_book(project_id, fail)
-                if record is not None:
-                    await self._records.announce(project_id, [record])
+                await self._uow.change_book(project_id, fail)
                 outcome = RunOutcome.FAILED
             span.set_attribute(SpanAttribute.RUN_OUTCOME, outcome)
             return outcome

@@ -12,8 +12,7 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.api.route_names import RouteName
-from bookreviver.domain.events import ProjectChanged
-from tests.helpers.builders import make_project
+from tests.helpers.builders import make_book_change, make_project
 from tests.helpers.connections import checked_out_connections
 from tests.helpers.seeding import commit_account, store_project
 from tests.helpers.sse import STREAM_TIMEOUT_SECONDS, EventStreamReader
@@ -114,7 +113,7 @@ class TestStreamConnections:
                 for reader in readers:
                     await reader.opened.wait()
             while_open.append(checked_out_connections(fx_database))
-            await fx_fakes.events.publish(ProjectChanged(project_id=fx_owned_project.id))
+            await fx_fakes.events.publish(make_book_change(project_id=fx_owned_project.id))
 
         expect(while_open == [before])
         expect([reader.status for reader in readers] == [HTTPStatus.OK] * OPEN_TABS)

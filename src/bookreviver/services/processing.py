@@ -137,25 +137,25 @@ class ProcessingService:
         """
         await self._library.open(actor, project_id)
 
-        def work(repos: BookRepositories, _project: Project) -> tuple[Recipe, list[PageStage]]:
+        def work(repos: BookRepositories, _project: Project) -> Recipe:
             """Store the new steps of the recipe, and mark the pages it processed stale.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it.
             :type _project: Project
-            :returns: The recipe as stored, and the records that became stale.
-            :rtype: tuple[Recipe, list[PageStage]]
+            :returns: The recipe as stored.
+            :rtype: Recipe
             :raises NotFoundError: If the project has no such recipe of the stage.
             :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
                                             usual order.
             """
             recipe = self._recipes.get(repos, key.recipe_id, stage=key.stage)
-            return self._recipes.rewrite(repos, recipe, draft), self._records.mark_recipe_stale(repos, recipe.id)
+            changed = self._recipes.rewrite(repos, recipe, draft)
+            self._records.mark_recipe_stale(repos, recipe.id)
+            return changed
 
-        changed, stale = await self._uow.change_book(project_id, work)
-        await self._records.announce(project_id, stale)
-        return changed
+        return await self._uow.change_book(project_id, work)
 
     async def start_run(self, actor: Actor, project_id: ProjectId, stage: Stage, run: StageRun) -> Job:
         """Record a job that runs a stage over some pages, each by the recipe of its kind, and queue it.
@@ -332,15 +332,15 @@ class ProcessingService:
             raise ConflictError(PROJECT_BUSY)
         key = PageStageKey(page_id, stage)
 
-        def work(repos: BookRepositories, _project: Project) -> tuple[PageVersion, Sequence[PageStage]]:
+        def work(repos: BookRepositories, _project: Project) -> tuple[PageVersion, PageStage]:
             """Check the version again, and make it the current one of the stage.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it, which the check of the version reads again.
             :type _project: Project
-            :returns: The version, and the records that changed, the stage first.
-            :rtype: tuple[PageVersion, Sequence[PageStage]]
+            :returns: The version, and the record of the stage in its new state.
+            :rtype: tuple[PageVersion, PageStage]
             :raises NotFoundError: If the project has no such page, or the page has no
                                    such version.
             :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage.
@@ -351,11 +351,10 @@ class ProcessingService:
                 repos, key, head_version_id=version_id, recipe_id=None if previous is None else previous.recipe_id
             )
 
-        version, changed = await self._uow.change_book(project_id, work)
-        await self._records.announce(project_id, changed)
+        version, record = await self._uow.change_book(project_id, work)
         if version.renditions is not None and not version.tiles_ready:
             await self._starter.enqueue_tiles(project_id, [version_id])
-        return changed[0]
+        return record
 
     async def versions(
         self,

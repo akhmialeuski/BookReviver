@@ -11,10 +11,10 @@ from PIL import Image
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.domain.enums import (
+    BookResource,
     JobKind,
     JobState,
     NewPageOrigin,
-    PageChange,
     PageKind,
     PageOrigin,
     Rendition,
@@ -24,7 +24,7 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.errors import ConflictError, NotAPlaceholderError, NotFoundError, ScanAlreadyInBookError
-from bookreviver.domain.events import JobChanged, PagesChanged, PageVersionReady
+from bookreviver.domain.events import JobChanged, PageVersionReady
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import JobEnd, NewPage, PageAnchor, PageSize, Renditions
@@ -341,7 +341,7 @@ class TestAddPlaceholder:
         fx_actor: Actor,
         fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
     ) -> None:
-        """Verify a placeholder is a page with its fields and no version, after the last page, announced once.
+        """Verify a placeholder is a page with its fields and no version, after the last page.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -354,7 +354,7 @@ class TestAddPlaceholder:
         :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
         :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         """
-        events, _, board = fx_runtime
+        _, _, board = fx_runtime
         book = await _commit_book(fx_uow(), fx_asset_store, fx_actor)
         new = NewPage(origin=NewPageOrigin.PLACEHOLDER, kind=PageKind.TITLE, label=THIRD_LABEL, notes=LOST_NOTES)
 
@@ -370,9 +370,6 @@ class TestAddPlaceholder:
         expect((overview.position, overview.image_version) == (1, None))
         expect(await _stored_versions(fx_uow(), book.project.id, page) == [])
         expect(_job_kinds(board) == [])
-        expect(
-            events.published == [PagesChanged(project_id=book.project.id, page_ids=[page.id], change=PageChange.ADDED)]
-        )
         assert_expectations()
 
     @pytest.mark.parametrize('side', [Side.BEFORE, Side.AFTER])
@@ -834,15 +831,15 @@ class TestAttachScan:
         expect(not taken_directory.exists())
         assert_expectations()
 
-    async def test_take_over_announces_the_removed_page_and_then_the_bound_one(
+    async def test_take_over_is_one_change_of_the_pages(
         self,
         fx_service: Callable[[], PageService],
         fx_uow: UnitOfWorkFactory,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
-        fx_events: RecordingEventBus,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
-        """Verify the browser learns of the page that went and of the page that took its scan, each once.
+        """Verify the page that went and the page that took its scan are one change of the book.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -852,17 +849,15 @@ class TestAttachScan:
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_events: Recording event bus of the test.
-        :type fx_events: RecordingEventBus
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         book, placeholder = await _placeholder_book(fx_uow(), fx_asset_store, fx_actor)
+        fx_book_changes.published.clear()
 
         await fx_service().attach_scan(fx_actor, book.project.id, placeholder.id, book.scans[0].id, take_over=True)
 
-        removed, edited = (event for event in fx_events.published if isinstance(event, PagesChanged))
-        expect((removed.change, list(removed.page_ids)) == (PageChange.REMOVED, [book.pages[0].id]))
-        expect((edited.change, list(edited.page_ids)) == (PageChange.EDITED, [placeholder.id]))
-        assert_expectations()
+        assert [BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True]
 
     async def test_scan_without_renditions_conflicts(
         self,
@@ -940,15 +935,15 @@ class TestDelete:
         expect([scan.id for scan in scans] == [book.scans[0].id] and book.source.id in {each.id for each in sources})
         assert_expectations()
 
-    async def test_announces_the_removed_page_once(
+    async def test_a_deletion_is_one_change_of_the_pages(
         self,
         fx_service: Callable[[], PageService],
         fx_uow: UnitOfWorkFactory,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
-        fx_events: RecordingEventBus,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
-        """Verify a deleted page is published as removed after the commit.
+        """Verify a deleted page is one change of the book after the commit.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -958,16 +953,15 @@ class TestDelete:
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_events: Recording event bus of the test.
-        :type fx_events: RecordingEventBus
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         book = await _commit_book(fx_uow(), fx_asset_store, fx_actor)
+        fx_book_changes.published.clear()
 
         await fx_service().delete(fx_actor, book.project.id, book.pages[0].id)
 
-        assert fx_events.published == [
-            PagesChanged(project_id=book.project.id, page_ids=[book.pages[0].id], change=PageChange.REMOVED)
-        ]
+        assert [BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True]
 
     async def test_page_of_another_project_and_of_another_account_are_not_found(
         self,
@@ -1660,15 +1654,15 @@ def _placeholder(label: str, anchor: PageAnchor | None = None) -> NewPage:
 class TestAddMany:
     """Tests for PageService.add_many()."""
 
-    async def test_adds_the_whole_list_at_the_end_in_order_with_one_event_and_one_key_call(
+    async def test_adds_the_whole_list_at_the_end_in_order_in_one_change_and_one_key_call(
         self,
         fx_uow: UnitOfWorkFactory,
         fx_asset_store: LocalAssetStore,
         fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         fx_actor: Actor,
-        fx_events: RecordingEventBus,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
-        """Verify pages without a place stand at the end in the order listed, announced once, with one key call.
+        """Verify pages without a place stand at the end in the order listed, in one change, with one key call.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -1678,28 +1672,20 @@ class TestAddMany:
         :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_events: Recording event bus of the test.
-        :type fx_events: RecordingEventBus
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         book = await _commit_book(fx_uow(), fx_asset_store, fx_actor)
         keys = CountingOrderKeys()
         service = make_page_service(fx_uow(), fx_asset_store, fx_runtime, order_keys=keys)
+        fx_book_changes.published.clear()
 
         added = await service.add_many(fx_actor, book.project.id, [_placeholder(str(n)) for n in range(1, 6)])
 
         expect([overview.position for overview in added] == [1, 2, 3, 4, 5])
         expect(await _labels_in_book_order(fx_uow(), book.project) == ['', '1', '2', '3', '4', '5'])
         expect(keys.calls == 1)
-        expect(
-            fx_events.published
-            == [
-                PagesChanged(
-                    project_id=book.project.id,
-                    page_ids=[overview.page.id for overview in added],
-                    change=PageChange.ADDED,
-                )
-            ]
-        )
+        expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True])
         assert_expectations()
 
     async def test_pages_without_a_place_follow_the_page_before_them_and_each_anchor_is_one_place(
@@ -1789,7 +1775,7 @@ class TestAddMany:
         fx_uow: UnitOfWorkFactory,
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
-        fx_events: RecordingEventBus,
+        fx_book_changes: RecordingEventBus,
     ) -> None:
         """Verify an anchor that is no page of the book refuses the whole list, and no page or event is left.
 
@@ -1801,18 +1787,19 @@ class TestAddMany:
         :type fx_asset_store: LocalAssetStore
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_events: Recording event bus of the test.
-        :type fx_events: RecordingEventBus
+        :param fx_book_changes: Where the units of work of the test announce the changes of the books.
+        :type fx_book_changes: RecordingEventBus
         """
         book = await _commit_book(fx_uow(), fx_asset_store, fx_actor)
         lost = PageAnchor(page_id=PageId(UUID(int=7)), side=Side.AFTER)
         new = [_placeholder('1'), _placeholder('2'), _placeholder('3', lost)]
 
+        fx_book_changes.published.clear()
         with pytest.raises(ConflictError, match='index 2 of the list'):
             await fx_service().add_many(fx_actor, book.project.id, new)
 
         expect(len(await _stored_pages(fx_uow(), book.project)) == len(book.pages))
-        expect(fx_events.published == [])
+        expect(fx_book_changes.published == [])
         assert_expectations()
 
     async def test_a_blank_leaf_without_a_size_in_a_book_without_images_names_its_index(

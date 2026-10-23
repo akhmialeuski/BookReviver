@@ -4,8 +4,7 @@ import anyio
 import pytest
 
 from bookreviver.adapters.events.broadcast import InProcessEventBus
-from bookreviver.domain.events import ProjectChanged
-from tests.helpers.builders import make_project
+from tests.helpers.builders import make_book_change, make_project
 
 pytestmark = pytest.mark.anyio
 
@@ -20,9 +19,9 @@ class TestSubscribe:
         bus = InProcessEventBus(queue_size=QUEUE_SIZE)
         mine, other = make_project(), make_project()
         async with bus.subscribe(mine.id) as events:
-            await bus.publish(ProjectChanged(project_id=other.id))
-            await bus.publish(ProjectChanged(project_id=mine.id))
-            assert await anext(events) == ProjectChanged(project_id=mine.id)
+            await bus.publish(make_book_change(project_id=other.id))
+            await bus.publish(make_book_change(project_id=mine.id))
+            assert await anext(events) == make_book_change(project_id=mine.id)
 
     async def test_left_subscription_receives_nothing(self) -> None:
         """Verify leaving a subscription unsubscribes at once, before anything reads or collects its iterator."""
@@ -30,7 +29,7 @@ class TestSubscribe:
         project = make_project()
         async with bus.subscribe(project.id) as events:
             pass
-        await bus.publish(ProjectChanged(project_id=project.id))
+        await bus.publish(make_book_change(project_id=project.id))
         # A delivered event is read without waiting; an empty queue waits and is cancelled at once
         with anyio.move_on_after(0) as scope:
             await anext(events)

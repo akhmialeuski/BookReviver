@@ -6,7 +6,6 @@ import pytest
 from attrs import evolve
 
 from bookreviver.domain.enums import NewPageOrigin, PageKind, Side, Stage, StageState, ValueScope
-from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.values import NewPage, PageAnchor
 from tests.helpers.builders import make_page, make_page_stage, make_project, make_step_values
 from tests.helpers.seeding import store_project
@@ -18,7 +17,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.database import UnitOfWorkFactory
-    from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 
@@ -231,26 +229,3 @@ class TestPagesTurnedOver:
         book = await _commit_book(fx_uow(), fx_actor, valued)
         await _move(fx_service(), fx_actor, book)
         assert await _stale(fx_uow(), book) == set()
-
-    async def test_the_marked_stages_are_announced_after_the_commit(
-        self,
-        fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
-        fx_actor: Actor,
-        fx_events: RecordingEventBus,
-    ) -> None:
-        """Verify one event is published for each stage record a move marked stale.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param fx_events: Recording event bus the service publishes to.
-        :type fx_events: RecordingEventBus
-        """
-        book = await _commit_book(fx_uow(), fx_actor, (ValueScope.ODD, Stage.GEOMETRY))
-        await _move(fx_service(), fx_actor, book)
-        announced = {event.stage.page_id for event in fx_events.published if isinstance(event, PageStageChanged)}
-        assert announced == {book.pages[1].id, book.pages[2].id}

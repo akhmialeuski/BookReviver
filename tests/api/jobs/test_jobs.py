@@ -10,24 +10,15 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import EventName
-from bookreviver.domain.enums import BookResource, JobKind, JobState, PageChange, Stage, StageState
-from bookreviver.domain.events import (
-    PagesChanged,
-    PageStageChanged,
-    PageVersionReady,
-    ProjectChanged,
-    ScanReady,
-    SourceImported,
-)
+from bookreviver.domain.enums import BookResource, JobKind, JobState, Stage
+from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import JobEnd, StageRun
 from tests.helpers.builders import (
+    make_book_change,
     make_job,
-    make_page_stage,
     make_page_version,
     make_project,
-    make_scan,
-    make_source,
     new_account_id,
 )
 from tests.helpers.scripted_runner import TASKS_PER_JOB
@@ -260,10 +251,10 @@ class TestCancelJob:
 class TestStreamProjectEvents:
     """Tests for GET /projects/{project_id}/events."""
 
-    async def test_stream_delivers_job_and_project_changes(
+    async def test_stream_delivers_job_and_book_changes(
         self, fx_app: FastAPI, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_queued_job: Job
     ) -> None:
-        """Verify a cancellation and a description change reach the stream as named events, in order.
+        """Verify a cancellation and a committed change of the book reach the stream as named events, in order.
 
         The subscription is in place before the response starts, and closed as soon as the browser disconnects.
 
@@ -283,13 +274,13 @@ class TestStreamProjectEvents:
             # Change things only once the stream has subscribed, which happens before the endpoint runs
             await fx_fakes.events.subscribed.wait()
             await fx_client.delete(JOB_PATH.format(job_id=fx_queued_job.id))
-            await fx_fakes.events.publish(ProjectChanged(project_id=project_id))
+            await fx_fakes.events.publish(make_book_change(project_id=project_id))
 
         expect((reader.status, reader.content_type.split(';')[0]) == (HTTPStatus.OK, EVENT_STREAM_TYPE))
-        expect([event.name for event in reader.events] == [EventName.JOB_CHANGED, EventName.PROJECT_CHANGED])
+        expect([event.name for event in reader.events] == [EventName.JOB_CHANGED, EventName.BOOK_CHANGED])
         expect(reader.events[0].data[JOB_ID_FIELD] == str(fx_queued_job.id))
         expect(reader.events[0].data[JOB_STATE_FIELD] == JobState.CANCELLED)
-        expect(reader.events[1].data == {PROJECT_ID_FIELD: str(project_id)})
+        expect(reader.events[1].data[PROJECT_ID_FIELD] == str(project_id))
         expect(fx_fakes.events.open_subscriptions == 0)
         assert_expectations()
 
@@ -439,62 +430,31 @@ class TestStreamProjectEvents:
         expect(failed[ERROR_FIELD] == JobEnd.UNEXPECTED_FAILURE)
         assert_expectations()
 
-    async def test_stream_names_the_changes_of_the_book(
+    async def test_stream_names_a_ready_version_by_identifier(
         self, fx_app: FastAPI, fx_fakes: JobFakes, fx_queued_job: Job
     ) -> None:
-        """Verify an imported source, a ready scan, changed pages and a ready version reach the stream by identifier.
+        """Verify a ready version of a page reaches the stream by the identifiers of the page and the version.
 
         :param fx_app: The running application.
         :type fx_app: FastAPI
         :param fx_fakes: Adapters the application runs on.
         :type fx_fakes: JobFakes
-        :param fx_queued_job: Queued job of the signed-in account, whose project the events belong to.
+        :param fx_queued_job: Queued job of the signed-in account, whose project the event belongs to.
         :type fx_queued_job: Job
         """
         project_id = fx_queued_job.project_id
-        source = make_source()
-        scan = make_scan(source=source, number=0)
-        page_id = PageId(uuid4())
-        version = make_page_version(page_id=page_id)
-        events = [
-            SourceImported(project_id=project_id, source=source),
-            ScanReady(project_id=project_id, scan=scan),
-            PagesChanged(project_id=project_id, page_ids=[page_id], change=PageChange.MOVED),
-            PageVersionReady(project_id=project_id, version=version),
-            PageStageChanged(
-                project_id=project_id,
-                stage=make_page_stage(page_id=page_id, head_version_id=None, state=StageState.STALE),
-            ),
-        ]
-        reader = EventStreamReader(count=len(events))
+        version = make_page_version(page_id=PageId(uuid4()))
+        reader = EventStreamReader(count=1)
         async with anyio.create_task_group() as group:
             group.start_soon(reader.read, fx_app, fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=project_id))
             await fx_fakes.events.subscribed.wait()
-            for event in events:
-                await fx_fakes.events.publish(event)
+            await fx_fakes.events.publish(PageVersionReady(project_id=project_id, version=version))
 
-        project = {PROJECT_ID_FIELD: str(project_id)}
         assert reader.events == [
-            StreamedEvent(EventName.SOURCE_IMPORTED, {**project, 'source_id': str(source.id)}),
-            StreamedEvent(EventName.SCAN_READY, {**project, 'scan_id': str(scan.id)}),
             StreamedEvent(
-                EventName.PAGES_CHANGED, {**project, 'page_ids': [str(page_id)], 'change': PageChange.MOVED.value}
-            ),
-            StreamedEvent(
-                EventName.PAGE_VERSION_READY, {**project, PAGE_ID_FIELD: str(version.page_id), 'version_id': version.id}
-            ),
-            StreamedEvent(
-                EventName.PAGE_STAGE_CHANGED,
-                {
-                    **project,
-                    PAGE_ID_FIELD: str(page_id),
-                    STAGE_FIELD: Stage.GEOMETRY.value,
-                    'recipe_id': None,
-                    'head_version_id': None,
-                    'state': StageState.STALE.value,
-                    'through_step': None,
-                },
-            ),
+                EventName.PAGE_VERSION_READY,
+                {PROJECT_ID_FIELD: str(project_id), PAGE_ID_FIELD: str(version.page_id), 'version_id': version.id},
+            )
         ]
 
     async def test_project_of_another_account_is_not_found(

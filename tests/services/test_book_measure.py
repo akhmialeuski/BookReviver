@@ -22,7 +22,6 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.geometry import Rect
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.margins import MM_PER_INCH
@@ -398,9 +397,7 @@ class TestMeasureBook:
         expect(after[NormalizeParam.PAGE_HEIGHT] == pytest.approx(width * 2, abs=SIZE_TOLERANCE_PX))
         assert_expectations()
 
-    async def test_the_pages_the_recipe_processed_go_out_of_date_and_are_announced(
-        self, fx_cv_kit: ProcessingKit
-    ) -> None:
+    async def test_the_pages_the_recipe_processed_go_out_of_date(self, fx_cv_kit: ProcessingKit) -> None:
         """Verify a change of the parameters marks the Geometry stage of the pages stale, as every change of a recipe does.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
@@ -414,10 +411,7 @@ class TestMeasureBook:
         ]
         await measure(fx_cv_kit, actor, project)
         records = [await geometry_record(fx_cv_kit, project.id, page) for page in pages]
-        announced = [event for event in fx_cv_kit.events.published if isinstance(event, PageStageChanged)]
-        expect(all(record.state is StageState.STALE for record in records))
-        expect({event.stage.page_id for event in announced} == {page.id for page in pages})
-        assert_expectations()
+        assert all(record.state is StageState.STALE for record in records)
 
     async def test_measuring_again_changes_nothing_and_marks_nothing(self, fx_cv_kit: ProcessingKit) -> None:
         """Verify a measure that finds the numbers the step has leaves the recipe and the pages as they are.

@@ -884,52 +884,49 @@ class RecipeRun(StageWork):
         :raises NotFoundError: If the page or the version was deleted meanwhile.
         """
 
-        def apply(repos: BookRepositories, _project: Project) -> tuple[Unsplit | None, list[PageStage]] | None:
+        def apply(repos: BookRepositories, _project: Project) -> tuple[bool, Unsplit | None]:
             """Make the version current, when what the run went by is as it was read.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it, which the run does not read.
             :type _project: Project
-            :returns: What the undoing deleted, and the records that changed, or None when what the run went by changed
-                      and nothing was written.
-            :rtype: tuple[Unsplit | None, list[PageStage]] | None
+            :returns: Whether the version was made current, which it is not when what the run went by changed and
+                      nothing was written, and what the undoing deleted, or None.
+            :rtype: tuple[bool, Unsplit | None]
             :raises NotFoundError: If the page or the version was deleted meanwhile.
             """
             fresh = repos.pages.get(page.id)
             current = StageInputs.of(repos, [page.id], recipe.stage).get(page.id)
             undoing = None if basis.undoing is None else self._splits.undoing(repos, fresh, recipe, confirmed=True)
             if basis.input_id is not None and (current is None or current.id != basis.input_id):
-                return None
+                return False, None
             if (
                 repos.recipes.get(recipe.id).updated_at != basis.recipe_updated_at
                 or tuple(repos.page_step_states.list_for_page(page.id, recipe.stage)) != basis.states
             ):
-                return None
+                return False, None
             if basis.undoing is not None and not basis.undoing.deletes_as(undoing):
-                return None
+                return False, None
             stored = repos.page_versions.get(version.id)
             if version.tiles_ready and not stored.tiles_ready:
                 repos.page_versions.update(evolve(stored, tiles_ready=True))
-            changed = list(
-                self._records.set_head(
-                    repos,
-                    PageStageKey(page.id, recipe.stage),
-                    head_version_id=version.id,
-                    recipe_id=recipe.id,
-                    through_step=recipe.stopped_at(through_step),
-                )
+            self._records.set_head(
+                repos,
+                PageStageKey(page.id, recipe.stage),
+                head_version_id=version.id,
+                recipe_id=recipe.id,
+                through_step=recipe.stopped_at(through_step),
             )
             if undoing is not None:
-                changed.extend(self._splits.unsplit(repos, undoing))
-            return undoing, changed
+                self._splits.unsplit(repos, undoing)
+            return True, undoing
 
-        if (done := await self._uow.change_book(self._project.id, apply)) is None:
+        stored, undoing = await self._uow.change_book(self._project.id, apply)
+        if not stored:
             return RunOutcome.SKIPPED
-        undoing, changed = done
         if undoing is not None:
             await self._splits.finish_unsplit(undoing)
-        await self._records.announce(self._project.id, changed)
         return RunOutcome.DONE
 
     async def measure(self, page: Page, recipe: Recipe, *, through_step: int | None = None) -> BlockMeasure | None:
@@ -1028,26 +1025,23 @@ class RecipeRun(StageWork):
         :rtype: RunOutcome
         """
 
-        def fail(repos: BookRepositories, _project: Project) -> PageStage:
+        def fail(repos: BookRepositories, _project: Project) -> None:
             """Record that the stage failed on the page.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it, which the record does not read.
             :type _project: Project
-            :returns: The record of the failed stage.
-            :rtype: PageStage
             :raises NotFoundError: If the page was deleted.
             """
             repos.pages.get(page.id)
-            return self._records.mark_failed(repos, page.id, recipe.stage, recipe_id=recipe.id)
+            self._records.mark_failed(repos, page.id, recipe.stage, recipe_id=recipe.id)
 
         try:
-            record = await self._uow.change_book(self._project.id, fail)
+            await self._uow.change_book(self._project.id, fail)
         except NotFoundError:
             await self._runner.discard(self._keys.page(page.id))
             return RunOutcome.SKIPPED
-        await self._records.announce(self._project.id, [record])
         return RunOutcome.FAILED
 
 

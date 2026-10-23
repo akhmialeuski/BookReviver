@@ -9,7 +9,6 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import EditorKind, Rendition, Stage, StageState
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
-from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.geometry import BrushStrokes, Line, Point, Rect, Rotation, Stroke
 from bookreviver.domain.ids import StepId
 from bookreviver.domain.keys import ProjectKeys
@@ -51,7 +50,7 @@ class TestSave:
     """Tests for EditService.save."""
 
     async def test_edit_is_stored_with_its_hash_and_marks_the_stage_stale(self, fx_kit: ProcessingKit) -> None:
-        """Verify a saved edit is listed with its hash, marks the stage stale, announces it and computes nothing.
+        """Verify a saved edit is listed with its hash, marks the stage stale and computes nothing.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -66,12 +65,6 @@ class TestSave:
         expect(stored.edit_hash == stored.edit_hash.lower() and len(stored.edit_hash) == 16)
         expect(record.state is StageState.STALE)
         expect(fx_kit.fake.runs == runs)
-        expect(
-            any(
-                isinstance(event, PageStageChanged) and event.stage.state is StageState.STALE
-                for event in fx_kit.events.published
-            )
-        )
         assert_expectations()
 
     async def test_edit_changes_the_version_the_next_run_makes_and_going_back_finds_the_old_one(

@@ -179,7 +179,7 @@ async def move_pages(
 ) -> None:
     """Put several pages in a run before or after another page, keeping the order they have in the book.
 
-    The answer is 409 when the anchor is one of the pages. The new order reaches the browser as a ``pages-changed``
+    The answer is 409 when the anchor is one of the pages. The new order reaches the browser as a ``book-changed``
     event, so the answer has no body.
 
     \N{FORM FEED}
@@ -209,7 +209,7 @@ async def fill_blank_pages(
     written by a job, so the pages show it once the job is done. The scan stays, and choosing it again, or changing the
     kind of the page, brings it back. The answer is 409 when a page is not cut from a scan, or is not blank and gets a
     leaf, or when no page of the book has a size to give the leaf, and nothing is changed then. The change reaches the
-    browser as a ``pages-changed`` event, so the answer has no body.
+    browser as a ``book-changed`` event, so the answer has no body.
 
     \N{FORM FEED}
     :param project_id: Identifier of the project.
@@ -239,7 +239,7 @@ async def detect_content_types(
     does too, and it leaves the pages the user set by hand and the covers, the endpapers and the blank pages alone. With
     ``page_ids`` it goes over those pages whatever they have, and gives the ones the user set by hand back to the
     detection. The answer is 409 while the content of the pages of the project is being detected. The change reaches the
-    browser as a ``pages-changed`` event.
+    browser as a ``book-changed`` event.
 
     \N{FORM FEED}
     :param project_id: Identifier of the project.
@@ -302,7 +302,7 @@ async def number_pages(
     the kinds to skip, and a section that does not count after the range, so the numbers follow the sections from then
     on. Pages kept out of the book, and pages of the kinds to skip, take no number and keep their label. The pages the
     range numbers give up the labels written by hand. The answer is 409 when the range runs backwards. The new labels
-    reach the browser as a ``pages-changed`` event.
+    reach the browser as a ``book-changed`` event.
 
     \N{FORM FEED}
     :param project_id: Identifier of the project.
@@ -387,7 +387,7 @@ async def create_pages(
     """Add several placeholders or blank leaves in one transaction, up to a thousand at once.
 
     Each page is placed as in ``POST /pages``. A page without a place stands after the page before it in the list, and
-    the first one at the end of the book. All pages are added or none is, and one ``pages-changed`` event follows. The
+    the first one at the end of the book. All pages are added or none is, and one ``book-changed`` event follows. The
     answer is 422 for a page whose body is invalid, with its index in the list in the location of the error, and 409
     for a page whose place is no page of the book or a blank leaf without a size in a book with no page to take the
     median of, with its index in the detail.

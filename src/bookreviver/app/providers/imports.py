@@ -140,7 +140,7 @@ class ImportsProvider(Provider):
     ) -> ImportRuntime:
         """Gather what an import reports through and is bounded by.
 
-        :param processing: The publisher, the clock and the job board of the application.
+        :param processing: The clock and the job board of the application.
         :type processing: ProcessingRuntime
         :param order_keys: Order keys of the application.
         :type order_keys: OrderKeys
@@ -150,7 +150,6 @@ class ImportsProvider(Provider):
         :rtype: ImportRuntime
         """
         return ImportRuntime(
-            publisher=processing.publisher,
             clock=processing.clock,
             order_keys=order_keys,
             limits=limits,

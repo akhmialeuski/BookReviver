@@ -176,7 +176,7 @@ async def move_source_pages(
 ) -> None:
     """Put every page of one source in a run before or after a page, which places a missing part of the book at once.
 
-    The answer is 409 when the anchor is a page of the source. The new order reaches the browser as a ``pages-changed``
+    The answer is 409 when the anchor is a page of the source. The new order reaches the browser as a ``book-changed``
     event, so the answer has no body.
 
     \N{FORM FEED}

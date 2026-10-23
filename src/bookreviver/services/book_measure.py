@@ -487,19 +487,16 @@ class BookMeasure:
             for name in (NormalizeParam.PAGE_WIDTH, NormalizeParam.PAGE_HEIGHT)
         }
 
-        def work(repos: BookRepositories, _project: Project) -> list[PageStage]:
+        def work(repos: BookRepositories, _project: Project) -> None:
             """Write the measured steps into the recipes that were not changed since they were read.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :param _project: The project as the change finds it, which the writing does not read.
             :type _project: Project
-            :returns: The records of the pages that became stale.
-            :rtype: list[PageStage]
             :raises ConflictError: If a recipe was changed or deleted while the pages were measured.
             :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
             """
-            stale: list[PageStage] = []
             # The steps were measured from the recipes as they were read, so a recipe saved or deleted since is not
             # written over
             stored = {r.id: r.updated_at for r in repos.recipes.list_for_stage(Stage.GEOMETRY)}
@@ -508,13 +505,12 @@ class BookMeasure:
             for (recipe, position), step, own in zip(holders, steps, measured, strict=True):
                 written = evolve(step, params={**step.params, **own, **page})
                 if written.params != step.params:
-                    stale.extend(self._write(repos, recipe, position, written))
-            return stale
+                    self._write(repos, recipe, position, written)
 
-        await self._records.announce(project_id, await self._uow.change_book(project_id, work))
+        await self._uow.change_book(project_id, work)
         return len(measures)
 
-    def _write(self, repos: BookRepositories, recipe: Recipe, position: int, step: Step) -> list[PageStage]:
+    def _write(self, repos: BookRepositories, recipe: Recipe, position: int, step: Step) -> None:
         """Store the recipe with the measured step, and mark the pages it processed stale, for the caller.
 
         :param repos: Repositories of the transaction the caller runs in.
@@ -525,11 +521,9 @@ class BookMeasure:
         :type position: int
         :param step: The normalize step with the measured parameters.
         :type step: Step
-        :returns: The records of the pages that became stale, which the caller announces after its transaction.
-        :rtype: list[PageStage]
         :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
         """
         steps = (*recipe.steps[:position], step, *recipe.steps[position + 1 :])
         # The steps keep the order they were saved in, whatever mode that was
         self._recipes.rewrite(repos, recipe, RecipeDraft(steps=steps, order=OrderMode.FREE))
-        return self._records.mark_recipe_stale(repos, recipe.id)
+        self._records.mark_recipe_stale(repos, recipe.id)

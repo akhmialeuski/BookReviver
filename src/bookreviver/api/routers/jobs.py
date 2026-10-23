@@ -29,25 +29,10 @@ from bookreviver.api.schemas.jobs import (
     EventName,
     JobQuery,
     JobSchema,
-    PagesChangedSchema,
-    PageStageChangedSchema,
     PageVersionReadySchema,
-    ProjectChangedSchema,
-    ScanReadySchema,
-    SourceImportedSchema,
 )
 from bookreviver.domain.entities import Job
-from bookreviver.domain.events import (
-    BookChanged,
-    DomainEvent,
-    JobChanged,
-    PagesChanged,
-    PageStageChanged,
-    PageVersionReady,
-    ProjectChanged,
-    ScanReady,
-    SourceImported,
-)
+from bookreviver.domain.events import BookChanged, DomainEvent, JobChanged, PageVersionReady
 from bookreviver.domain.ids import JobId, ProjectId
 from bookreviver.services.freshness import BookFreshness
 from bookreviver.services.jobs import JobService
@@ -153,7 +138,7 @@ async def stream_project_events(
     freshness: FromDishka[BookFreshness],
     last_event_id: Annotated[str | None, Header()] = None,
 ) -> AsyncIterator[ServerSentEvent]:
-    """Stream the project's events as they happen: jobs, imported sources, ready scans, pages, versions, description.
+    """Stream the project's events as they happen: the committed changes of the book, its jobs and its ready versions.
 
     A committed change of the book is a ``book-changed`` event whose id is the new version of the book. A browser that
     connects is first sent ``book-version`` with the version now, so it knows which version it holds. The stream keeps
@@ -191,40 +176,11 @@ async def stream_project_events(
                 )
             case JobChanged(job=job):
                 yield ServerSentEvent(event=EventName.JOB_CHANGED, data=JobSchema.model_validate(job))
-            case SourceImported(project_id=project_id, source=source):
-                yield ServerSentEvent(
-                    event=EventName.SOURCE_IMPORTED,
-                    data=SourceImportedSchema(project_id=project_id, source_id=source.id),
-                )
-            case ScanReady(project_id=project_id, scan=scan):
-                yield ServerSentEvent(
-                    event=EventName.SCAN_READY, data=ScanReadySchema(project_id=project_id, scan_id=scan.id)
-                )
-            case PagesChanged(project_id=project_id, page_ids=page_ids, change=change):
-                yield ServerSentEvent(
-                    event=EventName.PAGES_CHANGED,
-                    data=PagesChangedSchema(project_id=project_id, page_ids=list(page_ids), change=change),
-                )
             case PageVersionReady(project_id=project_id, version=version):
                 yield ServerSentEvent(
                     event=EventName.PAGE_VERSION_READY,
                     data=PageVersionReadySchema(project_id=project_id, page_id=version.page_id, version_id=version.id),
                 )
-            case PageStageChanged(project_id=project_id, stage=record):
-                yield ServerSentEvent(
-                    event=EventName.PAGE_STAGE_CHANGED,
-                    data=PageStageChangedSchema(
-                        project_id=project_id,
-                        page_id=record.page_id,
-                        stage=record.stage,
-                        recipe_id=record.recipe_id,
-                        head_version_id=record.head_version_id,
-                        state=record.state,
-                        through_step=record.through_step,
-                    ),
-                )
-            case ProjectChanged(project_id=project_id):
-                yield ServerSentEvent(event=EventName.PROJECT_CHANGED, data=ProjectChangedSchema(project_id=project_id))
 
 
 router = APIRouter(tags=['jobs'])

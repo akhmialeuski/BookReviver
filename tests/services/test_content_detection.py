@@ -17,13 +17,11 @@ from bookreviver.domain.enums import (
     ContentType,
     JobKind,
     JobState,
-    PageChange,
     PageKind,
     Stage,
     StageState,
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.events import PagesChanged, PageStageChanged
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import ContentDetection, PageStageKey
 from bookreviver.plugins.split_none import SplitNone
@@ -219,10 +217,8 @@ async def geometry_state(kit: ProcessingKit, project_id: ProjectId, page: Page) 
 class TestDetectionJob:
     """Tests for the ``detect-content`` job."""
 
-    async def test_what_the_processor_finds_is_written_into_each_page_and_announced(
-        self, fx_probe_kit: ProbeKitFactory
-    ) -> None:
-        """Verify each page gets its own answer as a proposal, the job ends well, and one event names the pages.
+    async def test_what_the_processor_finds_is_written_into_each_page(self, fx_probe_kit: ProbeKitFactory) -> None:
+        """Verify each page gets its own answer as a proposal, and the job ends well.
 
         :param fx_probe_kit: Function building the processing kit with the fake processor.
         :type fx_probe_kit: ProbeKitFactory
@@ -239,11 +235,6 @@ class TestDetectionJob:
         expect(not any(page.content_by_hand for page in found))
         expect([page.content_source for page in found] == [ContentSource.DETECTED] * len(pages))
         expect(probe.reads == len(pages))
-        events = [event for event in kit.events.published if isinstance(event, PagesChanged)]
-        expect(
-            [(set(event.page_ids), event.change) for event in events]
-            == [({page.id for page in pages}, PageChange.EDITED)]
-        )
         assert_expectations()
 
     async def test_a_job_that_names_no_pages_goes_over_the_pages_that_are_not_detected_and_not_a_role(
@@ -377,10 +368,7 @@ class TestDetectionJob:
         await detect(kit, actor, project)
 
         states = [await geometry_state(kit, project.id, page) for page in pages]
-        expect(states == [StageState.STALE, StageState.FRESH])
-        changed = [event for event in kit.events.published if isinstance(event, PageStageChanged)]
-        expect([event.stage.page_id for event in changed] == [pages[0].id])
-        assert_expectations()
+        assert states == [StageState.STALE, StageState.FRESH]
 
     async def test_a_job_that_was_cancelled_reads_nothing(self, fx_probe_kit: ProbeKitFactory) -> None:
         """Verify a job cancelled while it was queued is dropped by the board and leaves the pages as they are.
@@ -607,7 +595,6 @@ class TestApplyStep:
         job = await detect(kit, actor, project)
 
         expect((job.state, job.progress.done, job.progress.total) == (JobState.SUCCEEDED, 1, 1))
-        expect(not [event for event in kit.events.published if isinstance(event, PagesChanged)])
         if kept_type is None:
             with pytest.raises(NotFoundError):
                 await stored(kit, project.id, pages[0])

@@ -24,7 +24,7 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
-from bookreviver.domain.events import PageStageChanged, PageVersionReady
+from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.keys import ProjectKeys
@@ -210,8 +210,8 @@ class TestRunStage:
         expect((fx_kit.fake.runs, second.data) == (3, {RAN_KEY: 2}))
         assert_expectations()
 
-    async def test_events_announce_the_version_and_the_stage(self, fx_kit: ProcessingKit) -> None:
-        """Verify the viewer is told of the new version and of the changed stage.
+    async def test_the_new_version_is_announced_ready(self, fx_kit: ProcessingKit) -> None:
+        """Verify the viewer is told of the new version, which is the head of the stage.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -220,14 +220,7 @@ class TestRunStage:
         await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
         head = await head_of(fx_kit, project.id, page, Stage.GEOMETRY)
         ready = [event.version.id for event in fx_kit.events.published if isinstance(event, PageVersionReady)]
-        changed = [
-            (event.stage.stage, event.stage.head_version_id)
-            for event in fx_kit.events.published
-            if isinstance(event, PageStageChanged)
-        ]
-        expect(ready == [head.id])
-        expect(changed == [(Stage.GEOMETRY, head.id)])
-        assert_expectations()
+        assert ready == [head.id]
 
     async def test_new_current_version_marks_the_later_stages_stale_and_keeps_their_versions(
         self, fx_kit: ProcessingKit
@@ -869,7 +862,7 @@ class TestRunApplyStep:
         monkeypatch: pytest.MonkeyPatch,
         change: Callable[[ProcessingKit, SeededPage], Awaitable[None]],
     ) -> None:
-        """Verify a change that lands while the steps run leaves the stage without a head, and says nothing of it.
+        """Verify a change that lands while the steps run leaves the stage without a head.
 
         The change lands after the step is computed and before the change that stores its version, which is where a
         request made while the job runs lands. The job ends as succeeded with no page made, since a page that was
@@ -890,14 +883,8 @@ class TestRunApplyStep:
         await fx_kit.work_queue()
         stored = stored_job(fx_kit, job.id)
         record = await found_stage(fx_kit, seeded.project.id, seeded.page, Stage.GEOMETRY)
-        announced = [
-            event
-            for event in fx_kit.events.published
-            if isinstance(event, PageStageChanged) and event.stage.stage is Stage.GEOMETRY
-        ]
         expect((stored.state, stored.progress.total, stored.error) == (JobState.SUCCEEDED, 1, ''))
         expect(record is None)
-        expect(announced == [])
         assert_expectations()
 
     async def test_the_files_of_a_page_deleted_while_its_steps_ran_are_discarded(
