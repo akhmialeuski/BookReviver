@@ -11,7 +11,6 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import (
     JobKind,
     JobState,
@@ -41,7 +40,7 @@ from bookreviver.domain.values import (
 )
 from bookreviver.services.processing_jobs import VERSIONS_LEFT, ProcessingJobs
 from bookreviver.services.version_clearing import BEING_COLLECTED
-from tests.helpers.builders import EPOCH, make_page_stage
+from tests.helpers.builders import EPOCH, make_page_stage, open_for
 from tests.helpers.held_steps import steps_held
 from tests.helpers.meanwhile import change_when_published
 from tests.helpers.processing import (
@@ -58,7 +57,7 @@ from tests.helpers.spreads import run_stage, stage_of
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
 
-    from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion
+    from bookreviver.domain.entities import Actor, BookRecord, Job, Page, PageVersion
     from bookreviver.domain.ids import BookId, StorageKey
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.processing import ProcessingKit
@@ -178,7 +177,7 @@ async def previewed(
     """
     steps = (Step(processor_key=FakeProcessor.spec.key),)
     preview = await kit.service().start_preview(
-        actor, book_record.id, StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=steps, step_index=0)
+        open_for(actor, book_record.id), StepPreview(page_id=page.id, stage=Stage.GEOMETRY, steps=steps, step_index=0)
     )
     if state is JobState.RUNNING:
         async with steps_held(kit):
@@ -211,7 +210,9 @@ class TestChooseVersion:
             repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.CLEANUP, head_version_id=first.id))
 
         await fx_kit.uow().change_book(book_record.id, add_second)
-        chosen = await fx_kit.service().choose_version(actor, book_record.id, page.id, Stage.GEOMETRY, second.id)
+        chosen = await fx_kit.service().choose_version(
+            open_for(actor, book_record.id), page.id, Stage.GEOMETRY, second.id
+        )
         later = await stage_of(fx_kit, book_record.id, page, Stage.CLEANUP)
         expect((chosen.head_version_id, chosen.state) == (second.id, StageState.FRESH))
         expect(later.state is StageState.STALE)
@@ -224,9 +225,9 @@ class TestChooseVersion:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, page, first = await ran_geometry(fx_kit)
-        await fx_kit.service().start_collection(actor, book_record.id)
+        await fx_kit.service().start_collection(open_for(actor, book_record.id))
         with pytest.raises(ConflictError, match=BUSY_REASON):
-            await fx_kit.service().choose_version(actor, book_record.id, page.id, Stage.GEOMETRY, first.id)
+            await fx_kit.service().choose_version(open_for(actor, book_record.id), page.id, Stage.GEOMETRY, first.id)
 
     @pytest.mark.parametrize(STATE_ARGUMENT, [JobState.QUEUED, JobState.RUNNING])
     async def test_a_preview_of_the_book_is_cancelled_and_the_choice_goes_on(
@@ -243,7 +244,9 @@ class TestChooseVersion:
         """
         actor, book_record, page, first = await ran_geometry(fx_kit)
         async with previewed(fx_kit, actor, book_record, page, state) as preview:
-            chosen = await fx_kit.service().choose_version(actor, book_record.id, page.id, Stage.GEOMETRY, first.id)
+            chosen = await fx_kit.service().choose_version(
+                open_for(actor, book_record.id), page.id, Stage.GEOMETRY, first.id
+            )
         announced = [
             (event.job.id, event.job.state) for event in fx_kit.events.published if isinstance(event, JobChanged)
         ]
@@ -271,7 +274,7 @@ class TestChooseVersion:
             book_record.id, active, StageRun(stage=Stage.GEOMETRY).to_map()
         )
         with pytest.raises(ConflictError, match=BUSY_REASON):
-            await fx_kit.service().choose_version(actor, book_record.id, page.id, Stage.GEOMETRY, first.id)
+            await fx_kit.service().choose_version(open_for(actor, book_record.id), page.id, Stage.GEOMETRY, first.id)
         expect(stored_job(fx_kit, job.id).state is JobState.QUEUED)
         expect(await stage_of(fx_kit, book_record.id, page, Stage.GEOMETRY) == before)
         assert_expectations()
@@ -285,7 +288,7 @@ class TestChooseVersion:
         actor, book_record, page, first = await ran_geometry(fx_kit)
         preview = await fx_kit.parts(fx_kit.uow()).starter.enqueue(book_record.id, JobKind.PREVIEW_STEP, {})
         with pytest.raises(ConflictError, match=OTHER_STAGE_REASON):
-            await fx_kit.service().choose_version(actor, book_record.id, page.id, Stage.CLEANUP, first.id)
+            await fx_kit.service().choose_version(open_for(actor, book_record.id), page.id, Stage.CLEANUP, first.id)
         assert stored_job(fx_kit, preview.id).state is JobState.QUEUED
 
     async def test_old_versions_are_kept_when_a_later_one_is_chosen(self, fx_kit: ProcessingKit) -> None:
@@ -295,7 +298,7 @@ class TestChooseVersion:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, page, first = await ran_geometry(fx_kit)
-        await fx_kit.service().choose_version(actor, book_record.id, page.id, Stage.GEOMETRY, first.id)
+        await fx_kit.service().choose_version(open_for(actor, book_record.id), page.id, Stage.GEOMETRY, first.id)
         versions = await stage_versions(fx_kit, book_record.id, page, None)
         assert versions.total == 2
 
@@ -324,7 +327,7 @@ class TestChooseVersion:
         unfit = evolve(make_unfit(first), id=PageVersionId('fedcba9876543210'))
         await fx_kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(unfit))
         with pytest.raises(ConflictError, match=match):
-            await fx_kit.service().choose_version(actor, book_record.id, page.id, Stage.GEOMETRY, unfit.id)
+            await fx_kit.service().choose_version(open_for(actor, book_record.id), page.id, Stage.GEOMETRY, unfit.id)
 
     async def test_version_of_another_page_is_not_found(self, fx_kit: ProcessingKit) -> None:
         """Reject a version that belongs to another page, as if it did not exist.
@@ -335,7 +338,7 @@ class TestChooseVersion:
         actor, book_record, _, first = await ran_geometry(fx_kit)
         other, _ = await fx_kit.seed_scan_page(book_record, order_key='a1')
         with pytest.raises(NotFoundError):
-            await fx_kit.service().choose_version(actor, book_record.id, other.id, Stage.GEOMETRY, first.id)
+            await fx_kit.service().choose_version(open_for(actor, book_record.id), other.id, Stage.GEOMETRY, first.id)
 
     async def test_version_without_a_pyramid_gets_a_job_that_cuts_it(self, fx_kit: ProcessingKit) -> None:
         """Verify a chosen version whose pyramid is not cut queues a ``cut-tiles`` job, since the viewer opens it.
@@ -346,7 +349,7 @@ class TestChooseVersion:
         actor, book_record, page, first = await ran_geometry(fx_kit)
         untiled = evolve(first, id=PageVersionId('0011223344556677'), tiles_ready=False)
         await fx_kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(untiled))
-        await fx_kit.service().choose_version(actor, book_record.id, page.id, Stage.GEOMETRY, untiled.id)
+        await fx_kit.service().choose_version(open_for(actor, book_record.id), page.id, Stage.GEOMETRY, untiled.id)
         assert fx_kit.board.put_jobs[-1].kind is JobKind.CUT_TILES
 
 
@@ -360,14 +363,17 @@ class TestVersions:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, page, first = await ran_geometry(fx_kit)
-        everything = await fx_kit.service().versions(actor, book_record.id, page.id, NO_FILTER, EVERYTHING)
+        everything = await fx_kit.service().versions(open_for(actor, book_record.id), page.id, NO_FILTER, EVERYTHING)
         geometry = await fx_kit.service().versions(
-            actor, book_record.id, page.id, VersionFilter(stage=Stage.GEOMETRY, scale=VersionScale.FULL), EVERYTHING
+            open_for(actor, book_record.id),
+            page.id,
+            VersionFilter(stage=Stage.GEOMETRY, scale=VersionScale.FULL),
+            EVERYTHING,
         )
         previews = await fx_kit.service().versions(
-            actor, book_record.id, page.id, VersionFilter(scale=VersionScale.PREVIEW), EVERYTHING
+            open_for(actor, book_record.id), page.id, VersionFilter(scale=VersionScale.PREVIEW), EVERYTHING
         )
-        read = await fx_kit.service().version(actor, book_record.id, page.id, first.id)
+        read = await fx_kit.service().version(open_for(actor, book_record.id), page.id, first.id)
         expect((everything.total, geometry.total, previews.total) == (2, 1, 0))
         expect(read == first)
         assert_expectations()
@@ -385,10 +391,10 @@ class TestVersionsOfAStep:
         actor, book_record, page, [first, second], [made_first, made_second] = await ran_two_steps(fx_kit)
         service = fx_kit.service()
         by_first = await service.versions(
-            actor, book_record.id, page.id, VersionFilter(stage=Stage.GEOMETRY, step_id=first), EVERYTHING
+            open_for(actor, book_record.id), page.id, VersionFilter(stage=Stage.GEOMETRY, step_id=first), EVERYTHING
         )
         by_second = await service.versions(
-            actor, book_record.id, page.id, VersionFilter(stage=Stage.GEOMETRY, step_id=second), EVERYTHING
+            open_for(actor, book_record.id), page.id, VersionFilter(stage=Stage.GEOMETRY, step_id=second), EVERYTHING
         )
         expect(list(by_first.items) == [made_first])
         expect(list(by_second.items) == [made_second])
@@ -406,10 +412,10 @@ class TestVersionsOfAStep:
         actor, book_record, page, [off, on], [made] = await ran_two_steps(fx_kit, first_on=False)
         service = fx_kit.service()
         of_off = await service.versions(
-            actor, book_record.id, page.id, VersionFilter(stage=Stage.GEOMETRY, step_id=off), EVERYTHING
+            open_for(actor, book_record.id), page.id, VersionFilter(stage=Stage.GEOMETRY, step_id=off), EVERYTHING
         )
         of_on = await service.versions(
-            actor, book_record.id, page.id, VersionFilter(stage=Stage.GEOMETRY, step_id=on), EVERYTHING
+            open_for(actor, book_record.id), page.id, VersionFilter(stage=Stage.GEOMETRY, step_id=on), EVERYTHING
         )
         expect(of_off.total == 0)
         expect(list(of_on.items) == [made])
@@ -425,21 +431,22 @@ class TestVersionsOfAStep:
         await mark_version(fx_kit, book_record.id, made_first, ResultMark.BAD)
         service = fx_kit.service()
         bad_of_step = await service.versions(
-            actor,
-            book_record.id,
+            open_for(actor, book_record.id),
             page.id,
             VersionFilter(stage=Stage.GEOMETRY, step_id=first, mark=ResultMark.BAD),
             EVERYTHING,
         )
         good_of_step = await service.versions(
-            actor,
-            book_record.id,
+            open_for(actor, book_record.id),
             page.id,
             VersionFilter(stage=Stage.GEOMETRY, step_id=first, mark=ResultMark.GOOD),
             EVERYTHING,
         )
         bad_of_stage = await service.versions(
-            actor, book_record.id, page.id, VersionFilter(stage=Stage.GEOMETRY, mark=ResultMark.BAD), EVERYTHING
+            open_for(actor, book_record.id),
+            page.id,
+            VersionFilter(stage=Stage.GEOMETRY, mark=ResultMark.BAD),
+            EVERYTHING,
         )
         expect([version.id for version in bad_of_step.items] == [made_first.id])
         expect(good_of_step.total == 0)
@@ -454,8 +461,7 @@ class TestVersionsOfAStep:
         """
         actor, book_record, page, [first, _], _ = await ran_two_steps(fx_kit)
         window = await fx_kit.service().versions(
-            actor,
-            book_record.id,
+            open_for(actor, book_record.id),
             page.id,
             VersionFilter(stage=Stage.GEOMETRY, step_id=first),
             SliceRequest(offset=1, limit=1),
@@ -473,10 +479,15 @@ class TestVersionsOfAStep:
         actor, book_record, page, [first, _], _ = await ran_two_steps(fx_kit)
         with pytest.raises(NotFoundError):
             await fx_kit.service().versions(
-                actor, book_record.id, page.id, VersionFilter(stage=Stage.GEOMETRY, step_id=StepId(uuid4())), EVERYTHING
+                open_for(actor, book_record.id),
+                page.id,
+                VersionFilter(stage=Stage.GEOMETRY, step_id=StepId(uuid4())),
+                EVERYTHING,
             )
         with pytest.raises(InvalidParametersError):
-            await fx_kit.service().versions(actor, book_record.id, page.id, VersionFilter(step_id=first), EVERYTHING)
+            await fx_kit.service().versions(
+                open_for(actor, book_record.id), page.id, VersionFilter(step_id=first), EVERYTHING
+            )
 
 
 class TestStartTiles:
@@ -492,7 +503,7 @@ class TestStartTiles:
         untiled = evolve(first, id=PageVersionId('8899aabbccddeeff'), tiles_ready=False)
         await fx_kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(untiled))
         await fx_kit.store_files(untiled, book_record.id)
-        job = await fx_kit.service().start_tiles(actor, book_record.id, page.id, untiled.id)
+        job = await fx_kit.service().start_tiles(open_for(actor, book_record.id), page.id, untiled.id)
         await fx_kit.work_queue()
         cut = await fx_kit.stored_version(book_record.id, untiled.id)
         tiles = BookKeys(book_record.id).version_rendition(cut, Rendition.TILES)
@@ -518,7 +529,7 @@ class TestStartTiles:
         failed = evolve(first, id=PageVersionId('1122334455667788'), state=VersionState.FAILED)
         await fx_kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(failed))
         with pytest.raises(ConflictError):
-            await fx_kit.service().start_tiles(actor, book_record.id, page.id, failed.id)
+            await fx_kit.service().start_tiles(open_for(actor, book_record.id), page.id, failed.id)
 
     async def test_job_parameters_name_the_versions(self, fx_kit: ProcessingKit) -> None:
         """Verify the job stores the versions it must cut in its parameters.
@@ -527,7 +538,7 @@ class TestStartTiles:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, page, first = await ran_geometry(fx_kit)
-        job = await fx_kit.service().start_tiles(actor, book_record.id, page.id, first.id)
+        job = await fx_kit.service().start_tiles(open_for(actor, book_record.id), page.id, first.id)
         assert TileCut.from_map(job.params) == TileCut(version_ids=(first.id,))
 
 
@@ -568,7 +579,7 @@ class TestCollection:
         """
         actor, book_record, page, _ = await ran_geometry(fx_kit)
         async with previewed(fx_kit, actor, book_record, page, state) as preview:
-            job = await fx_kit.service().start_collection(actor, book_record.id)
+            job = await fx_kit.service().start_collection(open_for(actor, book_record.id))
         expect(job.kind is JobKind.COLLECT_VERSIONS)
         expect(fx_kit.board.put_jobs[-2:] == [preview, job])
         expect(stored_job(fx_kit, preview.id).state is JobState.CANCELLED)
@@ -595,7 +606,7 @@ class TestCollection:
             repos.page_versions.update(evolve(old, mark=ResultMark.BAD))
 
         await fx_kit.uow().change_book(book_record.id, mark_old)
-        job = await fx_kit.service().start_collection(actor, book_record.id)
+        job = await fx_kit.service().start_collection(open_for(actor, book_record.id))
         await fx_kit.work_queue()
         remaining = (await stage_versions(fx_kit, book_record.id, page, None)).items
         with pytest.raises(NotFoundError):
@@ -659,7 +670,7 @@ class TestCollection:
         async with fx_kit.assets.writable(keys.version_rendition(preview, Rendition.PREVIEW)) as target:
             target.write_bytes(IMAGE_CONTENT)
         await fx_kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(preview))
-        await fx_kit.service().start_collection(actor, book_record.id)
+        await fx_kit.service().start_collection(open_for(actor, book_record.id))
         await fx_kit.work_queue()
         with pytest.raises(NotFoundError):
             async with fx_kit.assets.readable(keys.version_directory(preview)):
@@ -686,7 +697,7 @@ class TestCollection:
         async with fx_kit.assets.writable(keys.version_rendition(preview, Rendition.PREVIEW)) as target:
             target.write_bytes(IMAGE_CONTENT)
         await fx_kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(preview))
-        await fx_kit.service().start_collection(actor, book_record.id)
+        await fx_kit.service().start_collection(open_for(actor, book_record.id))
         await fx_kit.work_queue()
         async with fx_kit.assets.readable(keys.version_rendition(preview, Rendition.PREVIEW)):
             pass
@@ -699,8 +710,8 @@ class TestCollection:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, _, _, _ = await self.collectable_book(fx_kit)
-        first = await fx_kit.service().start_collection(actor, book_record.id)
-        second = await fx_kit.service().start_collection(actor, book_record.id)
+        first = await fx_kit.service().start_collection(open_for(actor, book_record.id))
+        second = await fx_kit.service().start_collection(open_for(actor, book_record.id))
         assert second.id == first.id
 
     async def test_collection_marks_the_versions_failed_before_it_removes_their_files(
@@ -716,7 +727,7 @@ class TestCollection:
         actor, book_record, _, current, old = await self.collectable_book(fx_kit)
 
         monkeypatch.setattr(fx_kit.assets, DELETE_PREFIX, AsyncMock(side_effect=OSError(READ_ONLY_DISK)))
-        job = await fx_kit.service().start_collection(actor, book_record.id)
+        job = await fx_kit.service().start_collection(open_for(actor, book_record.id))
         await fx_kit.work_queue()
         marked = await fx_kit.stored_version(book_record.id, old.id)
         stored = stored_job(fx_kit, job.id)
@@ -738,9 +749,9 @@ class TestCollection:
         actor, book_record, _, _, old = await self.collectable_book(fx_kit)
         with monkeypatch.context() as broken:
             broken.setattr(fx_kit.assets, DELETE_PREFIX, AsyncMock(side_effect=OSError(READ_ONLY_DISK)))
-            await fx_kit.service().start_collection(actor, book_record.id)
+            await fx_kit.service().start_collection(open_for(actor, book_record.id))
             await fx_kit.work_queue()
-        again = await fx_kit.service().start_collection(actor, book_record.id)
+        again = await fx_kit.service().start_collection(open_for(actor, book_record.id))
         await fx_kit.work_queue()
         with pytest.raises(NotFoundError):
             async with fx_kit.assets.readable(BookKeys(book_record.id).version_directory(old)):
@@ -796,7 +807,7 @@ class TestCollection:
 
         monkeypatch.setattr(ProcessingJobs, BATCH_SIZE_ATTRIBUTE, batch_size)
         monkeypatch.setattr(fx_kit.assets, DELETE_PREFIX, refuse_one)
-        job = await fx_kit.service().start_collection(actor, book_record.id)
+        job = await fx_kit.service().start_collection(open_for(actor, book_record.id))
         await fx_kit.work_queue()
 
         stayed = await fx_kit.stored_version(book_record.id, old.id)
@@ -840,7 +851,7 @@ class TestCollection:
             await removing(prefix)
 
         monkeypatch.setattr(fx_kit.assets, DELETE_PREFIX, refuse_the_reader)
-        job = await fx_kit.service().start_collection(actor, book_record.id)
+        job = await fx_kit.service().start_collection(open_for(actor, book_record.id))
         await fx_kit.work_queue()
 
         stored = await fx_kit.stored_version(book_record.id, reader.id)
@@ -875,7 +886,7 @@ class TestCollection:
             repos.page_versions.add(commented)
 
         await fx_kit.uow().change_book(book_record.id, judge)
-        await fx_kit.service().start_collection(actor, book_record.id)
+        await fx_kit.service().start_collection(open_for(actor, book_record.id))
         await fx_kit.work_queue()
         for kept in (good, commented):
             async with fx_kit.assets.readable(keys.version_rendition(kept, Rendition.FULL_JPEG)):
@@ -893,7 +904,7 @@ class TestCollection:
         actor, book_record, _, _, old = await self.collectable_book(fx_kit)
         reader = evolve(old, id=OTHER_VERSION_ID, input_id=old.id)
         await fx_kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(reader))
-        await fx_kit.service().start_collection(actor, book_record.id)
+        await fx_kit.service().start_collection(open_for(actor, book_record.id))
         await fx_kit.work_queue()
         expect(await found_version(fx_kit, book_record.id, old.id) is None)
         expect(await found_version(fx_kit, book_record.id, reader.id) is None)
@@ -910,7 +921,7 @@ class TestCollection:
         actor, book_record, page, _, old = await self.collectable_book(fx_kit)
         # The run that made the book queued a collection of its own, so the report is judged by the jobs it adds
         before = fx_kit.board.jobs(book_record.id, active=False)
-        report = await fx_kit.service().collection_report(actor, book_record.id)
+        report = await fx_kit.service().collection_report(open_for(actor, book_record.id))
         listed = (await stage_versions(fx_kit, book_record.id, page, None)).items
         jobs = fx_kit.board.jobs(book_record.id, active=False)
         async with fx_kit.assets.readable(BookKeys(book_record.id).version_rendition(old, Rendition.FULL_JPEG)):
@@ -927,20 +938,9 @@ class TestCollection:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, _, _ = await ran_geometry(fx_kit)
-        assert await fx_kit.service().collection_report(actor, book_record.id) == CollectionReport(
+        assert await fx_kit.service().collection_report(open_for(actor, book_record.id)) == CollectionReport(
             versions=0, size_bytes=0
         )
-
-    async def test_the_report_of_a_book_of_another_account_is_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Verify an account that does not own the book is told it does not exist.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        _, book_record = await fx_kit.seed_record()
-        stranger = Actor(account_id=(await fx_kit.seed_record())[0].account_id)
-        with pytest.raises(NotFoundError):
-            await fx_kit.service().collection_report(stranger, book_record.id)
 
     async def test_a_collection_cancelled_while_it_deletes_a_batch_deletes_no_other_batch(
         self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
@@ -961,7 +961,7 @@ class TestCollection:
         async with fx_kit.assets.writable(keys.version_rendition(other, Rendition.FULL_JPEG)) as target:
             target.write_bytes(IMAGE_CONTENT)
         await fx_kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(other))
-        job = await fx_kit.service().start_collection(actor, book_record.id)
+        job = await fx_kit.service().start_collection(open_for(actor, book_record.id))
         removing = fx_kit.assets.delete_prefix
 
         async def remove_and_cancel(prefix: StorageKey) -> None:
@@ -1006,7 +1006,7 @@ class TestCollection:
             )
 
         await fx_kit.uow().change_book(book_record.id, add_reader)
-        await fx_kit.service().start_collection(actor, book_record.id)
+        await fx_kit.service().start_collection(open_for(actor, book_record.id))
         await fx_kit.work_queue()
         stored = await fx_kit.stored_version(book_record.id, reader.id)
         untouched = await fx_kit.stored_version(book_record.id, old.id)
@@ -1048,7 +1048,9 @@ class TestMapToScan:
             repos.page_versions.update(shifted)
 
         await fx_kit.uow().change_book(book_record.id, move)
-        [mapped] = await fx_kit.service().map_to_scan(actor, book_record.id, page.id, shifted.id, [Point(x=5, y=7)])
+        [mapped] = await fx_kit.service().map_to_scan(
+            open_for(actor, book_record.id), page.id, shifted.id, [Point(x=5, y=7)]
+        )
         assert mapped == Point(x=1115, y=27)
 
 
@@ -1116,6 +1118,6 @@ class TestChooseVersionApplyStep:
         await fx_kit.parts(fx_kit.uow()).starter.enqueue(book_record.id, JobKind.PREVIEW_STEP, {})
         change_when_published(fx_kit, monkeypatch, partial(change, fx_kit, book_record.id, second))
         with pytest.raises(refusal):
-            await fx_kit.service().choose_version(actor, book_record.id, page.id, Stage.GEOMETRY, second.id)
+            await fx_kit.service().choose_version(open_for(actor, book_record.id), page.id, Stage.GEOMETRY, second.id)
         record = await found_stage(fx_kit, book_record.id, page, Stage.GEOMETRY)
         assert record is None or record.head_version_id != second.id

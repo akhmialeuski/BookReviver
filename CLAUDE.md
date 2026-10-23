@@ -43,8 +43,9 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   module-level alias made only to keep an import at runtime. `ruff.toml` lists the `fastapi.APIRouter` methods and
   `dishka.integrations.fastapi.inject` under `runtime-evaluated-decorators`, and ruff resolves `@router.get` to
   them, so it keeps the imports those annotations need. A dependency shared by many routers, such as `ActorDep`,
-  stays an alias in its own module. A route docstring puts a form feed (`\N{FORM FEED}`) before its reST fields,
-  because FastAPI ends the OpenAPI description there.
+  stays an alias in its own module. One that reads a path parameter, such as `open_book`, is written in place, since
+  ruff's `FAST003` does not follow an alias to the path parameter it reads. A route docstring puts a form feed
+  (`\N{FORM FEED}`) before its reST fields, because FastAPI ends the OpenAPI description there.
 
 ## Architecture rules
 
@@ -65,7 +66,9 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 - Everything on the event loop is async: the API and the ports of files, jobs, events and HTTP. The persistence
   repositories are synchronous and run only inside the work a service hands to `UnitOfWork.read` or `change` of the
   catalogue, or `read_book` or `change_book` of one book, which the adapter runs in a worker thread as one transaction
-  of that file. The owner of a book is checked once, by `Library.open` in the services, before the book is read. Other blocking library calls go through
+  of that file. The owner of a book is checked once per request, by `BooksService.open`, which the route dependency
+  `open_book` calls before the book is read, and every use case of one book takes the `Book` it returns. A route of a
+  book declares it in place as `Annotated[Book, Depends(open_book)]`. Other blocking library calls go through
   `anyio.to_thread.run_sync` inside adapters, keyword arguments through `functools.partial`. Heavy work (parsing,
   rasterising, tiling, OCR, LLM calls) runs only in background jobs, whose entry points live in `app` and call one
   service method.

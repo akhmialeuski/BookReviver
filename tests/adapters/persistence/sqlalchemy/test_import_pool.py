@@ -18,7 +18,7 @@ from sqlalchemy.pool import QueuePool
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.values import SliceRequest
-from tests.helpers.builders import make_record
+from tests.helpers.builders import make_record, open_for
 from tests.helpers.connections import checked_out_connections
 from tests.helpers.fakes_imports import IMPORT_TIMEOUT_SECONDS, pdf_upload
 from tests.helpers.seeding import store_book
@@ -160,7 +160,7 @@ class TestRunImportConnections:
         async with fx_books.use(book_record.id) as book:
             with _counting_connections(book) as peak:
                 job = await rig.service(uow=uow).start_import(
-                    owner, book_record.id, [pdf_upload(samples, BOOK_PDF, pages=PARALLEL_SCANS)]
+                    open_for(owner, book_record.id), [pdf_upload(samples, BOOK_PDF, pages=PARALLEL_SCANS)]
                 )
                 with anyio.fail_after(IMPORT_TIMEOUT_SECONDS):
                     await rig.fakes.board.run_queued()

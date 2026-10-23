@@ -64,7 +64,6 @@ from bookreviver.domain.ids import JobId, PageId, ScanId, SourceId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import ImportRequest, JobEnd, PageStageKey, Renditions, StageRun, UploadPath
 from bookreviver.services.base_versions import SPLIT_NONE, BaseVersions
-from bookreviver.services.library import Library
 from bookreviver.services.page_labels import PageLabels
 from bookreviver.services.source_labels import SourceLabels
 from bookreviver.services.stage_records import StageRecords
@@ -73,7 +72,7 @@ from bookreviver.services.steps import StepRun
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Actor, BookRecord
+    from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.enums import SourceKind
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import MetadataSuggestion, UploadedSource
@@ -82,6 +81,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock, JobBoard, JobControl
     from bookreviver.ports.storage import AssetStore, IncomingFile, SourceStore
+    from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import ProcessingParts
     from bookreviver.services.steps import StepRunner
 
@@ -633,7 +633,6 @@ class ImportService:
         :type parts: ProcessingParts
         """
         self._uow = uow
-        self._library = Library(uow=uow)
         self._storage = storage
         self._imaging = imaging
         self._runtime = runtime
@@ -643,21 +642,17 @@ class ImportService:
         self._clock = runtime.clock
         self._limits = runtime.limits
 
-    async def authorize_upload(self, actor: Actor, book_id: BookId) -> None:
-        """Refuse an upload the actor may not make, or the book cannot take now, before any file is read.
+    async def authorize_upload(self, book: Book) -> None:
+        """Refuse an upload the book cannot take now, before any file is read.
 
         The API calls this before it parses the body of the request, so a refused caller costs the server no upload
         to spool, and ``start_import`` repeats it, since a caller of the service needs no API.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Book to import into.
-        :type book_id: BookId
-        :raises NotFoundError: If the actor has no such book.
+        :param book: The open book.
+        :type book: Book
         :raises ConflictError: If the book already has an import queued or running.
         """
-        await self._library.open(actor, book_id)
-        self._refuse_active_import(book_id)
+        self._refuse_active_import(book.id)
 
     def _refuse_active_import(self, book_id: BookId) -> None:
         """Refuse a book that has an import queued or running.
@@ -672,27 +667,24 @@ class ImportService:
         if any(job.kind in IMPORT_JOBS for job in self._board.jobs(book_id, active=True)):
             raise ConflictError(IMPORT_ACTIVE)
 
-    async def start_import(self, actor: Actor, book_id: BookId, files: Sequence[IncomingFile]) -> Job:
+    async def start_import(self, book: Book, files: Sequence[IncomingFile]) -> Job:
         """Receive an upload into the directory of a new import job and put the job on the board.
 
         The rules that need no file are checked before anything is received, so an upload that cannot be imported is
         not streamed first. The one-import rule is checked again right before the job is put, with no ``await`` between
         the check and the put, so two uploads cannot both pass it. The upload is removed again when that check fails.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Book to import into.
-        :type book_id: BookId
+        :param book: The open book to import into.
+        :type book: Book
         :param files: The uploaded files.
         :type files: Sequence[IncomingFile]
         :returns: The queued job, whose request lists the staged files.
         :rtype: Job
-        :raises NotFoundError: If the actor has no such book.
         :raises UploadRejectedError: If there are no files or too many, a file has no usable name or a path that leaves
                                      its folder, two files share a path, or the upload is larger than allowed.
         :raises ConflictError: If the book already has an import queued or running.
         """
-        await self.authorize_upload(actor, book_id)
+        await self.authorize_upload(book)
         if not files:
             raise UploadRejectedError(UploadProblem.NO_FILES)
         if len(files) > self._limits.max_files:
@@ -701,20 +693,20 @@ class ImportService:
         for file in files:
             UploadPath.parse(file.filename or '')
         job_id = JobId(uuid4())
-        staged = await self._storage.sources.stage(book_id, job_id, files, max_bytes=self._limits.max_bytes)
+        staged = await self._storage.sources.stage(book.id, job_id, files, max_bytes=self._limits.max_bytes)
         try:
-            self._refuse_active_import(book_id)
+            self._refuse_active_import(book.id)
             return self._board.put(
                 Job(
                     id=job_id,
-                    book_id=book_id,
+                    book_id=book.id,
                     kind=JobKind.IMPORT_SOURCE,
                     request=ImportRequest(files=staged),
                     created_at=self._clock.now(),
                 )
             )
         except BaseException:
-            await self._storage.sources.discard(book_id, job_id)
+            await self._storage.sources.discard(book.id, job_id)
             raise
 
     async def run_import(self, job: Job, control: JobControl) -> JobEnd:

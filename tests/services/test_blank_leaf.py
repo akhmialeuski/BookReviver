@@ -47,7 +47,7 @@ from tests.helpers.builders import (
     make_record,
     make_scan,
     make_source,
-    new_account_id,
+    open_for,
 )
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.page_services import make_page_service
@@ -223,7 +223,7 @@ class LeafDesk:
         :type fill: BlankFill
         """
         ids = [book.pages[position].id for position in positions]
-        await self.service().set_blank_fill(self.actor, book.book_record.id, ids, fill)
+        await self.service().set_blank_fill(open_for(self.actor, book.book_record.id), ids, fill)
 
     async def add_blank_page(self, book: LeafBook) -> PageOverview:
         """Add a generated blank page at the end of the book, which asks for a ``prepare-pages`` job as a request does.
@@ -234,7 +234,7 @@ class LeafDesk:
         :rtype: PageOverview
         """
         new_page = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
-        return await self.service().add(self.actor, book.book_record.id, new_page)
+        return await self.service().add(open_for(self.actor, book.book_record.id), new_page)
 
     def prepare_jobs(self) -> list[Job]:
         """Read the ``prepare-pages`` jobs put on the board, as the board holds them now, in the order they were put.
@@ -416,7 +416,7 @@ class TestChooseALeaf:
         await fx_desk.prepare()
 
         [leaf] = await fx_desk.leaves(book.book_record.id, blank)
-        shown = await fx_desk.service().get(fx_desk.actor, book.book_record.id, blank.id)
+        shown = await fx_desk.service().get(open_for(fx_desk.actor, book.book_record.id), blank.id)
         image = fx_desk.image(book, leaf)
         expect(leaf.state is VersionState.READY)
         expect((await fx_desk.heads(book.book_record.id, blank))[Stage.PAGE_ORDER].head_version_id == leaf.id)
@@ -548,7 +548,7 @@ class TestChooseALeaf:
         )
 
         added = await fx_desk.service().add(
-            fx_desk.actor, book.book_record.id, NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
+            open_for(fx_desk.actor, book.book_record.id), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
         )
 
         [made] = await fx_desk.leaves(book.book_record.id, added.page)
@@ -573,7 +573,7 @@ class TestGetTheScanBack:
 
         await fx_desk.choose(book, [1], BlankFill.SCAN)
 
-        shown = await fx_desk.service().get(fx_desk.actor, book.book_record.id, blank.id)
+        shown = await fx_desk.service().get(open_for(fx_desk.actor, book.book_record.id), blank.id)
         stored = await fx_desk.page(book.book_record.id, blank)
         expect((stored.blank_fill, stored.scan_id, stored.origin) == (BlankFill.SCAN, blank.scan_id, PageOrigin.SCAN))
         expect(Stage.PAGE_ORDER not in await fx_desk.heads(book.book_record.id, blank))
@@ -694,7 +694,7 @@ class TestGetTheScanBack:
         await fx_desk.prepare()
 
         changed = await fx_desk.service().update(
-            fx_desk.actor, book.book_record.id, blank.id, PageChanges(kind=PageKind.TEXT)
+            open_for(fx_desk.actor, book.book_record.id), blank.id, PageChanges(kind=PageKind.TEXT)
         )
 
         expect((changed.page.kind, changed.page.blank_fill) == (PageKind.TEXT, BlankFill.SCAN))
@@ -716,7 +716,7 @@ class TestGetTheScanBack:
         await fx_desk.prepare()
 
         await fx_desk.service().update(
-            fx_desk.actor, book.book_record.id, blank.id, PageChanges(notes='Verso is clean')
+            open_for(fx_desk.actor, book.book_record.id), blank.id, PageChanges(notes='Verso is clean')
         )
 
         expect((await fx_desk.page(book.book_record.id, blank)).blank_fill is BlankFill.WHITE)
@@ -890,12 +890,10 @@ class TestRefusals:
 
         for page in (generated, waiting):
             with pytest.raises(ConflictError, match='not cut from a scan'):
-                await fx_desk.service().set_blank_fill(fx_desk.actor, book.book_record.id, [page.id], fill)
+                await fx_desk.service().set_blank_fill(open_for(fx_desk.actor, book.book_record.id), [page.id], fill)
 
-    async def test_a_page_the_book_lacks_is_not_found_and_so_is_a_book_of_another_account(
-        self, fx_desk: LeafDesk
-    ) -> None:
-        """Verify an unknown page, a page of another book, and a book of another account answer not found.
+    async def test_a_page_the_book_lacks_is_not_found(self, fx_desk: LeafDesk) -> None:
+        """Verify a page of another book answers not found, and no leaf is chosen.
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
@@ -904,12 +902,11 @@ class TestRefusals:
         other = make_record()
         stranger = make_page(kind=PageKind.BLANK)
         await store_book(fx_desk.open_uow(), other, stranger, owner=fx_desk.actor.account_id)
-        foreign = evolve(fx_desk.actor, account_id=new_account_id())
 
         with pytest.raises(NotFoundError):
-            await fx_desk.service().set_blank_fill(fx_desk.actor, book.book_record.id, [stranger.id], BlankFill.WHITE)
-        with pytest.raises(NotFoundError):
-            await fx_desk.service().set_blank_fill(foreign, book.book_record.id, [book.pages[0].id], BlankFill.WHITE)
+            await fx_desk.service().set_blank_fill(
+                open_for(fx_desk.actor, book.book_record.id), [stranger.id], BlankFill.WHITE
+            )
 
         assert await fx_desk.leaves(book.book_record.id, book.pages[0]) == []
 

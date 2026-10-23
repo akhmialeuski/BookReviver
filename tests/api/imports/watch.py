@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.events import DomainEvent
     from bookreviver.domain.ids import BookId
 
-JOB_PATH: str = '/api/v1/jobs/{job_id}'
+JOB_PATH: str = '/api/v1/books/{book_id}/jobs/{job_id}'
 JOBS_PATH: str = '/api/v1/books/{book_id}/jobs'
 SOURCES_PATH: str = '/api/v1/books/{book_id}/sources'
 # The most files the sources route lists in one page
@@ -67,22 +67,22 @@ class ImportWatch:
         self._client = client
         self._events = events
 
-    async def finished(self, job_id: str) -> dict[str, Any]:
+    async def finished(self, queued: dict[str, Any]) -> dict[str, Any]:
         """Wait until the book of a job has no job queued or running, and read the job as the API shows it.
 
-        :param job_id: Identifier of the job the upload answered with.
-        :type job_id: str
+        :param queued: The job document the upload answered with.
+        :type queued: dict[str, Any]
         :returns: The job document, in the state it ended in.
         :rtype: dict[str, Any]
         """
+        job_path = JOB_PATH.format(book_id=queued['book_id'], job_id=queued['id'])
         with anyio.fail_after(FINISH_TIMEOUT_SECONDS):
-            book_id = (await self._client.get(JOB_PATH.format(job_id=job_id))).json()['book_id']
-            active_jobs = JOBS_PATH.format(book_id=book_id)
+            active_jobs = JOBS_PATH.format(book_id=queued['book_id'])
             while True:
                 # The event is taken before the jobs are read, so a job that ends in between still wakes the wait
                 ended = self._events.ended
                 if not (await self._client.get(active_jobs, params={'active': True})).json()['total']:
-                    return (await self._client.get(JOB_PATH.format(job_id=job_id))).json()
+                    return (await self._client.get(job_path)).json()
                 await ended.wait()
 
     async def report(self, book_id: BookId) -> list[dict[str, Any]]:

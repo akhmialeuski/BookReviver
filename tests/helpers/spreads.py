@@ -8,6 +8,7 @@ reads through a unit of work of its own, as committed.
 from typing import TYPE_CHECKING
 
 from bookreviver.domain.values import PageStageKey, RecipeDraft, SliceRequest, Step
+from tests.helpers.builders import open_for
 from tests.helpers.samples import png_bytes, spread
 
 if TYPE_CHECKING:
@@ -77,7 +78,7 @@ async def run_stage(kit: ProcessingKit, actor: Actor, book_record: BookRecord, r
     :param run: The stage, and the recipe and pages to run it on.
     :type run: StageRun
     """
-    await kit.service().start_run(actor, book_record.id, run.stage, run)
+    await kit.service().start_run(open_for(actor, book_record.id), run.stage, run)
     await kit.work_queue()
 
 

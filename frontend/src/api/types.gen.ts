@@ -3980,6 +3980,49 @@ export type CreateBookApiV1BooksPostResponses = {
 
 export type CreateBookApiV1BooksPostResponse = CreateBookApiV1BooksPostResponses[keyof CreateBookApiV1BooksPostResponses];
 
+export type ImportBookApiV1BooksArchivePostData = {
+    /**
+     * ArchiveForm
+     *
+     * The form of the import of a book: the archive another instance exported.
+     *
+     * :ivar archive: The uploaded archive of the book.
+     */
+    body: {
+        /**
+         * Archive
+         *
+         * The archive of a book, as an export of BookReviver writes it
+         */
+        archive: Blob | File;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/books/archive';
+};
+
+export type ImportBookApiV1BooksArchivePostErrors = {
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ImportBookApiV1BooksArchivePostError = ImportBookApiV1BooksArchivePostErrors[keyof ImportBookApiV1BooksArchivePostErrors];
+
+export type ImportBookApiV1BooksArchivePostResponses = {
+    /**
+     * Successful Response
+     */
+    201: BookSchema;
+};
+
+export type ImportBookApiV1BooksArchivePostResponse = ImportBookApiV1BooksArchivePostResponses[keyof ImportBookApiV1BooksArchivePostResponses];
+
 export type DeleteBookApiV1BooksBookIdDeleteData = {
     body?: never;
     path: {
@@ -4140,49 +4183,6 @@ export type ExportBookApiV1BooksBookIdArchiveGetResponses = {
 
 export type ExportBookApiV1BooksBookIdArchiveGetResponse = ExportBookApiV1BooksBookIdArchiveGetResponses[keyof ExportBookApiV1BooksBookIdArchiveGetResponses];
 
-export type ImportBookApiV1BooksArchivePostData = {
-    /**
-     * ArchiveForm
-     *
-     * The form of the import of a book: the archive another instance exported.
-     *
-     * :ivar archive: The uploaded archive of the book.
-     */
-    body: {
-        /**
-         * Archive
-         *
-         * The archive of a book, as an export of BookReviver writes it
-         */
-        archive: Blob | File;
-    };
-    path?: never;
-    query?: never;
-    url: '/api/v1/books/archive';
-};
-
-export type ImportBookApiV1BooksArchivePostErrors = {
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type ImportBookApiV1BooksArchivePostError = ImportBookApiV1BooksArchivePostErrors[keyof ImportBookApiV1BooksArchivePostErrors];
-
-export type ImportBookApiV1BooksArchivePostResponses = {
-    /**
-     * Successful Response
-     */
-    201: BookSchema;
-};
-
-export type ImportBookApiV1BooksArchivePostResponse = ImportBookApiV1BooksArchivePostResponses[keyof ImportBookApiV1BooksArchivePostResponses];
-
 export type ListSourcesApiV1BooksBookIdSourcesGetData = {
     body?: never;
     path: {
@@ -4336,17 +4336,17 @@ export type DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteData = {
     body?: never;
     path: {
         /**
-         * Book Id
-         *
-         * Identifier of the book
-         */
-        book_id: string;
-        /**
          * Source Id
          *
          * Identifier of the source
          */
         source_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/sources/{source_id}';
@@ -4382,17 +4382,17 @@ export type GetSourceApiV1BooksBookIdSourcesSourceIdGetData = {
     body?: never;
     path: {
         /**
-         * Book Id
-         *
-         * Identifier of the book
-         */
-        book_id: string;
-        /**
          * Source Id
          *
          * Identifier of the source
          */
         source_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/sources/{source_id}';
@@ -4481,17 +4481,17 @@ export type MoveSourcePagesApiV1BooksBookIdSourcesSourceIdPagesMovePostData = {
     body: PageAnchorBody;
     path: {
         /**
-         * Book Id
-         *
-         * Identifier of the book
-         */
-        book_id: string;
-        /**
          * Source Id
          *
          * Identifier of the source
          */
         source_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/sources/{source_id}/pages/move';
@@ -4666,17 +4666,17 @@ export type PageApiV1BooksBookIdPagesPageIdGetData = {
     body?: never;
     path: {
         /**
-         * Book Id
-         *
-         * Identifier of the book
-         */
-        book_id: string;
-        /**
          * Page Id
          *
          * Identifier of the page
          */
         page_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
     url: '/api/v1/books/{book_id}/pages/{page_id}';
@@ -7325,7 +7325,7 @@ export type ListProcessorsApiV1ProcessorsGetResponses = {
 
 export type ListProcessorsApiV1ProcessorsGetResponse = ListProcessorsApiV1ProcessorsGetResponses[keyof ListProcessorsApiV1ProcessorsGetResponses];
 
-export type CancelJobApiV1JobsJobIdDeleteData = {
+export type CancelJobApiV1BooksBookIdJobsJobIdDeleteData = {
     body?: never;
     path: {
         /**
@@ -7334,12 +7334,18 @@ export type CancelJobApiV1JobsJobIdDeleteData = {
          * Identifier of the job
          */
         job_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/jobs/{job_id}';
+    url: '/api/v1/books/{book_id}/jobs/{job_id}';
 };
 
-export type CancelJobApiV1JobsJobIdDeleteErrors = {
+export type CancelJobApiV1BooksBookIdJobsJobIdDeleteErrors = {
     /**
      * Validation Error
      */
@@ -7354,18 +7360,18 @@ export type CancelJobApiV1JobsJobIdDeleteErrors = {
     '5XX': Problem;
 };
 
-export type CancelJobApiV1JobsJobIdDeleteError = CancelJobApiV1JobsJobIdDeleteErrors[keyof CancelJobApiV1JobsJobIdDeleteErrors];
+export type CancelJobApiV1BooksBookIdJobsJobIdDeleteError = CancelJobApiV1BooksBookIdJobsJobIdDeleteErrors[keyof CancelJobApiV1BooksBookIdJobsJobIdDeleteErrors];
 
-export type CancelJobApiV1JobsJobIdDeleteResponses = {
+export type CancelJobApiV1BooksBookIdJobsJobIdDeleteResponses = {
     /**
      * Successful Response
      */
     200: JobSchema;
 };
 
-export type CancelJobApiV1JobsJobIdDeleteResponse = CancelJobApiV1JobsJobIdDeleteResponses[keyof CancelJobApiV1JobsJobIdDeleteResponses];
+export type CancelJobApiV1BooksBookIdJobsJobIdDeleteResponse = CancelJobApiV1BooksBookIdJobsJobIdDeleteResponses[keyof CancelJobApiV1BooksBookIdJobsJobIdDeleteResponses];
 
-export type ReadJobApiV1JobsJobIdGetData = {
+export type ReadJobApiV1BooksBookIdJobsJobIdGetData = {
     body?: never;
     path: {
         /**
@@ -7374,12 +7380,18 @@ export type ReadJobApiV1JobsJobIdGetData = {
          * Identifier of the job
          */
         job_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/jobs/{job_id}';
+    url: '/api/v1/books/{book_id}/jobs/{job_id}';
 };
 
-export type ReadJobApiV1JobsJobIdGetErrors = {
+export type ReadJobApiV1BooksBookIdJobsJobIdGetErrors = {
     /**
      * Validation Error
      */
@@ -7394,16 +7406,16 @@ export type ReadJobApiV1JobsJobIdGetErrors = {
     '5XX': Problem;
 };
 
-export type ReadJobApiV1JobsJobIdGetError = ReadJobApiV1JobsJobIdGetErrors[keyof ReadJobApiV1JobsJobIdGetErrors];
+export type ReadJobApiV1BooksBookIdJobsJobIdGetError = ReadJobApiV1BooksBookIdJobsJobIdGetErrors[keyof ReadJobApiV1BooksBookIdJobsJobIdGetErrors];
 
-export type ReadJobApiV1JobsJobIdGetResponses = {
+export type ReadJobApiV1BooksBookIdJobsJobIdGetResponses = {
     /**
      * Successful Response
      */
     200: JobSchema;
 };
 
-export type ReadJobApiV1JobsJobIdGetResponse = ReadJobApiV1JobsJobIdGetResponses[keyof ReadJobApiV1JobsJobIdGetResponses];
+export type ReadJobApiV1BooksBookIdJobsJobIdGetResponse = ReadJobApiV1BooksBookIdJobsJobIdGetResponses[keyof ReadJobApiV1BooksBookIdJobsJobIdGetResponses];
 
 export type ListBookJobsApiV1BooksBookIdJobsGetData = {
     body?: never;

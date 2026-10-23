@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobSchema } from '@/api';
 import {
   collectableVersionsApiV1BooksBookIdVersionsCollectableGetQueryKey,
-  readJobApiV1JobsJobIdGetQueryKey,
+  readJobApiV1BooksBookIdJobsJobIdGetQueryKey,
 } from '@/api/@tanstack/react-query.gen';
 import { pagesScope, versionReadyKey } from '@/features/books/queries';
 import { numberingPreviewKey } from '@/features/order/usePreviewLabels';
@@ -242,7 +242,9 @@ describe('applyBookEvent', () => {
     );
 
     expect(
-      queryClient.getQueryData(readJobApiV1JobsJobIdGetQueryKey({ path: { job_id: 'j-1' } })),
+      queryClient.getQueryData(
+        readJobApiV1BooksBookIdJobsJobIdGetQueryKey({ path: { book_id: BOOK_ID, job_id: 'j-1' } }),
+      ),
     ).toEqual(job('running'));
   });
 

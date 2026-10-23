@@ -30,19 +30,19 @@ from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.step_values import StepValues, StepValuesKey
 from bookreviver.domain.version_chains import StepVersions, step_places
 from bookreviver.services.books import book_pages
-from bookreviver.services.library import Library
 from bookreviver.services.processing_parts import BOOK_BUSY
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from bookreviver.domain.entities import Actor, BookRecord, Recipe
-    from bookreviver.domain.ids import BookId, PageHistoryEntryId, PageId, PageVersionId
+    from bookreviver.domain.entities import BookRecord, Recipe
+    from bookreviver.domain.ids import PageHistoryEntryId, PageId, PageVersionId
     from bookreviver.domain.values import PageStepKey
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore
+    from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import JobStarter
     from bookreviver.services.stage_records import StageRecords
 
@@ -71,39 +71,33 @@ class PageHistoryService:
         :type clock: Clock
         """
         self._uow = uow
-        self._library = Library(uow=uow)
         self._records = records
         self._starter = starter
         self._assets = assets
         self._clock = clock
 
-    async def list(self, actor: Actor, book_id: BookId, key: PageStepKey) -> StepHistory:
+    async def list(self, book: Book, key: PageStepKey) -> StepHistory:
         """Return the history of one step on one page.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param key: The page, the stage and the step.
         :type key: PageStepKey
         :returns: The changes of the step, oldest first, with which of them stand.
         :rtype: StepHistory
-        :raises NotFoundError: If the actor has no such book, or the book has no such page.
+        :raises NotFoundError: If the book has no such page.
         """
-        await self._library.open(actor, book_id)
-        return await self._uow.read_book(book_id, lambda repos: self._history(repos, key))
+        return await self._uow.read_book(book.id, lambda repos: self._history(repos, key))
 
     async def undo(
-        self, actor: Actor, book_id: BookId, key: PageStepKey, change_id: PageHistoryEntryId | None
+        self, book: Book, key: PageStepKey, change_id: PageHistoryEntryId | None
     ) -> Sequence[PageHistoryEntry]:
         """Take back the newest change of a step on a page, or every change back to a chosen one.
 
         A change of a batch brings the rest of its batch with it, whatever page the rest is on.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param key: The page, the stage and the step.
         :type key: PageStepKey
         :param change_id: The oldest change to take back, which takes back every change after it as well, or None for
@@ -111,12 +105,10 @@ class PageHistoryService:
         :type change_id: PageHistoryEntryId | None
         :returns: The undos that were written, which are none when the step has no change to take back.
         :rtype: Sequence[PageHistoryEntry]
-        :raises NotFoundError: If the actor has no such book, the book has no such page, or the step has no
-                               standing change with this identifier.
+        :raises NotFoundError: If the book has no such page, or the step has no standing change with this identifier.
         :raises ConflictError: If a layer changed after the change that is taken back, which a later change of the
                                same page or of a page of the batch did.
         """
-        await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories, _book_record: BookRecord) -> Sequence[PageHistoryEntry]:
             """Write the undos, put the layers and the values back, and mark the stages of the pages stale.
@@ -172,9 +164,9 @@ class PageHistoryService:
                 self._records.mark_stale(repos, page_id, stage)
             return added
 
-        return await self._uow.change_book(book_id, work)
+        return await self._uow.change_book(book.id, work)
 
-    async def clear(self, actor: Actor, book_id: BookId, key: PageStepKey) -> ClearedStep:
+    async def clear(self, book: Book, key: PageStepKey) -> ClearedStep:
         """Return a step to its initial state on a page: delete its history, its settings, its edit and its results.
 
         The results of the step on the page go with the versions that read them, directly or through a chain, whatever
@@ -198,24 +190,20 @@ class PageHistoryService:
         ``change_book`` for the rows. The files of the deleted versions are removed after it ended, so a store that
         fails to remove them leaves them without a row for the next collection and does not fail the clear.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param key: The page, the stage and the step.
         :type key: PageStepKey
         :returns: The number of changes deleted and the versions deleted, none of which when the step had nothing on the
                   page.
         :rtype: ClearedStep
-        :raises NotFoundError: If the actor has no such book, the book has no such page, or no recipe of the stage
-                               has the step.
+        :raises NotFoundError: If the book has no such page, or no recipe of the stage has the step.
         :raises ConflictError: If a run, a measure of the book, a tile cutting or a collection of the book is queued
                                or running, which may be reading or deleting the versions the clear deletes.
         """
-        await self._library.open(actor, book_id)
         # The step is checked before the previews are cancelled, so a request the change would refuse cancels nothing
-        await self._uow.read_book(book_id, lambda repos: self._recipes_with_step(repos, key))
-        if await self._starter.free_of_previews(book_id):
+        await self._uow.read_book(book.id, lambda repos: self._recipes_with_step(repos, key))
+        if await self._starter.free_of_previews(book.id):
             raise ConflictError(BOOK_BUSY)
 
         def work(repos: BookRepositories, _book_record: BookRecord) -> tuple[ClearedStep, list[PageVersionId]]:
@@ -263,11 +251,11 @@ class PageHistoryService:
             repos.page_versions.delete_many([version.id for version in deleted])
             return ClearedStep(changes=changes, versions=deleted), untiled
 
-        cleared, untiled = await self._uow.change_book(book_id, work)
-        await self._starter.enqueue_tiles(book_id, untiled)
+        cleared, untiled = await self._uow.change_book(book.id, work)
+        await self._starter.enqueue_tiles(book.id, untiled)
         for version in cleared.versions:
             try:
-                await self._assets.delete_prefix(BookKeys(book_id).version_directory(version))
+                await self._assets.delete_prefix(BookKeys(book.id).version_directory(version))
             except OSError:
                 logger.exception('The files of the version %s were not removed after its page was cleared', version.id)
         return cleared

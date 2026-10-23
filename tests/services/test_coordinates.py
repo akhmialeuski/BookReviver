@@ -16,6 +16,7 @@ from bookreviver.domain.enums import Stage
 from bookreviver.domain.geometry import Point, Rotation
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import NewPageEdit, StageRun
+from tests.helpers.builders import open_for
 from tests.helpers.samples import find_mark, mark, png_bytes, spread
 from tests.helpers.spreads import (
     HEIGHT_PX,
@@ -103,11 +104,11 @@ class TestChainOfTransforms:
         if degrees is not None:
             edit = NewPageEdit(kind=Rotation.editor, geometry=Rotation(degrees=degrees))
             key = await fx_cv_kit.edit_key(book_record.id, left, Stage.GEOMETRY, DESKEW)
-            await fx_cv_kit.edits().save(actor, book_record.id, key, edit, None)
+            await fx_cv_kit.edits().save(open_for(actor, book_record.id), key, edit, None)
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY, page_ids=(left.id,)))
         deskewed = await head_of(fx_cv_kit, book_record.id, left, Stage.GEOMETRY)
         found = await landmark_on(fx_cv_kit, book_record, deskewed)
-        [mapped] = await fx_cv_kit.service().map_to_scan(actor, book_record.id, left.id, deskewed.id, [found])
+        [mapped] = await fx_cv_kit.service().map_to_scan(open_for(actor, book_record.id), left.id, deskewed.id, [found])
         expect(deskewed.input_id is not None)
         expect(abs(mapped.x - MARK_ON_LEFT[0]) <= TOLERANCE_PX)
         expect(abs(mapped.y - MARK_ON_LEFT[1]) <= TOLERANCE_PX)
@@ -122,7 +123,7 @@ class TestChainOfTransforms:
         actor, book_record, _left, right = await split_marked_spread(fx_cv_kit)
         base = await head_of(fx_cv_kit, book_record.id, right, Stage.PAGE_SPLIT)
         found = await landmark_on(fx_cv_kit, book_record, base)
-        [mapped] = await fx_cv_kit.service().map_to_scan(actor, book_record.id, right.id, base.id, [found])
+        [mapped] = await fx_cv_kit.service().map_to_scan(open_for(actor, book_record.id), right.id, base.id, [found])
         expect(abs(mapped.x - MARK_ON_RIGHT[0]) <= TOLERANCE_PX)
         expect(abs(mapped.y - MARK_ON_RIGHT[1]) <= TOLERANCE_PX)
         assert_expectations()

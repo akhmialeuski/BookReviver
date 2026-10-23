@@ -29,12 +29,12 @@ from bookreviver.services.page_labels import PageLabels
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Actor, BookRecord, Page
-    from bookreviver.domain.ids import BookId, PageId
+    from bookreviver.domain.entities import BookRecord, Page
+    from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import PageNumbering, PaginationSectionDraft, SliceRequest
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
-    from bookreviver.services.library import Library
+    from bookreviver.services.book import Book
 
 NUMBERED_PAGES: str = 'Numbered pages'
 SKIPPED_KINDS: str = 'Pages that are not numbered'
@@ -76,36 +76,29 @@ class NumberingPlan:
 class PaginationService:
     """Lists, makes, changes and removes the pagination sections of the acting account's books."""
 
-    def __init__(self, *, uow: UnitOfWork, library: Library, clock: Clock) -> None:
+    def __init__(self, *, uow: UnitOfWork, clock: Clock) -> None:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request, whose ``change_book`` ends every changing use case.
         :type uow: UnitOfWork
-        :param library: Library that opens the books of the acting account.
-        :type library: Library
         :param clock: Clock stamping the sections and pages it writes.
         :type clock: Clock
         """
         self._uow = uow
-        self._library = library
         self._clock = clock
         self._labels = PageLabels(clock=clock)
 
-    async def sections(self, actor: Actor, book_id: BookId, request: SliceRequest) -> Slice[PaginationSection]:
+    async def sections(self, book: Book, request: SliceRequest) -> Slice[PaginationSection]:
         """List the sections of a book in book order, the order of the pages they start at.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param request: Offset and limit of the window.
         :type request: SliceRequest
         :returns: The sections of the window, those of the main flow before the series that start at the same page,
                   and the number of all the sections of the book.
         :rtype: Slice[PaginationSection]
-        :raises NotFoundError: If the actor has no such book.
         """
-        await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories) -> Slice[PaginationSection]:
             """Read the sections and order them by the pages they start at.
@@ -114,7 +107,6 @@ class PaginationService:
             :type repos: BookRepositories
             :returns: The sections of the window, and the number of all the sections of the book.
             :rtype: Slice[PaginationSection]
-            :raises NotFoundError: If the actor has no such book.
             """
             sections = repos.pagination_sections.list_all()
             starts = repos.pages.list_by_ids({section.first_page_id for section in sections})
@@ -122,24 +114,21 @@ class PaginationService:
             ordered = sorted(sections, key=lambda section: (position[section.first_page_id], section.is_series))
             return Slice(items=ordered[request.offset : request.offset + request.limit], total=len(ordered))
 
-        return await self._uow.read_book(book_id, work)
+        return await self._uow.read_book(book.id, work)
 
-    async def add(self, actor: Actor, book_id: BookId, draft: PaginationSectionDraft) -> PaginationSection:
+    async def add(self, book: Book, draft: PaginationSectionDraft) -> PaginationSection:
         """Make a section, and renumber the pages it takes.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param draft: The page the section starts at, and its name, style, first number, prefix, display and kinds.
         :type draft: PaginationSectionDraft
         :returns: The section as stored.
         :rtype: PaginationSection
-        :raises NotFoundError: If the actor has no such book, or the book has no such page.
+        :raises NotFoundError: If the book has no such page.
         :raises ConflictError: If another section that takes the same pages starts at the page, or a number does not
                                fit the style.
         """
-        await self._library.open(actor, book_id)
         moment = self._clock.now()
         section = PaginationSection(
             id=PaginationSectionId(uuid4()),
@@ -167,28 +156,25 @@ class PaginationService:
             self._labels.settle(repos)
             return stored
 
-        return await self._uow.change_book(book_id, work)
+        return await self._uow.change_book(book.id, work)
 
     async def update(
-        self, actor: Actor, book_id: BookId, section_id: PaginationSectionId, draft: PaginationSectionDraft
+        self, book: Book, section_id: PaginationSectionId, draft: PaginationSectionDraft
     ) -> PaginationSection:
         """Replace the page, the name and the rule of a section, and renumber the pages.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param section_id: Identifier of the section.
         :type section_id: PaginationSectionId
         :param draft: The new page, name, style, first number, prefix, display and kinds.
         :type draft: PaginationSectionDraft
         :returns: The section as stored.
         :rtype: PaginationSection
-        :raises NotFoundError: If the actor has no such book, or the book has no such section or page.
+        :raises NotFoundError: If the book has no such section or page.
         :raises ConflictError: If another section that takes the same pages starts at the page, or a number does not
                                fit the style.
         """
-        await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories, _book_record: BookRecord) -> PaginationSection:
             """Replace the section and check the numbers of the pages it renumbers.
@@ -214,21 +200,18 @@ class PaginationService:
             self._labels.settle(repos)
             return stored
 
-        return await self._uow.change_book(book_id, work)
+        return await self._uow.change_book(book.id, work)
 
-    async def remove(self, actor: Actor, book_id: BookId, section_id: PaginationSectionId) -> None:
+    async def remove(self, book: Book, section_id: PaginationSectionId) -> None:
         """Remove a section, and renumber the pages it numbered, which fall to the section before it.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param section_id: Identifier of the section.
         :type section_id: PaginationSectionId
-        :raises NotFoundError: If the actor has no such book, or the book has no such section.
+        :raises NotFoundError: If the book has no such section.
         :raises ConflictError: If the section before cannot write the numbers of the pages that fall to it.
         """
-        await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Delete the section and check the numbers of the pages it renumbered.
@@ -244,22 +227,19 @@ class PaginationService:
             repos.pagination_sections.delete(section.id)
             self._labels.settle(repos)
 
-        await self._uow.change_book(book_id, work)
+        await self._uow.change_book(book.id, work)
 
-    async def number(self, actor: Actor, book_id: BookId, numbering: PageNumbering) -> None:
+    async def number(self, book: Book, numbering: PageNumbering) -> None:
         """Make the sections that number a range of pages, and drop the manual labels of the pages they number.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param numbering: The range, the style and the first number.
         :type numbering: PageNumbering
-        :raises NotFoundError: If the actor has no such book, or the book lacks the first or the last page.
+        :raises NotFoundError: If the book lacks the first or the last page.
         :raises ReversedRangeError: If the range runs backwards.
         :raises ConflictError: If a number does not fit the style, such as 4000 in Roman numerals.
         """
-        await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Replace the sections the numbering replaces, and add the ones it makes.
@@ -280,29 +260,26 @@ class PaginationService:
             repos.pagination_sections.add_many(plan.added)
             self._labels.settle(repos, unpin=plan.counted)
 
-        await self._uow.change_book(book_id, work)
+        await self._uow.change_book(book.id, work)
 
-    async def preview_numbers(self, actor: Actor, book_id: BookId, numbering: PageNumbering) -> list[NumberedPage]:
+    async def preview_numbers(self, book: Book, numbering: PageNumbering) -> list[NumberedPage]:
         """Give the labels a numbering would write, without writing any.
 
         The labels come from the same plan ``number`` writes, so a client shows exactly what saving would store.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param numbering: The range, the style and the first number.
         :type numbering: PageNumbering
         :returns: One entry for each page of the range that takes a number, in book order, with the label it would get.
         :rtype: list[NumberedPage]
-        :raises NotFoundError: If the actor has no such book, or the book lacks the first or the last page.
+        :raises NotFoundError: If the book lacks the first or the last page.
         :raises ReversedRangeError: If the range runs backwards.
         :raises ConflictError: If a number does not fit the style.
         """
-        await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories) -> NumberingPlan:
-            """Work out the plan of the numbering on the book of the actor.
+            """Work out the plan of the numbering on the book.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
@@ -313,7 +290,7 @@ class PaginationService:
             """
             return self._plan(repos, numbering)
 
-        plan = await self._uow.read_book(book_id, work)
+        plan = await self._uow.read_book(book.id, work)
         labels = plan.labels()
         return [NumberedPage(page_id=page.id, label=labels[page.id]) for page in plan.pages if page.id in plan.counted]
 

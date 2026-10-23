@@ -12,26 +12,26 @@ from typing import TYPE_CHECKING, Annotated
 from urllib.parse import quote
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
-from fastapi import APIRouter, Body, Depends, Path, Request, Response, UploadFile, status
+from fastapi import APIRouter, Body, Depends, Request, Response, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page, Params
 from pydantic import ValidationError
 
 from bookreviver.api.auth import ActorDep
+from bookreviver.api.book import open_book
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.books import ArchiveForm, BookCreate, BookSchema, BookUpdate
 from bookreviver.domain.entities import BookOverview
-from bookreviver.domain.ids import BookId
+from bookreviver.services.book import Book
 from bookreviver.services.books import BooksService
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 LOCATION_HEADER: str = 'Location'
-BOOK_ID_DESCRIPTION: str = 'Identifier of the book'
 ARCHIVE_MEDIA_TYPE: str = 'application/zip'
 MULTIPART_MEDIA_TYPE: str = 'multipart/form-data'
 ARCHIVE_FIELD: str = 'archive'
@@ -64,10 +64,12 @@ async def read_archive(request: Request, _actor: ActorDep) -> AsyncIterator[Uplo
         await form.close()
 
 
-router = APIRouter(prefix='/books', tags=['books'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
+# The routes of the whole collection name no book, and those of one book take the freshness of its reads
+collection = APIRouter(prefix='/books', route_class=DishkaRoute)
+one_book = APIRouter(prefix='/books', route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 
-@router.get('')
+@collection.get('')
 async def list_books(
     actor: ActorDep, params: Annotated[Params, Depends()], books: FromDishka[BooksService]
 ) -> Page[BookSchema]:
@@ -87,7 +89,7 @@ async def list_books(
     return pager.page(await books.list(actor, pager.request))
 
 
-@router.post('', status_code=status.HTTP_201_CREATED)
+@collection.post('', status_code=status.HTTP_201_CREATED)
 async def create_book(
     body: Annotated[BookCreate, Body()],
     actor: ActorDep,
@@ -116,32 +118,28 @@ async def create_book(
     return BookSchema.from_overview(overview)
 
 
-@router.get('/{book_id}', name=RouteName.BOOK)
+@one_book.get('/{book_id}', name=RouteName.BOOK)
 async def get_book(
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
-    actor: ActorDep,
+    book: Annotated[Book, Depends(open_book)],
     books: FromDishka[BooksService],
 ) -> BookSchema:
     """Return one book of the signed-in account.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the book.
-    :type book_id: BookId
-    :param actor: The signed-in account.
-    :type actor: Actor
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param books: Books service of the request.
     :type books: BooksService
     :returns: The book.
     :rtype: BookSchema
     """
-    return BookSchema.from_overview(await books.get(actor, book_id))
+    return BookSchema.from_overview(await books.get(book))
 
 
-@router.patch('/{book_id}')
+@one_book.patch('/{book_id}')
 async def update_book(
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
+    book: Annotated[Book, Depends(open_book)],
     body: Annotated[BookUpdate, Body()],
-    actor: ActorDep,
     books: FromDishka[BooksService],
 ) -> BookSchema:
     """Merge the body into the book, as JSON Merge Patch (RFC 7396) defines.
@@ -150,28 +148,25 @@ async def update_book(
     title cannot be cleared, and the cover must be a page of the book.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the book.
-    :type book_id: BookId
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param body: Fields to change, with null for a field to clear.
     :type body: BookUpdate
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param books: Books service of the request.
     :type books: BooksService
     :returns: The changed book.
     :rtype: BookSchema
     """
-    return BookSchema.from_overview(await books.update(actor, book_id, body.to_changes()))
+    return BookSchema.from_overview(await books.update(book, body.to_changes()))
 
 
-@router.get(
+@one_book.get(
     '/{book_id}/archive',
     response_class=StreamingResponse,
     responses={status.HTTP_200_OK: {'content': {ARCHIVE_MEDIA_TYPE: {}}, 'description': 'The archive of the book'}},
 )
 async def export_book(
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
-    actor: ActorDep,
+    book: Annotated[Book, Depends(open_book)],
     books: FromDishka[BooksService],
 ) -> StreamingResponse:
     """Download the archive of a book, which another instance imports as a book of its own.
@@ -180,23 +175,21 @@ async def export_book(
     it is written and named after the title of the book.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the book.
-    :type book_id: BookId
-    :param actor: The signed-in account.
-    :type actor: Actor
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param books: Books service of the request.
     :type books: BooksService
     :returns: The stream of the archive.
     :rtype: StreamingResponse
     """
-    archived = await books.export(actor, book_id)
+    archived = await books.export(book)
     disposition = ARCHIVE_DISPOSITION.format(title=quote(archived.title, safe=''))
     return StreamingResponse(
         archived.pieces, media_type=ARCHIVE_MEDIA_TYPE, headers={CONTENT_DISPOSITION_HEADER: disposition}
     )
 
 
-@router.post(
+@collection.post(
     '/archive',
     status_code=status.HTTP_201_CREATED,
     openapi_extra={
@@ -238,20 +231,22 @@ async def import_book(
     return BookSchema.from_overview(overview)
 
 
-@router.delete('/{book_id}', status_code=status.HTTP_204_NO_CONTENT)
+@one_book.delete('/{book_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_book(
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
-    actor: ActorDep,
+    book: Annotated[Book, Depends(open_book)],
     books: FromDishka[BooksService],
 ) -> None:
     """Delete a book with its pages, jobs and files.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the book.
-    :type book_id: BookId
-    :param actor: The signed-in account.
-    :type actor: Actor
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param books: Books service of the request.
     :type books: BooksService
     """
-    await books.delete(actor, book_id)
+    await books.delete(book)
+
+
+router = APIRouter(tags=['books'])
+router.include_router(collection)
+router.include_router(one_book)

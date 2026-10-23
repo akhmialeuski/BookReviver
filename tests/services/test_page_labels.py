@@ -15,7 +15,7 @@ from bookreviver.domain.events import BookChanged
 from bookreviver.domain.values import PageAnchor
 from bookreviver.services.books import book_pages
 from tests.helpers.book_hold import hold_book_in_thread
-from tests.helpers.builders import EPOCH, make_page, make_record, new_account_id
+from tests.helpers.builders import EPOCH, make_page, make_record, new_account_id, open_for
 from tests.helpers.seeding import ensure_account, store_book
 
 if TYPE_CHECKING:
@@ -101,7 +101,7 @@ async def _update_kind(service: PageService, actor: Actor, book_id: BookId, page
     :param page_ids: Identifiers of the pages of the book in book order.
     :type page_ids: list[PageId]
     """
-    await service.update(actor, book_id, page_ids[2], PageChanges(kind=PageKind.OTHER))
+    await service.update(open_for(actor, book_id), page_ids[2], PageChanges(kind=PageKind.OTHER))
 
 
 async def _delete_page(service: PageService, actor: Actor, book_id: BookId, page_ids: list[PageId]) -> None:
@@ -116,7 +116,7 @@ async def _delete_page(service: PageService, actor: Actor, book_id: BookId, page
     :param page_ids: Identifiers of the pages of the book in book order.
     :type page_ids: list[PageId]
     """
-    await service.delete(actor, book_id, page_ids[2])
+    await service.delete(open_for(actor, book_id), page_ids[2])
 
 
 class TestUpdate:
@@ -148,8 +148,7 @@ class TestUpdate:
         fx_book_changes.published.clear()
 
         updated = await fx_service().update(
-            fx_actor,
-            book_record.id,
+            open_for(fx_actor, book_record.id),
             pages[2].id,
             PageChanges(label=NEW_LABEL, kind=PageKind.OTHER, included=False, notes=NEW_NOTES),
         )
@@ -189,8 +188,7 @@ class TestUpdate:
         fx_page_writes.start()
 
         await fx_service().update(
-            fx_actor,
-            book_record.id,
+            open_for(fx_actor, book_record.id),
             pages[2].id,
             PageChanges(label=NEW_LABEL, kind=PageKind.OTHER, included=False, notes=NEW_NOTES),
         )
@@ -211,20 +209,20 @@ class TestUpdate:
         """
         book_record, pages = await _commit_book(fx_uow(), fx_actor)
 
-        await fx_service().update(fx_actor, book_record.id, pages[3].id, PageChanges(label=''))
+        await fx_service().update(open_for(fx_actor, book_record.id), pages[3].id, PageChanges(label=''))
 
         stored = (await _stored(fx_uow(), book_record.id))[pages[3].id]
         assert evolve(stored, manual_label=STALE_LABEL, updated_at=EPOCH) == pages[3]
         assert stored.manual_label is None
 
-    async def test_missing_page_page_of_another_book_and_foreign_book_are_not_found(
+    async def test_missing_page_and_page_of_another_book_are_not_found(
         self,
         fx_service: Callable[[], PageService],
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
     ) -> None:
-        """Verify a page that does not exist, one of another book, and a book of another account are all 404.
+        """Verify a page that does not exist and one of another book are both not found, and nothing changes.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -238,15 +236,13 @@ class TestUpdate:
         book_record, pages = await _commit_book(fx_uow(), fx_actor)
         strangers_account = evolve(fx_actor, account_id=new_account_id())
         await ensure_account(fx_database, strangers_account.account_id)
-        stranger, strangers_pages = await _commit_book(fx_uow(), strangers_account)
+        _, strangers_pages = await _commit_book(fx_uow(), strangers_account)
         other = make_page(order_key='z0')
 
         with pytest.raises(NotFoundError):
-            await fx_service().update(fx_actor, book_record.id, other.id, PageChanges(label='1'))
+            await fx_service().update(open_for(fx_actor, book_record.id), other.id, PageChanges(label='1'))
         with pytest.raises(NotFoundError):
-            await fx_service().update(fx_actor, book_record.id, strangers_pages[0].id, PageChanges(label='1'))
-        with pytest.raises(NotFoundError):
-            await fx_service().update(fx_actor, stranger.id, strangers_pages[0].id, PageChanges(label='1'))
+            await fx_service().update(open_for(fx_actor, book_record.id), strangers_pages[0].id, PageChanges(label='1'))
         stored = await _stored(fx_uow(), book_record.id)
         assert [stored[page.id].manual_label for page in pages] == [STALE_LABEL] * len(pages)
 
@@ -289,7 +285,7 @@ class TestConcurrentWrites:
         mover = fx_service_over(fx_uow())
         # The hold ends first, when the block ends, and the group then waits for the changes that queued behind it
         async with anyio.create_task_group() as group, hold_book_in_thread(fx_uow(), book_record.id):
-            group.start_soon(mover.move_group, fx_actor, book_record.id, moved, anchor)
+            group.start_soon(mover.move_group, open_for(fx_actor, book_record.id), moved, anchor)
             await anyio.wait_all_tasks_blocked()
             group.start_soon(fx_uow().change_book, book_record.id, job_writes_content)
             await anyio.wait_all_tasks_blocked()
@@ -336,8 +332,7 @@ class TestConcurrentWrites:
         async with anyio.create_task_group() as group, hold_book_in_thread(fx_uow(), book_record.id):
             group.start_soon(
                 fx_service_over(fx_uow()).move,
-                fx_actor,
-                book_record.id,
+                open_for(fx_actor, book_record.id),
                 ids[0],
                 PageAnchor(page_id=ids[3], side=Side.AFTER),
             )

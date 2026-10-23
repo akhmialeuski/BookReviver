@@ -21,13 +21,13 @@ from bookreviver.domain.enums import (
     VersionData,
     VersionState,
 )
-from bookreviver.domain.errors import ConflictError, NotFoundError
+from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Rect
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.margins import MM_PER_INCH
 from bookreviver.domain.values import PageStageKey, ProcessorRef, RecipeDraft, StageRun, Step
 from bookreviver.services.book_measure import MEASURE_OUTDATED
-from tests.helpers.builders import EPOCH, make_page_stage, make_page_version
+from tests.helpers.builders import EPOCH, make_page_stage, make_page_version, open_for
 from tests.helpers.processing import stored_job
 
 if TYPE_CHECKING:
@@ -174,7 +174,7 @@ async def measure(kit: ProcessingKit, actor: Actor, book_record: BookRecord) -> 
     :returns: The job as it stands when the board is done.
     :rtype: Job
     """
-    job = await kit.service().start_measure(actor, book_record.id)
+    job = await kit.service().start_measure(open_for(actor, book_record.id))
     await kit.work_queue()
     return stored_job(kit, job.id)
 
@@ -528,17 +528,6 @@ class TestMeasureBook:
         expect(await normalize_params(fx_cv_kit, actor, book_record) == before)
         assert_expectations()
 
-    async def test_a_book_of_an_account_is_not_measured_by_another(self, fx_cv_kit: ProcessingKit) -> None:
-        """Verify the request is refused for a book that is not the actor's, as every request of a book is.
-
-        :param fx_cv_kit: The processing kit with the real OpenCV plugins.
-        :type fx_cv_kit: ProcessingKit
-        """
-        _, book_record = await fx_cv_kit.seed_record()
-        stranger, _ = await fx_cv_kit.seed_record()
-        with pytest.raises(NotFoundError):
-            await fx_cv_kit.service().start_measure(stranger, book_record.id)
-
 
 class TestMarginsSource:
     """Tests for the margins that the user set, which a measure leaves as they are."""
@@ -626,9 +615,11 @@ class TestMeasureIsProcessing:
         :type fx_cv_kit: ProcessingKit
         """
         actor, book_record = await fx_cv_kit.seed_record()
-        await fx_cv_kit.service().start_measure(actor, book_record.id)
+        await fx_cv_kit.service().start_measure(open_for(actor, book_record.id))
         with pytest.raises(ConflictError, match='measure of the book'):
-            await fx_cv_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+            await fx_cv_kit.service().start_run(
+                open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            )
 
     async def test_a_measure_is_refused_while_a_run_is_queued(self, fx_cv_kit: ProcessingKit) -> None:
         """Verify a measure cannot start while a run is queued, since the run writes the versions that are measured.
@@ -637,9 +628,11 @@ class TestMeasureIsProcessing:
         :type fx_cv_kit: ProcessingKit
         """
         actor, book_record = await fx_cv_kit.seed_record()
-        await fx_cv_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        await fx_cv_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
         with pytest.raises(ConflictError, match=BUSY_MESSAGE):
-            await fx_cv_kit.service().start_measure(actor, book_record.id)
+            await fx_cv_kit.service().start_measure(open_for(actor, book_record.id))
 
     async def test_a_second_measure_is_refused_while_one_is_queued(self, fx_cv_kit: ProcessingKit) -> None:
         """Verify two measures never overlap.
@@ -648,9 +641,9 @@ class TestMeasureIsProcessing:
         :type fx_cv_kit: ProcessingKit
         """
         actor, book_record = await fx_cv_kit.seed_record()
-        await fx_cv_kit.service().start_measure(actor, book_record.id)
+        await fx_cv_kit.service().start_measure(open_for(actor, book_record.id))
         with pytest.raises(ConflictError, match=BUSY_MESSAGE):
-            await fx_cv_kit.service().start_measure(actor, book_record.id)
+            await fx_cv_kit.service().start_measure(open_for(actor, book_record.id))
 
 
 class TestMeasureApplyStep:

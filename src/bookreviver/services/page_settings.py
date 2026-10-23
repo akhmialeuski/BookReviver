@@ -41,15 +41,15 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import datetime
 
-    from bookreviver.domain.entities import Actor, BookRecord, Page
+    from bookreviver.domain.entities import BookRecord, Page
     from bookreviver.domain.enums import RecipeKind, Stage
-    from bookreviver.domain.ids import BookId, PageId
+    from bookreviver.domain.ids import PageId
     from bookreviver.domain.step_values import ValueField
     from bookreviver.domain.values import MetadataMap, Step
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
-    from bookreviver.services.library import Library
+    from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
 
 
@@ -201,15 +201,11 @@ class _Scene:
 class PageSettingsService:
     """Lists, sets and takes back the values of the steps for parts of the pages of the acting account's books."""
 
-    def __init__(
-        self, *, uow: UnitOfWork, library: Library, catalogue: ProcessorCatalog, records: StageRecords, clock: Clock
-    ) -> None:
+    def __init__(self, *, uow: UnitOfWork, catalogue: ProcessorCatalog, records: StageRecords, clock: Clock) -> None:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request, whose ``change_book`` ends every changing use case.
         :type uow: UnitOfWork
-        :param library: Library that opens the books of the acting account.
-        :type library: Library
         :param catalogue: The processors the application can run, which check the value of a field.
         :type catalogue: ProcessorCatalog
         :param records: Writer of the stage records, which a changed value marks stale.
@@ -218,18 +214,15 @@ class PageSettingsService:
         :type clock: Clock
         """
         self._uow = uow
-        self._library = library
         self._catalogue = catalogue
         self._records = records
         self._clock = clock
 
-    async def list(self, actor: Actor, book_id: BookId, page_id: PageId, stage: Stage) -> Sequence[PageStepSettings]:
+    async def list(self, book: Book, page_id: PageId, stage: Stage) -> Sequence[PageStepSettings]:
         """List the steps of one stage of a page that have values of the page or of a part of the pages.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :param stage: The stage whose steps are listed.
@@ -237,9 +230,8 @@ class PageSettingsService:
         :returns: The steps of the recipe of the page that have a value of the page or a value of any part of the pages,
                   in the order of the recipe, each with the parameters it runs with on the page.
         :rtype: Sequence[PageStepSettings]
-        :raises NotFoundError: If the actor has no such book, or the book has no such page.
+        :raises NotFoundError: If the book has no such page.
         """
-        await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories) -> Sequence[PageStepSettings]:
             """Read the steps of the recipe of the page that have values, with what they run with on the page.
@@ -279,15 +271,13 @@ class PageSettingsService:
                 )
             return listed
 
-        return await self._uow.read_book(book_id, work)
+        return await self._uow.read_book(book.id, work)
 
-    async def change(self, actor: Actor, book_id: BookId, field: ValueField, value: object) -> ValueChanges:
+    async def change(self, book: Book, field: ValueField, value: object) -> ValueChanges:
         """Set one field of the parameters of a step for the pages the target names, and mark their stages stale.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param field: The field and the pages, the odd pages, the even pages or the group the value is for.
         :type field: ValueField
         :param value: The value they use for the field, as JSON.
@@ -295,12 +285,11 @@ class PageSettingsService:
         :returns: The batch and the changes written, one on each page whose parameters change, which are none when the
                   value is the one they have.
         :rtype: ValueChanges
-        :raises NotFoundError: If the actor has no such book, a page is not one of the book, no recipe of the
+        :raises NotFoundError: If a page is not one of the book, no recipe of the
                                stage has the step, or no page the target names is processed by it.
         :raises InvalidParametersError: If the processor has no such field, or the value is out of its range on a page
                                         it reaches.
         """
-        await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories, _book_record: BookRecord) -> ValueChanges:
             """Check the value on every page it reaches, and write it with the changes that made it.
@@ -342,23 +331,20 @@ class PageSettingsService:
                 own = {}
             return self._store(repos, scene, own=own, params=params)
 
-        return await self._uow.change_book(book_id, work)
+        return await self._uow.change_book(book.id, work)
 
-    async def reset(self, actor: Actor, book_id: BookId, field: ValueField) -> ValueChanges:
+    async def reset(self, book: Book, field: ValueField) -> ValueChanges:
         """Take a field back from the pages the target names, so they take it from the next part, and mark them stale.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param field: The field and the pages, the odd pages, the even pages or the group the value was set for.
         :type field: ValueField
         :returns: The batch and the changes written, one on each page whose parameters change.
         :rtype: ValueChanges
-        :raises NotFoundError: If the actor has no such book, a page is not one of the book, no recipe of the
+        :raises NotFoundError: If a page is not one of the book, no recipe of the
                                stage has the step, or none of the pages the target names has a value for the field.
         """
-        await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories, _book_record: BookRecord) -> ValueChanges:
             """Take the field back from the pages the target names, and write the changes that made it.
@@ -391,7 +377,7 @@ class PageSettingsService:
                 own = {}
             return self._store(repos, scene, own=own, params=params)
 
-        return await self._uow.change_book(book_id, work)
+        return await self._uow.change_book(book.id, work)
 
     def _store(
         self, repos: BookRepositories, scene: _Scene, *, own: Mapping[PageId, MetadataMap], params: MetadataMap | None

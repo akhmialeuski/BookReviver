@@ -7,7 +7,7 @@ from attrs import evolve
 
 from bookreviver.domain.enums import NewPageOrigin, PageKind, Side, Stage, StageState, ValueScope
 from bookreviver.domain.values import NewPage, PageAnchor
-from tests.helpers.builders import make_page, make_page_stage, make_record, make_step_values
+from tests.helpers.builders import make_page, make_page_stage, make_record, make_step_values, open_for
 from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
@@ -58,7 +58,7 @@ async def _move(service: PageService, actor: Actor, book: Book) -> None:
     :type book: Book
     """
     await service.move(
-        actor, book.book_record.id, book.pages[0].id, PageAnchor(page_id=book.pages[2].id, side=Side.AFTER)
+        open_for(actor, book.book_record.id), book.pages[0].id, PageAnchor(page_id=book.pages[2].id, side=Side.AFTER)
     )
 
 
@@ -73,7 +73,7 @@ async def _move_group(service: PageService, actor: Actor, book: Book) -> None:
     :type book: Book
     """
     anchor = PageAnchor(page_id=book.pages[3].id, side=Side.AFTER)
-    await service.move_group(actor, book.book_record.id, [book.pages[1].id, book.pages[2].id], anchor)
+    await service.move_group(open_for(actor, book.book_record.id), [book.pages[1].id, book.pages[2].id], anchor)
 
 
 async def _delete(service: PageService, actor: Actor, book: Book) -> None:
@@ -86,7 +86,7 @@ async def _delete(service: PageService, actor: Actor, book: Book) -> None:
     :param book: The book.
     :type book: Book
     """
-    await service.delete(actor, book.book_record.id, book.pages[0].id)
+    await service.delete(open_for(actor, book.book_record.id), book.pages[0].id)
 
 
 async def _insert(service: PageService, actor: Actor, book: Book) -> None:
@@ -104,7 +104,7 @@ async def _insert(service: PageService, actor: Actor, book: Book) -> None:
         kind=PageKind.TEXT,
         anchor=PageAnchor(page_id=book.pages[1].id, side=Side.BEFORE),
     )
-    await service.add(actor, book.book_record.id, new_page)
+    await service.add(open_for(actor, book.book_record.id), new_page)
 
 
 REORDERINGS: dict[str, Reordering] = {

@@ -9,19 +9,18 @@ from functools import partial
 from typing import Annotated
 
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
-from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.auth import ActorDep
+from bookreviver.api.book import open_book
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import ManifestPage, ManifestParams, Pager
 from bookreviver.api.routers.processing import StagePath
 from bookreviver.api.schemas.stages import StagePageSchema, StageSummarySchema
-from bookreviver.domain.ids import BookId, StepId
+from bookreviver.domain.ids import StepId
 from bookreviver.domain.stage_summaries import StageRow, StageSummary
+from bookreviver.services.book import Book
 from bookreviver.services.books import BooksService
-
-BOOK_ID_DESCRIPTION: str = 'Identifier of the book'
 
 
 @dataclass(frozen=True)
@@ -39,9 +38,8 @@ router = APIRouter(prefix='/books', tags=['stages'], route_class=DishkaRoute, de
 
 @router.get('/{book_id}/stages')
 async def list_stages(
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
+    book: Annotated[Book, Depends(open_book)],
     params: Annotated[Params, Depends()],
-    actor: ActorDep,
     books: FromDishka[BooksService],
 ) -> Page[StageSummarySchema]:
     """List the stages of a book in the order of the pipeline, each summed over the pages of the book.
@@ -50,26 +48,24 @@ async def list_stages(
     are zero.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the book.
-    :type book_id: BookId
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param params: Page number and size from the query; the ten stages fit one page of the default size.
     :type params: Params
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param books: Books service of the request.
     :type books: BooksService
     :returns: One page of the stages.
     :rtype: Page[StageSummarySchema]
     """
     pager = Pager[StageSummary, StageSummarySchema](params, StageSummarySchema.model_validate)
-    return pager.page(await books.stages(actor, book_id, pager.request))
+    return pager.page(await books.stages(book, pager.request))
 
 
 @router.get('/{book_id}/stages/{stage}/pages')
 async def list_stage_pages(
+    book: Annotated[Book, Depends(open_book)],
     address: Annotated[StageRowsPath, Depends()],
     params: Annotated[ManifestParams, Depends()],
-    actor: ActorDep,
     books: FromDishka[BooksService],
     step: Annotated[StepId | None, Query(description='A step of a recipe of the stage to place every page at')] = None,
 ) -> ManifestPage[StagePageSchema]:
@@ -83,12 +79,12 @@ async def list_stage_pages(
     without ``step`` the current version of the stage, else what the stage reads. A strip and a canvas draw it alike.
 
     \N{FORM FEED}
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param address: Identifiers of the book and the stage, and the request.
     :type address: StageRowsPath
     :param params: Page number and size from the query, the size up to a thousand.
     :type params: ManifestParams
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param books: Books service of the request.
     :type books: BooksService
     :param step: The step to place every page at, or None for the rows of the stage alone.
@@ -96,6 +92,6 @@ async def list_stage_pages(
     :returns: One page of the rows of the stage.
     :rtype: ManifestPage[StagePageSchema]
     """
-    to_schema = partial(StagePageSchema.of, book_id=address.book_id, request=address.request)
+    to_schema = partial(StagePageSchema.of, book_id=book.id, request=address.request)
     pager = Pager[StageRow, StagePageSchema](params, to_schema)
-    return pager.page(await books.stage_pages(actor, address.book_id, address.stage, pager.request, step))
+    return pager.page(await books.stage_pages(book, address.stage, pager.request, step))

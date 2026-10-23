@@ -44,7 +44,6 @@ TIFF_FORMAT: str = 'TIFF'
 # Formats a directory of scans may mix, by the suffix the browser sends
 SCAN_FORMATS: dict[str, str] = {'jpg': 'JPEG', 'png': 'PNG', 'tif': TIFF_FORMAT, 'jp2': 'JPEG2000'}
 # Fields of the job and of a file of the import report that the API answers with
-ID_FIELD: str = 'id'
 STATE_FIELD: str = 'state'
 REJECTION_FIELD: str = 'rejection'
 # Names of the uploaded files and folders
@@ -139,7 +138,7 @@ class TestUploadDirectories:
         parts.insert(1, _part(FOLDER_SYSTEM_FILE, b'thumbnails'))
 
         response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book.id), files=parts)
-        finished = await fx_import.finished(response.json()[ID_FIELD])
+        finished = await fx_import.finished(response.json())
 
         book = await stored_book(fx_uow(), fx_book.id)
         sources, pages = book.sources, book.pages
@@ -196,7 +195,7 @@ class TestUploadDirectories:
                 parts.append(_part(f'{folder}/Thumbs.db', b'thumbnails'))
 
         response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book.id), files=parts)
-        finished = await fx_import.finished(response.json()[ID_FIELD])
+        finished = await fx_import.finished(response.json())
 
         book = await stored_book(fx_uow(), fx_book.id)
         sources, pages = book.sources, book.pages
@@ -236,7 +235,7 @@ class TestUploadDirectories:
         cover = image_upload(tmp_path, COVER_NAME).file.read()
 
         response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book.id), files=[_part(COVER_NAME, cover)])
-        finished = await fx_import.finished(response.json()[ID_FIELD])
+        finished = await fx_import.finished(response.json())
 
         sources = (await stored_book(fx_uow(), fx_book.id)).sources
         expect(response.status_code == HTTPStatus.ACCEPTED)
@@ -274,7 +273,7 @@ class TestUploadDirectories:
         response = await fx_client.post(
             SOURCES_PATH.format(book_id=fx_book.id), files=[_part(TIFF_BOOK_NAME, book.read_bytes())]
         )
-        finished = await fx_import.finished(response.json()[ID_FIELD])
+        finished = await fx_import.finished(response.json())
 
         stored = await stored_book(fx_uow(), fx_book.id)
         [source], pages = stored.sources, stored.pages
@@ -315,7 +314,7 @@ class TestUploadDirectories:
         ]
 
         response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book.id), files=parts)
-        finished = await fx_import.finished(response.json()[ID_FIELD])
+        finished = await fx_import.finished(response.json())
 
         sources = (await stored_book(fx_uow(), fx_book.id)).sources
         expect(response.status_code == HTTPStatus.ACCEPTED)

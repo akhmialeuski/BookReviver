@@ -15,8 +15,9 @@ from fastapi import APIRouter, Depends, Path, status
 from fastapi_pagination import Page
 
 from bookreviver.api.auth import ActorDep
+from bookreviver.api.book import open_book
 from bookreviver.api.pagination import Pager
-from bookreviver.api.routers.processing import BOOK_ID_DESCRIPTION, RecipePath
+from bookreviver.api.routers.processing import RecipePath
 from bookreviver.api.schemas.processing import RecipeSchema
 from bookreviver.api.schemas.profiles import (
     AppliedProfileSchema,
@@ -31,8 +32,9 @@ from bookreviver.api.schemas.profiles import (
     RecipeProfileName,
     RecipeProfileSchema,
 )
-from bookreviver.domain.ids import BookId, RecipeProfileId
+from bookreviver.domain.ids import RecipeProfileId
 from bookreviver.domain.values import RecipeKey
+from bookreviver.services.book import Book
 from bookreviver.services.recipe_order import RecipeOrder
 from bookreviver.services.recipe_profiles import ListedProfile, RecipeProfiles
 
@@ -55,11 +57,9 @@ ProfilePath = Annotated[RecipeProfileId, Path(description=PROFILE_ID_DESCRIPTION
 class AppliedPath:
     """The identifiers in the address of a profile applied to a book.
 
-    :ivar book_id: Identifier of the book.
     :ivar profile_id: Identifier of the profile.
     """
 
-    book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)]
     profile_id: ProfilePath
 
 
@@ -276,9 +276,9 @@ async def delete_default_profile(
 
 @router.post(APPLY_PATH, status_code=status.HTTP_201_CREATED)
 async def apply_profile(
+    book: Annotated[Book, Depends(open_book)],
     address: Annotated[AppliedPath, Depends()],
     body: ApplyProfileBody,
-    actor: ActorDep,
     profiles: FromDishka[RecipeProfiles],
     order: FromDishka[RecipeOrder],
 ) -> AppliedProfileSchema:
@@ -289,12 +289,12 @@ async def apply_profile(
     profile, and the pages it processed become stale.
 
     \N{FORM FEED}
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param address: Identifiers of the book and the profile.
     :type address: AppliedPath
     :param body: The kind of page whose recipe takes the steps.
     :type body: ApplyProfileBody
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param profiles: Profiles service of the request.
     :type profiles: RecipeProfiles
     :param order: Finder of the steps that stand off the place their processors ask for.
@@ -302,7 +302,7 @@ async def apply_profile(
     :returns: The recipe, with the steps that are out of their place, and the processors whose steps were left out.
     :rtype: AppliedProfileSchema
     """
-    applied = await profiles.apply(actor, address.book_id, address.profile_id, kind=body.kind)
+    applied = await profiles.apply(book, address.profile_id, kind=body.kind)
     return AppliedProfileSchema(
         recipe=RecipeSchema.of(applied.recipe, order.issues(applied.recipe.steps)),
         missing_processors=list(applied.missing_processors),
@@ -311,9 +311,9 @@ async def apply_profile(
 
 @router.put(LINK_PATH)
 async def put_recipe_profile(
+    book: Annotated[Book, Depends(open_book)],
     address: Annotated[RecipePath, Depends()],
     body: ProfileLinkBody,
-    actor: ActorDep,
     profiles: FromDishka[RecipeProfiles],
     order: FromDishka[RecipeOrder],
 ) -> RecipeSchema:
@@ -323,12 +323,12 @@ async def put_recipe_profile(
     book does not have, and a profile of another stage answers 422.
 
     \N{FORM FEED}
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param address: Identifiers of the book, the stage and the recipe.
     :type address: RecipePath
     :param body: The profile, or null to unlink the recipe.
     :type body: ProfileLinkBody
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param profiles: Profiles service of the request.
     :type profiles: RecipeProfiles
     :param order: Finder of the steps that stand off the place their processors ask for.
@@ -336,5 +336,5 @@ async def put_recipe_profile(
     :returns: The recipe, with the steps that are out of their place.
     :rtype: RecipeSchema
     """
-    linked = await profiles.link(actor, address.book_id, RecipeKey(address.stage, address.recipe_id), body.profile_id)
+    linked = await profiles.link(book, RecipeKey(address.stage, address.recipe_id), body.profile_id)
     return RecipeSchema.of(linked, order.issues(linked.steps))

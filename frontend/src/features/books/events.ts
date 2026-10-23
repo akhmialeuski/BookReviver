@@ -1,6 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query';
 import type { JobSchema, JobState } from '@/api';
-import { readJobApiV1JobsJobIdGetQueryKey } from '@/api/@tanstack/react-query.gen';
+import { readJobApiV1BooksBookIdJobsJobIdGetQueryKey } from '@/api/@tanstack/react-query.gen';
 import {
   invalidateAllRecipes,
   invalidateAllStageRows,
@@ -317,7 +317,9 @@ export function applyBookEvent(
     case EventName.JobChanged:
       if (isJob(event.data)) {
         queryClient.setQueryData(
-          readJobApiV1JobsJobIdGetQueryKey({ path: { job_id: event.data.id } }),
+          readJobApiV1BooksBookIdJobsJobIdGetQueryKey({
+            path: { book_id: event.data.book_id, job_id: event.data.id },
+          }),
           event.data,
         );
         burstsOf(queryClient).add(bookId, isActiveJob(event.data) ? [BookRead.Jobs] : JOB_READS);

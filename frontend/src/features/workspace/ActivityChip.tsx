@@ -2,7 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import { ActivityIcon, AlertCircleIcon, CheckCircle2Icon, Loader2Icon, XIcon } from 'lucide-react';
 import { useState } from 'react';
 import type { JobSchema } from '@/api';
-import { cancelJobApiV1JobsJobIdDeleteMutation } from '@/api/@tanstack/react-query.gen';
+import { cancelJobApiV1BooksBookIdJobsJobIdDeleteMutation } from '@/api/@tanstack/react-query.gen';
 import {
   formatTime,
   isStoppable,
@@ -28,7 +28,7 @@ import { Progress } from '@/shared/ui/progress';
  */
 
 function JobRow({ job }: { job: JobSchema }): React.JSX.Element {
-  const stop = useMutation(cancelJobApiV1JobsJobIdDeleteMutation());
+  const stop = useMutation(cancelJobApiV1BooksBookIdJobsJobIdDeleteMutation());
   const labels = MESSAGES.activity;
   const time = formatTime(jobMoment(job));
   const percent = Math.round(job.progress.fraction * 100);
@@ -64,7 +64,7 @@ function JobRow({ job }: { job: JobSchema }): React.JSX.Element {
             variant="ghost"
             size="sm"
             disabled={stop.isPending}
-            onClick={() => stop.mutate({ path: { job_id: job.id } })}
+            onClick={() => stop.mutate({ path: { book_id: job.book_id, job_id: job.id } })}
           >
             <XIcon />
             {labels.stop}

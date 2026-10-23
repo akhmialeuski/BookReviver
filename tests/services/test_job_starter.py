@@ -13,6 +13,7 @@ from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.events import JobChanged, PageVersionReady
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.values import StageRun, Step, StepPreview, TileCut
+from tests.helpers.builders import open_for
 from tests.helpers.held_steps import steps_held
 from tests.helpers.processors import FakeProcessor
 
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, BookRecord, Job, Page
     from bookreviver.domain.ids import BookId, JobId
     from bookreviver.domain.values import MetadataMap
+    from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import JobStarter
     from tests.helpers.processing import ProcessingKit
 
@@ -134,7 +136,9 @@ class TestRunFollowUp:
         :type monkeypatch: pytest.MonkeyPatch
         """
         actor, book_record, _ = await prepared_page(fx_kit)
-        await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        await fx_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
         seen: list[tuple[JobKind, list[JobKind]]] = []
         put = fx_kit.board.put
 
@@ -167,7 +171,9 @@ class TestRunFollowUp:
         :type housekeeping: JobKind
         """
         actor, book_record, _ = await prepared_page(fx_kit)
-        run = await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        run = await fx_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
         starter = fx_kit.parts(fx_kit.uow()).starter
         waiting = await starter.enqueue(book_record.id, housekeeping, params_of(starter, housekeeping))
         await fx_kit.work_queue()
@@ -185,11 +191,13 @@ class TestRunFollowUp:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, _ = await prepared_page(fx_kit)
-        run = await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        run = await fx_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
         async with steps_held(fx_kit):
             await fx_kit.board.cancel(run.id)
             replacement = await fx_kit.service().start_run(
-                actor, book_record.id, Stage.CLEANUP, StageRun(stage=Stage.CLEANUP)
+                open_for(actor, book_record.id), Stage.CLEANUP, StageRun(stage=Stage.CLEANUP)
             )
         expect([job.kind for job in fx_kit.board.put_jobs] == [JobKind.RUN_STAGE] * 2 + [JobKind.COLLECT_VERSIONS])
         expect(began(fx_kit)[:2] == [run.id, replacement.id])
@@ -202,7 +210,7 @@ class TestCancelledRunHoldsTheBook:
 
     @pytest.mark.parametrize('ask', [ASK_FOR_COLLECTION, ASK_FOR_MEASURE], ids=['collection', 'measure'])
     async def test_job_asked_for_after_the_cancel_starts_only_when_the_task_under_way_has_returned(
-        self, fx_kit: ProcessingKit, ask: attrgetter[Callable[[Actor, BookId], Awaitable[Job]]]
+        self, fx_kit: ProcessingKit, ask: attrgetter[Callable[[Book], Awaitable[Job]]]
     ) -> None:
         """Verify the book is not worked on by two jobs at once, though the cancelled run no longer counts as active.
 
@@ -213,13 +221,15 @@ class TestCancelledRunHoldsTheBook:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         :param ask: The way to ask for the job from the processing service.
-        :type ask: attrgetter[Callable[[Actor, BookId], Awaitable[Job]]]
+        :type ask: attrgetter[Callable[[Book], Awaitable[Job]]]
         """
         actor, book_record, _ = await prepared_page(fx_kit)
-        run = await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        run = await fx_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
         async with steps_held(fx_kit):
             await fx_kit.board.cancel(run.id)
-            asked = await ask(fx_kit.service())(actor, book_record.id)
+            asked = await ask(fx_kit.service())(open_for(actor, book_record.id))
             while_held = (fx_kit.board.get(run.id).state, fx_kit.board.get(asked.id).state, began(fx_kit))
         published = fx_kit.events.published
         step_returned = next(index for index, event in enumerate(published) if isinstance(event, PageVersionReady))
@@ -244,9 +254,13 @@ class TestRunHandOff:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, _ = await prepared_page(fx_kit)
-        await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        await fx_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
         with pytest.raises(ConflictError, match=BUSY_REASON):
-            await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+            await fx_kit.service().start_run(
+                open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            )
 
     @pytest.mark.parametrize(REQUESTED_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
     @pytest.mark.parametrize(HOUSEKEEPING_ARGUMENT, [JobKind.CUT_TILES, JobKind.COLLECT_VERSIONS])
@@ -280,7 +294,9 @@ class TestRunHandOff:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, _ = await prepared_page(fx_kit)
-        run = await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        run = await fx_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
         starter = fx_kit.parts(fx_kit.uow()).starter
         tiles = await starter.enqueue(book_record.id, JobKind.CUT_TILES, NO_SUCH_TILES)
         with pytest.raises(ConflictError, match=BUSY_REASON):
@@ -328,7 +344,7 @@ class TestRunTakesTheBookFromAPreview:
         """
         actor, book_record, page = await prepared_page(fx_kit)
         starter = fx_kit.parts(fx_kit.uow()).starter
-        preview = await fx_kit.service().start_preview(actor, book_record.id, preview_of(page))
+        preview = await fx_kit.service().start_preview(open_for(actor, book_record.id), preview_of(page))
         async with steps_held(fx_kit):
             asked = await starter.enqueue(book_record.id, requested, params_of(starter, requested))
             while_held = (fx_kit.board.get(preview.id).state, fx_kit.board.get(asked.id).state, began(fx_kit))
@@ -365,7 +381,9 @@ class TestRunTakesTheBookFromAPreview:
         actor, book_record, _ = await prepared_page(fx_kit)
         starter = fx_kit.parts(fx_kit.uow()).starter
         preview = await starter.enqueue(book_record.id, JobKind.PREVIEW_STEP, {})
-        await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        await fx_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
         changes = [event.job for event in fx_kit.events.published if isinstance(event, JobChanged)]
         assert [(job.id, job.state) for job in changes] == [(preview.id, JobState.CANCELLED)]
 
@@ -478,7 +496,9 @@ class TestHousekeepingRequests:
         :type fx_kit: ProcessingKit
         """
         actor, book_record, _ = await prepared_page(fx_kit)
-        run = await fx_kit.service().start_run(actor, book_record.id, Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY))
+        run = await fx_kit.service().start_run(
+            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        )
         tiles = await fx_kit.parts(fx_kit.uow()).starter.enqueue_tiles(book_record.id, [NO_SUCH_VERSION])
         expect(tiles is not None and tiles.state is JobState.QUEUED)
         expect(tiles is not None and TileCut.from_map(tiles.params) == TileCut(version_ids=(NO_SUCH_VERSION,)))

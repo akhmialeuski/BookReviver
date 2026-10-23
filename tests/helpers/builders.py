@@ -64,8 +64,10 @@ from bookreviver.domain.ids import (
     SourceId,
     StepId,
 )
+from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
+    from bookreviver.domain.entities import Actor
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.values import MetadataMap
 from bookreviver.domain.step_values import StepValues
@@ -160,6 +162,19 @@ def make_record(*, title: str = 'Book', minutes: int = 0) -> BookRecord:
         created_at=moment,
         updated_at=moment,
     )
+
+
+def open_for(actor: Actor, book_id: BookId) -> Book:
+    """Open a book for the actor as ``BooksService.open`` does, without reading the library.
+
+    :param actor: Account the book is opened for, which the test made its owner.
+    :type actor: Actor
+    :param book_id: Identifier of the book.
+    :type book_id: BookId
+    :returns: The open book.
+    :rtype: Book
+    """
+    return Book(book_id, actor.account_id)
 
 
 def make_book_change(*, book_id: BookId, version: int = 1) -> BookChanged:

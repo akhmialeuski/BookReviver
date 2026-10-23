@@ -12,6 +12,7 @@ from bookreviver.domain.entities import Page
 from bookreviver.domain.enums import ReviewReason, Stage, StageState
 from bookreviver.domain.geometry import SplitChoice
 from bookreviver.domain.values import NewPageEdit, StageRun
+from tests.helpers.builders import open_for
 from tests.helpers.samples import png_bytes
 from tests.helpers.spreads import book_of, head_of, run_stage, stage_of
 from tests.plugins.synthetic import draw_blank, draw_single_page, draw_spread
@@ -59,7 +60,7 @@ async def choose(kit: ProcessingKit, actor: Actor, book_record: BookRecord, page
     :type choice: SplitChoice
     """
     key = await kit.edit_key(book_record.id, page, Stage.PAGE_SPLIT, SPLIT_AUTO)
-    await kit.edits().save(actor, book_record.id, key, NewPageEdit(kind=choice.editor, geometry=choice), None)
+    await kit.edits().save(open_for(actor, book_record.id), key, NewPageEdit(kind=choice.editor, geometry=choice), None)
 
 
 async def run_over_every_page(kit: ProcessingKit, actor: Actor, book_record: BookRecord) -> None:
@@ -189,7 +190,8 @@ class TestSplitChoice:
         await choose(fx_cv_kit, actor, book_record, single, SplitChoice(pages=SplitChoice.TWO_PAGES))
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT))
         await fx_cv_kit.edits().delete(
-            actor, book_record.id, await fx_cv_kit.edit_key(book_record.id, single, Stage.PAGE_SPLIT, SPLIT_AUTO)
+            open_for(actor, book_record.id),
+            await fx_cv_kit.edit_key(book_record.id, single, Stage.PAGE_SPLIT, SPLIT_AUTO),
         )
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT, confirm_unsplit=True))
         pages = await book_of(fx_cv_kit, book_record)

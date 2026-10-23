@@ -13,7 +13,7 @@ import {
   listStagePagesApiV1BooksBookIdStagesStagePagesGetQueryKey,
   listStagesApiV1BooksBookIdStagesGetQueryKey,
   listVersionsApiV1BooksBookIdPagesPageIdVersionsGetQueryKey,
-  readJobApiV1JobsJobIdGetQueryKey,
+  readJobApiV1BooksBookIdJobsJobIdGetQueryKey,
 } from '@/api/@tanstack/react-query.gen';
 import { STAGES } from '@/features/stages/stages';
 
@@ -211,7 +211,9 @@ export function invalidateAllRecipes(queryClient: QueryClient, bookId: string): 
 
 /** Refresh every job read one by one, such as the job a preview waits for, whose events a break of the stream lost. */
 export function invalidateJobReads(queryClient: QueryClient): Promise<void> {
-  const [{ _id, baseUrl }] = readJobApiV1JobsJobIdGetQueryKey({ path: { job_id: '' } });
+  const [{ _id, baseUrl }] = readJobApiV1BooksBookIdJobsJobIdGetQueryKey({
+    path: { book_id: '', job_id: '' },
+  });
   return queryClient.invalidateQueries({ queryKey: [{ _id, baseUrl }] });
 }
 

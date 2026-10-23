@@ -12,9 +12,8 @@ from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import RecipeDraft, ResultNote, StageRun, Step
-from bookreviver.services.library import Library
 from bookreviver.services.result_marks import ResultMarksService
-from tests.helpers.builders import EPOCH
+from tests.helpers.builders import EPOCH, open_for
 from tests.helpers.processors import STRENGTH_PARAMETER
 from tests.helpers.spreads import run_stage
 from tests.services.test_processing_versions import ran_geometry
@@ -38,7 +37,7 @@ def _marks(kit: ProcessingKit) -> ResultMarksService:
     :rtype: ResultMarksService
     """
     uow = kit.uow()
-    return ResultMarksService(uow=uow, library=Library(uow=uow))
+    return ResultMarksService(uow=uow)
 
 
 class TestSet:
@@ -52,7 +51,7 @@ class TestSet:
         """
         actor, book_record, page, version = await ran_geometry(fx_kit)
         answered = await _marks(fx_kit).set(
-            actor, book_record.id, page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
+            open_for(actor, book_record.id), page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
         )
         stored = await fx_kit.stored_version(book_record.id, version.id)
         expect((answered.mark, answered.comment) == (ResultMark.BAD, COMMENT))
@@ -68,13 +67,15 @@ class TestSet:
         """
         actor, book_record, page, version = await ran_geometry(fx_kit)
         await _marks(fx_kit).set(
-            actor, book_record.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
+            open_for(actor, book_record.id), page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
         )
         fx_kit.clock.moment = EPOCH + LATER
         await _marks(fx_kit).set(
-            actor, book_record.id, page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
+            open_for(actor, book_record.id), page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
         )
-        await _marks(fx_kit).set(actor, book_record.id, page.id, version.id, ResultNote(mark=None, comment=COMMENT))
+        await _marks(fx_kit).set(
+            open_for(actor, book_record.id), page.id, version.id, ResultNote(mark=None, comment=COMMENT)
+        )
         stored = await fx_kit.stored_version(book_record.id, version.id)
         assert (stored.mark, stored.comment) == (None, COMMENT)
 
@@ -86,10 +87,10 @@ class TestSet:
         """
         actor, book_record, page, version = await ran_geometry(fx_kit)
         marked = await _marks(fx_kit).set(
-            actor, book_record.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
+            open_for(actor, book_record.id), page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
         )
         again = await _marks(fx_kit).set(
-            actor, book_record.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
+            open_for(actor, book_record.id), page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
         )
         assert again == marked == await fx_kit.stored_version(book_record.id, version.id)
 
@@ -104,7 +105,7 @@ class TestSet:
         await fx_kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(preview))
         with pytest.raises(ConflictError):
             await _marks(fx_kit).set(
-                actor, book_record.id, page.id, preview.id, ResultNote(mark=ResultMark.GOOD, comment='')
+                open_for(actor, book_record.id), page.id, preview.id, ResultNote(mark=ResultMark.GOOD, comment='')
             )
 
     async def test_a_version_of_another_page_is_not_found(self, fx_kit: ProcessingKit) -> None:
@@ -118,20 +119,7 @@ class TestSet:
         assert other.id != page.id
         with pytest.raises(NotFoundError):
             await _marks(fx_kit).set(
-                actor, book_record.id, other.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
-            )
-
-    async def test_a_book_of_another_account_is_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Verify another account cannot mark a result of the book.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        _, book_record, page, version = await ran_geometry(fx_kit)
-        stranger, _ = await fx_kit.seed_record()
-        with pytest.raises(NotFoundError):
-            await _marks(fx_kit).set(
-                stranger, book_record.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
+                open_for(actor, book_record.id), other.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
             )
 
     async def test_a_comment_keeps_the_version_and_its_notes_through_a_collection(self, fx_kit: ProcessingKit) -> None:
@@ -142,7 +130,7 @@ class TestSet:
         """
         actor, book_record, page, first = await ran_geometry(fx_kit)
         await _marks(fx_kit).set(
-            actor, book_record.id, page.id, first.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
+            open_for(actor, book_record.id), page.id, first.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
         )
         stronger = RecipeDraft(steps=[Step(processor_key=fx_kit.fake.spec.key, params={STRENGTH_PARAMETER: 2})])
         await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, stronger)

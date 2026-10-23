@@ -179,14 +179,14 @@ class TestIiifFile:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    async def test_another_accounts_file_is_not_found(
+    async def test_another_accounts_file_is_served(
         self,
         fx_client: httpx.AsyncClient,
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_asset_store: AssetStore,
     ) -> None:
-        """Verify a stored file of another account's book answers exactly like a missing one.
+        """Verify a stored file of another account's book is served by its key alone, with no owner checked.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -201,7 +201,7 @@ class TestIiifFile:
 
         response = await fx_client.get(f'{IIIF_PATH}/{book.pyramid}/{IIIF_INFO_FILE}')
 
-        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.status_code == status.HTTP_200_OK
 
     async def test_source_and_upload_files_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_source_store: SourceStore, fx_actor: Actor

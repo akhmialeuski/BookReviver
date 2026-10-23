@@ -166,6 +166,84 @@
         }
       }
     },
+    "/api/v1/books/archive": {
+      "post": {
+        "tags": [
+          "books"
+        ],
+        "summary": "Import Book",
+        "description": "Import the archive of a book as a new book of the signed-in account, and point to it in ``Location``.\n\nThe book keeps its pages, versions, history, recipes and settings, and gets a new identifier, so the same archive\ncan be imported twice. An archive that is not the archive of a book is refused, and so is one exported by a newer\nrelease.",
+        "operationId": "import_book_api_v1_books_archive_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "archive": {
+                    "type": "string",
+                    "contentMediaType": "application/octet-stream",
+                    "title": "Archive",
+                    "description": "The archive of a book, as an export of BookReviver writes it"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "archive"
+                ],
+                "title": "ArchiveForm",
+                "description": "The form of the import of a book: the archive another instance exported.\n\n:ivar archive: The uploaded archive of the book."
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookSchema"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "client-error-type",
+                  "title": "User facing error message.",
+                  "status": 400,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server Error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "server-error-type",
+                  "title": "User facing error message.",
+                  "status": 500,
+                  "detail": "Additional error context."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/books/{book_id}": {
       "get": {
         "tags": [
@@ -434,84 +512,6 @@
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "4XX": {
-            "description": "Client Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "client-error-type",
-                  "title": "User facing error message.",
-                  "status": 400,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          },
-          "5XX": {
-            "description": "Server Error",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                },
-                "example": {
-                  "type": "server-error-type",
-                  "title": "User facing error message.",
-                  "status": 500,
-                  "detail": "Additional error context."
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/books/archive": {
-      "post": {
-        "tags": [
-          "books"
-        ],
-        "summary": "Import Book",
-        "description": "Import the archive of a book as a new book of the signed-in account, and point to it in ``Location``.\n\nThe book keeps its pages, versions, history, recipes and settings, and gets a new identifier, so the same archive\ncan be imported twice. An archive that is not the archive of a book is refused, and so is one exported by a newer\nrelease.",
-        "operationId": "import_book_api_v1_books_archive_post",
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "properties": {
-                  "archive": {
-                    "type": "string",
-                    "contentMediaType": "application/octet-stream",
-                    "title": "Archive",
-                    "description": "The archive of a book, as an export of BookReviver writes it"
-                  }
-                },
-                "additionalProperties": false,
-                "type": "object",
-                "required": [
-                  "archive"
-                ],
-                "title": "ArchiveForm",
-                "description": "The form of the import of a book: the archive another instance exported.\n\n:ivar archive: The uploaded archive of the book."
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BookSchema"
                 }
               }
             }
@@ -855,18 +855,6 @@
         "operationId": "get_source_api_v1_books__book_id__sources__source_id__get",
         "parameters": [
           {
-            "name": "book_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the book",
-              "title": "Book Id"
-            },
-            "description": "Identifier of the book"
-          },
-          {
             "name": "source_id",
             "in": "path",
             "required": true,
@@ -877,6 +865,18 @@
               "title": "Source Id"
             },
             "description": "Identifier of the source"
+          },
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
           }
         ],
         "responses": {
@@ -943,18 +943,6 @@
         "operationId": "delete_source_api_v1_books__book_id__sources__source_id__delete",
         "parameters": [
           {
-            "name": "book_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the book",
-              "title": "Book Id"
-            },
-            "description": "Identifier of the book"
-          },
-          {
             "name": "source_id",
             "in": "path",
             "required": true,
@@ -965,6 +953,18 @@
               "title": "Source Id"
             },
             "description": "Identifier of the source"
+          },
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
           }
         ],
         "responses": {
@@ -1144,18 +1144,6 @@
         "operationId": "move_source_pages_api_v1_books__book_id__sources__source_id__pages_move_post",
         "parameters": [
           {
-            "name": "book_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the book",
-              "title": "Book Id"
-            },
-            "description": "Identifier of the book"
-          },
-          {
             "name": "source_id",
             "in": "path",
             "required": true,
@@ -1166,6 +1154,18 @@
               "title": "Source Id"
             },
             "description": "Identifier of the source"
+          },
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
           }
         ],
         "requestBody": {
@@ -1434,18 +1434,6 @@
         "operationId": "page_api_v1_books__book_id__pages__page_id__get",
         "parameters": [
           {
-            "name": "book_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "description": "Identifier of the book",
-              "title": "Book Id"
-            },
-            "description": "Identifier of the book"
-          },
-          {
             "name": "page_id",
             "in": "path",
             "required": true,
@@ -1456,6 +1444,18 @@
               "title": "Page Id"
             },
             "description": "Identifier of the page"
+          },
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
           }
         ],
         "responses": {
@@ -7097,14 +7097,14 @@
         }
       }
     },
-    "/api/v1/jobs/{job_id}": {
+    "/api/v1/books/{book_id}/jobs/{job_id}": {
       "get": {
         "tags": [
           "jobs"
         ],
         "summary": "Read Job",
         "description": "Return the state and progress of a job.",
-        "operationId": "read_job_api_v1_jobs__job_id__get",
+        "operationId": "read_job_api_v1_books__book_id__jobs__job_id__get",
         "parameters": [
           {
             "name": "job_id",
@@ -7117,6 +7117,18 @@
               "title": "Job Id"
             },
             "description": "Identifier of the job"
+          },
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
           }
         ],
         "responses": {
@@ -7180,7 +7192,7 @@
         ],
         "summary": "Cancel Job",
         "description": "Cancel a queued or running job and return it; a running job stops at the boundary of its current task.",
-        "operationId": "cancel_job_api_v1_jobs__job_id__delete",
+        "operationId": "cancel_job_api_v1_books__book_id__jobs__job_id__delete",
         "parameters": [
           {
             "name": "job_id",
@@ -7193,6 +7205,18 @@
               "title": "Job Id"
             },
             "description": "Identifier of the job"
+          },
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
           }
         ],
         "responses": {

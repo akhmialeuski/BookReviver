@@ -31,20 +31,20 @@ from bookreviver.domain.enums import ChangeSource, EditorKind, Rendition, StepLa
 from bookreviver.domain.errors import ConflictError, InvalidParametersError, NotFoundError
 from bookreviver.domain.ids import StorageKey
 from bookreviver.domain.keys import BookKeys
-from bookreviver.services.library import Library
 from bookreviver.services.recipes import find_step
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Actor, BookRecord
+    from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.enums import Stage
-    from bookreviver.domain.ids import BookId, PageId
+    from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import NewPageEdit, PageStepKey, ProcessorSpec
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore, IncomingFile
+    from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
 
 WRONG_EDITOR: str = 'The processor {key} reads an edit of the {expected} editor, not of the {actual} editor.'
@@ -88,21 +88,16 @@ class EditService:
         :type clock: Clock
         """
         self._uow = uow
-        self._library = Library(uow=uow)
         self._assets = assets
         self._catalogue = catalogue
         self._records = records
         self._clock = clock
 
-    async def save(
-        self, actor: Actor, book_id: BookId, key: PageStepKey, edit: NewPageEdit, mask: IncomingFile | None
-    ) -> PageEdit:
+    async def save(self, book: Book, key: PageStepKey, edit: NewPageEdit, mask: IncomingFile | None) -> PageEdit:
         """Store the edit a step reads, replacing the one it read before, and mark the stage stale.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param key: The page, the stage and the step that reads the edit.
         :type key: PageStepKey
         :param edit: The shape the user drew and the editor that drew it.
@@ -111,12 +106,10 @@ class EditService:
         :type mask: IncomingFile | None
         :returns: The edit as stored, with its hash.
         :rtype: PageEdit
-        :raises NotFoundError: If the actor has no such book, the book has no such page, or no recipe of the stage
-                               has such a step.
+        :raises NotFoundError: If the book has no such page, or no recipe of the stage has such a step.
         :raises InvalidParametersError: If the processor of the step reads another editor, or the edit lacks its shape
                                         or its mask or has one it should not.
         """
-        await self._library.open(actor, book_id)
 
         def check(repos: BookRepositories) -> None:
             """Require the book, the page and the edit to be as the request says.
@@ -133,8 +126,8 @@ class EditService:
 
         # The edit is checked before its mask is written, so a refused request leaves no file, and checked again in the
         # change, since the page or the recipe may have changed while the mask streamed in
-        await self._uow.read_book(book_id, check)
-        keys = BookKeys(book_id)
+        await self._uow.read_book(book.id, check)
+        keys = BookKeys(book.id)
         mask_digest, scratch = (None, None) if mask is None else await self._receive(keys, key, mask)
         edit_hash = PageEdit.hash_of(edit.geometry, mask_digest)
         mask_key = None
@@ -174,25 +167,22 @@ class EditService:
             self._records.mark_stale(repos, key.page_id, key.stage)
 
         # A mask stays when the change fails, since its key holds the hash of the edit and an equal edit finds it there
-        await self._uow.change_book(book_id, work)
+        await self._uow.change_book(book.id, work)
         return stored
 
-    async def list(self, actor: Actor, book_id: BookId, page_id: PageId, stage: Stage) -> Sequence[PageEdit]:
+    async def list(self, book: Book, page_id: PageId, stage: Stage) -> Sequence[PageEdit]:
         """List the edits of one stage of a page, by step.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :param stage: The stage whose edits are listed.
         :type stage: Stage
         :returns: The edits of the stage.
         :rtype: Sequence[PageEdit]
-        :raises NotFoundError: If the actor has no such book, or the book has no such page.
+        :raises NotFoundError: If the book has no such page.
         """
-        await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories) -> list[PageEdit]:
             """Read the edits of the stage of the page.
@@ -207,23 +197,19 @@ class EditService:
             states = repos.page_step_states.list_for_page(page_id, stage)
             return [state.edit for state in states if state.edit is not None]
 
-        return await self._uow.read_book(book_id, work)
+        return await self._uow.read_book(book.id, work)
 
-    async def delete(self, actor: Actor, book_id: BookId, key: PageStepKey) -> None:
+    async def delete(self, book: Book, key: PageStepKey) -> None:
         """Delete the edit a step reads, and mark the stage stale.
 
         The files of its mask stay, since an edit is the input of the user and an equal edit stored again finds them.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :param key: The page, the stage and the step that reads the edit.
         :type key: PageStepKey
-        :raises NotFoundError: If the actor has no such book, the book has no such page, or the step has no edit
-                               there.
+        :raises NotFoundError: If the book has no such page, or the step has no edit there.
         """
-        await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Delete the edit from the state of the step, and mark the stage stale.
@@ -242,7 +228,7 @@ class EditService:
             self._store(repos, state, evolve(state, edit=None, updated_at=self._clock.now()))
             self._records.mark_stale(repos, key.page_id, key.stage)
 
-        await self._uow.change_book(book_id, work)
+        await self._uow.change_book(book.id, work)
 
     @staticmethod
     def _store(repos: BookRepositories, state: PageStepState, changed: PageStepState) -> None:

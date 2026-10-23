@@ -9,6 +9,7 @@ from bookreviver.domain.enums import OrderMode, OrderRuleKind, RecipeKind, Stage
 from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.values import ProfileDraft, RecipeDraft, Step
 from bookreviver.services.recipe_order import RecipeOrder
+from tests.helpers.builders import open_for
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.processors import (
     FIRST_KEY,
@@ -272,5 +273,5 @@ class TestSavePaths:
         profile = await profiles.save(
             actor, Stage.GEOMETRY, profile_draft_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE)
         )
-        applied = await profiles.apply(actor, book_record.id, profile.id, kind=RecipeKind.TEXT)
+        applied = await profiles.apply(open_for(actor, book_record.id), profile.id, kind=RecipeKind.TEXT)
         assert [step.processor_key for step in applied.recipe.steps] == [THIRD_KEY, SECOND_KEY]
