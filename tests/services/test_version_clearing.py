@@ -9,8 +9,8 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import VersionData, VersionState
 from bookreviver.services.version_clearing import BEING_COLLECTED, VersionClearing
-from tests.helpers.builders import make_page, make_page_version, make_project, new_account_id
-from tests.helpers.seeding import commit_project
+from tests.helpers.builders import make_page, make_page_version, make_record, new_account_id
+from tests.helpers.seeding import commit_record
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
@@ -37,18 +37,20 @@ class TestClear:
         :param fx_asset_store: Local asset store of the test.
         :type fx_asset_store: LocalAssetStore
         """
-        project = make_project()
+        book_record = make_record()
         page = make_page()
         kept, deleted = (
             evolve(make_page_version(page_id=page.id, minutes=n), state=VersionState.READY) for n in (1, 2)
         )
-        await commit_project(fx_database, fx_uow(), project, page, owner=new_account_id(), versions=[kept, deleted])
-        await fx_uow().change_book(project.id, lambda repos, _project: repos.page_versions.delete_many([deleted.id]))
-        clearing = VersionClearing(uow=fx_uow(), assets=fx_asset_store, project_id=project.id)
+        await commit_record(fx_database, fx_uow(), book_record, page, owner=new_account_id(), versions=[kept, deleted])
+        await fx_uow().change_book(
+            book_record.id, lambda repos, _book_record: repos.page_versions.delete_many([deleted.id])
+        )
+        clearing = VersionClearing(uow=fx_uow(), assets=fx_asset_store, book_id=book_record.id)
 
         await clearing.clear([kept, deleted])
 
-        remaining = await fx_uow().read_book(project.id, lambda repos: repos.page_versions.list_for_page(page.id))
+        remaining = await fx_uow().read_book(book_record.id, lambda repos: repos.page_versions.list_for_page(page.id))
         expect(remaining == [])
         assert_expectations()
 
@@ -72,20 +74,20 @@ class TestClear:
         :param monkeypatch: Fixture that restores the patched store after the test.
         :type monkeypatch: pytest.MonkeyPatch
         """
-        project = make_project()
+        book_record = make_record()
         page = make_page()
         chosen = evolve(make_page_version(page_id=page.id), state=VersionState.READY)
-        await commit_project(fx_database, fx_uow(), project, page, owner=new_account_id(), versions=[chosen])
+        await commit_record(fx_database, fx_uow(), book_record, page, owner=new_account_id(), versions=[chosen])
         await fx_uow().change_book(
-            project.id, lambda repos, _project: repos.page_versions.update(evolve(chosen, comment=KEPT_COMMENT))
+            book_record.id, lambda repos, _book_record: repos.page_versions.update(evolve(chosen, comment=KEPT_COMMENT))
         )
 
         monkeypatch.setattr(fx_asset_store, 'delete_prefix', AsyncMock(side_effect=OSError))
-        clearing = VersionClearing(uow=fx_uow(), assets=fx_asset_store, project_id=project.id)
+        clearing = VersionClearing(uow=fx_uow(), assets=fx_asset_store, book_id=book_record.id)
 
         await clearing.clear([chosen])
 
-        stored = await fx_uow().read_book(project.id, lambda repos: repos.page_versions.get(chosen.id))
+        stored = await fx_uow().read_book(book_record.id, lambda repos: repos.page_versions.get(chosen.id))
         expect((stored.state, stored.comment) == (VersionState.FAILED, KEPT_COMMENT))
         expect(stored.data[VersionData.ERROR] == BEING_COLLECTED)
         assert_expectations()

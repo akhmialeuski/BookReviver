@@ -32,7 +32,7 @@ describe('NumberingPanel slots', () => {
       root.render(
         <QueryClientProvider client={client}>
           <NumberingPanel
-            projectId="book"
+            bookId="book"
             pages={pages}
             draft={draft}
             preview={preview}

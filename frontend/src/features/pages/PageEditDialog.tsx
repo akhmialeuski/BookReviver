@@ -40,19 +40,19 @@ const View = {
 type View = (typeof View)[keyof typeof View];
 
 function EditForm({
-  projectId,
+  bookId,
   page,
   name,
   onView,
   onDone,
 }: {
-  projectId: string;
+  bookId: string;
   page: PageSchema;
   name: string;
   onView: (view: View) => void;
   onDone: () => void;
 }): React.JSX.Element {
-  const update = useUpdatePage(projectId);
+  const update = useUpdatePage(bookId);
   const [label, setLabel] = useState(page.label);
   const [kind, setKind] = useState<PageKind>(page.kind);
   const [included, setIncluded] = useState(page.included);
@@ -67,7 +67,7 @@ function EditForm({
         // A null clears a label or notes to the empty text, which is what an emptied field means
         update.mutate(
           {
-            path: { project_id: projectId, page_id: page.id },
+            path: { book_id: bookId, page_id: page.id },
             body: {
               label: label.trim() === '' ? null : label.trim(),
               kind,
@@ -146,17 +146,17 @@ function EditForm({
 }
 
 function RemoveStep({
-  projectId,
+  bookId,
   page,
   onBack,
   onDone,
 }: {
-  projectId: string;
+  bookId: string;
   page: PageSchema;
   onBack: () => void;
   onDone: () => void;
 }): React.JSX.Element {
-  const remove = useDeletePage(projectId);
+  const remove = useDeletePage(bookId);
   return (
     <div className="grid gap-4">
       {remove.isError ? <ErrorAlert message={describePageError(remove.error)} /> : null}
@@ -168,10 +168,7 @@ function RemoveStep({
           variant="destructive"
           disabled={remove.isPending}
           onClick={() =>
-            remove.mutate(
-              { path: { project_id: projectId, page_id: page.id } },
-              { onSuccess: onDone },
-            )
+            remove.mutate({ path: { book_id: bookId, page_id: page.id } }, { onSuccess: onDone })
           }
         >
           {remove.isPending ? MESSAGES.pages.remove.submitting : MESSAGES.pages.remove.submit}
@@ -182,11 +179,11 @@ function RemoveStep({
 }
 
 export function PageEditDialog({
-  projectId,
+  bookId,
   page,
   onClose,
 }: {
-  projectId: string;
+  bookId: string;
   /** The page to edit, or null while the dialog is closed. */
   page: PageSchema | null;
   onClose: () => void;
@@ -218,17 +215,11 @@ export function PageEditDialog({
         {page === null ? null : (
           <>
             {view === View.Edit ? (
-              <EditForm
-                projectId={projectId}
-                page={page}
-                name={name}
-                onView={setView}
-                onDone={close}
-              />
+              <EditForm bookId={bookId} page={page} name={name} onView={setView} onDone={close} />
             ) : null}
             {view === View.Attach ? (
               <AttachScanView
-                projectId={projectId}
+                bookId={bookId}
                 page={page}
                 onBack={() => setView(View.Edit)}
                 onDone={close}
@@ -236,7 +227,7 @@ export function PageEditDialog({
             ) : null}
             {view === View.Remove ? (
               <RemoveStep
-                projectId={projectId}
+                bookId={bookId}
                 page={page}
                 onBack={() => setView(View.Edit)}
                 onDone={close}

@@ -1,7 +1,7 @@
 """A blank leaf: a page of a given size drawn in white or in the colour of the paper of the book.
 
 ``pages.blank`` draws the page of the size and the resolution in its parameters with libvips. A white page is a 1-bit
-PNG, because it has two colours at most and so is a bilevel page whatever the project's image policy. ``Image.black``
+PNG, because it has two colours at most and so is a bilevel page whatever the book's image policy. ``Image.black``
 makes a black image of unsigned characters, so adding 255 makes it white and keeps the single band. The resolution is
 written in pixels per millimetre. libvips always writes a resolution, so a leaf made without one carries its default of
 one pixel per millimetre, and the resolution the book keeps is the one in the data of the version, which says it is

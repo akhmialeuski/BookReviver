@@ -18,8 +18,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Sequence
     from datetime import datetime
 
-    from bookreviver.domain.entities import Page, PageStage, PageVersion, Project
-    from bookreviver.domain.ids import PageVersionId, ProjectId
+    from bookreviver.domain.entities import BookRecord, Page, PageStage, PageVersion
+    from bookreviver.domain.ids import BookId, PageVersionId
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.page_stage_writes import PageStageWrites
     from tests.helpers.processing import ProcessingKit
@@ -43,22 +43,22 @@ class SeededPage:
     """A book of one page that has its base version, with the results the test commits on it.
 
     :ivar kit: What the processing services of the test share.
-    :ivar project_id: Identifier of the project of the book.
+    :ivar book_id: Identifier of the book.
     :ivar page: The page.
     """
 
-    def __init__(self, kit: ProcessingKit, project_id: ProjectId, page: Page) -> None:
+    def __init__(self, kit: ProcessingKit, book_id: BookId, page: Page) -> None:
         """Hold the kit, the book and the page the results are committed on.
 
         :param kit: What the processing services of the test share.
         :type kit: ProcessingKit
-        :param project_id: Identifier of the project of the book.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the book.
+        :type book_id: BookId
         :param page: The page.
         :type page: Page
         """
         self.kit = kit
-        self.project_id = project_id
+        self.book_id = book_id
         self.page = page
 
     @classmethod
@@ -70,10 +70,10 @@ class SeededPage:
         :returns: The seeded page.
         :rtype: Self
         """
-        _, project = await kit.seed_project()
-        page, _ = await kit.seed_scan_page(project, order_key='a0')
-        await kit.seed_base_version(project.id, page)
-        return cls(kit, project.id, page)
+        _, book_record = await kit.seed_record()
+        page, _ = await kit.seed_scan_page(book_record, order_key='a0')
+        await kit.seed_base_version(book_record.id, page)
+        return cls(kit, book_record.id, page)
 
     async def result(
         self,
@@ -107,18 +107,18 @@ class SeededPage:
         )
         record = make_page_stage(page_id=self.page.id, stage=stage, head_version_id=version.id, state=state)
 
-        def add_result(repos: BookRepositories, _project: Project) -> None:
+        def add_result(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Add the version and the record of the stage that has it as its current version.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: Project of the book, which the work does not need.
-            :type _project: Project
+            :param _book_record: Record of the book, which the work does not need.
+            :type _book_record: BookRecord
             """
             repos.page_versions.add(version)
             repos.page_stages.save(record)
 
-        await self.kit.uow().change_book(self.project_id, add_result)
+        await self.kit.uow().change_book(self.book_id, add_result)
         return version
 
     async def base(self) -> PageVersion:
@@ -128,9 +128,7 @@ class SeededPage:
         :rtype: PageVersion
         """
         return (
-            await self.kit.uow().read_book(
-                self.project_id, lambda repos: repos.page_versions.list_for_page(self.page.id)
-            )
+            await self.kit.uow().read_book(self.book_id, lambda repos: repos.page_versions.list_for_page(self.page.id))
         )[0]
 
     async def stored(self, stage: Stage) -> PageStage:
@@ -142,7 +140,7 @@ class SeededPage:
         :rtype: PageStage
         """
         return await self.kit.uow().read_book(
-            self.project_id, lambda repos: repos.page_stages.get(PageStageKey(self.page.id, stage))
+            self.book_id, lambda repos: repos.page_stages.get(PageStageKey(self.page.id, stage))
         )
 
 
@@ -198,34 +196,34 @@ class TestMarkStale:
         read = uow.read_book
         changed = False
 
-        def request_changes_record(repos: BookRepositories, _project: Project) -> None:
+        def request_changes_record(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Write the record as a request that came after the check found it outdated leaves it.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: Project of the book, which the work does not need.
-            :type _project: Project
+            :param _book_record: Record of the book, which the work does not need.
+            :type _book_record: BookRecord
             """
             if left is None:
                 repos.page_stages.delete(record.key)
             else:
                 repos.page_stages.save(left)
 
-        async def read_then_change[T](project_id: ProjectId, work: Callable[[BookRepositories], T]) -> T:
+        async def read_then_change[T](book_id: BookId, work: Callable[[BookRepositories], T]) -> T:
             """Read as the unit of work does, then let a request change the record in a change of its own, once.
 
-            :param project_id: Project whose book is read.
-            :type project_id: ProjectId
+            :param book_id: Book that is read.
+            :type book_id: BookId
             :param work: Function over the repositories of the transaction.
             :type work: Callable[[BookRepositories], T]
             :returns: What the work returns.
             :rtype: T
             """
             nonlocal changed
-            found = await read(project_id, work)
+            found = await read(book_id, work)
             if not changed:
                 changed = True
-                await fx_kit.uow().change_book(project_id, request_changes_record)
+                await fx_kit.uow().change_book(book_id, request_changes_record)
             return found
 
         monkeypatch.setattr(uow, 'read_book', read_then_change)
@@ -233,7 +231,7 @@ class TestMarkStale:
 
         marked = await OutdatedResults(uow=uow, catalogue=fx_kit.catalogue, clock=fx_kit.clock).mark_stale()
 
-        stored = await fx_kit.uow().read_book(page.project_id, lambda repos: repos.page_stages.find(record.key))
+        stored = await fx_kit.uow().read_book(page.book_id, lambda repos: repos.page_stages.find(record.key))
         assert (marked, stored) == ([], left)
 
     async def test_fresh_stage_made_by_an_older_version_of_a_processor_becomes_stale(

@@ -20,8 +20,8 @@ export function usePageValues(
   current: StripItem | undefined,
   selected: ReadonlySet<string>,
 ): PageValues | undefined {
-  const { projectId, stage, recipe } = processing;
-  const settings = usePageSettings(projectId, current?.page.id, stage);
+  const { bookId, stage, recipe } = processing;
+  const settings = usePageSettings(bookId, current?.page.id, stage);
   const kind = recipe?.kind;
   const parts = useMemo(() => countParts(items, kind), [items, kind]);
   const picked = useMemo(() => [...selected], [selected]);
@@ -30,7 +30,7 @@ export function usePageValues(
       current === undefined
         ? undefined
         : {
-            projectId,
+            bookId,
             stage,
             page: {
               id: current.page.id,
@@ -40,6 +40,6 @@ export function usePageValues(
             selected: picked,
             ...parts,
           },
-    [projectId, stage, current, settings.data, picked, parts],
+    [bookId, stage, current, settings.data, picked, parts],
   );
 }

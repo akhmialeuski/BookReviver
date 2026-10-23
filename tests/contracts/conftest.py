@@ -34,9 +34,9 @@ ORDER_KEYS_ADAPTERS: dict[str, type[OrderKeys]] = {'fractional-indexing': Fracti
 
 @pytest.fixture
 def fx_new_owner(fx_database: SqlDatabase) -> OwnerFactory:
-    """Return a function creating an account that may own projects.
+    """Return a function creating an account that may own books.
 
-    The database checks the owner of a project against the account table of fastapi-users, so an account is a
+    The database checks the owner of a book against the account table of fastapi-users, so an account is a
     committed row.
 
     :param fx_database: Database of the test.

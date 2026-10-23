@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from bookreviver.domain.entities import (
     BookPlace,
+    BookRecord,
     Job,
     Page,
     PageEdit,
@@ -15,13 +16,13 @@ from bookreviver.domain.entities import (
     PageStepState,
     PageVersion,
     PaginationSection,
-    Project,
     Recipe,
     RecipeProfile,
     Scan,
     Source,
 )
 from bookreviver.domain.enums import (
+    BookResource,
     ChangeSource,
     ColorMode,
     CompareMode,
@@ -47,23 +48,26 @@ from bookreviver.domain.enums import (
     ValueScope,
     ViewMode,
 )
+from bookreviver.domain.events import BookChanged
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import (
     AccountId,
+    BookId,
     JobId,
     PageHistoryEntryId,
     PageId,
     PageVersionId,
     PaginationSectionId,
-    ProjectId,
     RecipeId,
     RecipeProfileId,
     ScanId,
     SourceId,
     StepId,
 )
+from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
+    from bookreviver.domain.entities import Actor
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.values import MetadataMap
 from bookreviver.domain.step_values import StepValues
@@ -141,23 +145,49 @@ def new_account_id() -> AccountId:
     return AccountId(uuid4())
 
 
-def make_project(*, title: str = 'Book', minutes: int = 0) -> Project:
-    """Build a project updated ``minutes`` after the epoch.
+def make_record(*, title: str = 'Book', minutes: int = 0) -> BookRecord:
+    """Build a book updated ``minutes`` after the epoch.
 
     :param title: Title of the book.
     :type title: str
-    :param minutes: Minutes after ``EPOCH`` the project was created and last updated.
+    :param minutes: Minutes after ``EPOCH`` the book was created and last updated.
     :type minutes: int
-    :returns: A project with a fresh identifier and no source.
-    :rtype: Project
+    :returns: A book with a fresh identifier and no source.
+    :rtype: BookRecord
     """
     moment = EPOCH + timedelta(minutes=minutes)
-    return Project(
-        id=ProjectId(uuid4()),
+    return BookRecord(
+        id=BookId(uuid4()),
         details=BookDetails(title=title),
         created_at=moment,
         updated_at=moment,
     )
+
+
+def open_for(actor: Actor, book_id: BookId) -> Book:
+    """Open a book for the actor as the access dependency ``open_book`` does, without reading the library.
+
+    :param actor: Account the book is opened for, which the test made its owner.
+    :type actor: Actor
+    :param book_id: Identifier of the book.
+    :type book_id: BookId
+    :returns: The open book.
+    :rtype: Book
+    """
+    return Book(book_id, actor.account_id)
+
+
+def make_book_change(*, book_id: BookId, version: int = 1) -> BookChanged:
+    """Build a committed change of the description of a book, which a test publishes as any event of the book.
+
+    :param book_id: The book.
+    :type book_id: BookId
+    :param version: The version of the book after the change.
+    :type version: int
+    :returns: The change.
+    :rtype: BookChanged
+    """
+    return BookChanged(book_id=book_id, version=version, resources=frozenset({BookResource.RECORD}))
 
 
 def make_page(
@@ -167,9 +197,9 @@ def make_page(
     kind: PageKind = PageKind.TEXT,
     group_label: str = '',
 ) -> Page:
-    """Build an included page of the given project, cut from the whole of a scan or a placeholder without one.
+    """Build an included page of the given book, cut from the whole of a scan or a placeholder without one.
 
-    :param order_key: Order key placing the page in the book, unique within the project.
+    :param order_key: Order key placing the page in the book, unique within the book.
     :type order_key: str
     :param scan: Scan the page shows whole, or None for a placeholder.
     :type scan: Scan | None
@@ -202,7 +232,7 @@ def make_section(
 ) -> PaginationSection:
     """Build a pagination section that starts at a page, numbering from 1 with no prefix and no name.
 
-    :param page: Page the section starts at, whose project the section takes.
+    :param page: Page the section starts at, whose book the section takes.
     :type page: Page
     :param style: How the numbers are written, Arabic unless given.
     :type style: LabelStyle
@@ -210,7 +240,7 @@ def make_section(
     :type display: NumberDisplay
     :param kinds: Kinds of page a series by kind takes, none for a section of the main flow.
     :type kinds: frozenset[PageKind]
-    :param minutes: Minutes after ``EPOCH`` the section was made, which orders the sections of a project.
+    :param minutes: Minutes after ``EPOCH`` the section was made, which orders the sections of a book.
     :type minutes: int
     :returns: A section with a fresh identifier, which a test changes with ``evolve`` for the rest of its fields.
     :rtype: PaginationSection
@@ -254,7 +284,7 @@ def make_source(*, name: str = 'book.pdf', minutes: int = 0) -> Source:
 def make_scan(*, source: Source, number: int) -> Scan:
     """Build a grayscale scan of a source.
 
-    :param source: Source holding the scan, whose project the scan belongs to.
+    :param source: Source holding the scan, whose book the scan belongs to.
     :type source: Source
     :param number: Position of the scan in its source, starting at 0.
     :type number: int
@@ -286,7 +316,7 @@ def make_page_version(*, page_id: PageId, minutes: int = 0) -> PageVersion:
 
 def make_job(
     *,
-    project_id: ProjectId,
+    book_id: BookId,
     state: JobState = JobState.QUEUED,
     minutes: int = 0,
     kind: JobKind = JobKind.IMPORT_SOURCE,
@@ -294,8 +324,8 @@ def make_job(
 ) -> Job:
     """Build a job created ``minutes`` after the epoch, an import job unless told otherwise.
 
-    :param project_id: Project the job imports into.
-    :type project_id: ProjectId
+    :param book_id: Book the job imports into.
+    :type book_id: BookId
     :param state: State of the job.
     :type state: JobState
     :param minutes: Minutes after ``EPOCH`` the job was created.
@@ -309,7 +339,7 @@ def make_job(
     """
     return Job(
         id=JobId(uuid4()),
-        project_id=project_id,
+        book_id=book_id,
         kind=kind,
         state=state,
         params={} if params is None else params,

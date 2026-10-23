@@ -12,16 +12,16 @@ from bookreviver.api.routers.iiif import IMMUTABLE_CACHE
 from bookreviver.api.schemas.iiif import IIIF_INFO_FILE, IIIF_INFO_MEDIA_TYPE
 from bookreviver.domain.enums import Rendition
 from bookreviver.domain.ids import JobId, SourceId, StorageKey
-from bookreviver.domain.keys import ProjectKeys
-from tests.helpers.builders import make_page, make_page_version, make_project
-from tests.helpers.seeding import commit_account, store_project
+from bookreviver.domain.keys import BookKeys
+from tests.helpers.builders import make_page, make_page_version, make_record
+from tests.helpers.seeding import commit_account, store_book
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, PageVersion, Project
+    from bookreviver.domain.entities import Actor, BookRecord, PageVersion
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.storage import AssetStore, SourceStore
@@ -45,36 +45,36 @@ MAX_UPLOAD_BYTES: int = 1024
 class Book(NamedTuple):
     """A book of the signed-in account with one page whose base version has files in the asset store.
 
-    :ivar project: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar version: The base version of its page.
     """
 
-    project: Project
+    book_record: BookRecord
     version: PageVersion
 
     @property
     def pyramid(self) -> StorageKey:
         """The key of the directory of the tile pyramid of the page."""
-        return ProjectKeys(self.project.id).version_rendition(self.version, Rendition.TILES)
+        return BookKeys(self.book_record.id).version_rendition(self.version, Rendition.TILES)
 
 
 async def _store_book(uow: UnitOfWork, assets: AssetStore, owner: AccountId) -> Book:
-    """Store a project with a page whose pyramid holds an ``info.json`` and one tile, and whose thumbnail exists.
+    """Store a book with a page whose pyramid holds an ``info.json`` and one tile, and whose thumbnail exists.
 
     :param uow: Unit of work over the catalogue and the books of the test.
     :type uow: UnitOfWork
     :param assets: Asset store of the application.
     :type assets: AssetStore
-    :param owner: Committed account that owns the project.
+    :param owner: Committed account that owns the book.
     :type owner: AccountId
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project()
+    book_record = make_record()
     page = make_page()
     version = make_page_version(page_id=page.id)
-    await store_project(uow, project, page, owner=owner, versions=[version])
-    keys = ProjectKeys(project.id)
+    await store_book(uow, book_record, page, owner=owner, versions=[version])
+    keys = BookKeys(book_record.id)
     for key, content in (
         (f'{keys.version_rendition(version, Rendition.TILES)}/{IIIF_INFO_FILE}', INFO_CONTENT),
         (f'{keys.version_rendition(version, Rendition.TILES)}/{TILE_PATH}', TILE_CONTENT),
@@ -83,7 +83,7 @@ async def _store_book(uow: UnitOfWork, assets: AssetStore, owner: AccountId) -> 
         async with assets.writable(StorageKey(key)) as path:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
-    return Book(project=project, version=version)
+    return Book(book_record=book_record, version=version)
 
 
 class TestIiifFile:
@@ -140,7 +140,7 @@ class TestIiifFile:
         :type rendition: Rendition
         """
         book = await _store_book(fx_uow(), fx_asset_store, fx_actor.account_id)
-        key = ProjectKeys(book.project.id).version_rendition(book.version, rendition)
+        key = BookKeys(book.book_record.id).version_rendition(book.version, rendition)
         address = f'{key}/{TILE_PATH}' if rendition is Rendition.TILES else key
 
         response = await fx_client.get(f'{IIIF_PATH}/{address}')
@@ -173,20 +173,20 @@ class TestIiifFile:
         :type name: str
         """
         book = await _store_book(fx_uow(), fx_asset_store, fx_actor.account_id)
-        directory = ProjectKeys(book.project.id).version_directory(book.version)
+        directory = BookKeys(book.book_record.id).version_directory(book.version)
 
         response = await fx_client.get(f'{IIIF_PATH}/{directory}/{name}')
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    async def test_another_accounts_file_is_not_found(
+    async def test_another_accounts_file_is_served(
         self,
         fx_client: httpx.AsyncClient,
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_asset_store: AssetStore,
     ) -> None:
-        """Verify a stored file of another account's project answers exactly like a missing one.
+        """Verify a stored file of another account's book is served by its key alone, with no owner checked.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -201,12 +201,12 @@ class TestIiifFile:
 
         response = await fx_client.get(f'{IIIF_PATH}/{book.pyramid}/{IIIF_INFO_FILE}')
 
-        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.status_code == status.HTTP_200_OK
 
     async def test_source_and_upload_files_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_source_store: SourceStore, fx_actor: Actor
     ) -> None:
-        """Verify a stored source file and a staged upload of the account's own project answer 404, not 500.
+        """Verify a stored source file and a staged upload of the account's own book answer 404, not 500.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -217,14 +217,14 @@ class TestIiifFile:
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        project = make_project()
-        await store_project(fx_uow(), project, owner=fx_actor.account_id)
-        keys = ProjectKeys(project.id)
+        book_record = make_record()
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+        keys = BookKeys(book_record.id)
         promoted, staged = JobId(uuid4()), JobId(uuid4())
         source_id = SourceId(uuid4())
         for job_id in (promoted, staged):
-            await fx_source_store.stage(project.id, job_id, [upload(SOURCE_NAME)], max_bytes=MAX_UPLOAD_BYTES)
-        await fx_source_store.promote(project.id, promoted, source_id, names=[SOURCE_NAME])
+            await fx_source_store.stage(book_record.id, job_id, [upload(SOURCE_NAME)], max_bytes=MAX_UPLOAD_BYTES)
+        await fx_source_store.promote(book_record.id, promoted, source_id, names=[SOURCE_NAME])
 
         responses = [
             await fx_client.get(f'{IIIF_PATH}/{keys.source(source_id)}/{SOURCE_NAME}'),

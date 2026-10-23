@@ -25,7 +25,7 @@ from bookreviver.domain.ids import PageId, RecipeId, StepId
 if TYPE_CHECKING:
     from starlette.requests import Request
 
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
     from bookreviver.domain.stage_summaries import StageRow, StepRow
 
 
@@ -109,13 +109,13 @@ class StepPageSchema(ResponseModel):
     flags: list[StepFlag]
 
     @classmethod
-    def of(cls, row: StepRow, project_id: ProjectId, request: Request) -> Self:
+    def of(cls, row: StepRow, book_id: BookId, request: Request) -> Self:
         """Build the schema of the row of a page at a step.
 
         :param row: The row.
         :type row: StepRow
-        :param project_id: Project owning the page, whose keys place the files of the versions.
-        :type project_id: ProjectId
+        :param book_id: Book owning the page, whose keys place the files of the versions.
+        :type book_id: BookId
         :param request: The request, whose application knows the route that serves the images.
         :type request: Request
         :returns: The schema.
@@ -126,8 +126,8 @@ class StepPageSchema(ResponseModel):
             state=row.state,
             input_version=None
             if row.input_version is None
-            else PageVersionSchema.of(row.input_version, project_id, request),
-            version=None if row.version is None else PageVersionSchema.of(row.version, project_id, request),
+            else PageVersionSchema.of(row.input_version, book_id, request),
+            version=None if row.version is None else PageVersionSchema.of(row.version, book_id, request),
             flags=list(row.flags),
         )
 
@@ -169,19 +169,19 @@ class StagePageSchema(ResponseModel):
     picture: PageVersionSchema | None
 
     @classmethod
-    def of(cls, row: StageRow, project_id: ProjectId, request: Request) -> Self:
+    def of(cls, row: StageRow, book_id: BookId, request: Request) -> Self:
         """Build the schema of the row of a page.
 
         :param row: The row.
         :type row: StageRow
-        :param project_id: Project owning the page, whose keys place the files of the version.
-        :type project_id: ProjectId
+        :param book_id: Book owning the page, whose keys place the files of the version.
+        :type book_id: BookId
         :param request: The request, whose application knows the route that serves the images.
         :type request: Request
         :returns: The schema.
         :rtype: Self
         """
-        version = None if row.head_version is None else PageVersionSchema.of(row.head_version, project_id, request)
+        version = None if row.head_version is None else PageVersionSchema.of(row.head_version, book_id, request)
         return cls(
             page_id=row.page_id,
             status=row.status,
@@ -191,9 +191,9 @@ class StagePageSchema(ResponseModel):
             version=version,
             through_step=row.through_step,
             review_processor=row.review_processor,
-            step=None if row.step is None else StepPageSchema.of(row.step, project_id, request),
+            step=None if row.step is None else StepPageSchema.of(row.step, book_id, request),
             marked_bad=row.marked_bad,
-            picture=None if row.picture is None else PageVersionSchema.of(row.picture, project_id, request),
+            picture=None if row.picture is None else PageVersionSchema.of(row.picture, book_id, request),
         )
 
 

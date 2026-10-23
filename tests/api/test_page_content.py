@@ -14,12 +14,12 @@ from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.enums import ContentSource, ContentType, JobKind, JobState, PageKind
 from bookreviver.domain.values import ContentDetection
-from tests.helpers.builders import EPOCH, make_job, make_page, make_project, new_account_id
+from tests.helpers.builders import EPOCH, make_job, make_page, make_record, new_account_id
 from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import FakeBoardProvider, RecordingEventBus
 from tests.helpers.scripted_runner import ScriptedRunner
-from tests.helpers.seeding import commit_project, store_project
+from tests.helpers.seeding import commit_record, store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -28,13 +28,13 @@ if TYPE_CHECKING:
     from dishka import Provider
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, Project
+    from bookreviver.domain.entities import Actor, BookRecord
     from bookreviver.domain.entities import Page as BookPage
     from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
-PROJECTS_PATH: str = '/api/v1/projects'
+BOOKS_PATH: str = '/api/v1/books'
 CONTENT_FIELD: str = 'content_type'
 PAGE_IDS_FIELD: str = 'page_ids'
 DETECT_SUFFIX: str = '/pages/content-types/detect'
@@ -47,11 +47,11 @@ SAME_PAGE: str = str(uuid4())
 class Book(NamedTuple):
     """A book of three pages of the signed-in account: two of text, the second with a picture found on it, and a plate.
 
-    :ivar project: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar pages: The pages in book order.
     """
 
-    project: Project
+    book_record: BookRecord
     pages: list[BookPage]
 
     def page_path(self, index: int) -> str:
@@ -62,12 +62,12 @@ class Book(NamedTuple):
         :returns: The path of the page resource.
         :rtype: str
         """
-        return f'{PROJECTS_PATH}/{self.project.id}/pages/{self.pages[index].id}'
+        return f'{BOOKS_PATH}/{self.book_record.id}/pages/{self.pages[index].id}'
 
     @property
     def detect_path(self) -> str:
         """The path of the detection of the content of pages."""
-        return f'{PROJECTS_PATH}/{self.project.id}{DETECT_SUFFIX}'
+        return f'{BOOKS_PATH}/{self.book_record.id}{DETECT_SUFFIX}'
 
 
 @pytest.fixture
@@ -103,12 +103,12 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project()
+    book_record = make_record()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(LAYOUT))
     pages = [evolve(make_page(order_key=key), kind=kind) for key, kind in zip(keys, LAYOUT, strict=True)]
     pages[1] = evolve(pages[1], content_type=FOUND)
-    await store_project(fx_uow(), project, *pages, owner=fx_actor.account_id)
-    return Book(project=project, pages=pages)
+    await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id)
+    return Book(book_record=book_record, pages=pages)
 
 
 async def _page(client: httpx.AsyncClient, book: Book, index: int) -> PageSchema:
@@ -139,7 +139,7 @@ class TestPageContent:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        response = await fx_client.get(f'{PROJECTS_PATH}/{fx_book.project.id}/pages')
+        response = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/pages')
 
         pages = Page[PageSchema].model_validate_json(response.content).items
         expect(response.status_code == status.HTTP_200_OK)
@@ -192,7 +192,7 @@ class TestPageContent:
 
 
 class TestDetectContent:
-    """Tests for POST /projects/{project_id}/pages/content-types/detect."""
+    """Tests for POST /books/{book_id}/pages/content-types/detect."""
 
     async def test_a_request_without_pages_queues_a_job_for_the_pages_not_detected(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -236,7 +236,7 @@ class TestDetectContent:
     async def test_a_second_request_while_the_job_is_queued_is_a_409_problem(
         self, fx_client: httpx.AsyncClient, fx_board: FakeJobBoard, fx_book: Book
     ) -> None:
-        """Verify one detection of the project at a time, which the request is told of while one is queued.
+        """Verify one detection of the book at a time, which the request is told of while one is queued.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -245,7 +245,7 @@ class TestDetectContent:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        queued = fx_board.put(make_job(project_id=fx_book.project.id, kind=JobKind.DETECT_CONTENT))
+        queued = fx_board.put(make_job(book_id=fx_book.book_record.id, kind=JobKind.DETECT_CONTENT))
 
         response = await fx_client.post(fx_book.detect_path, json={})
 
@@ -277,7 +277,7 @@ class TestDetectContent:
     async def test_a_page_that_is_not_in_the_book_and_a_book_of_another_account_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify a page that does not exist and a project that is not the account's answer 404 and queue nothing.
+        """Verify a page that does not exist and a book that is not the account's answer 404 and queue nothing.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -288,12 +288,12 @@ class TestDetectContent:
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        stranger = make_project()
+        stranger = make_record()
         page = make_page()
-        await commit_project(fx_database, fx_uow(), stranger, page, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), stranger, page, owner=new_account_id())
 
         missing = await fx_client.post(fx_book.detect_path, json={PAGE_IDS_FIELD: [str(uuid4())]})
-        foreign = await fx_client.post(f'{PROJECTS_PATH}/{stranger.id}{DETECT_SUFFIX}', json={})
+        foreign = await fx_client.post(f'{BOOKS_PATH}/{stranger.id}{DETECT_SUFFIX}', json={})
         borrowed = await fx_client.post(fx_book.detect_path, json={PAGE_IDS_FIELD: [str(page.id)]})
 
         expect(missing.status_code == status.HTTP_404_NOT_FOUND)

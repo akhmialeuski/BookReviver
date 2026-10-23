@@ -13,7 +13,7 @@ from bookreviver.domain.enums import OrderMode, OrderRuleKind, RecipeKind
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.services.recipes import DefaultRecipes
-from tests.helpers.builders import make_project
+from tests.helpers.builders import make_record
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.processing import DEFAULTS
 from tests.helpers.processors import (
@@ -29,14 +29,14 @@ from tests.helpers.processors import (
     SecondProcessor,
     ThirdProcessor,
 )
-from tests.helpers.seeding import store_project
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     import httpx
 
-    from bookreviver.domain.entities import Actor, Project
+    from bookreviver.domain.entities import Actor, BookRecord
     from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
@@ -95,63 +95,65 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_project(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Project:
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> BookRecord:
     """Commit a book of the signed-in account.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
-    :returns: The stored project.
-    :rtype: Project
+    :returns: The stored book.
+    :rtype: BookRecord
     """
-    project = make_project()
-    await store_project(fx_uow(), project, owner=fx_actor.account_id)
-    return project
+    book_record = make_record()
+    await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+    return book_record
 
 
-def recipes_path(project: Project) -> str:
-    """Return the path of the recipes of the geometry stage of a project.
+def recipes_path(book_record: BookRecord) -> str:
+    """Return the path of the recipes of the geometry stage of a book.
 
-    :param project: The project.
-    :type project: Project
+    :param book_record: The book.
+    :type book_record: BookRecord
     :returns: The path of the request.
     :rtype: str
     """
-    return f'{API_PATH}/projects/{project.id}/stages/geometry/recipes'
+    return f'{API_PATH}/books/{book_record.id}/stages/geometry/recipes'
 
 
-async def recipe_of(client: httpx.AsyncClient, project: Project, kind: RecipeKind = RecipeKind.TEXT) -> RecipeSchema:
-    """Read the recipe of a kind of the geometry stage of a project, which the first read creates.
+async def recipe_of(
+    client: httpx.AsyncClient, book_record: BookRecord, kind: RecipeKind = RecipeKind.TEXT
+) -> RecipeSchema:
+    """Read the recipe of a kind of the geometry stage of a book, which the first read creates.
 
     :param client: Client of the running application.
     :type client: httpx.AsyncClient
-    :param project: The project.
-    :type project: Project
+    :param book_record: The book.
+    :type book_record: BookRecord
     :param kind: The kind of page, text unless given.
     :type kind: RecipeKind
     :returns: The recipe.
     :rtype: RecipeSchema
     """
-    listed = await client.get(recipes_path(project))
+    listed = await client.get(recipes_path(book_record))
     return next(
         recipe for recipe in (RecipeSchema.model_validate(item) for item in listed.json()[ITEMS]) if recipe.kind is kind
     )
 
 
-async def recipe_url(client: httpx.AsyncClient, project: Project, kind: RecipeKind = RecipeKind.TEXT) -> str:
-    """Give the path of the recipe of a kind of the geometry stage of a project.
+async def recipe_url(client: httpx.AsyncClient, book_record: BookRecord, kind: RecipeKind = RecipeKind.TEXT) -> str:
+    """Give the path of the recipe of a kind of the geometry stage of a book.
 
     :param client: Client of the running application.
     :type client: httpx.AsyncClient
-    :param project: The project.
-    :type project: Project
+    :param book_record: The book.
+    :type book_record: BookRecord
     :param kind: The kind of page, text unless given.
     :type kind: RecipeKind
     :returns: The path of the request.
     :rtype: str
     """
-    return f'{recipes_path(project)}/{(await recipe_of(client, project, kind)).id}'
+    return f'{recipes_path(book_record)}/{(await recipe_of(client, book_record, kind)).id}'
 
 
 def body_of(*keys: str, order: OrderMode | None = None) -> dict[str, object]:
@@ -196,16 +198,16 @@ class TestRecipeOrder:
     """Tests for saving a recipe whose steps stand off their places."""
 
     async def test_a_step_off_its_usual_place_is_saved_and_named_in_the_answer(
-        self, fx_client: httpx.AsyncClient, fx_project: Project
+        self, fx_client: httpx.AsyncClient, fx_book: BookRecord
     ) -> None:
         """Verify the recipe is stored and the answer says which step is out of place and why.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_project: Book of the signed-in account.
-        :type fx_project: Project
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: BookRecord
         """
-        response = await fx_client.put(await recipe_url(fx_client, fx_project), json=body_of(SECOND_KEY, FIRST_KEY))
+        response = await fx_client.put(await recipe_url(fx_client, fx_book), json=body_of(SECOND_KEY, FIRST_KEY))
         recipe = RecipeSchema.model_validate_json(response.content)
         (issue,) = recipe.order_issues
         expect(response.status_code == status.HTTP_200_OK)
@@ -215,70 +217,70 @@ class TestRecipeOrder:
         assert_expectations()
 
     async def test_a_recipe_in_its_usual_order_has_no_issue(
-        self, fx_client: httpx.AsyncClient, fx_project: Project
+        self, fx_client: httpx.AsyncClient, fx_book: BookRecord
     ) -> None:
         """Verify the answer lists nothing for steps that keep their places.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_project: Book of the signed-in account.
-        :type fx_project: Project
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: BookRecord
         """
         response = await fx_client.put(
-            await recipe_url(fx_client, fx_project), json=body_of(FIRST_KEY, SECOND_KEY, THIRD_KEY)
+            await recipe_url(fx_client, fx_book), json=body_of(FIRST_KEY, SECOND_KEY, THIRD_KEY)
         )
         assert RecipeSchema.model_validate_json(response.content).order_issues == []
 
     async def test_a_step_where_it_cannot_work_is_refused_with_its_reason_and_the_recipe_stays(
-        self, fx_client: httpx.AsyncClient, fx_project: Project
+        self, fx_client: httpx.AsyncClient, fx_book: BookRecord
     ) -> None:
         """Verify the usual order answers 422 with the reason as the detail, and stores nothing.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_project: Book of the signed-in account.
-        :type fx_project: Project
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: BookRecord
         """
-        refused = await fx_client.put(await recipe_url(fx_client, fx_project), json=body_of(THIRD_KEY, SECOND_KEY))
-        kept = await recipe_of(fx_client, fx_project)
+        refused = await fx_client.put(await recipe_url(fx_client, fx_book), json=body_of(THIRD_KEY, SECOND_KEY))
+        kept = await recipe_of(fx_client, fx_book)
         expect(refused.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
         expect(refused.json()[DETAIL] == THIRD_REASON)
         expect([step.processor_key for step in kept.steps] == [FAKE_KEY])
         assert_expectations()
 
     async def test_the_free_order_saves_the_step_and_warns_of_it_on_every_later_read(
-        self, fx_client: httpx.AsyncClient, fx_project: Project
+        self, fx_client: httpx.AsyncClient, fx_book: BookRecord
     ) -> None:
         """Verify the free order stores the recipe, and the issue of the required kind is read back with it.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_project: Book of the signed-in account.
-        :type fx_project: Project
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: BookRecord
         """
         body = body_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE)
-        saved = await fx_client.put(await recipe_url(fx_client, fx_project), json=body)
-        read = await recipe_of(fx_client, fx_project)
+        saved = await fx_client.put(await recipe_url(fx_client, fx_book), json=body)
+        read = await recipe_of(fx_client, fx_book)
         expect(saved.status_code == status.HTTP_200_OK)
         for issues in (RecipeSchema.model_validate_json(saved.content).order_issues, read.order_issues):
             expect([(issue.kind, issue.reason) for issue in issues] == [(OrderRuleKind.REQUIRED, THIRD_REASON)])
         assert_expectations()
 
     async def test_the_recipe_of_another_kind_is_refused_and_saved_by_the_same_rule(
-        self, fx_client: httpx.AsyncClient, fx_project: Project
+        self, fx_client: httpx.AsyncClient, fx_book: BookRecord
     ) -> None:
         """Verify the recipe of every kind keeps the order as the recipe of text pages does.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_project: Book of the signed-in account.
-        :type fx_project: Project
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: BookRecord
         """
-        url = await recipe_url(fx_client, fx_project, RecipeKind.BLANK)
+        url = await recipe_url(fx_client, fx_book, RecipeKind.BLANK)
         refused = await fx_client.put(url, json=body_of(THIRD_KEY, SECOND_KEY))
         saved = await fx_client.put(url, json=body_of(FIRST_KEY, SECOND_KEY))
         free = await fx_client.put(url, json=body_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE))
-        read = await recipe_of(fx_client, fx_project, RecipeKind.BLANK)
+        read = await recipe_of(fx_client, fx_book, RecipeKind.BLANK)
         expect(refused.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT)
         expect(
             saved.status_code == status.HTTP_200_OK
@@ -310,20 +312,20 @@ class TestProfileOrder:
         assert_expectations()
 
     async def test_applying_a_profile_names_the_steps_that_are_out_of_place(
-        self, fx_client: httpx.AsyncClient, fx_project: Project
+        self, fx_client: httpx.AsyncClient, fx_book: BookRecord
     ) -> None:
         """Verify the recipe a profile makes is answered with its issues, though the profile was saved before them.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_project: Book of the signed-in account.
-        :type fx_project: Project
+        :param fx_book: Book of the signed-in account.
+        :type fx_book: BookRecord
         """
         steps = [{'processor_key': SECOND_KEY}, {'processor_key': FIRST_KEY}]
         created = await fx_client.post(PROFILES_PATH, json={'name': NAME, 'stage': 'geometry', 'steps': steps})
         profile_id = created.json()['id']
         applied = await fx_client.post(
-            f'{API_PATH}/projects/{fx_project.id}/recipe-profiles/{profile_id}/apply', json={'kind': 'text'}
+            f'{API_PATH}/books/{fx_book.id}/recipe-profiles/{profile_id}/apply', json={'kind': 'text'}
         )
         answer = AppliedProfileSchema.model_validate_json(applied.content)
         expect(applied.status_code == status.HTTP_201_CREATED)

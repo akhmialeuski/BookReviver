@@ -1,4 +1,4 @@
-"""Tests for the SQLAlchemy tables: the file of a book ties its rows to its project, and the library ties it to an owner."""
+"""Tests for the SQLAlchemy tables: the file of a book ties its rows to it, and the library ties the book to an owner."""
 
 from typing import TYPE_CHECKING
 
@@ -18,18 +18,18 @@ from tests.helpers.builders import (
     EPOCH,
     make_page,
     make_page_history_entry,
-    make_project,
+    make_record,
     make_source,
     make_step_values,
     new_account_id,
 )
-from tests.helpers.seeding import store_project
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.adapters.persistence.sqlalchemy.tables import ProjectRow, ScanRow
+    from bookreviver.adapters.persistence.sqlalchemy.tables import BookRecordRow, ScanRow
     from bookreviver.domain.ids import AccountId
     from tests.helpers.database import BookSessions, UnitOfWorkFactory
 
@@ -47,42 +47,42 @@ SECOND_NAME: str = 'second.pdf'
 UNIMPORTED_STATUSES: tuple[SourceStatus, ...] = (SourceStatus.REJECTED, SourceStatus.REJECTED, SourceStatus.SKIPPED)
 
 
-def count_rows(session: Session, table: type[PageRow | ProjectRow | ScanRow | SourceRow | StepChangeRow]) -> int:
+def count_rows(session: Session, table: type[PageRow | BookRecordRow | ScanRow | SourceRow | StepChangeRow]) -> int:
     """Count the rows of a table in the transaction of the session.
 
     :param session: Session of the transaction.
     :type session: Session
     :param table: Table to count.
-    :type table: type[PageRow | ProjectRow | ScanRow | SourceRow | StepChangeRow]
+    :type table: type[PageRow | BookRecordRow | ScanRow | SourceRow | StepChangeRow]
     :returns: Number of rows the transaction sees.
     :rtype: int
     """
     return session.scalar(select(func.count()).select_from(table)) or 0
 
 
-class TestProjectRow:
-    """Tests for ProjectRow together with the foreign keys and relationships of its pages."""
+class TestBookRecordRow:
+    """Tests for BookRecordRow together with the foreign keys and relationships of its pages."""
 
     async def test_update_keeps_pages(
         self, fx_uow: UnitOfWorkFactory, fx_book_sessions: BookSessions, fx_owner_id: AccountId
     ) -> None:
-        """Verify updating a project leaves its pages, which the relationships must not merge away.
+        """Verify updating a book leaves its pages, which the relationships must not merge away.
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_book_sessions: Sessions of the files of the books of the test.
         :type fx_book_sessions: BookSessions
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
-        project = make_project()
+        book_record = make_record()
         uow = fx_uow()
-        await store_project(uow, project, make_page(), owner=fx_owner_id)
+        await store_book(uow, book_record, make_page(), owner=fx_owner_id)
 
-        renamed = evolve(project, details=evolve(project.details, title='Renamed'))
-        await uow.change_book(project.id, lambda repos, _project: repos.projects.update(renamed))
+        renamed = evolve(book_record, details=evolve(book_record.details, title='Renamed'))
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.book_record.update(renamed))
 
-        assert await fx_book_sessions.read(project.id, lambda session: count_rows(session, PageRow)) == 1
+        assert await fx_book_sessions.read(book_record.id, lambda session: count_rows(session, PageRow)) == 1
 
 
 class TestStepChangeRow:
@@ -97,20 +97,22 @@ class TestStepChangeRow:
         :type fx_uow: UnitOfWorkFactory
         :param fx_book_sessions: Sessions of the files of the books of the test.
         :type fx_book_sessions: BookSessions
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
-        project, deleted, kept = make_project(), make_page(order_key='a0'), make_page(order_key='b0')
+        book_record, deleted, kept = make_record(), make_page(order_key='a0'), make_page(order_key='b0')
         uow = fx_uow()
-        await store_project(uow, project, deleted, kept, owner=fx_owner_id)
+        await store_book(uow, book_record, deleted, kept, owner=fx_owner_id)
         values = make_step_values(scope=ValueScope.ODD)
         shared = PageHistoryEntry.of_values([deleted.id, kept.id], values, values, ChangeSource.USER)
         own = make_page_history_entry(page_id=deleted.id)
-        await uow.change_book(project.id, lambda repos, _project: repos.page_history.add_many([*shared, own]))
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.page_history.add_many([*shared, own]))
 
-        await uow.change_book(project.id, lambda repos, _project: repos.pages.delete(deleted.id))
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.pages.delete(deleted.id))
 
-        ids = await fx_book_sessions.read(project.id, lambda session: session.scalars(select(StepChangeRow.id)).all())
+        ids = await fx_book_sessions.read(
+            book_record.id, lambda session: session.scalars(select(StepChangeRow.id)).all()
+        )
         assert ids == [shared[0].id]
 
 
@@ -129,7 +131,7 @@ class TestLibraryRow:
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
-        await store_project(fx_uow(), make_project(), owner=fx_owner_id)
+        await store_book(fx_uow(), make_record(), owner=fx_owner_id)
         with pytest.raises(IntegrityError, match=SQLITE_FOREIGN_KEY_FAILED):
             await fx_database.write(
                 lambda session: session.execute(delete(AccountTable).filter_by(id=fx_owner_id)),
@@ -145,13 +147,13 @@ class TestLibraryRow:
         :type fx_uow: UnitOfWorkFactory
         """
         owner_id = new_account_id()
-        entry = LibraryEntry(project_id=make_project().id, owner_id=owner_id, added_at=EPOCH)
+        entry = LibraryEntry(book_id=make_record().id, owner_id=owner_id, added_at=EPOCH)
         with pytest.raises(NotFoundError, match=str(owner_id)):
             await fx_uow().change(lambda repos: repos.library.add(entry))
 
 
 class TestSourceRow:
-    """Tests for the partial unique index that keeps the digest of an imported source unique in its project."""
+    """Tests for the partial unique index that keeps the digest of an imported source unique in its book."""
 
     async def test_database_refuses_a_second_imported_source_with_one_digest(
         self, fx_uow: UnitOfWorkFactory, fx_book_sessions: BookSessions, fx_owner_id: AccountId
@@ -162,12 +164,12 @@ class TestSourceRow:
         :type fx_uow: UnitOfWorkFactory
         :param fx_book_sessions: Sessions of the files of the books of the test.
         :type fx_book_sessions: BookSessions
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
-        project = make_project()
+        book_record = make_record()
         first = make_source(name=FIRST_NAME)
-        await store_project(fx_uow(), project, owner=fx_owner_id, sources=[first])
+        await store_book(fx_uow(), book_record, owner=fx_owner_id, sources=[first])
         second = SourceMapper().to_row(evolve(make_source(name=SECOND_NAME), sha256=first.sha256))
 
         def add_and_flush(session: Session) -> None:
@@ -181,7 +183,7 @@ class TestSourceRow:
             session.flush()
 
         with pytest.raises(IntegrityError, match=SQLITE_UNIQUE_FAILED):
-            await fx_book_sessions.write(project.id, add_and_flush)
+            await fx_book_sessions.write(book_record.id, add_and_flush)
 
     async def test_files_no_import_took_in_may_repeat_the_digest_of_an_imported_source(
         self, fx_uow: UnitOfWorkFactory, fx_book_sessions: BookSessions, fx_owner_id: AccountId
@@ -192,12 +194,12 @@ class TestSourceRow:
         :type fx_uow: UnitOfWorkFactory
         :param fx_book_sessions: Sessions of the files of the books of the test.
         :type fx_book_sessions: BookSessions
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         """
-        project = make_project()
+        book_record = make_record()
         imported = make_source(name=FIRST_NAME)
-        await store_project(fx_uow(), project, owner=fx_owner_id, sources=[imported])
+        await store_book(fx_uow(), book_record, owner=fx_owner_id, sources=[imported])
         unimported = [
             evolve(
                 make_source(name=SECOND_NAME),
@@ -217,7 +219,7 @@ class TestSourceRow:
             """
             session.add_all(SourceMapper().to_row(source) for source in unimported)
 
-        await fx_book_sessions.write(project.id, add_sources)
+        await fx_book_sessions.write(book_record.id, add_sources)
 
-        stored = await fx_book_sessions.read(project.id, lambda session: count_rows(session, SourceRow))
+        stored = await fx_book_sessions.read(book_record.id, lambda session: count_rows(session, SourceRow))
         assert stored == 1 + len(UNIMPORTED_STATUSES)

@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Stage } from '@/api';
 import {
-  deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteMutation,
-  listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetOptions,
-  listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey,
-  putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutMutation,
+  deleteEditApiV1BooksBookIdPagesPageIdEditsStageStepIdDeleteMutation,
+  listEditsApiV1BooksBookIdPagesPageIdEditsStageGetOptions,
+  listEditsApiV1BooksBookIdPagesPageIdEditsStageGetQueryKey,
+  putEditApiV1BooksBookIdPagesPageIdEditsStageStepIdPutMutation,
 } from '@/api/@tanstack/react-query.gen';
 
 /**
@@ -20,15 +20,10 @@ import {
 const EDITS_PAGE_SIZE = 100;
 
 /** Read the manual edits a stage has on a page, one per step. */
-export function useEdits(
-  projectId: string,
-  pageId: string | undefined,
-  stage: Stage,
-  enabled = true,
-) {
+export function useEdits(bookId: string, pageId: string | undefined, stage: Stage, enabled = true) {
   return useQuery({
-    ...listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetOptions({
-      path: { project_id: projectId, page_id: pageId ?? '', stage },
+    ...listEditsApiV1BooksBookIdPagesPageIdEditsStageGetOptions({
+      path: { book_id: bookId, page_id: pageId ?? '', stage },
       query: { size: EDITS_PAGE_SIZE },
     }),
     select: (page) => page.items,
@@ -37,27 +32,27 @@ export function useEdits(
 }
 
 /** The changes that save and delete an edit. */
-export function useEditChanges(projectId: string) {
+export function useEditChanges(bookId: string) {
   const queryClient = useQueryClient();
-  const scope = { id: `page-edits:${projectId}` };
+  const scope = { id: `page-edits:${bookId}` };
   const onSettled = (
     _data: unknown,
     _error: unknown,
-    { path }: { path: { project_id: string; page_id: string; stage: Stage } },
+    { path }: { path: { book_id: string; page_id: string; stage: Stage } },
   ) =>
     queryClient.invalidateQueries({
-      queryKey: listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetQueryKey({
-        path: { project_id: path.project_id, page_id: path.page_id, stage: path.stage },
+      queryKey: listEditsApiV1BooksBookIdPagesPageIdEditsStageGetQueryKey({
+        path: { book_id: path.book_id, page_id: path.page_id, stage: path.stage },
       }),
     });
   return {
     save: useMutation({
-      ...putEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutMutation(),
+      ...putEditApiV1BooksBookIdPagesPageIdEditsStageStepIdPutMutation(),
       scope,
       onSettled,
     }),
     remove: useMutation({
-      ...deleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteMutation(),
+      ...deleteEditApiV1BooksBookIdPagesPageIdEditsStageStepIdDeleteMutation(),
       scope,
       onSettled,
     }),

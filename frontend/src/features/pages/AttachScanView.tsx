@@ -2,8 +2,8 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import type { PageSchema } from '@/api';
 import {
-  listScansApiV1ProjectsProjectIdScansGetOptions,
-  listSourcesApiV1ProjectsProjectIdSourcesGetOptions,
+  listScansApiV1BooksBookIdScansGetOptions,
+  listSourcesApiV1BooksBookIdSourcesGetOptions,
 } from '@/api/@tanstack/react-query.gen';
 import { useAttachScan } from '@/features/pages/actions';
 import { describePageError } from '@/features/pages/errors';
@@ -30,32 +30,32 @@ const SOURCES_SIZE = 100;
 const SCANS_SIZE = 12;
 
 export function AttachScanView({
-  projectId,
+  bookId,
   page,
   onBack,
   onDone,
 }: {
-  projectId: string;
+  bookId: string;
   page: PageSchema;
   onBack: () => void;
   onDone: () => void;
 }): React.JSX.Element {
-  const attach = useAttachScan(projectId);
+  const attach = useAttachScan(bookId);
   const [chosenSourceId, setSourceId] = useState<string | null>(null);
   const [scanPage, setScanPage] = useState(1);
   const [scanId, setScanId] = useState<string | null>(null);
   const [takeOver, setTakeOver] = useState(false);
 
   const sources = useQuery(
-    listSourcesApiV1ProjectsProjectIdSourcesGetOptions({
-      path: { project_id: projectId },
+    listSourcesApiV1BooksBookIdSourcesGetOptions({
+      path: { book_id: bookId },
       query: { page: 1, size: SOURCES_SIZE },
     }),
   );
   const sourceId = chosenSourceId ?? sources.data?.items[0]?.id ?? null;
   const scans = useQuery({
-    ...listScansApiV1ProjectsProjectIdScansGetOptions({
-      path: { project_id: projectId },
+    ...listScansApiV1BooksBookIdScansGetOptions({
+      path: { book_id: bookId },
       query: { page: scanPage, size: SCANS_SIZE, source_id: sourceId },
     }),
     enabled: sourceId !== null,
@@ -86,7 +86,7 @@ export function AttachScanView({
         if (scanId !== null) {
           attach.mutate(
             {
-              path: { project_id: projectId, page_id: page.id },
+              path: { book_id: bookId, page_id: page.id },
               body: { scan_id: scanId, take_over: takeOver },
             },
             { onSuccess: onDone },

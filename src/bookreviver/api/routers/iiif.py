@@ -6,8 +6,9 @@ tile from. The stored document never names its book, so a book imported under a 
 domain, port or device address, keeps every pyramid it has.
 
 The key of a file carries the version of its renditions, so the content behind a key never changes and browsers cache
-it for good. The cache is private because access is checked for every request. On a server a reverse proxy can take
-over ``/iiif`` after the API has checked access, since all files are served alike.
+it for good. No account and no owner is checked: anyone who has the key of a file reads it, and the key holds the
+identifier of its book, which only the owner is told. On a server a reverse proxy can take over ``/iiif``, since all
+files are served alike.
 """
 
 import json
@@ -21,7 +22,6 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka, inject
 from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import FileResponse, Response
 
-from bookreviver.api.auth import ActorDep
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.iiif import IIIF_INFO_FILE, IIIF_INFO_MEDIA_TYPE
 from bookreviver.api.schemas.types import AssetKey
@@ -31,7 +31,7 @@ from bookreviver.services.pages import PageService
 
 # Where the router is mounted below the API prefix, which a pyramid's ``info.json`` names as its address
 IIIF_PREFIX: str = '/iiif'
-# Asset keys carry the version of the asset, so the content behind a URL never changes; private, as access is checked
+# Asset keys carry the version of the asset, so the content behind a URL never changes, and no shared cache keeps it
 IMMUTABLE_CACHE: dict[str, str] = {'Cache-Control': 'private, max-age=31536000, immutable'}
 KEY_DESCRIPTION: str = 'Storage key of the file, as found in the image addresses of a page or a scan'
 # The property of an image information document that holds the address of its image service
@@ -42,25 +42,23 @@ router = APIRouter(prefix=IIIF_PREFIX, tags=['iiif'], route_class=DishkaRoute)
 
 @inject
 async def opened_asset(
-    key: Annotated[AssetKey, Path(description=KEY_DESCRIPTION)], actor: ActorDep, pages: FromDishka[PageService]
+    key: Annotated[AssetKey, Path(description=KEY_DESCRIPTION)], pages: FromDishka[PageService]
 ) -> AsyncIterator[pathlib.Path]:
     """Keep the stored file at ``key`` open until the response carrying it has been sent.
 
     :param key: Storage key of the file.
     :type key: AssetKey
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param pages: Page service of the request.
     :type pages: PageService
     :returns: Iterator yielding once the path of the file, and closing the file afterwards.
     :rtype: AsyncIterator[pathlib.Path]
-    :raises NotFoundError: If the key is not under the ``assets/`` of one of the actor's projects, no file is stored
-                           there, or the key names a directory.
+    :raises NotFoundError: If the key is not under the ``assets/`` of a book, no file is stored there, or the key
+                           names a directory.
     """
     # try/finally rather than a context manager around the yield, because FastAPI drives this generator
     opened = AsyncExitStack()
     try:
-        path = await opened.enter_async_context(pages.open_asset(actor, StorageKey(key)))
+        path = await opened.enter_async_context(pages.open_asset(StorageKey(key)))
         if not await anyio.Path(path).is_file():
             raise NotFoundError(key)
         yield path

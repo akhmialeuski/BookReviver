@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { BookOpenIcon, ChevronRightIcon, KeyboardIcon } from 'lucide-react';
-import { projectApiV1ProjectsProjectIdGetOptions } from '@/api/@tanstack/react-query.gen';
+import { bookApiV1BooksBookIdGetOptions } from '@/api/@tanstack/react-query.gen';
 import { AccountMenu } from '@/features/auth/AppHeader';
 import { ActivityChip } from '@/features/workspace/ActivityChip';
 import { MESSAGES } from '@/shared/messages';
@@ -14,20 +14,18 @@ import { Button } from '@/shared/ui/button';
  */
 
 export function BookHeader({
-  projectId,
+  bookId,
   onShortcuts,
 }: {
-  projectId: string;
+  bookId: string;
   onShortcuts: () => void;
 }): React.JSX.Element {
-  const project = useQuery(
-    projectApiV1ProjectsProjectIdGetOptions({ path: { project_id: projectId } }),
-  );
-  const details = project.data?.details;
+  const book = useQuery(bookApiV1BooksBookIdGetOptions({ path: { book_id: bookId } }));
+  const details = book.data?.details;
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
-      <Link to="/projects" className="flex items-center gap-2 font-semibold tracking-tight">
+      <Link to="/books" className="flex items-center gap-2 font-semibold tracking-tight">
         <BookOpenIcon className="size-5" aria-hidden="true" />
         {MESSAGES.app.name}
       </Link>
@@ -36,7 +34,7 @@ export function BookHeader({
         aria-hidden="true"
       />
       <Link
-        to="/projects"
+        to="/books"
         className="hidden text-sm text-muted-foreground hover:text-foreground md:block"
       >
         {MESSAGES.workspace.header.library}
@@ -46,15 +44,15 @@ export function BookHeader({
         aria-hidden="true"
       />
       <h1 className="truncate text-sm font-semibold" data-testid="book-title">
-        {details === undefined ? '' : details.title || MESSAGES.projects.untitled}
+        {details === undefined ? '' : details.title || MESSAGES.books.untitled}
       </h1>
       {details?.publication_year ? (
         <Badge variant="secondary">{details.publication_year}</Badge>
       ) : null}
       <div className="ml-auto flex items-center gap-2">
-        <ActivityChip projectId={projectId} />
+        <ActivityChip bookId={bookId} />
         <Button asChild variant="outline" size="sm">
-          <Link to="/projects/$projectId/viewer" params={{ projectId }}>
+          <Link to="/books/$bookId/viewer" params={{ bookId }}>
             <BookOpenIcon />
             {MESSAGES.workspace.header.read}
           </Link>

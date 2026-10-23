@@ -6,7 +6,7 @@ inside a work directory made next to the files it will write, and stores each ou
 service that calls it owns the rows of the versions, and decides which output is which version.
 
 A processor makes its image without loss, or leaves one the runner can read as it is. The format of ``full`` is chosen
-here from the image policy of the project and the colour of the output, so the processor knows nothing of that setting.
+here from the image policy of the book and the colour of the output, so the processor knows nothing of that setting.
 A version is written once into the directory of its identifier, which the asset store publishes whole or not at all,
 so a step that fails leaves nothing behind and its version is made again under the same identifier.
 
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import PageEdit, PageVersion
     from bookreviver.domain.enums import ImagePolicy, PageSide
     from bookreviver.domain.ids import StorageKey
-    from bookreviver.domain.keys import ProjectKeys
+    from bookreviver.domain.keys import BookKeys
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.imaging import RenditionWriter, Tiler
     from bookreviver.ports.processing import StepExecutor
@@ -174,20 +174,20 @@ class StepRunner:
         )
 
     async def store(
-        self, keys: ProjectKeys, version: PageVersion, output: StepOutput, *, policy: ImagePolicy, tiles: bool
+        self, keys: BookKeys, version: PageVersion, output: StepOutput, *, policy: ImagePolicy, tiles: bool
     ) -> PageVersion:
         """Store the files of a version from one output of its step, and return the version as ready.
 
         Whatever an earlier attempt of the version left in its directory is removed first, since a stored file is
         never replaced, and a version that is stored again is one that never became ready.
 
-        :param keys: Keys of the project owning the page.
-        :type keys: ProjectKeys
+        :param keys: Keys of the book owning the page.
+        :type keys: BookKeys
         :param version: The version being made, whose identifier names its directory.
         :type version: PageVersion
         :param output: What the processor made.
         :type output: StepOutput
-        :param policy: Image policy of the project, which with the colour of the output chooses the format of ``full``.
+        :param policy: Image policy of the book, which with the colour of the output chooses the format of ``full``.
         :type policy: ImagePolicy
         :param tiles: Whether to cut the tile pyramid too, which a full run does for a current version only.
         :type tiles: bool
@@ -237,11 +237,11 @@ class StepRunner:
         """
         await self._assets.delete_prefix(prefix)
 
-    async def cut_tiles(self, keys: ProjectKeys, version: PageVersion) -> PageVersion:
+    async def cut_tiles(self, keys: BookKeys, version: PageVersion) -> PageVersion:
         """Cut the IIIF tile pyramid of a ready version from its ``full`` image.
 
-        :param keys: Keys of the project owning the page.
-        :type keys: ProjectKeys
+        :param keys: Keys of the book owning the page.
+        :type keys: BookKeys
         :param version: A ready version of a full run that has an image.
         :type version: PageVersion
         :returns: The version with its pyramid marked as cut.

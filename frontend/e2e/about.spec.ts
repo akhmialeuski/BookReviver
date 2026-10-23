@@ -25,8 +25,8 @@ test('a reader describes a book and finds the description after a reload', async
   await test.step('open the About tab of a new book', async () => {
     await openLibrary(page);
     const title = await createBook(page, TITLE);
-    const projectId = new URL(page.url()).pathname.split('/')[2] ?? '';
-    aboutUrl = `/projects/${projectId}/about`;
+    const bookId = new URL(page.url()).pathname.split('/')[2] ?? '';
+    aboutUrl = `/books/${bookId}/about`;
     await page.goto(aboutUrl);
     await expect(page.getByLabel('Title', { exact: true })).toHaveValue(title);
   });
@@ -67,8 +67,8 @@ test('a reader describes a book and finds the description after a reload', async
   });
 
   await test.step('see the library card with the ten stages and the next one', async () => {
-    await page.goto('/projects');
-    const card = page.getByTestId('project-card').filter({ hasText: renamed });
+    await page.goto('/books');
+    const card = page.getByTestId('book-card').filter({ hasText: renamed });
     await expect(card).toBeVisible();
     await expect(card.getByTestId('stage-segment')).toHaveCount(STAGE_COUNT);
     await expect(card.getByTestId('next-stage')).toContainText('Import');
@@ -79,7 +79,7 @@ test('a reader describes a book and finds the description after a reload', async
     await page.getByRole('button', { name: 'Delete the book' }).click();
     await expect(page.getByText('Delete this book?')).toBeVisible();
     await page.getByRole('button', { name: 'Delete book', exact: true }).click();
-    await expect(page).toHaveURL(/\/projects(\?.*)?$/);
-    await expect(page.getByTestId('project-card').filter({ hasText: renamed })).toHaveCount(0);
+    await expect(page).toHaveURL(/\/books(\?.*)?$/);
+    await expect(page.getByTestId('book-card').filter({ hasText: renamed })).toHaveCount(0);
   });
 });

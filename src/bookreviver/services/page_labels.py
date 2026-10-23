@@ -1,4 +1,4 @@
-"""Keeping the pagination sections of a book valid while its pages change, and telling which pages they renumber.
+"""Keeping the pagination sections of a book valid while its pages change.
 
 The label a page shows is computed when the page is read, from the sections by ``Pagination``, except for a manual
 label, which no section changes. Nothing computed is stored, so a change of the pages or of the sections writes no
@@ -10,44 +10,37 @@ A section starts at a page and so does not survive the deletion of that page. ``
 to leave, and hands every section that starts at one of them to the next page that stays, or removes it when no page
 follows.
 
-A change of the pages announces its own pages, and the browser reads the whole book again for it. A change of a
-section touches no page, so it watches the labels with ``watching`` and announces the pages whose label changed as one
-``PagesChanged`` of kind ``edited``.
+A change of the pages or of a section is announced by the unit of work once it committed, and the browser reads the
+pages and their labels again for it.
 """
 
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING
 
 from attrs import evolve
 
-from bookreviver.domain.enums import PageChange
 from bookreviver.domain.errors import ConflictError
-from bookreviver.domain.events import PagesChanged
 from bookreviver.domain.pagination import Pagination
-from bookreviver.services.projects import book_pages
+from bookreviver.services.books import book_pages
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
-    from types import TracebackType
 
     from bookreviver.domain.entities import Page, PaginationSection
-    from bookreviver.domain.ids import PageId, ProjectId
+    from bookreviver.domain.ids import PageId
     from bookreviver.domain.pagination import Numbering
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.runtime import Clock, EventPublisher
+    from bookreviver.ports.runtime import Clock
 
 
 class PageLabels:
-    """Settles the sections of a book in the transaction of its caller, and announces renumbered pages after it."""
+    """Settles the sections of a book in the transaction of its caller."""
 
-    def __init__(self, *, publisher: EventPublisher, clock: Clock) -> None:
-        """Stamp the pages and sections with a clock and announce the renumbered pages through a publisher.
+    def __init__(self, *, clock: Clock) -> None:
+        """Stamp the pages and sections with a clock.
 
-        :param publisher: Publisher of the events the browser follows.
-        :type publisher: EventPublisher
         :param clock: Clock stamping the pages and sections it writes.
         :type clock: Clock
         """
-        self._publisher = publisher
         self._clock = clock
 
     def settle(
@@ -97,29 +90,6 @@ class PageLabels:
         sections = repos.pagination_sections.list_all()
         return Pagination(sections, book_pages(repos.pages) if sections else pages).numbering()
 
-    def watching(self, repos: BookRepositories) -> LabelWatch:
-        """Watch the labels of the pages of a book for the ones a block of code changes.
-
-        :param repos: Repositories of the transaction the block runs in.
-        :type repos: BookRepositories
-        :returns: The watch, which is entered with ``with`` around the block, inside the work of the caller.
-        :rtype: LabelWatch
-        """
-        return LabelWatch(repos=repos)
-
-    async def announce(self, project_id: ProjectId, page_ids: Sequence[PageId]) -> None:
-        """Tell the browser which pages were renumbered, after the transaction ended.
-
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
-        :param page_ids: The pages whose label changed, none for a change that renumbered nothing.
-        :type page_ids: Sequence[PageId]
-        """
-        if page_ids:
-            await self._publisher.publish(
-                PagesChanged(project_id=project_id, page_ids=list(page_ids), change=PageChange.EDITED)
-            )
-
     def _hand_over(
         self,
         repos: BookRepositories,
@@ -134,9 +104,9 @@ class PageLabels:
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param sections: Every section of the project.
+        :param sections: Every section of the book.
         :type sections: Sequence[PaginationSection]
-        :param pages: Every page of the project in book order.
+        :param pages: Every page of the book in book order.
         :type pages: Sequence[Page]
         :param leaving: Pages about to be deleted.
         :type leaving: Collection[PageId]
@@ -160,58 +130,3 @@ class PageLabels:
             else:
                 settled.append(repos.pagination_sections.update(moved))
         return settled
-
-
-class LabelWatch:
-    """Finds the pages whose label a block of code changes, by reading the labels of the book before and after it.
-
-    The watch is a synchronous context manager entered inside the work of ``change_book``, and the caller announces
-    the pages after the work. A block that raises finds nothing.
-
-    :ivar renumbered: The pages whose label changed, in book order, which are none until a block ends without an error.
-    """
-
-    def __init__(self, *, repos: BookRepositories) -> None:
-        """Watch the labels of a project through the repositories of the caller's transaction.
-
-        :param repos: Repositories of the transaction the block runs in.
-        :type repos: BookRepositories
-        """
-        self._repos = repos
-        self._before: dict[PageId, str] = {}
-        self.renumbered: list[PageId] = []
-
-    def __enter__(self) -> Self:
-        """Read the labels the pages show before the block.
-
-        :returns: The watch itself.
-        :rtype: Self
-        """
-        self._before = self._labels()
-        return self
-
-    def __exit__(
-        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
-    ) -> None:
-        """Compare the labels after a block that ended without an error with those before it.
-
-        :param exc_type: Type of the exception the block raised, or None.
-        :type exc_type: type[BaseException] | None
-        :param exc_value: The exception the block raised, or None.
-        :type exc_value: BaseException | None
-        :param traceback: Traceback of the exception, or None.
-        :type traceback: TracebackType | None
-        """
-        if exc_type is not None:
-            return
-        after = self._labels()
-        self.renumbered = [page_id for page_id, label in after.items() if self._before.get(page_id) != label]
-
-    def _labels(self) -> dict[PageId, str]:
-        """Compute the label every page of the book shows.
-
-        :returns: The label of every page by identifier, in book order.
-        :rtype: dict[PageId, str]
-        """
-        sections = self._repos.pagination_sections.list_all()
-        return Pagination(sections, book_pages(self._repos.pages)).labels()

@@ -61,21 +61,21 @@ function findPage(pages: readonly PageSchema[], moving: ReadonlySet<string>, que
 }
 
 function MoveForm({
-  projectId,
+  bookId,
   pages,
   thumbnails,
   target,
   onDone,
 }: {
-  projectId: string;
+  bookId: string;
   pages: readonly PageSchema[];
   thumbnails: ReadonlyMap<string, string> | undefined;
   target: MoveTarget;
   onDone: () => void;
 }): React.JSX.Element {
   const text = MESSAGES.order.move;
-  const movePages = useMovePages(projectId);
-  const moveSource = useMoveSourcePages(projectId);
+  const movePages = useMovePages(bookId);
+  const moveSource = useMoveSourcePages(bookId);
   const moving = new Set(target.pageIds);
   const candidates = pages.filter((page) => !moving.has(page.id));
   const [anchorId, setAnchorId] = useState(candidates[0]?.id ?? '');
@@ -107,12 +107,12 @@ function MoveForm({
     const place = anchorBody({ pageId: anchorId, side });
     if (target.sourceId === undefined) {
       movePages.mutate(
-        { path: { project_id: projectId }, body: { page_ids: [...target.pageIds], ...place } },
+        { path: { book_id: bookId }, body: { page_ids: [...target.pageIds], ...place } },
         { onSuccess: onDone },
       );
     } else {
       moveSource.mutate(
-        { path: { project_id: projectId, source_id: target.sourceId }, body: place },
+        { path: { book_id: bookId, source_id: target.sourceId }, body: place },
         { onSuccess: onDone },
       );
     }
@@ -263,13 +263,13 @@ function MoveForm({
 }
 
 export function MovePagesDialog({
-  projectId,
+  bookId,
   pages,
   thumbnails,
   target,
   onClose,
 }: {
-  projectId: string;
+  bookId: string;
   pages: readonly PageSchema[];
   /**
    * The thumbnail of each page by its identifier, for a screen that draws the pages at one stage and not as the latest
@@ -295,7 +295,7 @@ export function MovePagesDialog({
         </DialogHeader>
         {target === null ? null : (
           <MoveForm
-            projectId={projectId}
+            bookId={bookId}
             pages={pages}
             thumbnails={thumbnails}
             target={target}

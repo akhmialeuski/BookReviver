@@ -4,9 +4,9 @@ import { expect } from '@playwright/test';
 import {
   addPlaceholderPages,
   createBook,
+  openBookId,
   openImportStage,
   openLibrary,
-  openProjectId,
   snap,
   uploadFolder,
   waitForIdleJobs,
@@ -115,7 +115,7 @@ test('a reload of the page in the middle of a run shows the same run, which goes
       // The strip keeps only the pages in sight, so the stage is told open by its title and not by its pages
       await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
       // The editor of the step opens with a preview of its own, which is over before the run is asked for
-      await waitForIdleJobs(page, openProjectId(page));
+      await waitForIdleJobs(page, openBookId(page));
       await page.getByTestId('run-menu').click();
       await page.getByTestId('run-pages-all').click();
       await page.keyboard.press('Escape');

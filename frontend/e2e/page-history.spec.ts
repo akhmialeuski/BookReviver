@@ -5,10 +5,10 @@ import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../src/shared/http/csrf';
 import {
   createBook,
   markPagesAsText,
+  openBookId,
   openImportStage,
   openLibrary,
   openOrderStage,
-  openProjectId,
   snap,
   stepIdsOf,
   uploadFolder,
@@ -68,7 +68,7 @@ interface HistoryItem {
 
 /** Read the identifier of the first page of the open book. */
 async function firstPageId(page: Page): Promise<string> {
-  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/pages?size=100`);
+  const listed = await page.request.get(`/api/v1/books/${openBookId(page)}/pages?size=100`);
   const items = ((await listed.json()) as { items: { id: string; position: number }[] }).items;
   const found = items.find((item) => item.position === FIRST_PAGE);
   if (found === undefined) {
@@ -80,7 +80,7 @@ async function firstPageId(page: Page): Promise<string> {
 /** Save the rotation edit of a step as the editor does, which writes the manual layer of the step to the history. */
 async function saveRotation(page: Page, pageId: string, stepId: string): Promise<void> {
   const response = await page.request.put(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/edits/geometry/${stepId}`,
+    `/api/v1/books/${openBookId(page)}/pages/${pageId}/edits/geometry/${stepId}`,
     {
       headers: await changeHeaders(page),
       multipart: { kind: 'rotation', geometry: JSON.stringify({ degrees: ANGLE_OF_THE_EDIT }) },
@@ -100,7 +100,7 @@ async function changeHeaders(page: Page): Promise<Record<string, string>> {
 /** Set the value a page uses for the largest slant of the step, as a value for the open page does. */
 async function putSlant(page: Page, pageId: string, stepId: string, value: number): Promise<void> {
   const response = await page.request.put(
-    `/api/v1/projects/${openProjectId(page)}/stages/geometry/steps/${stepId}/values/max_angle`,
+    `/api/v1/books/${openBookId(page)}/stages/geometry/steps/${stepId}/values/max_angle`,
     { headers: await changeHeaders(page), data: { scope: 'pages', page_ids: [pageId], value } },
   );
   expect(response.ok()).toBe(true);
@@ -109,7 +109,7 @@ async function putSlant(page: Page, pageId: string, stepId: string, value: numbe
 /** Read the settings a page has for the steps of the Geometry stage, one entry for each step that has any. */
 async function readSettings(page: Page, pageId: string): Promise<Record<string, number>[]> {
   const response = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/settings/geometry`,
+    `/api/v1/books/${openBookId(page)}/pages/${pageId}/settings/geometry`,
   );
   return ((await response.json()) as { items: { params: Record<string, number> }[] }).items.map(
     (item) => item.params,
@@ -119,7 +119,7 @@ async function readSettings(page: Page, pageId: string): Promise<Record<string, 
 /** Read the history of a step on a page from the server, the newest change first. */
 async function readHistory(page: Page, pageId: string, stepId: string): Promise<HistoryItem[]> {
   const response = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/history/geometry/${stepId}?size=100`,
+    `/api/v1/books/${openBookId(page)}/pages/${pageId}/history/geometry/${stepId}?size=100`,
   );
   return ((await response.json()) as { items: HistoryItem[] }).items;
 }
@@ -139,7 +139,7 @@ interface StepRow {
 /** Read the row of a page at a step of the Geometry stage from the server. */
 async function readStepRow(page: Page, pageId: string, stepId: string): Promise<StepRow> {
   const response = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/stages/geometry/pages?step=${stepId}&size=100`,
+    `/api/v1/books/${openBookId(page)}/stages/geometry/pages?step=${stepId}&size=100`,
   );
   const found = ((await response.json()) as { items: StepRow[] }).items.find(
     (row) => row.page_id === pageId,
@@ -168,7 +168,7 @@ test('a reader sees what changed on a page, takes the last change back with the 
     await openLibrary(page);
     await createBook(page, 'A book with a history');
     await uploadFolder(page, folder, PAGES);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
@@ -232,7 +232,7 @@ test('a reader sees what changed on a page, takes the last change back with the 
       ['hand', 'user', true],
     ]);
     const edits = await page.request.get(
-      `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/edits/geometry`,
+      `/api/v1/books/${openBookId(page)}/pages/${pageId}/edits/geometry`,
     );
     expect(((await edits.json()) as { total: number }).total).toBe(0);
   });
@@ -255,7 +255,7 @@ test('a reader reads a long history three changes at a time, undoes back to an o
     await openLibrary(page);
     await createBook(page, 'A book with a long history');
     await uploadFolder(page, folder, PAGES);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
     await expect(page.getByTestId('stage-title')).toHaveText('Geometry');
@@ -302,7 +302,7 @@ test('a reader reads a long history three changes at a time, undoes back to an o
   await test.step('a clear asks first, deletes the history and the settings, and leaves the section grey', async () => {
     // The undo changed the settings, so the editor of the step asks for a preview of the page, and a clear is refused
     // while that preview may read the versions the clear deletes
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     await history.getByTestId('page-history-clear').click();
     await expect(dialog).toContainText('cannot be undone');
     await history.scrollIntoViewIfNeeded();
@@ -339,21 +339,21 @@ test('a reader reads the changes and the results of a step in one timeline that 
   const results = history.locator(RESULT_ROWS);
   const dialog = page.getByTestId('page-history-dialog');
   const layer = page.getByTestId('editor-layer');
-  let projectId = '';
+  let bookId = '';
   let bookPath = '';
 
   // An edit starts a run of the stage on the page, and the next change waits until that run is over
   const settled = async (): Promise<void> => {
     await expect(page.getByTestId('editor-busy')).toHaveCount(0, { timeout: RUN_TIMEOUT_MS });
-    await waitForIdleJobs(page, projectId);
+    await waitForIdleJobs(page, bookId);
   };
 
   await test.step('a run through Select content makes a result, which the collapsed section counts', async () => {
     await openLibrary(page);
     await createBook(page, 'A book with a timeline');
     await uploadFolder(page, folder, 1);
-    projectId = openProjectId(page);
-    await waitForIdleJobs(page, projectId);
+    bookId = openBookId(page);
+    await waitForIdleJobs(page, bookId);
     // The detection takes the sheet for a picture, which the recipe for pictures processes, and the step open here
     // belongs to the recipe for text, so the page is said to be text
     await markPagesAsText(page);
@@ -463,12 +463,12 @@ test('a reader reads the changes and the results of a step in one timeline that 
   });
 
   await test.step('Cleanup opens on a step, and its history lists the changes of that step and the result of the stage', async () => {
-    const started = await page.request.post(`/api/v1/projects/${projectId}/stages/cleanup/run`, {
+    const started = await page.request.post(`/api/v1/books/${bookId}/stages/cleanup/run`, {
       headers: await changeHeaders(page),
       data: {},
     });
     expect(started.ok()).toBe(true);
-    await waitForIdleJobs(page, projectId);
+    await waitForIdleJobs(page, bookId);
     await page.goto(`${bookPath}/stages/cleanup`);
     await expect(page.getByTestId('stage-title')).toHaveText('Cleanup');
     await expect(page.getByTestId('strip-page')).toHaveCount(1);

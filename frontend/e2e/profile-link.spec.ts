@@ -37,7 +37,7 @@ test('a book shows its profile, marks a change of the steps, and saves or revert
 
   await test.step('a new book starts the Geometry stage with a built-in recipe, which is made from no profile', async () => {
     await registerAndSignIn(page);
-    await page.goto('/projects');
+    await page.goto('/books');
     await createBook(page, 'A photographed book');
     await uploadFolder(page, folder, PAGES);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');

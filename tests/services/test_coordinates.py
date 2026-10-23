@@ -14,8 +14,9 @@ from PIL import Image
 
 from bookreviver.domain.enums import Stage
 from bookreviver.domain.geometry import Point, Rotation
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import NewPageEdit, StageRun
+from tests.helpers.builders import open_for
 from tests.helpers.samples import find_mark, mark, png_bytes, spread
 from tests.helpers.spreads import (
     HEIGHT_PX,
@@ -28,7 +29,7 @@ from tests.helpers.spreads import (
 )
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Actor, Page, PageVersion, Project
+    from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -41,42 +42,44 @@ MARK_ON_LEFT: tuple[int, int] = (300, 500)
 MARK_ON_RIGHT: tuple[int, int] = (1_300, 700)
 
 
-async def landmark_on(kit: ProcessingKit, project: Project, version: PageVersion) -> Point:
+async def landmark_on(kit: ProcessingKit, book_record: BookRecord, version: PageVersion) -> Point:
     """Find the landmark on the stored image of a version.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param project: Project owning the version's page.
-    :type project: Project
+    :param book_record: Record of the book owning the version's page.
+    :type book_record: BookRecord
     :param version: A ready version that has its files.
     :type version: PageVersion
     :returns: The centre of the landmark in the pixels of the image of the version.
     :rtype: Point
     """
     assert version.renditions is not None
-    async with kit.assets.readable(ProjectKeys(project.id).version_rendition(version, version.renditions.full)) as full:
+    async with kit.assets.readable(
+        BookKeys(book_record.id).version_rendition(version, version.renditions.full)
+    ) as full:
         with Image.open(io.BytesIO(full.read_bytes())) as image:
             x, y = find_mark(image)
     return Point(x=x, y=y)
 
 
-async def split_marked_spread(kit: ProcessingKit) -> tuple[Actor, Project, Page, Page]:
+async def split_marked_spread(kit: ProcessingKit) -> tuple[Actor, BookRecord, Page, Page]:
     """Split a generated spread with a landmark on each half, whose left page is skewed.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The actor, the project, and the left and the right page.
-    :rtype: tuple[Actor, Project, Page, Page]
+    :returns: The actor, the book, and the left and the right page.
+    :rtype: tuple[Actor, BookRecord, Page, Page]
     """
     scan = spread(PAGE_WIDTH_PX, HEIGHT_PX, tilt=TILT_DEGREES)
     mark(scan, MARK_ON_LEFT)
     mark(scan, MARK_ON_RIGHT)
-    actor, project = await kit.seed_project()
-    await kit.seed_scan_page(project, image=png_bytes(scan))
-    await use_recipe(kit, actor, project, Stage.PAGE_SPLIT, SPLIT_SPREAD)
-    await run_stage(kit, actor, project, StageRun(stage=Stage.PAGE_SPLIT))
-    left, right = await book_of(kit, project)
-    return actor, project, left, right
+    actor, book_record = await kit.seed_record()
+    await kit.seed_scan_page(book_record, image=png_bytes(scan))
+    await use_recipe(kit, actor, book_record, Stage.PAGE_SPLIT, SPLIT_SPREAD)
+    await run_stage(kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT))
+    left, right = await book_of(kit, book_record)
+    return actor, book_record, left, right
 
 
 class TestChainOfTransforms:
@@ -96,16 +99,16 @@ class TestChainOfTransforms:
         :param degrees: The angle of the rotation edit of the user, or None to leave the angle to the search.
         :type degrees: float | None
         """
-        actor, project, left, _right = await split_marked_spread(fx_cv_kit)
-        await use_recipe(fx_cv_kit, actor, project, Stage.GEOMETRY, DESKEW)
+        actor, book_record, left, _right = await split_marked_spread(fx_cv_kit)
+        await use_recipe(fx_cv_kit, actor, book_record, Stage.GEOMETRY, DESKEW)
         if degrees is not None:
             edit = NewPageEdit(kind=Rotation.editor, geometry=Rotation(degrees=degrees))
-            key = await fx_cv_kit.edit_key(project.id, left, Stage.GEOMETRY, DESKEW)
-            await fx_cv_kit.edits().save(actor, project.id, key, edit, None)
-        await run_stage(fx_cv_kit, actor, project, StageRun(stage=Stage.GEOMETRY, page_ids=(left.id,)))
-        deskewed = await head_of(fx_cv_kit, project.id, left, Stage.GEOMETRY)
-        found = await landmark_on(fx_cv_kit, project, deskewed)
-        [mapped] = await fx_cv_kit.service().map_to_scan(actor, project.id, left.id, deskewed.id, [found])
+            key = await fx_cv_kit.edit_key(book_record.id, left, Stage.GEOMETRY, DESKEW)
+            await fx_cv_kit.edits().save(open_for(actor, book_record.id), key, edit, None)
+        await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY, page_ids=(left.id,)))
+        deskewed = await head_of(fx_cv_kit, book_record.id, left, Stage.GEOMETRY)
+        found = await landmark_on(fx_cv_kit, book_record, deskewed)
+        [mapped] = await fx_cv_kit.service().map_to_scan(open_for(actor, book_record.id), left.id, deskewed.id, [found])
         expect(deskewed.input_id is not None)
         expect(abs(mapped.x - MARK_ON_LEFT[0]) <= TOLERANCE_PX)
         expect(abs(mapped.y - MARK_ON_LEFT[1]) <= TOLERANCE_PX)
@@ -117,10 +120,10 @@ class TestChainOfTransforms:
         :param fx_cv_kit: The processing kit with the OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
-        actor, project, _left, right = await split_marked_spread(fx_cv_kit)
-        base = await head_of(fx_cv_kit, project.id, right, Stage.PAGE_SPLIT)
-        found = await landmark_on(fx_cv_kit, project, base)
-        [mapped] = await fx_cv_kit.service().map_to_scan(actor, project.id, right.id, base.id, [found])
+        actor, book_record, _left, right = await split_marked_spread(fx_cv_kit)
+        base = await head_of(fx_cv_kit, book_record.id, right, Stage.PAGE_SPLIT)
+        found = await landmark_on(fx_cv_kit, book_record, base)
+        [mapped] = await fx_cv_kit.service().map_to_scan(open_for(actor, book_record.id), right.id, base.id, [found])
         expect(abs(mapped.x - MARK_ON_RIGHT[0]) <= TOLERANCE_PX)
         expect(abs(mapped.y - MARK_ON_RIGHT[1]) <= TOLERANCE_PX)
         assert_expectations()

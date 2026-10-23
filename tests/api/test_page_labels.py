@@ -12,20 +12,20 @@ from fastapi_pagination import Page
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.enums import LabelStyle, PageKind
-from tests.helpers.builders import make_page, make_project, new_account_id
-from tests.helpers.seeding import commit_project, store_project
+from tests.helpers.builders import make_page, make_record, new_account_id
+from tests.helpers.seeding import commit_record, store_book
 
 if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, Project
+    from bookreviver.domain.entities import Actor, BookRecord
     from bookreviver.domain.entities import Page as BookPage
     from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
-PROJECTS_PATH: str = '/api/v1/projects'
+BOOKS_PATH: str = '/api/v1/books'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 MERGE_PATCH_TYPE: str = 'application/merge-patch+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
@@ -46,11 +46,11 @@ LAYOUT: list[tuple[PageKind, bool]] = [
 class Book(NamedTuple):
     """A book of five labelled pages of the signed-in account.
 
-    :ivar project: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar pages: The pages in book order.
     """
 
-    project: Project
+    book_record: BookRecord
     pages: list[BookPage]
 
     def page_path(self, index: int) -> str:
@@ -61,12 +61,12 @@ class Book(NamedTuple):
         :returns: The path of the page resource.
         :rtype: str
         """
-        return f'{PROJECTS_PATH}/{self.project.id}/pages/{self.pages[index].id}'
+        return f'{BOOKS_PATH}/{self.book_record.id}/pages/{self.pages[index].id}'
 
     @property
     def labels_path(self) -> str:
         """The path of the numbering of a range."""
-        return f'{PROJECTS_PATH}/{self.project.id}/pages/labels'
+        return f'{BOOKS_PATH}/{self.book_record.id}/pages/labels'
 
 
 @pytest.fixture
@@ -80,7 +80,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project()
+    book_record = make_record()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(LAYOUT))
     pages = [
         evolve(
@@ -92,8 +92,8 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
         )
         for key, (kind, included) in zip(keys, LAYOUT, strict=True)
     ]
-    await store_project(fx_uow(), project, *pages, owner=fx_actor.account_id)
-    return Book(project=project, pages=pages)
+    await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id)
+    return Book(book_record=book_record, pages=pages)
 
 
 async def _labels(client: httpx.AsyncClient, book: Book) -> list[str]:
@@ -106,7 +106,7 @@ async def _labels(client: httpx.AsyncClient, book: Book) -> list[str]:
     :returns: The label of each page in the manifest.
     :rtype: list[str]
     """
-    response = await client.get(f'{PROJECTS_PATH}/{book.project.id}/pages')
+    response = await client.get(f'{BOOKS_PATH}/{book.book_record.id}/pages')
     return [item.label for item in Page[PageSchema].model_validate_json(response.content).items]
 
 
@@ -159,7 +159,7 @@ NUMBER_CASES: list[NumberCase] = [
 
 
 class TestUpdatePage:
-    """Tests for PATCH /projects/{project_id}/pages/{page_id}."""
+    """Tests for PATCH /books/{book_id}/pages/{page_id}."""
 
     @pytest.mark.parametrize('case', FIELD_CASES, ids=[f'{case.field}-{case.sent}' for case in FIELD_CASES])
     async def test_changes_the_field_sent_and_keeps_the_others(
@@ -242,7 +242,7 @@ class TestUpdatePage:
     async def test_missing_page_and_page_of_another_account_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify a page that does not exist and a page of another account's project both answer 404.
+        """Verify a page that does not exist and a page of another account's book both answer 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -253,12 +253,12 @@ class TestUpdatePage:
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        stranger = make_project()
+        stranger = make_record()
         page = make_page()
-        await commit_project(fx_database, fx_uow(), stranger, page, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), stranger, page, owner=new_account_id())
 
-        missing = await fx_client.patch(f'{PROJECTS_PATH}/{fx_book.project.id}/pages/{uuid4()}', json={'label': '1'})
-        foreign = await fx_client.patch(f'{PROJECTS_PATH}/{stranger.id}/pages/{page.id}', json={'label': '1'})
+        missing = await fx_client.patch(f'{BOOKS_PATH}/{fx_book.book_record.id}/pages/{uuid4()}', json={'label': '1'})
+        foreign = await fx_client.patch(f'{BOOKS_PATH}/{stranger.id}/pages/{page.id}', json={'label': '1'})
 
         expect(missing.status_code == status.HTTP_404_NOT_FOUND)
         expect(foreign.status_code == status.HTTP_404_NOT_FOUND)
@@ -266,7 +266,7 @@ class TestUpdatePage:
 
 
 class TestNumberPages:
-    """Tests for POST /projects/{project_id}/pages/labels."""
+    """Tests for POST /books/{book_id}/pages/labels."""
 
     @pytest.mark.parametrize('case', NUMBER_CASES, ids=[f'{case.style}-{case.bracketed}' for case in NUMBER_CASES])
     async def test_writes_the_labels_of_every_style_skipping_pages_kept_out_and_kinds_to_skip(
@@ -319,7 +319,7 @@ class TestNumberPages:
 
         await fx_client.post(fx_book.labels_path, json=body)
 
-        listed = await fx_client.get(f'{PROJECTS_PATH}/{fx_book.project.id}/pagination-sections')
+        listed = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/pagination-sections')
         flow, series = listed.json()['items']
         expect(
             (flow['first_page_id'], flow['style'], flow['start'], flow['kinds'])
@@ -348,7 +348,7 @@ class TestNumberPages:
         }
 
         previewed = await fx_client.post(f'{fx_book.labels_path}/preview', json=body)
-        listed = await fx_client.get(f'{PROJECTS_PATH}/{fx_book.project.id}/pagination-sections')
+        listed = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/pagination-sections')
 
         expect(previewed.status_code == status.HTTP_200_OK)
         expect(

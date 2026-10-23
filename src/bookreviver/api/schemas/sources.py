@@ -13,17 +13,17 @@ from fastapi import Query
 from fastapi_pagination import Params
 
 from bookreviver.api.schemas.base import ResponseModel
+from bookreviver.api.schemas.books import ContributorSchema, IdentifierSchema
 from bookreviver.api.schemas.images import ImagePathsSchema
-from bookreviver.api.schemas.projects import ContributorSchema, IdentifierSchema
 from bookreviver.domain.enums import ColorMode, FileType, RejectionReason, SourceKind, SourceStatus
 from bookreviver.domain.ids import ScanId, SourceId
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 
 if TYPE_CHECKING:
     from starlette.requests import Request
 
     from bookreviver.domain.entities import Scan
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
 
 
 class ScanQuery(Params):
@@ -31,7 +31,7 @@ class ScanQuery(Params):
 
     :ivar page: Number of the page of the list, from one.
     :ivar size: Number of scans in one page.
-    :ivar source_id: Source whose scans to list, or omitted for the scans of every source of the project.
+    :ivar source_id: Source whose scans to list, or omitted for the scans of every source of the book.
     """
 
     source_id: SourceId | None = Query(None, description='List only the scans of this source')
@@ -88,7 +88,7 @@ class SourceSchema(ResponseModel):
     :ivar status: Whether the file was imported, rejected by the import, or skipped by a cancelled one.
     :ivar rejection: Why a rejected file was refused, or None for a file that was not.
     :ivar detail: Text that says more than the reason, such as the name of the source a duplicate repeats, or empty.
-    :ivar imported_at: When the file was recorded, which for an imported source is when it became part of the project.
+    :ivar imported_at: When the file was recorded, which for an imported source is when it became part of the book.
     """
 
     id: SourceId
@@ -155,19 +155,19 @@ class ScanSchema(ResponseModel):
     images: ImagePathsSchema | None
 
     @classmethod
-    def from_scan(cls, scan: Scan, request: Request, *, project_id: ProjectId) -> Self:
+    def from_scan(cls, scan: Scan, request: Request, *, book_id: BookId) -> Self:
         """Build the schema of a scan with the paths of its images once they are ready.
 
         :param scan: The scan.
         :type scan: Scan
         :param request: The request, whose application knows the route that serves the images.
         :type request: Request
-        :param project_id: Identifier of the project of the scan, whose files hold its images.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the book of the scan, whose files hold its images.
+        :type book_id: BookId
         :returns: The scan resource, with images once its renditions are ready.
         :rtype: Self
         """
-        keys = ProjectKeys(project_id)
+        keys = BookKeys(book_id)
         images = None
         if scan.renditions.ready:
             images = ImagePathsSchema.of(

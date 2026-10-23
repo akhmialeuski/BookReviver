@@ -4,8 +4,8 @@ import { expect, type Locator, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   stepIdsOf,
   uploadFolder,
@@ -125,7 +125,7 @@ test('the book screen stays in place on Import, Order and Geometry while its str
     await openLibrary(page);
     await createBook(page, 'A book that keeps its header');
     await uploadFolder(page, folder, PAGES);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     const [pageId = ''] = await pageIds(page);
     const [stepId = ''] = await stepIdsOf(page, 'geometry', DESKEW);
@@ -255,7 +255,7 @@ test('the panel of a stage is never wider than its column at 1280 px, nor at its
     await openLibrary(page);
     await createBook(page, 'A book with a panel that fits');
     await uploadFolder(page, folder, PAGES);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     await markPagesAsText(page);
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
   });

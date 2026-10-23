@@ -1,14 +1,14 @@
 """Storage ports: the uploads and sources of a book, and the files derived from them.
 
-Two stores divide the files of a project by prefix, as ``ProjectKeys`` lays them out. The ``SourceStore`` owns
+Two stores divide the files of a book by prefix, as ``BookKeys`` lays them out. The ``SourceStore`` owns
 ``incoming/`` and ``sources/``: an upload is received into the directory of the import job receiving it, and every
-source the upload holds is promoted into a directory of its own, named by its ``SourceId``. A project gathers any
+source the upload holds is promoted into a directory of its own, named by its ``SourceId``. A book gathers any
 number of sources of any kind that way, and deleting one source leaves the others. The ``AssetStore`` owns
 ``assets/``, where everything derived from the sources lives, such as the renditions of scans and page versions.
 
 The ``BookArchive`` packs the directory of a book into one file and unpacks such a file into the directory of a new
 book. Both stores write once and never replace what they store: a source is immutable once promoted, and a regenerated
-asset gets a new key. Each store deletes everything of a project it holds, so deleting a project is one call to
+asset gets a new key. Each store deletes everything of a book it holds, so deleting a book is one call to
 each. Local paths, not open files, cross these ports, because the imaging libraries read and write paths.
 """
 
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import BinaryIO
 
-    from bookreviver.domain.ids import JobId, ProjectId, SourceId, StorageKey
+    from bookreviver.domain.ids import BookId, JobId, SourceId, StorageKey
     from bookreviver.domain.values import SourceFile
 
 
@@ -45,20 +45,20 @@ class IncomingFile(Protocol):
 
 
 class SourceStore(ABC):
-    """The uploads being received and the sources of each project, every source written once and never replaced."""
+    """The uploads being received and the sources of each book, every source written once and never replaced."""
 
     @abstractmethod
     async def stage(
-        self, project_id: ProjectId, job_id: JobId, files: Sequence[IncomingFile], *, max_bytes: int
+        self, book_id: BookId, job_id: JobId, files: Sequence[IncomingFile], *, max_bytes: int
     ) -> Sequence[SourceFile]:
         """Receive the upload of an import job, replacing whatever an interrupted upload of the same job left.
 
         A file is kept under the relative path ``UploadPath`` makes of its name, so the files of a chosen directory
-        keep their folders and ``vol1/001.tif`` and ``vol2/001.tif`` are two files. The sources the project already has
+        keep their folders and ``vol1/001.tif`` and ``vol2/001.tif`` are two files. The sources the book already has
         do not matter: another upload adds sources beside them.
 
-        :param project_id: Project receiving the upload.
-        :type project_id: ProjectId
+        :param book_id: Book receiving the upload.
+        :type book_id: BookId
         :param job_id: Import job owning the upload.
         :type job_id: JobId
         :param files: Uploaded files, read in chunks as they arrive.
@@ -73,14 +73,14 @@ class SourceStore(ABC):
         """
 
     @abstractmethod
-    async def promote(self, project_id: ProjectId, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
+    async def promote(self, book_id: BookId, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
         """Move the staged files of one source into the source's own directory in one step.
 
         The source is never seen half written, and the files it takes are no longer staged afterwards. Each file is
         stored under the last segment of its name alone, so the folders of a directory upload end at the source.
 
-        :param project_id: Project owning the upload and the source.
-        :type project_id: ProjectId
+        :param book_id: Book owning the upload and the source.
+        :type book_id: BookId
         :param job_id: Import job whose upload holds the files.
         :type job_id: JobId
         :param source_id: Source the files become.
@@ -94,29 +94,29 @@ class SourceStore(ABC):
         """
 
     @abstractmethod
-    async def discard(self, project_id: ProjectId, job_id: JobId) -> None:
+    async def discard(self, book_id: BookId, job_id: JobId) -> None:
         """Remove what is left of the upload of an import job; a job without one is not an error.
 
-        :param project_id: Project owning the upload.
-        :type project_id: ProjectId
+        :param book_id: Book owning the upload.
+        :type book_id: BookId
         :param job_id: Import job whose upload is removed.
         :type job_id: JobId
         """
 
     @abstractmethod
     async def discard_all_staged(self) -> None:
-        """Remove the staged upload of every import job of every project, which no job can run any more.
+        """Remove the staged upload of every import job of every book, which no job can run any more.
 
         The application calls it when it starts, because the board of jobs is empty then and the uploads that a
         restart interrupted would stay for good. The sources already promoted are not touched.
         """
 
     @abstractmethod
-    def staged_files(self, project_id: ProjectId, job_id: JobId) -> AbstractAsyncContextManager[Mapping[str, Path]]:
+    def staged_files(self, book_id: BookId, job_id: JobId) -> AbstractAsyncContextManager[Mapping[str, Path]]:
         """Give local paths of the files an import job has staged and not promoted, while the context is open.
 
-        :param project_id: Project owning the upload.
-        :type project_id: ProjectId
+        :param book_id: Book owning the upload.
+        :type book_id: BookId
         :param job_id: Import job whose upload is read.
         :type job_id: JobId
         :returns: Context manager yielding the path of every file by its name as ``stage`` reported it, the relative
@@ -126,11 +126,11 @@ class SourceStore(ABC):
         """
 
     @abstractmethod
-    def source_files(self, project_id: ProjectId, source_id: SourceId) -> AbstractAsyncContextManager[Sequence[Path]]:
+    def source_files(self, book_id: BookId, source_id: SourceId) -> AbstractAsyncContextManager[Sequence[Path]]:
         """Give local paths of the files of one source, while the context is open.
 
-        :param project_id: Project owning the source.
-        :type project_id: ProjectId
+        :param book_id: Book owning the source.
+        :type book_id: BookId
         :param source_id: Source whose files are read.
         :type source_id: SourceId
         :returns: Context manager yielding the paths in name order.
@@ -139,23 +139,23 @@ class SourceStore(ABC):
         """
 
     @abstractmethod
-    async def delete_source(self, project_id: ProjectId, source_id: SourceId) -> None:
+    async def delete_source(self, book_id: BookId, source_id: SourceId) -> None:
         """Remove the files of one source; a source without files is not an error.
 
         The renditions of its scans are derived files, which ``AssetStore.delete_prefix`` removes.
 
-        :param project_id: Project owning the source.
-        :type project_id: ProjectId
+        :param book_id: Book owning the source.
+        :type book_id: BookId
         :param source_id: Source whose files are removed.
         :type source_id: SourceId
         """
 
     @abstractmethod
-    async def delete_project(self, project_id: ProjectId) -> None:
-        """Remove every source and every staged upload of the project; a project without either is not an error.
+    async def delete_book(self, book_id: BookId) -> None:
+        """Remove every source and every staged upload of the book; a book without either is not an error.
 
-        :param project_id: Project whose files are removed.
-        :type project_id: ProjectId
+        :param book_id: Book whose files are removed.
+        :type book_id: BookId
         """
 
 
@@ -163,8 +163,8 @@ class AssetStore(ABC):
     """Derived files addressed by storage keys, such as the renditions of scans and page versions, each written once.
 
     A regenerated file gets a new key, such as the next renditions version of a scan, so a stored file is never
-    replaced. Every key lies under ``projects/<id>/assets/``, as ``ProjectKeys`` builds it, so no key reaches the
-    uploads and sources of a project, which belong to the ``SourceStore``.
+    replaced. Every key lies under ``projects/<id>/assets/``, as ``BookKeys`` builds it, so no key reaches the
+    uploads and sources of a book, which belong to the ``SourceStore``.
     """
 
     @abstractmethod
@@ -236,14 +236,14 @@ class AssetStore(ABC):
         """
 
     @abstractmethod
-    async def delete_project(self, project_id: ProjectId) -> None:
-        """Remove every derived file of the project; a project without any is not an error.
+    async def delete_book(self, book_id: BookId) -> None:
+        """Remove every derived file of the book; a book without any is not an error.
 
-        The store removes the whole ``assets/`` directory of the project, which no ``delete_prefix`` may name. The
-        uploads and sources are left to ``SourceStore.delete_project``.
+        The store removes the whole ``assets/`` directory of the book, which no ``delete_prefix`` may name. The
+        uploads and sources are left to ``SourceStore.delete_book``.
 
-        :param project_id: Project whose derived files are removed.
-        :type project_id: ProjectId
+        :param book_id: Book whose derived files are removed.
+        :type book_id: BookId
         """
 
 
@@ -255,11 +255,11 @@ class BookArchive(ABC):
     """
 
     @abstractmethod
-    def export(self, project_id: ProjectId, database: bytes) -> AsyncIterator[bytes]:
+    def export(self, book_id: BookId, database: bytes) -> AsyncIterator[bytes]:
         """Stream the archive of a book in pieces, without holding it whole anywhere.
 
-        :param project_id: The book.
-        :type project_id: ProjectId
+        :param book_id: The book.
+        :type book_id: BookId
         :param database: The copy of the database of the book, which the archive carries in place of the file.
         :type database: bytes
         :returns: The pieces of the archive, in order.
@@ -267,13 +267,13 @@ class BookArchive(ABC):
         """
 
     @abstractmethod
-    async def unpack(self, project_id: ProjectId, archive: BinaryIO) -> None:
+    async def unpack(self, book_id: BookId, archive: BinaryIO) -> None:
         """Place the content of an archive as the directory of a new book, its database first.
 
         Every name in the archive is checked before anything is written, so a refused archive leaves nothing behind.
 
-        :param project_id: The new book, which has no directory yet.
-        :type project_id: ProjectId
+        :param book_id: The new book, which has no directory yet.
+        :type book_id: BookId
         :param archive: The archive, a file that can be read from any position.
         :type archive: BinaryIO
         :raises InvalidArchiveError: If the file is not a ZIP archive, holds no database, or holds a file outside what

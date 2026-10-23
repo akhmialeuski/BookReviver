@@ -29,7 +29,7 @@ import { fitsSchema, formSchemaOf } from '@/features/processing/schema';
 
 /** The steps of the stage panel as the screen reads and changes them. */
 export interface Processing {
-  projectId: string;
+  bookId: string;
   stage: Stage;
   /** Whether the stage is built from processors, which is when the catalogue has one of this stage. */
   available: boolean;
@@ -123,13 +123,13 @@ export function shownRecipe(
  *
  * The recipe shown is picked by `shownRecipe`: the recipe of the open page's kind, unless the reader chose another.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param stage The stage.
  * @param stepId The step the address names, or undefined when it names none.
  * @param pageKind The kind of the open page, or undefined while it is not known.
  */
 export function useProcessing(
-  projectId: string,
+  bookId: string,
   stage: Stage,
   stepId?: string,
   pageKind?: RecipeKind,
@@ -140,7 +140,7 @@ export function useProcessing(
     [processors.data, stage],
   );
   const available = catalogue.length > 0;
-  const recipes = useRecipes(projectId, stage, available);
+  const recipes = useRecipes(bookId, stage, available);
 
   const [choice, setChoice] = useState<RecipeChoice | null>(null);
   const list = recipes.data ?? [];
@@ -190,7 +190,7 @@ export function useProcessing(
   const write = (next: StepDraft[]): void => setEdit({ owner: draftOwner, steps: next });
 
   return {
-    projectId,
+    bookId,
     stage,
     available,
     ready: !available || (recipes.data !== undefined && recipe !== undefined),

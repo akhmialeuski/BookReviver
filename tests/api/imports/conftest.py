@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tests.api.imports.watch import ImportWatch, JobEndBus
-from tests.helpers.builders import EPOCH, make_project
+from tests.helpers.builders import EPOCH, make_record
 from tests.helpers.fakes_imports import TickingClock
 from tests.helpers.fakes_jobs import JobFakes, JobFakesProvider
-from tests.helpers.seeding import store_project
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.domain.entities import Actor, Project
+    from bookreviver.domain.entities import Actor, BookRecord
     from tests.helpers.database import UnitOfWorkFactory
 
 
@@ -59,19 +59,19 @@ def fx_extra_providers(fx_fakes: JobFakes) -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_project(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Project:
-    """Store a project of the signed-in account with no sources.
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> BookRecord:
+    """Store a book of the signed-in account with no sources.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
-    :returns: The stored project.
-    :rtype: Project
+    :returns: The stored book.
+    :rtype: BookRecord
     """
-    project = make_project()
-    await store_project(fx_uow(), project, owner=fx_actor.account_id)
-    return project
+    book_record = make_record()
+    await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+    return book_record
 
 
 @pytest.fixture

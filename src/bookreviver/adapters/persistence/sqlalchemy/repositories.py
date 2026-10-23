@@ -4,7 +4,7 @@ Each port repository works on two levels. A row repository, a subclass of advanc
 :class:`~advanced_alchemy.repository.SQLAlchemySyncRepository`, supplies every generic query of one table: lookup by
 primary key, add, update, delete, filtered and paginated listings, and counts. A mapper from
 :mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turns its rows into domain entities. The port repository
-adds only the queries specific to BookReviver, such as the counts of the book of a project. The repositories are
+adds only the queries specific to BookReviver, such as the counts of a book. The repositories are
 synchronous, because the unit of work runs the whole work of a use case in one worker thread.
 :class:`SqlAlchemyCatalogueRepositories` binds the repositories of the catalogue to the session of a transaction of the
 catalogue, and :class:`SqlAlchemyBookRepositories` those of a book to a session of the file of that book.
@@ -34,11 +34,12 @@ from sqlalchemy import Table, UniqueConstraint, and_, case, delete, exists, func
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import contains_eager
 
-from bookreviver.adapters.persistence.sqlalchemy.catalogue import PROJECT_ID_COLUMN, LibraryRow, RecipeProfileRow
+from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow, RecipeProfileRow
 from bookreviver.adapters.persistence.sqlalchemy.database import SQLITE_DIALECT
 from bookreviver.adapters.persistence.sqlalchemy.groups import PageGroups
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     BookPlaceMapper,
+    BookRecordMapper,
     GroupValuesMapper,
     LibraryEntryMapper,
     PageHistoryMapper,
@@ -47,7 +48,6 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     PageStepStateMapper,
     PageVersionMapper,
     PaginationSectionMapper,
-    ProjectMapper,
     RecipeMapper,
     RecipeProfileMapper,
     ScanMapper,
@@ -58,6 +58,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     BOOK_PLACE_ID,
     EMPTY_TEXT,
     BookPlaceRow,
+    BookRecordRow,
     GroupValuesRow,
     PageHistoryRow,
     PageRow,
@@ -65,7 +66,6 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     PageStepStateRow,
     PageVersionRow,
     PaginationSectionRow,
-    ProjectRow,
     RecipeRow,
     ScanRow,
     SourceRow,
@@ -73,14 +73,14 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     StepValuesRow,
 )
 from bookreviver.domain.entities import (
+    BookOverview,
+    BookRecord,
     LibraryEntry,
     Page,
     PageStage,
     PageStepState,
     PageVersion,
     PaginationSection,
-    Project,
-    ProjectOverview,
     Recipe,
     RecipeProfile,
     Scan,
@@ -102,10 +102,10 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import (
+    BookId,
     PageId,
     PageVersionId,
     PaginationSectionId,
-    ProjectId,
     RecipeId,
     RecipeProfileId,
     ScanId,
@@ -118,6 +118,7 @@ from bookreviver.domain.values import PageSize, PageStageKey, PageStepKey, Slice
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
     BookPlaceRepository,
+    BookRecordRepository,
     BookRepositories,
     CatalogueRepositories,
     KeyedRepository,
@@ -128,7 +129,6 @@ from bookreviver.ports.persistence import (
     PageStepStateRepository,
     PageVersionRepository,
     PaginationSectionRepository,
-    ProjectRepository,
     RecipeProfileRepository,
     RecipeRepository,
     Repository,
@@ -376,13 +376,13 @@ class LibraryRows(RowRepository[LibraryRow]):
     """Rows of the ``library`` table of the catalogue, keyed by the book."""
 
     model_type = LibraryRow
-    id_attribute = PROJECT_ID_COLUMN
+    id_attribute = LibraryRow.book_id.key
 
 
-class ProjectRows(RowRepository[ProjectRow]):
+class BookRecordRows(RowRepository[BookRecordRow]):
     """Rows of the ``projects`` table of a book."""
 
-    model_type = ProjectRow
+    model_type = BookRecordRow
 
 
 class SourceRows(RowRepository[SourceRow]):
@@ -631,7 +631,7 @@ class SqlAlchemyKeyedRepository[EntityT, KeyT, RowT: ModelProtocol](
             return None
 
 
-class SqlAlchemyLibraryRepository(SqlAlchemyRepository[LibraryEntry, ProjectId, LibraryRow], LibraryRepository):
+class SqlAlchemyLibraryRepository(SqlAlchemyRepository[LibraryEntry, BookId, LibraryRow], LibraryRepository):
     """The library of the catalogue, one entry for each book, listed per owner."""
 
     def __init__(self, session: Session) -> None:
@@ -658,7 +658,7 @@ class SqlAlchemyLibraryRepository(SqlAlchemyRepository[LibraryEntry, ProjectId, 
         """
         rows = self._rows.get_many(
             LimitOffset(limit=request.limit, offset=request.offset),
-            order_by=[LibraryRow.added_at.desc(), LibraryRow.project_id.asc()],
+            order_by=[LibraryRow.added_at.desc(), LibraryRow.book_id.asc()],
             owner_id=owner_id,
         )
         return Slice(items=[self._mapper.to_entity(row) for row in rows], total=self._rows.count(owner_id=owner_id))
@@ -670,11 +670,11 @@ class SqlAlchemyLibraryRepository(SqlAlchemyRepository[LibraryEntry, ProjectId, 
         :returns: Every entry of the library.
         :rtype: Sequence[LibraryEntry]
         """
-        return [self._mapper.to_entity(row) for row in self._rows.get_many(order_by=LibraryRow.project_id.asc())]
+        return [self._mapper.to_entity(row) for row in self._rows.get_many(order_by=LibraryRow.book_id.asc())]
 
 
-class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, ProjectRow], ProjectRepository):
-    """The project of the book of the file, with the counts and the cover of its book.
+class SqlAlchemyBookRecordRepository(SqlAlchemyRepository[BookRecord, BookId, BookRecordRow], BookRecordRepository):
+    """The record of the book of the file, with the counts and the cover of the book.
 
     The counts are scalar subqueries, so one statement returns every count.
     """
@@ -685,25 +685,25 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
         :param session: Session of the unit of work.
         :type session: Session
         """
-        super().__init__(rows=ProjectRows(session=session), mapper=ProjectMapper())
+        super().__init__(rows=BookRecordRows(session=session), mapper=BookRecordMapper())
 
     @override
-    def overview(self, project: Project) -> ProjectOverview:
-        """Count the included pages, the sources and the scans of the project in one statement, and find its cover.
+    def overview(self, book_record: BookRecord) -> BookOverview:
+        """Count the included pages, the sources and the scans of the book in one statement, and find its cover.
 
         The cover is the page of the kind ``cover`` that comes first in the book, else the first page of the book, and a
         book without pages has none.
 
-        :param project: Project whose book is counted.
-        :type project: Project
-        :returns: The project with its counts and its cover.
-        :rtype: ProjectOverview
+        :param book_record: Record of the book to count.
+        :type book_record: BookRecord
+        :returns: The record of the book with its counts and its cover.
+        :rtype: BookOverview
         """
         pages, sources, scans, with_image = self._rows.session.execute(select(*self._book_counts())).one()
         cover = select(PageRow.id).order_by(PageRow.kind != PageKind.COVER, PageRow.order_key).limit(1)
         cover_id = self._rows.session.scalar(cover)
-        return ProjectOverview(
-            project=project,
+        return BookOverview(
+            book_record=book_record,
             page_count=pages,
             source_count=sources,
             scan_count=scans,
@@ -743,9 +743,9 @@ class SqlAlchemySourceRepository(SqlAlchemyRepository[Source, SourceId, SourceRo
 
     @override
     def list_all(self) -> Sequence[Source]:
-        """Return the project's imported sources, the earliest import first, ties by identifier.
+        """Return the book's imported sources, the earliest import first, ties by identifier.
 
-        :returns: Every imported source of the project in import order.
+        :returns: Every imported source of the book in import order.
         :rtype: Sequence[Source]
         """
         rows = self._rows.get_many(
@@ -756,9 +756,9 @@ class SqlAlchemySourceRepository(SqlAlchemyRepository[Source, SourceId, SourceRo
 
     @override
     def list_unimported(self) -> Sequence[Source]:
-        """Return the project's rejected and skipped files, the earliest first, ties by identifier.
+        """Return the book's rejected and skipped files, the earliest first, ties by identifier.
 
-        :returns: Every rejected or skipped source of the project in the order it was recorded.
+        :returns: Every rejected or skipped source of the book in the order it was recorded.
         :rtype: Sequence[Source]
         """
         rows = self._rows.get_many(
@@ -769,12 +769,12 @@ class SqlAlchemySourceRepository(SqlAlchemyRepository[Source, SourceId, SourceRo
 
     @override
     def delete_unimported(self) -> None:
-        """Delete the project's rejected and skipped sources with one statement."""
+        """Delete the book's rejected and skipped sources with one statement."""
         self._rows.session.execute(delete(SourceRow).where(SourceRow.status != SourceStatus.IMPORTED))
 
     @override
     def find_by_sha256(self, sha256: str) -> Source | None:
-        """Return the project's imported source with this digest, found through the partial unique index.
+        """Return the book's imported source with this digest, found through the partial unique index.
 
         :param sha256: SHA-256 digest of a main file.
         :type sha256: str
@@ -810,14 +810,14 @@ class SqlAlchemyScanRepository(SqlAlchemyRepository[Scan, ScanId, ScanRow], Scan
 
     @override
     def list_window(self, request: SliceRequest) -> Slice[Scan]:
-        """Return a slice of the project's scans, source by source in import order and by number within one.
+        """Return a slice of the book's scans, source by source in import order and by number within one.
 
         The order comes from the sources, so the listing joins them; the total is a separate count, which stays
         correct for a slice past the end.
 
         :param request: Offset and limit of the slice.
         :type request: SliceRequest
-        :returns: Scans of the slice and the total number of the project's scans.
+        :returns: Scans of the slice and the total number of the book's scans.
         :rtype: Slice[Scan]
         """
         statement = (
@@ -844,7 +844,7 @@ class SqlAlchemyScanRepository(SqlAlchemyRepository[Scan, ScanId, ScanRow], Scan
 
     @override
     def list_unready(self) -> Sequence[Scan]:
-        """Return the project's scans whose renditions are not ready, in the order ``list_for_project`` lists them.
+        """Return the book's scans whose renditions are not ready, in the order ``list_window`` lists them.
 
         :returns: The scans without ready renditions.
         :rtype: Sequence[Scan]
@@ -895,7 +895,7 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
 
     @override
     def list_window(self, request: SliceRequest, *, included_only: bool = False) -> Slice[Page]:
-        """Return a slice of the project's pages in book order.
+        """Return a slice of the book's pages in book order.
 
         The column's collation compares order keys byte by byte. The total is a separate count query, which stays
         correct for a slice past the end where a window-function count would report zero.
@@ -918,7 +918,7 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
 
     @override
     def list_by_ids(self, page_ids: Collection[PageId]) -> Sequence[Page]:
-        """Return the given pages of a project in book order, in one ``IN`` query.
+        """Return the given pages of a book in book order, in one ``IN`` query.
 
         :param page_ids: Identifiers of the pages to read.
         :type page_ids: Collection[PageId]
@@ -1001,9 +1001,9 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
 
     @override
     def count_before(self, page: Page) -> int:
-        """Count the project's pages whose order key is smaller, which the unique index of the key answers.
+        """Count the book's pages whose order key is smaller, which the unique index of the key answers.
 
-        :param page: Stored page of the project.
+        :param page: Stored page of the book.
         :type page: Page
         :returns: The position of the page in the book, from zero.
         :rtype: int
@@ -1012,7 +1012,7 @@ class SqlAlchemyPageRepository(SqlAlchemyRepository[Page, PageId, PageRow], Page
 
     @override
     def last_order_key(self) -> str | None:
-        """Return the greatest order key of the project's pages, read from the unique index of the key.
+        """Return the greatest order key of the book's pages, read from the unique index of the key.
 
         :returns: The order key of the last page, or None for a book without pages.
         :rtype: str | None
@@ -1053,9 +1053,9 @@ class SqlAlchemyPaginationSectionRepository(
 
     @override
     def list_all(self) -> Sequence[PaginationSection]:
-        """Return the sections of a project in the order they were made, ties by identifier.
+        """Return the sections of a book in the order they were made, ties by identifier.
 
-        :returns: Every section of the project.
+        :returns: Every section of the book.
         :rtype: Sequence[PaginationSection]
         """
         rows = self._rows.get_many(order_by=[PaginationSectionRow.created_at.asc(), PaginationSectionRow.id.asc()])
@@ -1089,7 +1089,7 @@ class SqlAlchemyPageVersionRepository(
 
     @override
     def list_to_prepare(self, processor_keys: Collection[str]) -> Sequence[PageVersion]:
-        """Return the pending and failed versions of the project's pages made by the given processors.
+        """Return the pending and failed versions of the book's pages made by the given processors.
 
         :param processor_keys: Keys of the processors whose versions are returned.
         :type processor_keys: Collection[str]
@@ -1109,7 +1109,7 @@ class SqlAlchemyPageVersionRepository(
 
     @override
     def base_sizes(self) -> Sequence[PageSize]:
-        """Return the sizes the base versions of the project's included scan pages record in their data.
+        """Return the sizes the base versions of the book's included scan pages record in their data.
 
         A leaf drawn in place of a scan is a version of the page order, so it is not counted. Only the data column is
         read, and the sizes are taken from it here, since the column is JSON.
@@ -1217,7 +1217,7 @@ class SqlAlchemyPageVersionRepository(
         """Return the versions that are neither base versions nor in the chain of a current version.
 
         The chains are followed here, from the heads of the stage records through the input of each version, over the
-        two columns of the project's versions, read in one query. A recursive query, ``WITH RECURSIVE``, would follow
+        two columns of the book's versions, read in one query. A recursive query, ``WITH RECURSIVE``, would follow
         them in the database; whether it is faster is a question for a measurement on a large book.
 
         :param previews_older_than: Previews created before this moment may go.
@@ -1232,7 +1232,7 @@ class SqlAlchemyPageVersionRepository(
             PageVersionRow.comment == EMPTY_TEXT,
             or_(PageVersionRow.scale != VersionScale.PREVIEW, PageVersionRow.created_at < previews_older_than),
         )
-        # The two columns of every version of the project, and whether it may go, since the chains are followed here
+        # The two columns of every version of the book, and whether it may go, since the chains are followed here
         rows = session.execute(
             select(PageVersionRow.id, PageVersionRow.input_id, may_go).join(
                 PageRow, PageVersionRow.page_id == PageRow.id
@@ -1375,11 +1375,11 @@ class SqlAlchemyPageStageRepository(
 
     @override
     def list_for_stage(self, stage: Stage) -> Sequence[PageStage]:
-        """Return the records of one stage over the pages of a project, by page identifier.
+        """Return the records of one stage over the pages of a book, by page identifier.
 
         :param stage: The stage.
         :type stage: Stage
-        :returns: Every record of the stage in the project.
+        :returns: Every record of the stage in the book.
         :rtype: Sequence[PageStage]
         """
         statement = (
@@ -1392,7 +1392,7 @@ class SqlAlchemyPageStageRepository(
 
     @override
     def head_ids(self) -> Collection[PageVersionId]:
-        """Return the distinct head versions of the stage records of the project's pages.
+        """Return the distinct head versions of the stage records of the book's pages.
 
         :returns: The identifiers of the current versions.
         :rtype: Collection[PageVersionId]
@@ -1407,7 +1407,7 @@ class SqlAlchemyPageStageRepository(
 
     @override
     def tally(self) -> Sequence[StageTally]:
-        """Count the records of every stage of the project by state with one grouped statement.
+        """Count the records of every stage of the book by state with one grouped statement.
 
         The counts are conditional sums, which every database computes alike, and the head version is joined outside
         so a record without one still counts. The check count is one more sum over the same rows, so a page that is
@@ -1459,7 +1459,7 @@ class SqlAlchemyPageStageRepository(
 
     @override
     def step_tally(self) -> Sequence[StepTally]:
-        """Count the pages a run stopped at each step, for every stage of the project, with one grouped statement.
+        """Count the pages a run stopped at each step, for every stage of the book, with one grouped statement.
 
         :returns: One tally for each step of a stage that a page stopped at.
         :rtype: Sequence[StepTally]
@@ -1943,7 +1943,7 @@ class SqlAlchemyBookPlaceRepository(BookPlaceRepository):
 
 
 class SqlAlchemyRecipeRepository(SqlAlchemyRepository[Recipe, RecipeId, RecipeRow], RecipeRepository):
-    """Recipes of the projects, of which a stage has one for each kind."""
+    """Recipes of the books, of which a stage has one for each kind."""
 
     def __init__(self, session: Session) -> None:
         """Create the repository over the ``recipes`` table.
@@ -1967,7 +1967,7 @@ class SqlAlchemyRecipeRepository(SqlAlchemyRepository[Recipe, RecipeId, RecipeRo
 
     @override
     def list_all(self) -> Sequence[Recipe]:
-        """Return the recipes of every stage of a project, in the order of the stages and then by creation.
+        """Return the recipes of every stage of a book, in the order of the stages and then by creation.
 
         :returns: The recipes of the stages that have been used.
         :rtype: Sequence[Recipe]
@@ -2049,7 +2049,7 @@ class SqlAlchemyBookRepositories(BookRepositories):
     The unit of work builds one for each transaction and hands it to the work, so the repositories share the session,
     and with it the transaction, and are dropped with it.
 
-    :ivar projects: Project repository bound to the session.
+    :ivar book_record: Repository of the record of the book, bound to the session.
     :ivar sources: Source repository bound to the session.
     :ivar scans: Scan repository bound to the session.
     :ivar pages: Page repository bound to the session.
@@ -2071,7 +2071,7 @@ class SqlAlchemyBookRepositories(BookRepositories):
         :type session: Session
         """
         self.groups = PageGroups(session)
-        self.projects = SqlAlchemyProjectRepository(session)
+        self.book_record = SqlAlchemyBookRecordRepository(session)
         self.sources = SqlAlchemySourceRepository(session)
         self.scans = SqlAlchemyScanRepository(session)
         self.pages = SqlAlchemyPageRepository(session, self.groups)

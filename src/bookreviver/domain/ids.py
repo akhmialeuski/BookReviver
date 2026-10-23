@@ -9,7 +9,7 @@ from typing import NewType
 from uuid import UUID
 
 AccountId = NewType('AccountId', UUID)
-ProjectId = NewType('ProjectId', UUID)
+BookId = NewType('BookId', UUID)
 SourceId = NewType('SourceId', UUID)
 ScanId = NewType('ScanId', UUID)
 PageId = NewType('PageId', UUID)

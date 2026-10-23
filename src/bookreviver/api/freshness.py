@@ -3,8 +3,9 @@
 Every read of a book answers with a weak ``ETag`` made of the mark of the book, its version and the mark of its jobs,
 and of a digest of the path and the query asked for, and with ``Cache-Control: private, no-cache``, so the browser
 keeps the answer and asks again with ``If-None-Match`` every time. When the tag it sends is still the tag of the book,
-the read is answered 304 without a body and its handler never runs. The book routers take :func:`fresh_book` as a
-dependency of every route, and it lets anything but a read of a book through.
+the read is answered 304 without a body and its handler never runs. The routers of one book take :func:`fresh_book` as
+a dependency of every route, and it lets anything but a read of a book through. It takes the same open book as the
+route, so the owner is checked once for both.
 
 A dependency cannot answer a request itself, so a read that still holds raises :class:`NotModifiedError`, which
 :func:`not_modified` answers. fastapi-problem answers every ``HTTPException`` with a problem body, which a 304 must not
@@ -14,14 +15,13 @@ route that returns data, which every read of a book does.
 
 import hashlib
 from http import HTTPMethod, HTTPStatus
-from typing import TYPE_CHECKING, Final
-from uuid import UUID
+from typing import TYPE_CHECKING, Annotated, Final
 
 from dishka.integrations.fastapi import FromDishka, inject
-from fastapi import Request, Response
+from fastapi import Depends, Request, Response
 
-from bookreviver.api.auth import ActorDep
-from bookreviver.domain.ids import ProjectId
+from bookreviver.api.access import open_book
+from bookreviver.services.book import Book
 from bookreviver.services.freshness import BookFreshness
 
 if TYPE_CHECKING:
@@ -32,7 +32,6 @@ IF_NONE_MATCH_HEADER: Final = 'If-None-Match'
 CACHE_CONTROL_HEADER: Final = 'Cache-Control'
 # The browser keeps the answer for this account alone and asks again before it uses it
 REVALIDATE: Final = 'private, no-cache'
-PROJECT_ID_PARAMETER: Final = 'project_id'
 WEAK_PREFIX: Final = 'W/'
 ANY_TAG: Final = '*'
 TAG_SEPARATOR: Final = ','
@@ -74,31 +73,28 @@ def _matches(sent: str | None, tag: str) -> bool:
 
 @inject
 async def fresh_book(
-    request: Request, response: Response, actor: ActorDep, freshness: FromDishka[BookFreshness]
+    request: Request,
+    response: Response,
+    book: Annotated[Book, Depends(open_book)],
+    freshness: FromDishka[BookFreshness],
 ) -> None:
     """Tag a read of a book, and answer it 304 when the client holds it as it still is.
 
     :param request: The request, whose method, path, query and ``If-None-Match`` are read.
     :type request: Request
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
     :param response: The response of a read that runs, which receives the tag and the caching.
     :type response: Response
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param freshness: Freshness of the reads of the books of the request.
     :type freshness: BookFreshness
     :raises NotModifiedError: If the client holds the read as it still is.
-    :raises NotFoundError: If the actor has no such project.
     """
     if request.method != HTTPMethod.GET:
         return
-    try:
-        project_id = ProjectId(UUID(request.path_params[PROJECT_ID_PARAMETER]))
-    except KeyError, ValueError:
-        # No book, or a malformed identifier, which the validation of the route answers
-        return
     asked = request.url.path if not request.url.query else f'{request.url.path}?{request.url.query}'
     digest = hashlib.blake2b(asked.encode(), digest_size=DIGEST_BYTES).hexdigest()
-    tag = f'{WEAK_PREFIX}"{await freshness.mark(actor, project_id)}-{digest}"'
+    tag = f'{WEAK_PREFIX}"{await freshness.mark(book)}-{digest}"'
     headers = {ETAG_HEADER: tag, CACHE_CONTROL_HEADER: REVALIDATE}
     if _matches(request.headers.get(IF_NONE_MATCH_HEADER), tag):
         raise NotModifiedError(headers)

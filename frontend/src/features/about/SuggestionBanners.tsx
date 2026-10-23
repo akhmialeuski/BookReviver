@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { LightbulbIcon } from 'lucide-react';
-import { listSourcesApiV1ProjectsProjectIdSourcesGetOptions } from '@/api/@tanstack/react-query.gen';
+import { listSourcesApiV1BooksBookIdSourcesGetOptions } from '@/api/@tanstack/react-query.gen';
 import type { EditableFields } from '@/features/about/fields';
 import {
   planSuggestion,
@@ -73,17 +73,17 @@ export function SuggestionBox({
 }
 
 export function SuggestionBanners({
-  projectId,
+  bookId,
   fields,
   onEdit,
 }: {
-  projectId: string;
+  bookId: string;
   fields: EditableFields;
   onEdit: (changes: Partial<EditableFields>, options?: EditOptions) => void;
 }): React.JSX.Element | null {
   const sources = useQuery(
-    listSourcesApiV1ProjectsProjectIdSourcesGetOptions({
-      path: { project_id: projectId },
+    listSourcesApiV1BooksBookIdSourcesGetOptions({
+      path: { book_id: bookId },
       query: { size: SOURCES_PAGE_SIZE },
     }),
   );

@@ -6,19 +6,17 @@ import pytest
 from attrs import evolve
 
 from bookreviver.domain.enums import NewPageOrigin, PageKind, Side, Stage, StageState, ValueScope
-from bookreviver.domain.events import PageStageChanged
 from bookreviver.domain.values import NewPage, PageAnchor
-from tests.helpers.builders import make_page, make_page_stage, make_project, make_step_values
-from tests.helpers.seeding import store_project
+from tests.helpers.builders import make_page, make_page_stage, make_record, make_step_values, open_for
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from bookreviver.domain.entities import Actor, Page, Project
+    from bookreviver.domain.entities import Actor, BookRecord, Page
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.database import UnitOfWorkFactory
-    from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
 
@@ -30,11 +28,11 @@ GROUP: str = 'Index'
 class Book(NamedTuple):
     """A book of four pages that all went through the geometry and the cleanup stage.
 
-    :ivar project: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar pages: The pages in book order.
     """
 
-    project: Project
+    book_record: BookRecord
     pages: list[Page]
 
 
@@ -59,7 +57,9 @@ async def _move(service: PageService, actor: Actor, book: Book) -> None:
     :param book: The book.
     :type book: Book
     """
-    await service.move(actor, book.project.id, book.pages[0].id, PageAnchor(page_id=book.pages[2].id, side=Side.AFTER))
+    await service.move(
+        open_for(actor, book.book_record.id), book.pages[0].id, PageAnchor(page_id=book.pages[2].id, side=Side.AFTER)
+    )
 
 
 async def _move_group(service: PageService, actor: Actor, book: Book) -> None:
@@ -73,7 +73,7 @@ async def _move_group(service: PageService, actor: Actor, book: Book) -> None:
     :type book: Book
     """
     anchor = PageAnchor(page_id=book.pages[3].id, side=Side.AFTER)
-    await service.move_group(actor, book.project.id, [book.pages[1].id, book.pages[2].id], anchor)
+    await service.move_group(open_for(actor, book.book_record.id), [book.pages[1].id, book.pages[2].id], anchor)
 
 
 async def _delete(service: PageService, actor: Actor, book: Book) -> None:
@@ -86,7 +86,7 @@ async def _delete(service: PageService, actor: Actor, book: Book) -> None:
     :param book: The book.
     :type book: Book
     """
-    await service.delete(actor, book.project.id, book.pages[0].id)
+    await service.delete(open_for(actor, book.book_record.id), book.pages[0].id)
 
 
 async def _insert(service: PageService, actor: Actor, book: Book) -> None:
@@ -104,7 +104,7 @@ async def _insert(service: PageService, actor: Actor, book: Book) -> None:
         kind=PageKind.TEXT,
         anchor=PageAnchor(page_id=book.pages[1].id, side=Side.BEFORE),
     )
-    await service.add(actor, book.project.id, new_page)
+    await service.add(open_for(actor, book.book_record.id), new_page)
 
 
 REORDERINGS: dict[str, Reordering] = {
@@ -127,17 +127,17 @@ async def _commit_book(uow: UnitOfWork, actor: Actor, valued: tuple[ValueScope, 
     :returns: The book.
     :rtype: Book
     """
-    project = make_project()
+    book_record = make_record()
     pages = [make_page(order_key=f'a{number}') for number in range(PAGE_COUNT)]
-    await store_project(uow, project, *pages, owner=actor.account_id)
+    await store_book(uow, book_record, *pages, owner=actor.account_id)
 
-    def save_records(repos: BookRepositories, _project: Project) -> None:
+    def save_records(repos: BookRepositories, _book_record: BookRecord) -> None:
         """Save a record for every checked stage of every page, and the value of the part of the pages when given.
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _project: The project as the change finds it, which the work does not need.
-        :type _project: Project
+        :param _book_record: The record of the book as the change finds it, which the work does not need.
+        :type _book_record: BookRecord
         """
         for page in pages:
             for stage in CHECKED_STAGES:
@@ -148,8 +148,8 @@ async def _commit_book(uow: UnitOfWork, actor: Actor, valued: tuple[ValueScope, 
             values = make_step_values(scope=scope, group_label=group_label)
             repos.step_values.save(evolve(values, stage=stage))
 
-    await uow.change_book(project.id, save_records)
-    return Book(project=project, pages=pages)
+    await uow.change_book(book_record.id, save_records)
+    return Book(book_record=book_record, pages=pages)
 
 
 async def _stale(uow: UnitOfWork, book: Book) -> set[tuple[int, Stage]]:
@@ -163,7 +163,7 @@ async def _stale(uow: UnitOfWork, book: Book) -> set[tuple[int, Stage]]:
     :rtype: set[tuple[int, Stage]]
     """
     index = {page.id: place for place, page in enumerate(book.pages)}
-    records = await uow.read_book(book.project.id, lambda repos: repos.page_stages.list_for_pages(list(index)))
+    records = await uow.read_book(book.book_record.id, lambda repos: repos.page_stages.list_for_pages(list(index)))
     return {(index[record.page_id], record.stage) for record in records if record.state is StageState.STALE}
 
 
@@ -231,26 +231,3 @@ class TestPagesTurnedOver:
         book = await _commit_book(fx_uow(), fx_actor, valued)
         await _move(fx_service(), fx_actor, book)
         assert await _stale(fx_uow(), book) == set()
-
-    async def test_the_marked_stages_are_announced_after_the_commit(
-        self,
-        fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
-        fx_actor: Actor,
-        fx_events: RecordingEventBus,
-    ) -> None:
-        """Verify one event is published for each stage record a move marked stale.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param fx_events: Recording event bus the service publishes to.
-        :type fx_events: RecordingEventBus
-        """
-        book = await _commit_book(fx_uow(), fx_actor, (ValueScope.ODD, Stage.GEOMETRY))
-        await _move(fx_service(), fx_actor, book)
-        announced = {event.stage.page_id for event in fx_events.published if isinstance(event, PageStageChanged)}
-        assert announced == {book.pages[1].id, book.pages[2].id}

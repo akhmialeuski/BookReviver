@@ -13,7 +13,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.ids import JobId, ProjectId
+from bookreviver.domain.ids import BookId, JobId
 from bookreviver.domain.values import JobEnd
 from tests.helpers.builders import make_job
 from tests.helpers.job_boards import open_board_under_test
@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
-BOOK: ProjectId = ProjectId(UUID(int=1))
-OTHER_BOOK: ProjectId = ProjectId(UUID(int=2))
+BOOK: BookId = BookId(UUID(int=1))
+OTHER_BOOK: BookId = BookId(UUID(int=2))
 UNKNOWN_JOB: JobId = JobId(UUID(int=99))
 KEPT_ENDED: int = 2
 JOBS_PUT: int = 4
@@ -50,7 +50,7 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        jobs = [make_job(project_id=BOOK, kind=JobKind.RUN_STAGE, minutes=minute) for minute in range(JOBS_PUT)]
+        jobs = [make_job(book_id=BOOK, kind=JobKind.RUN_STAGE, minutes=minute) for minute in range(JOBS_PUT)]
         async with open_board_under_test(fx_board_adapter) as under_test:
             for job in jobs:
                 under_test.board.put(job)
@@ -65,7 +65,7 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        first, second = (make_job(project_id=BOOK, minutes=minute) for minute in range(2))
+        first, second = (make_job(book_id=BOOK, minutes=minute) for minute in range(2))
         async with open_board_under_test(fx_board_adapter) as under_test:
             release = under_test.runner.hold(first)
             under_test.board.put(first)
@@ -94,7 +94,7 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        held, free = make_job(project_id=BOOK), make_job(project_id=OTHER_BOOK)
+        held, free = make_job(book_id=BOOK), make_job(book_id=OTHER_BOOK)
         async with open_board_under_test(fx_board_adapter) as under_test:
             under_test.runner.hold(held)
             under_test.board.put(held)
@@ -109,7 +109,7 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        first, dropped, last = (make_job(project_id=BOOK, minutes=minute) for minute in range(3))
+        first, dropped, last = (make_job(book_id=BOOK, minutes=minute) for minute in range(3))
         async with open_board_under_test(fx_board_adapter) as under_test:
             release = under_test.runner.hold(first)
             for job in (first, dropped, last):
@@ -131,7 +131,7 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        running, next_job = make_job(project_id=BOOK, minutes=0), make_job(project_id=BOOK, minutes=1)
+        running, next_job = make_job(book_id=BOOK, minutes=0), make_job(book_id=BOOK, minutes=1)
         async with open_board_under_test(fx_board_adapter) as under_test:
             release = under_test.runner.hold(running)
             under_test.board.put(running)
@@ -167,7 +167,7 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        job = make_job(project_id=BOOK)
+        job = make_job(book_id=BOOK)
         async with open_board_under_test(fx_board_adapter) as under_test:
             under_test.board.put(job)
             await settle(under_test)
@@ -182,7 +182,7 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        broken, next_job = make_job(project_id=BOOK, minutes=0), make_job(project_id=BOOK, minutes=1)
+        broken, next_job = make_job(book_id=BOOK, minutes=0), make_job(book_id=BOOK, minutes=1)
         async with open_board_under_test(fx_board_adapter) as under_test:
             under_test.runner.fail(broken)
             under_test.board.put(broken)
@@ -200,7 +200,7 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        jobs = [make_job(project_id=BOOK, minutes=minute) for minute in range(JOBS_PUT)]
+        jobs = [make_job(book_id=BOOK, minutes=minute) for minute in range(JOBS_PUT)]
         async with open_board_under_test(fx_board_adapter, kept_ended=KEPT_ENDED) as under_test:
             for job in jobs:
                 under_test.board.put(job)
@@ -218,8 +218,8 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        ended, held, waiting = (make_job(project_id=BOOK, minutes=minute) for minute in range(3))
-        elsewhere = make_job(project_id=OTHER_BOOK, minutes=3)
+        ended, held, waiting = (make_job(book_id=BOOK, minutes=minute) for minute in range(3))
+        elsewhere = make_job(book_id=OTHER_BOOK, minutes=3)
         async with open_board_under_test(fx_board_adapter) as under_test:
             under_test.board.put(ended)
             await settle(under_test)
@@ -243,7 +243,7 @@ class TestJobBoard:
         """
         async with open_board_under_test(fx_board_adapter) as under_test:
             empty, other = under_test.board.revision(BOOK), under_test.board.revision(OTHER_BOOK)
-            under_test.board.put(make_job(project_id=BOOK))
+            under_test.board.put(make_job(book_id=BOOK))
             queued = under_test.board.revision(BOOK)
             await settle(under_test)
             ended = under_test.board.revision(BOOK)
@@ -269,7 +269,7 @@ class TestJobBoard:
         :param fx_board_adapter: Adapter under test.
         :type fx_board_adapter: BoardAdapter
         """
-        job = make_job(project_id=BOOK)
+        job = make_job(book_id=BOOK)
         async with open_board_under_test(fx_board_adapter) as under_test:
             under_test.board.put(job)
             await settle(under_test)

@@ -9,20 +9,21 @@ from typing import Annotated
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Request
 
-from bookreviver.api.auth import ActorDep
+from bookreviver.api.access import open_book
 from bookreviver.api.routers.processing import VersionPath
 from bookreviver.api.schemas.processing import PageVersionSchema
 from bookreviver.api.schemas.result_marks import ResultMarkForm
+from bookreviver.services.book import Book
 from bookreviver.services.result_marks import ResultMarksService
 
-router = APIRouter(prefix='/projects', tags=['result-marks'], route_class=DishkaRoute)
+router = APIRouter(prefix='/books', tags=['result-marks'], route_class=DishkaRoute)
 
 
-@router.put('/{project_id}/pages/{page_id}/versions/{version_id}/mark')
+@router.put('/{book_id}/pages/{page_id}/versions/{version_id}/mark')
 async def put_mark(
+    book: Annotated[Book, Depends(open_book)],
     address: Annotated[VersionPath, Depends()],
     form: ResultMarkForm,
-    actor: ActorDep,
     request: Request,
     marks: FromDishka[ResultMarksService],
 ) -> PageVersionSchema:
@@ -32,12 +33,12 @@ async def put_mark(
     A body equal to what is stored writes nothing. The answer is 409 for a preview.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page and the version.
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
+    :param address: Identifiers of the book, the page and the version.
     :type address: VersionPath
     :param form: The mark and the comment.
     :type form: ResultMarkForm
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param request: The request, whose application knows the route that serves the images.
     :type request: Request
     :param marks: Result marks service of the request.
@@ -45,5 +46,5 @@ async def put_mark(
     :returns: The version with its mark and comment.
     :rtype: PageVersionSchema
     """
-    version = await marks.set(actor, address.project_id, address.page_id, address.version_id, form.to_note())
-    return PageVersionSchema.of(version, address.project_id, request)
+    version = await marks.set(book, address.page_id, address.version_id, form.to_note())
+    return PageVersionSchema.of(version, book.id, request)

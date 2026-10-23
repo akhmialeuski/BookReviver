@@ -38,8 +38,8 @@ export function ResetSteps({
   /** The rows of the stage, which the number of pages the reset makes out of date is counted from. */
   rows: readonly StagePageSchema[];
 }): React.JSX.Element | null {
-  const { projectId, stage, recipe } = processing;
-  const reset = useResetRecipe(projectId);
+  const { bookId, stage, recipe } = processing;
+  const reset = useResetRecipe(bookId);
   const [open, setOpen] = useState(false);
   if (recipe === undefined) {
     return null;
@@ -91,7 +91,7 @@ export function ResetSteps({
             data-testid="steps-reset-confirm"
             onClick={() =>
               reset.mutate(
-                { path: { project_id: projectId, stage, recipe_id: recipe.id } },
+                { path: { book_id: bookId, stage, recipe_id: recipe.id } },
                 {
                   onSuccess: () => {
                     processing.discard();

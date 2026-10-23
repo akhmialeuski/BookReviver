@@ -5,7 +5,7 @@ hand. It has no scheme or host because the browser resolves it against the origi
 address kept by a client or written into a pyramid then survives a change of domain, port or device address.
 
 The ``full`` image is a JPEG or a PNG, and its address names the format recorded with the scan or the page version when
-the image was written, never one worked out from the project's image policy as it is now, since a later change of the
+the image was written, never one worked out from the book's image policy as it is now, since a later change of the
 policy does not change the files already stored.
 """
 
@@ -15,7 +15,7 @@ from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.base import ResponseModel
 from bookreviver.api.schemas.iiif import IIIF_INFO_FILE
 from bookreviver.domain.enums import Rendition
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -63,7 +63,7 @@ class ImagePathsSchema(ResponseModel):
             """
             return str(request.app.url_path_for(RouteName.IIIF_FILE, key=key))
 
-        info = f'{key_of(Rendition.TILES)}{ProjectKeys.SEPARATOR}{IIIF_INFO_FILE}'
+        info = f'{key_of(Rendition.TILES)}{BookKeys.SEPARATOR}{IIIF_INFO_FILE}'
         return cls(
             full=path(key_of(full)),
             preview=path(key_of(Rendition.PREVIEW)),

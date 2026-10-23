@@ -36,8 +36,8 @@ from attrs import define, field
 
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SchemaRevisions, SqlDatabase
 from bookreviver.domain.errors import BookTooNewError, ConflictError, NotFoundError
-from bookreviver.domain.ids import ProjectId
-from bookreviver.domain.keys import KeySegment, ProjectKeys
+from bookreviver.domain.ids import BookId
+from bookreviver.domain.keys import BookKeys, KeySegment
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -105,33 +105,33 @@ class BookDatabases:
         self._blank = blank
         self._blank_directory: TemporaryDirectory[str] | None = None
         self._revisions: tuple[tuple[str, ...], frozenset[str]] | None = None
-        self._open: dict[ProjectId, OpenBook] = {}
-        self._removing: set[ProjectId] = set()
+        self._open: dict[BookId, OpenBook] = {}
+        self._removing: set[BookId] = set()
         # Taken to open, create and close books, never around a transaction
         self._lock = anyio.Lock()
 
-    def path(self, project_id: ProjectId) -> Path:
+    def path(self, book_id: BookId) -> Path:
         """Return where the database of a book lives.
 
-        :param project_id: The book.
-        :type project_id: ProjectId
+        :param book_id: The book.
+        :type book_id: BookId
         :returns: The path of ``projects/<id>/book.db`` under the storage root.
         :rtype: Path
         """
-        return self._root / ProjectKeys(project_id).database
+        return self._root / BookKeys(book_id).database
 
     @asynccontextmanager
-    async def use(self, project_id: ProjectId) -> AsyncIterator[SqlDatabase]:
+    async def use(self, book_id: BookId) -> AsyncIterator[SqlDatabase]:
         """Hold the database of a book open for one unit of work, opening it first when it is closed.
 
-        :param project_id: The book.
-        :type project_id: ProjectId
+        :param book_id: The book.
+        :type book_id: BookId
         :returns: Iterator yielding the open database of the book once.
         :rtype: AsyncIterator[SqlDatabase]
         :raises NotFoundError: If the book has no database, or it is being removed.
         :raises BookTooNewError: If the database is at a revision of the book schema that this code does not ship.
         """
-        book = await self._acquire(project_id)
+        book = await self._acquire(book_id)
         try:
             yield book.database
         finally:
@@ -140,45 +140,45 @@ class BookDatabases:
             if not book.users and book.released is not None:
                 book.released.set()
 
-    async def create(self, project_id: ProjectId) -> None:
+    async def create(self, book_id: BookId) -> None:
         """Make the database of a new book, empty and at the head revision, in a new directory of the book.
 
-        :param project_id: The new book.
-        :type project_id: ProjectId
+        :param book_id: The new book.
+        :type book_id: BookId
         :raises ConflictError: If the book has a database already.
         """
         blank = await self._blank_file()
         try:
-            await to_thread.run_sync(_copy_new, blank, self.path(project_id))
+            await to_thread.run_sync(_copy_new, blank, self.path(book_id))
         except FileExistsError as error:
-            raise ConflictError(project_id) from error
+            raise ConflictError(book_id) from error
 
-    async def remove(self, project_id: ProjectId) -> None:
+    async def remove(self, book_id: BookId) -> None:
         """Close the database of a book once no unit of work uses it, and delete its files.
 
         A book without a database is left as it is, so a removal broken off half way can run again.
 
-        :param project_id: The book.
-        :type project_id: ProjectId
+        :param book_id: The book.
+        :type book_id: BookId
         """
         async with self._lock:
-            self._removing.add(project_id)
-            book = self._open.pop(project_id, None)
+            self._removing.add(book_id)
+            book = self._open.pop(book_id, None)
         try:
             if book is not None:
                 if book.users:
                     released = book.released = anyio.Event()
                     await released.wait()
                 await book.database.dispose()
-            await to_thread.run_sync(_delete_database, self.path(project_id))
+            await to_thread.run_sync(_delete_database, self.path(book_id))
         finally:
-            self._removing.discard(project_id)
+            self._removing.discard(book_id)
 
-    async def stored(self) -> list[ProjectId]:
+    async def stored(self) -> list[BookId]:
         """Return every book that has a database under the storage root.
 
         :returns: The identifiers of the books, in order.
-        :rtype: list[ProjectId]
+        :rtype: list[BookId]
         """
         return await to_thread.run_sync(self._stored)
 
@@ -186,10 +186,8 @@ class BookDatabases:
         """Close every open book that no unit of work has used for the idle limit."""
         since = monotonic() - self._idle_seconds
         async with self._lock:
-            idle = [
-                project_id for project_id, book in self._open.items() if not book.users and book.idle_since <= since
-            ]
-            closing = [self._open.pop(project_id) for project_id in idle]
+            idle = [book_id for book_id, book in self._open.items() if not book.users and book.idle_since <= since]
+            closing = [self._open.pop(book_id) for book_id in idle]
         for book in closing:
             await book.database.dispose()
 
@@ -210,36 +208,36 @@ class BookDatabases:
             await to_thread.run_sync(self._blank_directory.cleanup)
             self._blank_directory = None
 
-    async def _acquire(self, project_id: ProjectId) -> OpenBook:
+    async def _acquire(self, book_id: BookId) -> OpenBook:
         """Count one more user of a book, opening its database first when it is closed.
 
         The open book is looked up and counted with no await between, so a removal or a closing never finds it unused
         while a unit of work has it in hand.
 
-        :param project_id: The book.
-        :type project_id: ProjectId
+        :param book_id: The book.
+        :type book_id: BookId
         :returns: The open book, counted.
         :rtype: OpenBook
         :raises NotFoundError: If the book has no database, or it is being removed.
         :raises BookTooNewError: If the database is at a revision of the book schema that this code does not ship.
         """
-        if (book := self._open.get(project_id)) is not None:
+        if (book := self._open.get(book_id)) is not None:
             book.users += 1
             return book
         async with self._lock:
-            if project_id in self._removing:
-                raise NotFoundError(project_id)
-            if (book := self._open.get(project_id)) is None:
-                path = self.path(project_id)
+            if book_id in self._removing:
+                raise NotFoundError(book_id)
+            if (book := self._open.get(book_id)) is None:
+                path = self.path(book_id)
                 if not await anyio.Path(path).is_file():
-                    raise NotFoundError(project_id)
+                    raise NotFoundError(book_id)
                 database = self._database(path)
                 try:
                     await self._migrate(database)
                 except BaseException:
                     await database.dispose()
                     raise
-                book = self._open[project_id] = OpenBook(database=database)
+                book = self._open[book_id] = OpenBook(database=database)
             book.users += 1
             return book
 
@@ -292,23 +290,23 @@ class BookDatabases:
                 self._blank = blank
             return self._blank
 
-    def _stored(self) -> list[ProjectId]:
+    def _stored(self) -> list[BookId]:
         """List the books that have a database, in a worker thread.
 
         Every directory under ``projects`` is named by the identifier of its book, which is how the stores make them.
 
         :returns: The identifiers of the books, in order.
-        :rtype: list[ProjectId]
+        :rtype: list[BookId]
         """
-        projects = self._root / KeySegment.PROJECTS
-        if not projects.is_dir():
+        books = self._root / KeySegment.BOOKS
+        if not books.is_dir():
             return []
-        found: list[ProjectId] = []
-        for directory in projects.iterdir():
+        found: list[BookId] = []
+        for directory in books.iterdir():
             with suppress(ValueError):
-                project_id = ProjectId(UUID(directory.name))
-                if self.path(project_id).is_file():
-                    found.append(project_id)
+                book_id = BookId(UUID(directory.name))
+                if self.path(book_id).is_file():
+                    found.append(book_id)
         return sorted(found)
 
 

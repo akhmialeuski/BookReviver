@@ -1,4 +1,4 @@
-"""Reading the server-sent event stream of a project the way a browser does, for the API tests.
+"""Reading the server-sent event stream of a book the way a browser does, for the API tests.
 
 httpx's ASGI transport returns a response only after the application finished it, which an event stream never does,
 so the reader drives the ASGI application directly: it sends the request, collects the events, and disconnects like a

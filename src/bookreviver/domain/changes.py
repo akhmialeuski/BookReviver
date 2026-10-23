@@ -14,7 +14,7 @@ from attrs import asdict, evolve, field, frozen
 from bookreviver.domain.enums import BlankFill, PageKind
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Page, Project
+    from bookreviver.domain.entities import BookRecord, Page
     from bookreviver.domain.enums import ContentType, ImagePolicy, Orthography, RightsStatus, Script
     from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor
 
@@ -106,8 +106,8 @@ class BookDetailsChanges:
 
 
 @frozen(kw_only=True)
-class ProjectChanges:
-    """New values for some fields of a project; a field left as None keeps its current value.
+class BookChanges:
+    """New values for some fields of a book; a field left as None keeps its current value.
 
     :ivar details: New values for some fields of the book description.
     :ivar image_policy: New way to store the images of new scans and page versions.
@@ -116,18 +116,18 @@ class ProjectChanges:
     details: BookDetailsChanges = field(factory=BookDetailsChanges)
     image_policy: ImagePolicy | None = None
 
-    def apply_to(self, project: Project) -> Project:
-        """Return ``project`` with every given field replaced, its description checked like a new one.
+    def apply_to(self, book_record: BookRecord) -> BookRecord:
+        """Return ``book_record`` with every given field replaced, its description checked like a new one.
 
         The update time is left to the caller, which owns the clock.
 
-        :param project: Current state of the project.
-        :type project: Project
-        :returns: The project with the given fields replaced and the others kept.
-        :rtype: Project
+        :param book_record: Current record of the book.
+        :type book_record: BookRecord
+        :returns: The record of the book with the given fields replaced and the others kept.
+        :rtype: BookRecord
         :raises ValueError: If the changed description breaks one of its rules, such as an empty title.
         """
-        changed = evolve(project, details=self.details.apply_to(project.details))
+        changed = evolve(book_record, details=self.details.apply_to(book_record.details))
         if self.image_policy is not None:
             changed = evolve(changed, image_policy=self.image_policy)
         return changed

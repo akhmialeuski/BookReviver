@@ -31,7 +31,6 @@ from bookreviver.services.imports import (
     ImportStorage,
 )
 from bookreviver.services.jobs import JobService
-from bookreviver.services.library import Library
 from bookreviver.services.processing_parts import ProcessingParts, ProcessingRuntime
 from bookreviver.services.steps import StepRunner
 
@@ -71,11 +70,9 @@ class ImportsProvider(Provider):
             await stack.aclose()
 
     @provide(scope=Scope.REQUEST)
-    def job_service(self, library: Library, board: JobBoard, stream: EventStream, sources: SourceStore) -> JobService:
-        """Build the job service over the library of the request or job.
+    def job_service(self, board: JobBoard, stream: EventStream, sources: SourceStore) -> JobService:
+        """Build the job service of the request or job.
 
-        :param library: Library of the current request or job.
-        :type library: Library
         :param board: Board holding the jobs of every book.
         :type board: JobBoard
         :param stream: Stream of the application's event bus.
@@ -85,7 +82,7 @@ class ImportsProvider(Provider):
         :returns: The job service.
         :rtype: JobService
         """
-        return JobService(library=library, board=board, stream=stream, sources=sources)
+        return JobService(board=board, stream=stream, sources=sources)
 
     @provide(scope=Scope.APP)
     def import_limits(self, settings: Settings) -> ImportLimits:
@@ -140,7 +137,7 @@ class ImportsProvider(Provider):
     ) -> ImportRuntime:
         """Gather what an import reports through and is bounded by.
 
-        :param processing: The publisher, the clock and the job board of the application.
+        :param processing: The clock and the job board of the application.
         :type processing: ProcessingRuntime
         :param order_keys: Order keys of the application.
         :type order_keys: OrderKeys
@@ -150,7 +147,6 @@ class ImportsProvider(Provider):
         :rtype: ImportRuntime
         """
         return ImportRuntime(
-            publisher=processing.publisher,
             clock=processing.clock,
             order_keys=order_keys,
             limits=limits,

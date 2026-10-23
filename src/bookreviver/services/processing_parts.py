@@ -5,10 +5,10 @@ the objects that do these over one unit of work, so ``ProcessingService`` and ``
 and are built the same way.
 
 A job is put on the job board of the process, which queues it behind the jobs its book has already and runs one job of a
-book at a time. A project processes one thing at a time. The user asks for a run, a preview or a measure of the book, of
-which the project has one, and the application queues a tile cutting and a collection of old versions for itself, of
+book at a time. A book processes one thing at a time. The user asks for a run, a preview or a measure of the book, of
+which the book has one, and the application queues a tile cutting and a collection of old versions for itself, of
 which it has one too. A request for a second of the first kind is refused, except that a run or a measure takes the
-project from a preview by cancelling it, since a preview is a look that changes nothing. A request that comes while a
+book from a preview by cancelling it, since a preview is a look that changes nothing. A request that comes while a
 job of the other kind is active is queued behind it, so the tile cutting of the viewer never refuses a run and a run
 never waits on a collection with a 409. The collection that every run queues is put behind the run when it ends, and is
 left out while a housekeeping job is active.
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import timedelta
 
-    from bookreviver.domain.ids import PageVersionId, ProjectId
+    from bookreviver.domain.ids import BookId, PageVersionId
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
@@ -45,8 +45,8 @@ if TYPE_CHECKING:
     from bookreviver.ports.tracing import Tracer
     from bookreviver.services.recipes import DefaultRecipes
 
-PROJECT_BUSY: str = (
-    'The project is busy with another run, preview, measure of the book, tile cutting or collection of old versions. '
+BOOK_BUSY: str = (
+    'The book is busy with another run, preview, measure of the book, tile cutting or collection of old versions. '
     'Wait for it to end, or cancel it.'
 )
 
@@ -80,7 +80,7 @@ class ProcessingConfig:
 
 
 class JobStarter:
-    """Puts the jobs of a project on the board, under the rules of what a project may process at once."""
+    """Puts the jobs of a book on the board, under the rules of what a book may process at once."""
 
     def __init__(self, *, runtime: ProcessingRuntime, config: ProcessingConfig) -> None:
         """Start jobs through the board.
@@ -94,22 +94,22 @@ class JobStarter:
         self._clock = runtime.clock
         self._config = config
 
-    async def enqueue(self, project_id: ProjectId, kind: JobKind, params: MetadataMap) -> Job:
-        """Put a job that processes the versions of the project on the board, behind the jobs the project has.
+    async def enqueue(self, book_id: BookId, kind: JobKind, params: MetadataMap) -> Job:
+        """Put a job that processes the versions of the book on the board, behind the jobs the book has.
 
-        A project has one run, preview or measure at a time, and one tile cutting or collection at a time. A job whose
+        A book has one run, preview or measure at a time, and one tile cutting or collection at a time. A job whose
         own group is free is queued whatever the other group is doing, and runs after the job before it.
 
-        A run or a measure of the book does not wait for a preview of the project, queued or running, nor is it refused
+        A run or a measure of the book does not wait for a preview of the book, queued or running, nor is it refused
         by one: the preview is cancelled the way an account holder cancels a job, after the new job is put, and the
-        request goes on as if the project had been free of it. A preview that was still queued never runs. One that is
+        request goes on as if the book had been free of it. A preview that was still queued never runs. One that is
         running stops at the boundary of its current task, and the new job starts after that, so the two never overlap.
         A preview asked for while a run or a measure is active, and a run or a measure asked for while another run or
         measure is, are refused. A measure takes a preview's place like a run does, as the measure is the other button
         the reader presses while the editor of the step is looking at the page.
 
-        :param project_id: Project the job works on.
-        :type project_id: ProjectId
+        :param book_id: Book the job works on.
+        :type book_id: BookId
         :param kind: What the job does, one of the processing kinds.
         :type kind: JobKind
         :param params: What the job was asked to do, in the form its value class writes.
@@ -120,15 +120,15 @@ class JobStarter:
                                running, or while a preview is, unless the request is a run or a measure, or a tile
                                cutting or a collection while one is.
         """
-        if (job := await self._place(project_id, kind, params)) is None:
-            raise ConflictError(PROJECT_BUSY)
+        if (job := await self._place(book_id, kind, params)) is None:
+            raise ConflictError(BOOK_BUSY)
         return job
 
-    async def _place(self, project_id: ProjectId, kind: JobKind, params: MetadataMap) -> Job | None:
-        """Check the rules of the project, put the job, and cancel the previews the job takes the place of.
+    async def _place(self, book_id: BookId, kind: JobKind, params: MetadataMap) -> Job | None:
+        """Check the rules of the book, put the job, and cancel the previews the job takes the place of.
 
-        :param project_id: Project the job works on.
-        :type project_id: ProjectId
+        :param book_id: Book the job works on.
+        :type book_id: BookId
         :param kind: What the job does.
         :type kind: JobKind
         :param params: What the job was asked to do.
@@ -137,28 +137,28 @@ class JobStarter:
         :rtype: Job | None
         """
         group = JobKind.requested() if kind in JobKind.requested() else JobKind.housekeeping()
-        previews, others = self._active(project_id)
+        previews, others = self._active(book_id)
         # A job that takes the place of previews is not refused by them
         taken = previews if kind in JobKind.preemptive() else []
         if any(job.kind in group for job in [*others, *(previews if not taken else [])]):
             return None
-        job = self._board.put(self._new_job(project_id, kind, params))
+        job = self._board.put(self._new_job(book_id, kind, params))
         await self._cancel(taken)
         return job
 
-    async def free_of_previews(self, project_id: ProjectId) -> list[Job]:
-        """Cancel the previews of the project that are queued or running, and return the jobs that are still active.
+    async def free_of_previews(self, book_id: BookId) -> list[Job]:
+        """Cancel the previews of the book that are queued or running, and return the jobs that are still active.
 
         A preview is cancelled the way an account holder cancels a job, so a request that would be refused by a preview
-        alone, a run, a measure of the book or the clear of a page, goes on as if the project had been free of it.
+        alone, a run, a measure of the book or the clear of a page, goes on as if the book had been free of it.
 
-        :param project_id: Project whose previews are cancelled.
-        :type project_id: ProjectId
-        :returns: The queued or running run, tile cutting, collection or measure of the project, newest first, which
-                  are none when the project was free of them.
+        :param book_id: Book whose previews are cancelled.
+        :type book_id: BookId
+        :returns: The queued or running run, tile cutting, collection or measure of the book, newest first, which
+                  are none when the book was free of them.
         :rtype: list[Job]
         """
-        previews, others = self._active(project_id)
+        previews, others = self._active(book_id)
         await self._cancel(previews)
         return others
 
@@ -170,68 +170,68 @@ class JobStarter:
         """
         return VersionCollection(previews_older_than=self._clock.now() - self._config.preview_retention)
 
-    async def enqueue_collection(self, project_id: ProjectId) -> Job | None:
-        """Queue a collection of the project's old versions, unless the project is processing something.
+    async def enqueue_collection(self, book_id: BookId) -> Job | None:
+        """Queue a collection of the book's old versions, unless the book is processing something.
 
         A preview, queued or running, does not count as processing: it is cancelled, since the collection is what the
         reader asked for and a preview is disposable. A preview younger than its retention is kept by the collection
         itself.
 
-        :param project_id: Project whose versions are collected.
-        :type project_id: ProjectId
+        :param book_id: Book whose versions are collected.
+        :type book_id: BookId
         :returns: The collection job, new or the one that is queued or running already, or None when another job
-                  processes the project. A run queues its collection when it ends, through ``queue_collection``.
+                  processes the book. A run queues its collection when it ends, through ``queue_collection``.
         :rtype: Job | None
         """
-        previews, others = self._active(project_id)
-        collection = None if others else self._put_collection(project_id)
+        previews, others = self._active(book_id)
+        collection = None if others else self._put_collection(book_id)
         await self._cancel(previews)
         if others:
             return others[0] if others[0].kind is JobKind.COLLECT_VERSIONS else None
         return collection
 
-    def queue_collection(self, project_id: ProjectId) -> Job | None:
+    def queue_collection(self, book_id: BookId) -> Job | None:
         """Queue the collection a run follows with, behind the job that is running, unless a housekeeping job is active.
 
-        :param project_id: Project whose versions are collected.
-        :type project_id: ProjectId
-        :returns: The collection job, or None when a tile cutting or a collection of the project is queued or running,
+        :param book_id: Book whose versions are collected.
+        :type book_id: BookId
+        :returns: The collection job, or None when a tile cutting or a collection of the book is queued or running,
                   which a collection is not needed beside.
         :rtype: Job | None
         """
-        _, others = self._active(project_id)
+        _, others = self._active(book_id)
         if any(job.kind in JobKind.housekeeping() for job in others):
             return None
-        return self._put_collection(project_id)
+        return self._put_collection(book_id)
 
-    async def enqueue_tiles(self, project_id: ProjectId, version_ids: Sequence[PageVersionId]) -> Job | None:
+    async def enqueue_tiles(self, book_id: BookId, version_ids: Sequence[PageVersionId]) -> Job | None:
         """Queue the cutting of the pyramids of versions that were just made the current ones of their stages.
 
-        The change that made them current is committed already, so a job of another request that took the project in
+        The change that made them current is committed already, so a job of another request that took the book in
         the meantime does not undo it. The viewer asks for the pyramid of a current version, and only the last step of
         a run cuts one, so the version of a step in the middle of a recipe has none until it is cut here.
 
-        :param project_id: Project whose versions are cut.
-        :type project_id: ProjectId
+        :param book_id: Book whose versions are cut.
+        :type book_id: BookId
         :param version_ids: The versions, which may be empty.
         :type version_ids: Sequence[PageVersionId]
         :returns: The tile cutting job, or None when there is no version to cut or another tile cutting or collection
-                  of the project is queued or running.
+                  of the book is queued or running.
         :rtype: Job | None
         """
         if not version_ids:
             return None
-        return await self._place(project_id, JobKind.CUT_TILES, TileCut(version_ids=tuple(version_ids)).to_map())
+        return await self._place(book_id, JobKind.CUT_TILES, TileCut(version_ids=tuple(version_ids)).to_map())
 
-    def _active(self, project_id: ProjectId) -> tuple[list[Job], list[Job]]:
-        """Read the jobs of the project that process its versions and are queued or running.
+    def _active(self, book_id: BookId) -> tuple[list[Job], list[Job]]:
+        """Read the jobs of the book that process its versions and are queued or running.
 
-        :param project_id: Project whose jobs are read.
-        :type project_id: ProjectId
+        :param book_id: Book whose jobs are read.
+        :type book_id: BookId
         :returns: The previews, and the other jobs, each newest first.
         :rtype: tuple[list[Job], list[Job]]
         """
-        active = [job for job in self._board.jobs(project_id, active=True) if job.kind in JobKind.processing()]
+        active = [job for job in self._board.jobs(book_id, active=True) if job.kind in JobKind.processing()]
         previews = [job for job in active if job.kind is JobKind.PREVIEW_STEP]
         return previews, [job for job in active if job not in previews]
 
@@ -245,21 +245,21 @@ class JobStarter:
             with suppress(JobFinishedError, NotFoundError):
                 await self._board.cancel(job.id)
 
-    def _put_collection(self, project_id: ProjectId) -> Job:
-        """Put a collection of the old versions of the project on the board.
+    def _put_collection(self, book_id: BookId) -> Job:
+        """Put a collection of the old versions of the book on the board.
 
-        :param project_id: Project whose versions are collected.
-        :type project_id: ProjectId
+        :param book_id: Book whose versions are collected.
+        :type book_id: BookId
         :returns: The queued job.
         :rtype: Job
         """
-        return self._board.put(self._new_job(project_id, JobKind.COLLECT_VERSIONS, self.collection().to_map()))
+        return self._board.put(self._new_job(book_id, JobKind.COLLECT_VERSIONS, self.collection().to_map()))
 
-    def _new_job(self, project_id: ProjectId, kind: JobKind, params: MetadataMap) -> Job:
+    def _new_job(self, book_id: BookId, kind: JobKind, params: MetadataMap) -> Job:
         """Build a queued job.
 
-        :param project_id: Project the job works on.
-        :type project_id: ProjectId
+        :param book_id: Book the job works on.
+        :type book_id: BookId
         :param kind: What the job does.
         :type kind: JobKind
         :param params: What the job was asked to do.
@@ -267,14 +267,14 @@ class JobStarter:
         :returns: The job, queued as of now.
         :rtype: Job
         """
-        return Job(id=JobId(uuid4()), project_id=project_id, kind=kind, params=params, created_at=self._clock.now())
+        return Job(id=JobId(uuid4()), book_id=book_id, kind=kind, params=params, created_at=self._clock.now())
 
 
 @frozen(kw_only=True)
 class ProcessingParts:
     """The objects a processing use case works through, built over one unit of work.
 
-    :ivar recipes: The recipes of the project and the check of their steps.
+    :ivar recipes: The recipes of the book and the check of their steps.
     :ivar records: Writer of the stage records.
     :ivar starter: Putter of new jobs on the board.
     :ivar clock: Clock stamping what a use case writes, such as the changes a run makes to the pages.
@@ -313,7 +313,7 @@ class ProcessingParts:
             recipes=RecipeBook(
                 uow=uow, catalogue=catalogue, defaults=defaults, clock=runtime.clock, order=RecipeOrder(catalogue)
             ),
-            records=StageRecords(publisher=runtime.publisher, clock=runtime.clock),
+            records=StageRecords(clock=runtime.clock),
             starter=JobStarter(runtime=runtime, config=config),
             clock=runtime.clock,
         )

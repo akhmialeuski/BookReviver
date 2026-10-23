@@ -6,11 +6,11 @@ import {
   MaximizeIcon,
 } from 'lucide-react';
 import { useState } from 'react';
-import { DropZone } from '@/features/projects/upload/DropZone';
-import { SkippedFiles } from '@/features/projects/upload/FileReview';
-import type { PickedFile, SkippedFile } from '@/features/projects/upload/files';
-import { EMPTY_SELECTION, selectionReducer } from '@/features/projects/upload/selection';
-import { useUpload } from '@/features/projects/upload/useUpload';
+import { DropZone } from '@/features/books/upload/DropZone';
+import { SkippedFiles } from '@/features/books/upload/FileReview';
+import type { PickedFile, SkippedFile } from '@/features/books/upload/files';
+import { EMPTY_SELECTION, selectionReducer } from '@/features/books/upload/selection';
+import { useUpload } from '@/features/books/upload/useUpload';
 import { StagePanel } from '@/features/workspace/StagePanel';
 import { describeError } from '@/shared/http/problem';
 import { MESSAGES } from '@/shared/messages';
@@ -32,9 +32,9 @@ const STEPS = [
   { icon: BookOpenIcon, ...MESSAGES.import.empty.steps.pages },
 ] as const;
 
-export function EmptyImport({ projectId }: { projectId: string }): React.JSX.Element {
+export function EmptyImport({ bookId }: { bookId: string }): React.JSX.Element {
   const [skipped, setSkipped] = useState<SkippedFile[]>([]);
-  const { upload, send } = useUpload(projectId);
+  const { upload, send } = useUpload(bookId);
 
   const onPick = (picked: PickedFile[]): void => {
     const selection = selectionReducer(EMPTY_SELECTION, { type: 'add', picked });

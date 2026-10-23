@@ -11,7 +11,7 @@ import {
 function job(id: string, state: JobSchema['state'], startedAt: string | null): JobSchema {
   return {
     id,
-    project_id: 'p-1',
+    book_id: 'p-1',
     kind: 'run-stage',
     stage: 'geometry',
     state,

@@ -1,8 +1,8 @@
 import type { QueryClient } from '@tanstack/react-query';
 import type { Stage } from '@/api';
 import {
-  listStagesApiV1ProjectsProjectIdStagesGetOptions,
-  projectApiV1ProjectsProjectIdGetOptions,
+  bookApiV1BooksBookIdGetOptions,
+  listStagesApiV1BooksBookIdStagesGetOptions,
 } from '@/api/@tanstack/react-query.gen';
 import { manifestOptions } from '@/features/pages/manifest';
 import { placeOptions } from '@/features/place/queries';
@@ -34,37 +34,35 @@ async function attempt<ResultT>(request: () => Promise<ResultT>): Promise<Result
  * read is the same as none.
  *
  * @param queryClient The client whose cache the screens read.
- * @param projectId The book.
+ * @param bookId The book.
  */
-export async function loadPlace(queryClient: QueryClient, projectId: string): Promise<void> {
-  await attempt(() => queryClient.ensureQueryData(placeOptions(projectId)));
+export async function loadPlace(queryClient: QueryClient, bookId: string): Promise<void> {
+  await attempt(() => queryClient.ensureQueryData(placeOptions(bookId)));
 }
 
 /**
  * Find the screen a book opens on.
  *
  * @param queryClient The client whose cache the screens read, which the requests fill.
- * @param projectId The book.
+ * @param bookId The book.
  */
-export async function openBook(queryClient: QueryClient, projectId: string): Promise<ResumeTarget> {
-  const path = { project_id: projectId };
-  const [place, project] = await Promise.all([
-    attempt(() => queryClient.fetchQuery({ ...placeOptions(projectId), staleTime: 0 })),
-    attempt(() => queryClient.fetchQuery(projectApiV1ProjectsProjectIdGetOptions({ path }))),
+export async function openBook(queryClient: QueryClient, bookId: string): Promise<ResumeTarget> {
+  const path = { book_id: bookId };
+  const [place, book] = await Promise.all([
+    attempt(() => queryClient.fetchQuery({ ...placeOptions(bookId), staleTime: 0 })),
+    attempt(() => queryClient.fetchQuery(bookApiV1BooksBookIdGetOptions({ path }))),
   ]);
   const [pages, stages] = await Promise.all([
     place === null || place.page_id === null
       ? null
-      : attempt(() => queryClient.fetchQuery(manifestOptions(projectId))),
+      : attempt(() => queryClient.fetchQuery(manifestOptions(bookId))),
     place?.mode === 'workspace'
-      ? attempt(() =>
-          queryClient.fetchQuery(listStagesApiV1ProjectsProjectIdStagesGetOptions({ path })),
-        )
+      ? attempt(() => queryClient.fetchQuery(listStagesApiV1BooksBookIdStagesGetOptions({ path })))
       : null,
   ]);
   const everyStage: readonly Stage[] = STAGES.map((entry) => entry.stage);
   return resumeTarget(place, {
-    nextStage: project?.next_stage ?? null,
+    nextStage: book?.next_stage ?? null,
     // A list that could not be read says nothing against the place, so the page and the stage it names stay
     pageIds: new Set(pages === null ? [place?.page_id ?? ''] : pages.map((page) => page.id)),
     availableStages: new Set(

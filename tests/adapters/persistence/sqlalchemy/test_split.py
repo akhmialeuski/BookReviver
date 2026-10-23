@@ -2,7 +2,7 @@
 
 The revisions of the shared database are gone from the code, so the tests build a shared database the way its last
 revision left it: every table of the catalogue but the library and every table of a book, in one file, with the owner
-of a project and the account of a place that the new tables no longer keep, and the version table at the last
+of a book and the account of a place that the new tables no longer keep, and the version table at the last
 revision. The tables come from the baselines of the catalogue and of a book, which have the tables of that revision
 without the accounts of the books, and the rows are stored through the repositories of the adapter at the head and
 carried down to the baselines by the downgrades, so they have the shape the application wrote.
@@ -35,8 +35,8 @@ from tests.helpers.builders import (
     make_page,
     make_page_stage,
     make_page_version,
-    make_project,
     make_recipe_profile,
+    make_record,
     make_scan,
     make_source,
     new_account_id,
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import Project
+    from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import AccountId, PageId
 
 pytestmark = pytest.mark.anyio
@@ -81,8 +81,8 @@ class SharedBooks:
 
     path: Path
     owner_id: AccountId
-    first: Project
-    second: Project
+    first: BookRecord
+    second: BookRecord
     labelled: PageId
 
 
@@ -155,7 +155,7 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
     :rtype: SharedBooks
     """
     owner_id = new_account_id()
-    first, second = make_project(title='First'), make_project(title='Second', minutes=1)
+    first, second = make_record(title='First'), make_record(title='Second', minutes=1)
     source = make_source()
     scan = make_scan(source=source, number=0)
     pages = [make_page(order_key=f'a{index}', scan=scan if not index else None) for index in range(2)]
@@ -190,7 +190,7 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
         :type session: Session
         """
         repos = SqlAlchemyBookRepositories(session)
-        repos.projects.add(first)
+        repos.book_record.add(first)
         repos.sources.add(source)
         repos.scans.add(scan)
         repos.pages.add_many(pages)
@@ -205,7 +205,7 @@ async def _build_shared(directory: Path, *, revision: str) -> SharedBooks:
         :type session: Session
         """
         repos = SqlAlchemyBookRepositories(session)
-        repos.projects.add(second)
+        repos.book_record.add(second)
         repos.pages.add(make_page())
 
     files = [parts / name for name in ('catalogue.db', 'first.db', 'second.db')]
@@ -276,7 +276,7 @@ class TestSplit:
         first = await uow.read_book(
             fx_shared.first.id,
             lambda repos: (
-                repos.projects.get(fx_shared.first.id),
+                repos.book_record.get(fx_shared.first.id),
                 repos.pages.list_window(SliceRequest()).total,
                 len(repos.sources.list_all()),
                 repos.book_places.find(),
@@ -286,10 +286,9 @@ class TestSplit:
             fx_shared.second.id, lambda repos: repos.pages.list_window(SliceRequest()).total
         )
         expect((report.accounts, report.books) == (1, 2))
-        expect({entry.project_id for entry in entries.items} == {fx_shared.first.id, fx_shared.second.id})
+        expect({entry.book_id for entry in entries.items} == {fx_shared.first.id, fx_shared.second.id})
         expect(
-            {entry.project_id: entry.added_at for entry in entries.items}[fx_shared.first.id]
-            == fx_shared.first.created_at
+            {entry.book_id: entry.added_at for entry in entries.items}[fx_shared.first.id] == fx_shared.first.created_at
         )
         expect(len(profiles) == 1)
         expect(first[0] == fx_shared.first)

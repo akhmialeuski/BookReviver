@@ -8,13 +8,11 @@ import pytest
 
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import PlaceMode, Stage, ViewMode
-from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import CanvasPosition, NewBookPlace
-from bookreviver.services.library import Library
 from bookreviver.services.places import PlaceService
-from tests.helpers.builders import make_project, new_account_id
-from tests.helpers.seeding import commit_project
+from tests.helpers.builders import make_record, new_account_id, open_for
+from tests.helpers.seeding import commit_record
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
@@ -37,7 +35,7 @@ def _service(new_uow: UnitOfWorkFactory, clock: FixedClock) -> PlaceService:
     :rtype: PlaceService
     """
     uow = new_uow()
-    return PlaceService(uow=uow, library=Library(uow=uow), clock=clock)
+    return PlaceService(uow=uow, clock=clock)
 
 
 def _place(stage: Stage = Stage.GEOMETRY) -> NewBookPlace:
@@ -73,10 +71,10 @@ class TestPlaceService:
         :type fx_clock: FixedClock
         """
         actor = Actor(account_id=new_account_id())
-        project = make_project()
-        await commit_project(fx_database, fx_uow(), project, owner=actor.account_id)
+        book_record = make_record()
+        await commit_record(fx_database, fx_uow(), book_record, owner=actor.account_id)
         places = _service(fx_uow, fx_clock)
-        assert await places.find(actor, project.id) is None
+        assert await places.find(open_for(actor, book_record.id)) is None
 
     async def test_save_stores_the_place_with_the_time_of_the_write(
         self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_clock: FixedClock
@@ -91,11 +89,11 @@ class TestPlaceService:
         :type fx_clock: FixedClock
         """
         actor = Actor(account_id=new_account_id())
-        project = make_project()
-        await commit_project(fx_database, fx_uow(), project, owner=actor.account_id)
+        book_record = make_record()
+        await commit_record(fx_database, fx_uow(), book_record, owner=actor.account_id)
         new = _place()
-        saved = await _service(fx_uow, fx_clock).save(actor, project.id, new)
-        found = await _service(fx_uow, fx_clock).find(actor, project.id)
+        saved = await _service(fx_uow, fx_clock).save(open_for(actor, book_record.id), new)
+        found = await _service(fx_uow, fx_clock).find(open_for(actor, book_record.id))
         assert found == saved
         assert (found.updated_at, found.canvas, found.page_id) == (fx_clock.now(), new.canvas, new.page_id)
 
@@ -112,13 +110,13 @@ class TestPlaceService:
         :type fx_clock: FixedClock
         """
         actor = Actor(account_id=new_account_id())
-        project = make_project()
-        await commit_project(fx_database, fx_uow(), project, owner=actor.account_id)
-        await _service(fx_uow, fx_clock).save(actor, project.id, _place())
+        book_record = make_record()
+        await commit_record(fx_database, fx_uow(), book_record, owner=actor.account_id)
+        await _service(fx_uow, fx_clock).save(open_for(actor, book_record.id), _place())
         fx_clock.moment += MOVE
         later = NewBookPlace(mode=PlaceMode.READING, stage=Stage.LAYOUT)
-        await _service(fx_uow, fx_clock).save(actor, project.id, later)
-        found = await _service(fx_uow, fx_clock).find(actor, project.id)
+        await _service(fx_uow, fx_clock).save(open_for(actor, book_record.id), later)
+        found = await _service(fx_uow, fx_clock).find(open_for(actor, book_record.id))
         assert found is not None
         assert (found.mode, found.stage, found.canvas, found.updated_at) == (
             PlaceMode.READING,
@@ -140,35 +138,15 @@ class TestPlaceService:
         :type fx_clock: FixedClock
         """
         actor = Actor(account_id=new_account_id())
-        project = make_project()
-        await commit_project(fx_database, fx_uow(), project, owner=actor.account_id)
+        book_record = make_record()
+        await commit_record(fx_database, fx_uow(), book_record, owner=actor.account_id)
         older_request = _service(fx_uow, fx_clock)
         newer_request = _service(fx_uow, fx_clock)
         fx_clock.moment += MOVE
-        newer = await newer_request.save(actor, project.id, NewBookPlace(mode=PlaceMode.READING, stage=Stage.LAYOUT))
+        newer = await newer_request.save(
+            open_for(actor, book_record.id), NewBookPlace(mode=PlaceMode.READING, stage=Stage.LAYOUT)
+        )
         fx_clock.moment -= MOVE
-        answered = await older_request.save(actor, project.id, _place())
-        found = await _service(fx_uow, fx_clock).find(actor, project.id)
+        answered = await older_request.save(open_for(actor, book_record.id), _place())
+        found = await _service(fx_uow, fx_clock).find(open_for(actor, book_record.id))
         assert (answered, found) == (newer, newer)
-
-    async def test_the_book_of_another_account_is_not_found(
-        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_clock: FixedClock
-    ) -> None:
-        """Verify neither reading nor writing a place of a book of another account says the book exists.
-
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_clock: Clock stopped at the epoch.
-        :type fx_clock: FixedClock
-        """
-        project = make_project()
-        await commit_project(fx_database, fx_uow(), project, owner=new_account_id())
-        stranger = Actor(account_id=new_account_id())
-        places = _service(fx_uow, fx_clock)
-        with pytest.raises(NotFoundError):
-            await places.find(stranger, project.id)
-        with pytest.raises(NotFoundError):
-            await places.save(stranger, project.id, _place())
-        assert await fx_uow().read_book(project.id, lambda repos: repos.book_places.find()) is None

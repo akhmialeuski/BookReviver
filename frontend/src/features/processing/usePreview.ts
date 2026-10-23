@@ -1,14 +1,15 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import {
-  listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet,
+  listVersionsApiV1BooksBookIdPagesPageIdVersionsGet,
   type PageVersionSchema,
   type Stage,
 } from '@/api';
 import {
-  getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetOptions,
-  readJobApiV1JobsJobIdGetOptions,
+  getVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGetOptions,
+  readJobApiV1BooksBookIdJobsJobIdGetOptions,
 } from '@/api/@tanstack/react-query.gen';
+import { type VersionReady, versionReadyKey } from '@/features/books/queries';
 import {
   answersPreview,
   PREVIEW_DELAY_MS,
@@ -16,7 +17,6 @@ import {
   previewKey,
 } from '@/features/processing/preview';
 import { usePreviewStep } from '@/features/processing/queries';
-import { type VersionReady, versionReadyKey } from '@/features/projects/queries';
 import { useActiveJobs } from '@/features/workspace/queries';
 import { useDebouncedCallback } from '@/shared/hooks/useDebouncedCallback';
 import { describeError, ProblemError } from '@/shared/http/problem';
@@ -30,7 +30,7 @@ import { HttpStatus } from '@/shared/http/status';
  * in the background and announces the version it made with the `page-version-ready` event, which `events.ts` leaves in
  * the cache; the version is read and shown if it answers the ask. An ask for what is shown already starts nothing.
  *
- * A project runs one job at a time, so an ask that is made while another is under way waits for it, and one that
+ * A book runs one job at a time, so an ask that is made while another is under way waits for it, and one that
  * changes while its predecessor is still being made is made when that has ended, with the newest form. A job that
  * ends without an event, as one answered from the cache of the server does, is looked up among the previews of the page.
  */
@@ -141,21 +141,21 @@ export interface PreviewResult {
 /**
  * Keep a preview of a request up to date while it is on.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param stage The stage of the steps.
  * @param request The steps of the form and the page, or null when there is nothing to preview.
  * @param on Whether the reader asked for the preview.
  */
 export function usePreview(
-  projectId: string,
+  bookId: string,
   stage: Stage,
   request: PreviewRequest | null,
   on: boolean,
 ): PreviewResult {
   const queryClient = useQueryClient();
   const [state, dispatch] = useReducer(reduce, INITIAL);
-  const { mutateAsync: ask } = usePreviewStep(projectId);
-  const activeJobs = useActiveJobs(projectId);
+  const { mutateAsync: ask } = usePreviewStep(bookId);
+  const activeJobs = useActiveJobs(bookId);
   const key = request === null ? null : previewKey(request);
   // Turning the preview on is a change like any other, so the first ask waits for the form to stand still as well
   const settled = useSettled(on ? request : null, on ? key : null);
@@ -187,7 +187,7 @@ export function usePreview(
     // The answer of this ask is taken whatever the screen does meanwhile, and the same ask is not made twice
     asking.current = settledKey;
     ask({
-      path: { project_id: projectId, stage },
+      path: { book_id: bookId, stage },
       body: { page_id: settled.pageId, steps: [...settled.steps], step_index: settled.stepIndex },
     })
       .then((job) =>
@@ -212,7 +212,7 @@ export function usePreview(
     busy,
     anotherJobGoing,
     ask,
-    projectId,
+    bookId,
     stage,
   ]);
 
@@ -228,7 +228,7 @@ export function usePreview(
 
   // The server announces the version it made
   const ready = useQuery<VersionReady | null>({
-    queryKey: versionReadyKey(projectId, inflight?.request.pageId ?? ''),
+    queryKey: versionReadyKey(bookId, inflight?.request.pageId ?? ''),
     queryFn: () => null,
     enabled: false,
     staleTime: Number.POSITIVE_INFINITY,
@@ -242,8 +242,8 @@ export function usePreview(
     let current = true;
     void queryClient
       .fetchQuery(
-        getVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetOptions({
-          path: { project_id: projectId, page_id: inflight.request.pageId, version_id: readyId },
+        getVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGetOptions({
+          path: { book_id: bookId, page_id: inflight.request.pageId, version_id: readyId },
         }),
       )
       .then((version) => {
@@ -255,12 +255,14 @@ export function usePreview(
     return () => {
       current = false;
     };
-  }, [inflight, readyAt, readyId, projectId, queryClient]);
+  }, [inflight, readyAt, readyId, bookId, queryClient]);
 
   // The job ends, which is the end of the ask even when no event named a version. The events of the job keep it
   // current, and a break of the stream reads it again, which finds a job a restarted server no longer has
   const job = useQuery({
-    ...readJobApiV1JobsJobIdGetOptions({ path: { job_id: inflight?.jobId ?? '' } }),
+    ...readJobApiV1BooksBookIdJobsJobIdGetOptions({
+      path: { book_id: bookId, job_id: inflight?.jobId ?? '' },
+    }),
     enabled: inflight !== null,
   });
   const jobState = job.data?.state;
@@ -271,7 +273,7 @@ export function usePreview(
     if (inflight === null) {
       return;
     }
-    // A run or a measure of the book takes the project from a preview by cancelling it, which is no failure of the preview,
+    // A run or a measure of the book cancels a preview to take its place, which is no failure of the preview,
     // so the hook says nothing and asks again once that job has ended. A job that is gone ended the same way
     if (jobState === 'cancelled' || jobGone) {
       dispatch({ type: 'cancelled' });
@@ -285,7 +287,7 @@ export function usePreview(
       return;
     }
     let current = true;
-    void findPreview(projectId, stage, inflight.request).then((version) => {
+    void findPreview(bookId, stage, inflight.request).then((version) => {
       if (!current) {
         return;
       }
@@ -298,7 +300,7 @@ export function usePreview(
     return () => {
       current = false;
     };
-  }, [inflight, jobState, jobError, jobGone, projectId, stage]);
+  }, [inflight, jobState, jobError, jobGone, bookId, stage]);
 
   const matches = on && key !== null && state.shown?.key === key;
   return {
@@ -319,14 +321,14 @@ export function usePreview(
  * @returns The version that answers the ask, or null when there is none.
  */
 async function findPreview(
-  projectId: string,
+  bookId: string,
   stage: Stage,
   request: PreviewRequest,
 ): Promise<PageVersionSchema | null> {
   const read = async (page: number) =>
     (
-      await listVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGet({
-        path: { project_id: projectId, page_id: request.pageId },
+      await listVersionsApiV1BooksBookIdPagesPageIdVersionsGet({
+        path: { book_id: bookId, page_id: request.pageId },
         query: { stage, scale: 'preview', page, size: SEARCH_SIZE },
         throwOnError: true,
       })

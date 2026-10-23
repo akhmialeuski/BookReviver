@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import attrs
 import pytest
 
-from bookreviver.domain.changes import KEEP, BookDetailsChanges, PageChanges, ProjectChanges
+from bookreviver.domain.changes import KEEP, BookChanges, BookDetailsChanges, PageChanges
 from bookreviver.domain.enums import (
     BlankFill,
     ContributorRole,
@@ -16,7 +16,7 @@ from bookreviver.domain.enums import (
     Script,
 )
 from bookreviver.domain.values import BookDetails, BookIdentifier, Contributor
-from tests.helpers.builders import FULL_DETAILS, make_page, make_project, make_scan, make_source
+from tests.helpers.builders import FULL_DETAILS, make_page, make_record, make_scan, make_source
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Page
@@ -27,7 +27,7 @@ CURRENT: BookDetails = BookDetails(
     contributors=(Contributor(name='A. Author', role=ContributorRole.AUTHOR),),
     notes='Kept',
 )
-PROJECT = attrs.evolve(make_project(), details=CURRENT)
+BOOK = attrs.evolve(make_record(), details=CURRENT)
 
 
 class TestBookDetailsChanges:
@@ -92,25 +92,25 @@ class TestApplyTo:
             BookDetailsChanges(height_cm=0).apply_to(CURRENT)
 
 
-class TestProjectChangesApplyTo:
-    """Tests for ProjectChanges.apply_to()."""
+class TestBookChangesApplyTo:
+    """Tests for BookChanges.apply_to()."""
 
     def test_replaces_given_fields_and_keeps_the_rest(self) -> None:
         """Verify the description and the image policy change together, and nothing else does."""
-        changes = ProjectChanges(details=BookDetailsChanges(title=NEW_TITLE), image_policy=ImagePolicy.LOSSLESS)
+        changes = BookChanges(details=BookDetailsChanges(title=NEW_TITLE), image_policy=ImagePolicy.LOSSLESS)
 
-        assert changes.apply_to(PROJECT) == attrs.evolve(
-            PROJECT, details=attrs.evolve(CURRENT, title=NEW_TITLE), image_policy=ImagePolicy.LOSSLESS
+        assert changes.apply_to(BOOK) == attrs.evolve(
+            BOOK, details=attrs.evolve(CURRENT, title=NEW_TITLE), image_policy=ImagePolicy.LOSSLESS
         )
 
-    def test_empty_change_keeps_the_project(self) -> None:
-        """Verify a change that sets no field returns the project as it was."""
-        assert ProjectChanges().apply_to(PROJECT) == PROJECT
+    def test_empty_change_keeps_the_book(self) -> None:
+        """Verify a change that sets no field returns the book as it was."""
+        assert BookChanges().apply_to(BOOK) == BOOK
 
     def test_empty_title_is_rejected_like_a_new_description(self) -> None:
-        """Verify the result is validated, so a change cannot produce a project with an invalid description."""
+        """Verify the result is validated, so a change cannot produce a book with an invalid description."""
         with pytest.raises(ValueError, match='title'):
-            ProjectChanges(details=BookDetailsChanges(title='')).apply_to(PROJECT)
+            BookChanges(details=BookDetailsChanges(title='')).apply_to(BOOK)
 
 
 class TestPageChangesApplyTo:

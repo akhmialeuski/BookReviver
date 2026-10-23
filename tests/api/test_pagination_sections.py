@@ -12,20 +12,20 @@ from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.api.schemas.pagination import PaginationSectionSchema
 from bookreviver.domain.enums import NumberDisplay
-from tests.helpers.builders import make_page, make_project, new_account_id
-from tests.helpers.seeding import commit_project, store_project
+from tests.helpers.builders import make_page, make_record, new_account_id
+from tests.helpers.seeding import commit_record, store_book
 
 if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, Project
+    from bookreviver.domain.entities import Actor, BookRecord
     from bookreviver.domain.entities import Page as BookPage
     from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
-PROJECTS_PATH: str = '/api/v1/projects'
+BOOKS_PATH: str = '/api/v1/books'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
 PLATE_PREFIX: str = 'Plate '
@@ -36,17 +36,17 @@ PAGE_COUNT: int = 4
 class Book(NamedTuple):
     """A book of four pages of the signed-in account.
 
-    :ivar project: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar pages: The pages in book order.
     """
 
-    project: Project
+    book_record: BookRecord
     pages: list[BookPage]
 
     @property
     def sections_path(self) -> str:
         """The path of the pagination sections of the book."""
-        return f'{PROJECTS_PATH}/{self.project.id}/pagination-sections'
+        return f'{BOOKS_PATH}/{self.book_record.id}/pagination-sections'
 
     def body(self, index: int, **fields: Any) -> dict[str, Any]:
         """Build the body of a section that starts at a page, in Arabic numerals unless given another rule.
@@ -72,11 +72,11 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project()
+    book_record = make_record()
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=PAGE_COUNT)
     pages = [make_page(order_key=key) for key in keys]
-    await store_project(fx_uow(), project, *pages, owner=fx_actor.account_id)
-    return Book(project=project, pages=pages)
+    await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id)
+    return Book(book_record=book_record, pages=pages)
 
 
 async def _labels(client: httpx.AsyncClient, book: Book) -> list[str]:
@@ -89,12 +89,12 @@ async def _labels(client: httpx.AsyncClient, book: Book) -> list[str]:
     :returns: The label of each page in the manifest.
     :rtype: list[str]
     """
-    response = await client.get(f'{PROJECTS_PATH}/{book.project.id}/pages')
+    response = await client.get(f'{BOOKS_PATH}/{book.book_record.id}/pages')
     return [item.label for item in Page[PageSchema].model_validate_json(response.content).items]
 
 
 class TestCreateSection:
-    """Tests for POST /projects/{project_id}/pagination-sections."""
+    """Tests for POST /books/{book_id}/pagination-sections."""
 
     async def test_makes_a_section_that_numbers_the_pages_and_answers_it(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -213,10 +213,10 @@ class TestCreateSection:
         expect(await _labels(fx_client, fx_book) == [''] * PAGE_COUNT)
         assert_expectations()
 
-    async def test_page_of_another_project_and_project_of_another_account_are_not_found(
+    async def test_page_of_another_book_and_book_of_another_account_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify a first page that is another project's, and a project of another account, both answer 404.
+        """Verify a first page that is another book's, and a book of another account, both answer 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -227,25 +227,25 @@ class TestCreateSection:
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        stranger = make_project()
+        stranger = make_record()
         page = make_page()
-        await commit_project(fx_database, fx_uow(), stranger, page, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), stranger, page, owner=new_account_id())
 
         foreign_page = await fx_client.post(
             fx_book.sections_path, json={'first_page_id': str(page.id), 'style': 'arabic'}
         )
-        foreign_project = await fx_client.post(
-            f'{PROJECTS_PATH}/{stranger.id}/pagination-sections',
+        foreign_record = await fx_client.post(
+            f'{BOOKS_PATH}/{stranger.id}/pagination-sections',
             json={'first_page_id': str(page.id), 'style': 'arabic'},
         )
 
         expect(foreign_page.status_code == status.HTTP_404_NOT_FOUND)
-        expect(foreign_project.status_code == status.HTTP_404_NOT_FOUND)
+        expect(foreign_record.status_code == status.HTTP_404_NOT_FOUND)
         assert_expectations()
 
 
 class TestListSections:
-    """Tests for GET /projects/{project_id}/pagination-sections."""
+    """Tests for GET /books/{book_id}/pagination-sections."""
 
     async def test_lists_the_sections_in_book_order(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
         """Verify the sections come in the order of the pages they start at, whatever order they were made in.
@@ -265,10 +265,10 @@ class TestListSections:
         expect(page.total == len(page.items))
         assert_expectations()
 
-    async def test_a_project_of_another_account_is_not_found(
+    async def test_a_book_of_another_account_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify the sections of another account's project are answered not found.
+        """Verify the sections of another account's book are answered not found.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -277,16 +277,16 @@ class TestListSections:
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        stranger = make_project()
-        await commit_project(fx_database, fx_uow(), stranger, owner=new_account_id())
+        stranger = make_record()
+        await commit_record(fx_database, fx_uow(), stranger, owner=new_account_id())
 
-        response = await fx_client.get(f'{PROJECTS_PATH}/{stranger.id}/pagination-sections')
+        response = await fx_client.get(f'{BOOKS_PATH}/{stranger.id}/pagination-sections')
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 class TestChangeSections:
-    """Tests for PUT and DELETE /projects/{project_id}/pagination-sections/{section_id}."""
+    """Tests for PUT and DELETE /books/{book_id}/pagination-sections/{section_id}."""
 
     async def test_put_replaces_the_section_and_renumbers_the_pages(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -354,7 +354,7 @@ class TestChangeSections:
         :type fx_book: Book
         """
         await fx_client.post(fx_book.sections_path, json=fx_book.body(0))
-        path = f'{PROJECTS_PATH}/{fx_book.project.id}/pages/{fx_book.pages[1].id}'
+        path = f'{BOOKS_PATH}/{fx_book.book_record.id}/pages/{fx_book.pages[1].id}'
         computed = PageSchema.model_validate((await fx_client.get(path)).json())
 
         typed = PageSchema.model_validate((await fx_client.patch(path, json={'label': '2a'})).json())
@@ -374,7 +374,7 @@ class TestChangeSections:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        pages_path = f'{PROJECTS_PATH}/{fx_book.project.id}/pages'
+        pages_path = f'{BOOKS_PATH}/{fx_book.book_record.id}/pages'
         flow = PaginationSectionSchema.model_validate_json(
             (await fx_client.post(fx_book.sections_path, json=fx_book.body(1))).content
         )
@@ -401,7 +401,7 @@ class TestChangeSections:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        pages_path = f'{PROJECTS_PATH}/{fx_book.project.id}/pages'
+        pages_path = f'{BOOKS_PATH}/{fx_book.book_record.id}/pages'
         before = Page[PageSchema].model_validate_json((await fx_client.get(pages_path)).content)
         made = PaginationSectionSchema.model_validate_json(
             (await fx_client.post(fx_book.sections_path, json=fx_book.body(0))).content

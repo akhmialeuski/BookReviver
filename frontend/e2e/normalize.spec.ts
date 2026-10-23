@@ -4,8 +4,8 @@ import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   uploadFolder,
   waitForIdleJobs,
@@ -56,18 +56,18 @@ async function runAll(page: Page): Promise<void> {
 }
 
 /** Read the data of the current result of the Geometry stage of every page of the book, in the order of the book. */
-async function resultsOf(page: Page, projectId: string): Promise<Result[]> {
+async function resultsOf(page: Page, bookId: string): Promise<Result[]> {
   const pages = (await (
-    await page.request.get(`/api/v1/projects/${projectId}/pages?size=50`)
+    await page.request.get(`/api/v1/books/${bookId}/pages?size=50`)
   ).json()) as { items: { id: string }[] };
   const results: Result[] = [];
   for (const { id } of pages.items) {
     const stages = (await (
-      await page.request.get(`/api/v1/projects/${projectId}/pages/${id}/stages`)
+      await page.request.get(`/api/v1/books/${bookId}/pages/${id}/stages`)
     ).json()) as { items: { stage: string; head_version_id: string }[] };
     const head = stages.items.find((item) => item.stage === 'geometry')?.head_version_id;
     const version = (await (
-      await page.request.get(`/api/v1/projects/${projectId}/pages/${id}/versions/${head}`)
+      await page.request.get(`/api/v1/books/${bookId}/pages/${id}/versions/${head}`)
     ).json()) as { data: Record<string, number | Record<string, number>> };
     const { data } = version;
     const frame = data.frame as Record<string, number>;
@@ -94,14 +94,14 @@ test('the book is measured and its pages come out of one size with the lines at 
   let pageWidth = 0;
   let pageHeight = 0;
   let lineHeight = 0;
-  let projectId = '';
+  let bookId = '';
 
   await test.step('the stage runs on the scans with the settings a book starts with', async () => {
     await openLibrary(page);
     await createBook(page, 'A book of two scales');
     await uploadFolder(page, folder, PAGES);
-    projectId = openProjectId(page);
-    await waitForIdleJobs(page, projectId);
+    bookId = openBookId(page);
+    await waitForIdleJobs(page, bookId);
     await markPagesAsText(page);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
@@ -115,13 +115,13 @@ test('the book is measured and its pages come out of one size with the lines at 
     // book while a job of the book runs
     await page.getByTestId('bar-step').filter({ hasText: NORMALIZE_TITLE }).click();
     await expect(normalize).toBeVisible();
-    await waitForIdleJobs(page, projectId);
+    await waitForIdleJobs(page, bookId);
     await expect(field('page_width')).toHaveValue(DEFAULT_PAGE_WIDTH);
     await normalize.getByTestId('measure-book-button').click();
     await expect(field('page_width')).not.toHaveValue(DEFAULT_PAGE_WIDTH, {
       timeout: RUN_TIMEOUT_MS,
     });
-    await waitForIdleJobs(page, projectId);
+    await waitForIdleJobs(page, bookId);
     pageWidth = Number(await field('page_width').inputValue());
     pageHeight = Number(await field('page_height').inputValue());
     lineHeight = Number(await field('line_height').inputValue());
@@ -139,9 +139,9 @@ test('the book is measured and its pages come out of one size with the lines at 
       await expect(page.getByTestId('recipe-save-bar')).toHaveCount(0);
     };
     const measureAgain = async (): Promise<void> => {
-      await waitForIdleJobs(page, projectId);
+      await waitForIdleJobs(page, bookId);
       await normalize.getByTestId('measure-book-button').click();
-      await waitForIdleJobs(page, projectId);
+      await waitForIdleJobs(page, bookId);
     };
     const measuredTop = Number(await field('margin_top').inputValue());
     const handTop = Number((measuredTop + HAND_MARGIN_GROWTH_MM).toFixed(1));
@@ -187,7 +187,7 @@ test('the book is measured and its pages come out of one size with the lines at 
 
   await test.step('a run on all pages gives every page one size and the lines one distance', async () => {
     await runAll(page);
-    const results = await resultsOf(page, projectId);
+    const results = await resultsOf(page, bookId);
     expect(results).toHaveLength(PAGES);
     for (const result of results) {
       expect([result.width, result.height]).toEqual([pageWidth, pageHeight]);

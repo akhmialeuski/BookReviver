@@ -1,7 +1,7 @@
 """Following an import through the API of the application: when it has ended, and what it reported.
 
 The application runs the import on its own job board, in the same event loop as the test, so a test has no handle on
-the job. It reads the jobs and the report through the routes a browser reads, and waits until the project has no job
+the job. It reads the jobs and the report through the routes a browser reads, and waits until the book has no job
 queued or running, which is also when the split of the new pages, which a successful import queues, is done.
 """
 
@@ -17,11 +17,11 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.domain.events import DomainEvent
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
 
-JOB_PATH: str = '/api/v1/jobs/{job_id}'
-JOBS_PATH: str = '/api/v1/projects/{project_id}/jobs'
-SOURCES_PATH: str = '/api/v1/projects/{project_id}/sources'
+JOB_PATH: str = '/api/v1/books/{book_id}/jobs/{job_id}'
+JOBS_PATH: str = '/api/v1/books/{book_id}/jobs'
+SOURCES_PATH: str = '/api/v1/books/{book_id}/sources'
 # The most files the sources route lists in one page
 REPORT_PAGE_SIZE: int = 100
 # Long enough for an import of thousands of files, short enough to fail a test whose import never ends
@@ -44,7 +44,7 @@ class JobEndBus(RecordingEventBus):
     async def publish(self, event: DomainEvent) -> None:
         """Record and deliver the event, and announce the end of a job when the event is one.
 
-        :param event: Event to deliver, carrying the project it belongs to.
+        :param event: Event to deliver, carrying the book it belongs to.
         :type event: DomainEvent
         """
         await super().publish(event)
@@ -67,29 +67,29 @@ class ImportWatch:
         self._client = client
         self._events = events
 
-    async def finished(self, job_id: str) -> dict[str, Any]:
-        """Wait until the project of a job has no job queued or running, and read the job as the API shows it.
+    async def finished(self, queued: dict[str, Any]) -> dict[str, Any]:
+        """Wait until the book of a job has no job queued or running, and read the job as the API shows it.
 
-        :param job_id: Identifier of the job the upload answered with.
-        :type job_id: str
+        :param queued: The job document the upload answered with.
+        :type queued: dict[str, Any]
         :returns: The job document, in the state it ended in.
         :rtype: dict[str, Any]
         """
+        job_path = JOB_PATH.format(book_id=queued['book_id'], job_id=queued['id'])
         with anyio.fail_after(FINISH_TIMEOUT_SECONDS):
-            project_id = (await self._client.get(JOB_PATH.format(job_id=job_id))).json()['project_id']
-            active_jobs = JOBS_PATH.format(project_id=project_id)
+            active_jobs = JOBS_PATH.format(book_id=queued['book_id'])
             while True:
                 # The event is taken before the jobs are read, so a job that ends in between still wakes the wait
                 ended = self._events.ended
                 if not (await self._client.get(active_jobs, params={'active': True})).json()['total']:
-                    return (await self._client.get(JOB_PATH.format(job_id=job_id))).json()
+                    return (await self._client.get(job_path)).json()
                 await ended.wait()
 
-    async def report(self, project_id: ProjectId) -> list[dict[str, Any]]:
-        """Read the report of the imports of a project: the files that were rejected and the files that were skipped.
+    async def report(self, book_id: BookId) -> list[dict[str, Any]]:
+        """Read the report of the imports of a book: the files that were rejected and the files that were skipped.
 
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the book.
+        :type book_id: BookId
         :returns: The source documents of the files, in the order they were recorded.
         :rtype: list[dict[str, Any]]
         """
@@ -98,7 +98,7 @@ class ImportWatch:
         while True:
             body = (
                 await self._client.get(
-                    SOURCES_PATH.format(project_id=project_id),
+                    SOURCES_PATH.format(book_id=book_id),
                     params={
                         'status': [SourceStatus.REJECTED.value, SourceStatus.SKIPPED.value],
                         'page': page,

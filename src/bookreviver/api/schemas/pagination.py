@@ -71,7 +71,7 @@ class PaginationSectionSchema(ResponseModel):
 class PaginationSectionBody(RequestModel):
     """A section to make, or the whole new state of a section that exists.
 
-    :ivar first_page_id: The page the section starts at, which must be a page of the project.
+    :ivar first_page_id: The page the section starts at, which must be a page of the book.
     :ivar name: Name the user sees.
     :ivar style: How the numbers are written.
     :ivar start: Number of the first counted page, from 1, and at most 3999 in a Roman style.

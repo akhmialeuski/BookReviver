@@ -27,18 +27,18 @@ export function usePlaceWriter(): PlaceWriter | null {
  * return the canvas and the strip to where they were. Give a book its own screen with a `key`, because the writer
  * belongs to one book.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param address Where the reader is, or null while the screen has no address to write.
  */
-export function useBookPlaceWriter(projectId: string, address: PlaceAddress | null): PlaceWriter {
+export function useBookPlaceWriter(bookId: string, address: PlaceAddress | null): PlaceWriter {
   const queryClient = useQueryClient();
   const [writer] = useState(
     () =>
       new PlaceWriter({
         address,
-        initial: cachedPlace(queryClient, projectId),
-        send: (body, keepalive) => sendPlace(projectId, body, keepalive),
-        remember: (place) => cachePlace(queryClient, projectId, place),
+        initial: cachedPlace(queryClient, bookId),
+        send: (body, keepalive) => sendPlace(bookId, body, keepalive),
+        remember: (place) => cachePlace(queryClient, bookId, place),
       }),
   );
 

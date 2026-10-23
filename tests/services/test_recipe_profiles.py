@@ -8,14 +8,15 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import RecipeKind, Stage, StageState
-from bookreviver.domain.errors import InvalidParametersError, NotFoundError
+from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.values import PageStageKey, ProfileDraft, SliceRequest, Step
-from tests.helpers.builders import make_page_stage, make_project, make_recipe_profile
+from tests.helpers.builders import make_page_stage, make_recipe_profile, make_record, open_for
+from tests.helpers.processing import account_books, account_profiles
 from tests.helpers.processors import FakeProcessor
-from tests.helpers.seeding import commit_account, store_project
+from tests.helpers.seeding import commit_account, store_book
 
 if TYPE_CHECKING:
-    from bookreviver.domain.entities import Project, RecipeProfile
+    from bookreviver.domain.entities import BookRecord, RecipeProfile
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -48,19 +49,19 @@ async def store_profile(kit: ProcessingKit, profile: RecipeProfile) -> RecipePro
     return await kit.uow().change(lambda repos: repos.recipe_profiles.add(profile))
 
 
-async def second_project(kit: ProcessingKit, actor: Actor) -> Project:
-    """Commit another project of the same account.
+async def second_record(kit: ProcessingKit, actor: Actor) -> BookRecord:
+    """Commit another book of the same account.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :returns: The project.
-    :rtype: Project
+    :returns: The book.
+    :rtype: BookRecord
     """
-    project = make_project(title='Another book')
-    await store_project(kit.uow(), project, owner=actor.account_id)
-    return project
+    book_record = make_record(title='Another book')
+    await store_book(kit.uow(), book_record, owner=actor.account_id)
+    return book_record
 
 
 async def saved(kit: ProcessingKit, actor: Actor, name: str = PROFILE_NAME) -> RecipeProfile:
@@ -90,9 +91,9 @@ class TestSaveProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_project()
+        actor, _ = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
-        listed = await fx_kit.profiles().profiles(actor, None, EVERYTHING)
+        listed = await account_profiles(fx_kit, actor, None)
         assert [(step.params[STRENGTH], step.enabled) for step in listed.items[0].steps] == [(3, False), (2, True)]
         assert (profile.stage, profile.name, profile.is_default) == (Stage.GEOMETRY, PROFILE_NAME, False)
 
@@ -102,7 +103,7 @@ class TestSaveProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_project()
+        actor, _ = await fx_kit.seed_record()
         missing = ProfileDraft(name=PROFILE_NAME, steps=[Step(processor_key=MISSING_KEY)])
         with pytest.raises(InvalidParametersError):
             await fx_kit.profiles().save(actor, Stage.GEOMETRY, missing)
@@ -113,7 +114,7 @@ class TestSaveProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_project()
+        actor, _ = await fx_kit.seed_record()
         off = ProfileDraft(name=PROFILE_NAME, steps=[Step(processor_key=FAKE_KEY, enabled=False)])
         with pytest.raises(InvalidParametersError):
             await fx_kit.profiles().save(actor, Stage.GEOMETRY, off)
@@ -128,14 +129,14 @@ class TestChangeProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_project()
-        other, _ = await fx_kit.seed_project()
+        actor, _ = await fx_kit.seed_record()
+        other, _ = await fx_kit.seed_record()
         mine = await saved(fx_kit, actor)
         await saved(fx_kit, other, OTHER_NAME)
         cleaning = ProfileDraft(name=OTHER_NAME, steps=[Step(processor_key=fx_kit.cleanup.spec.key)])
         cleanup = await fx_kit.profiles().save(actor, Stage.CLEANUP, cleaning)
-        everything = await fx_kit.profiles().profiles(actor, None, EVERYTHING)
-        geometry = await fx_kit.profiles().profiles(actor, Stage.GEOMETRY, EVERYTHING)
+        everything = await account_profiles(fx_kit, actor, None)
+        geometry = await account_profiles(fx_kit, actor, Stage.GEOMETRY)
         assert ([profile.id for profile in everything.items], everything.total) == ([mine.id, cleanup.id], 2)
         assert [profile.id for profile in geometry.items] == [mine.id]
 
@@ -145,9 +146,9 @@ class TestChangeProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_project()
+        actor, _ = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
-        renamed = await fx_kit.profiles().rename(actor, profile.id, OTHER_NAME)
+        renamed = await fx_kit.profiles().rename(profile, OTHER_NAME)
         assert (renamed.name, renamed.steps) == (OTHER_NAME, profile.steps)
         assert await fx_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id)) == renamed
 
@@ -157,12 +158,12 @@ class TestChangeProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_project()
+        actor, _ = await fx_kit.seed_record()
         first = await saved(fx_kit, actor)
         second = await saved(fx_kit, actor, OTHER_NAME)
-        await fx_kit.profiles().set_default(actor, first.id, is_default=True)
-        await fx_kit.profiles().set_default(actor, second.id, is_default=True)
-        listed = await fx_kit.profiles().profiles(actor, Stage.GEOMETRY, EVERYTHING)
+        await fx_kit.profiles().set_default(first, is_default=True)
+        await fx_kit.profiles().set_default(second, is_default=True)
+        listed = await account_profiles(fx_kit, actor, Stage.GEOMETRY)
         assert [(profile.id, profile.is_default) for profile in listed.items] == [(first.id, False), (second.id, True)]
 
     async def test_a_default_can_be_given_up(self, fx_kit: ProcessingKit) -> None:
@@ -171,10 +172,10 @@ class TestChangeProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_project()
+        actor, _ = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
-        await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
-        await fx_kit.profiles().set_default(actor, profile.id, is_default=False)
+        await fx_kit.profiles().set_default(profile, is_default=True)
+        await fx_kit.profiles().set_default(profile, is_default=False)
         default = await fx_kit.uow().read(
             lambda repos: repos.recipe_profiles.find_default(actor.account_id, Stage.GEOMETRY)
         )
@@ -186,33 +187,13 @@ class TestChangeProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project = await fx_kit.seed_project()
+        actor, book_record = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
-        await fx_kit.profiles().remove(actor, profile.id)
-        kept = await fx_kit.uow().read_book(project.id, lambda repos: repos.recipes.get(applied.recipe.id))
+        applied = await fx_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
+        await fx_kit.profiles().remove(profile, await account_books(fx_kit, actor))
+        kept = await fx_kit.uow().read_book(book_record.id, lambda repos: repos.recipes.get(applied.recipe.id))
         assert kept.steps == profile.steps
-        assert (await fx_kit.profiles().profiles(actor, None, EVERYTHING)).total == 0
-
-    async def test_a_profile_of_another_account_is_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Reject every change of a profile by an account that does not own it.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        owner, _ = await fx_kit.seed_project()
-        stranger, stranger_project = await fx_kit.seed_project()
-        profile = await saved(fx_kit, owner)
-        service = fx_kit.profiles()
-        with pytest.raises(NotFoundError):
-            await service.rename(stranger, profile.id, OTHER_NAME)
-        with pytest.raises(NotFoundError):
-            await service.set_default(stranger, profile.id, is_default=True)
-        with pytest.raises(NotFoundError):
-            await service.remove(stranger, profile.id)
-        with pytest.raises(NotFoundError):
-            await service.apply(stranger, stranger_project.id, profile.id, kind=RecipeKind.TEXT)
-        assert await fx_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id)) == profile
+        assert (await account_profiles(fx_kit, actor, None)).total == 0
 
 
 class TestApplyProfile:
@@ -226,10 +207,10 @@ class TestApplyProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project = await fx_kit.seed_project()
+        actor, book_record = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
-        other = await second_project(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(actor, other.id, profile.id, kind=RecipeKind.BW_PICTURE)
+        other = await second_record(fx_kit, actor)
+        applied = await fx_kit.profiles().apply(open_for(actor, other.id), profile, kind=RecipeKind.BW_PICTURE)
         picture = await fx_kit.recipe_of(actor, other, Stage.GEOMETRY, RecipeKind.BW_PICTURE)
         text = await fx_kit.recipe_of(actor, other, Stage.GEOMETRY)
         expect(applied.recipe.steps == profile.steps)
@@ -237,7 +218,7 @@ class TestApplyProfile:
         expect(applied.missing_processors == ())
         expect((picture.id, picture.profile_id) == (applied.recipe.id, profile.id))
         expect(text.steps != profile.steps)
-        expect((await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)).steps != profile.steps)
+        expect((await fx_kit.recipe_of(actor, book_record, Stage.GEOMETRY)).steps != profile.steps)
         assert_expectations()
 
     async def test_applying_a_profile_marks_the_pages_of_the_recipe_stale(self, fx_kit: ProcessingKit) -> None:
@@ -246,15 +227,15 @@ class TestApplyProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project = await fx_kit.seed_project()
-        page, _ = await fx_kit.seed_scan_page(project)
-        recipe = await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)
+        actor, book_record = await fx_kit.seed_record()
+        page, _ = await fx_kit.seed_scan_page(book_record)
+        recipe = await fx_kit.recipe_of(actor, book_record, Stage.GEOMETRY)
         seeded = make_page_stage(page_id=page.id, recipe_id=recipe.id)
-        await fx_kit.uow().change_book(project.id, lambda repos, _project: repos.page_stages.save(seeded))
+        await fx_kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.page_stages.save(seeded))
         profile = await saved(fx_kit, actor)
-        await fx_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
+        await fx_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
         record = await fx_kit.uow().read_book(
-            project.id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+            book_record.id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         )
         assert record.state is StageState.STALE
 
@@ -264,7 +245,7 @@ class TestApplyProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project = await fx_kit.seed_project()
+        actor, book_record = await fx_kit.seed_record()
         profile = await store_profile(
             fx_kit,
             make_recipe_profile(
@@ -276,7 +257,7 @@ class TestApplyProfile:
                 ),
             ),
         )
-        applied = await fx_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
+        applied = await fx_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
         assert [step.processor_key for step in applied.recipe.steps] == [FAKE_KEY]
         assert applied.missing_processors == (MISSING_KEY,)
 
@@ -286,25 +267,13 @@ class TestApplyProfile:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project = await fx_kit.seed_project()
+        actor, book_record = await fx_kit.seed_record()
         profile = await store_profile(
             fx_kit,
             make_recipe_profile(account_id=actor.account_id, steps=(Step(processor_key=MISSING_KEY),)),
         )
         with pytest.raises(InvalidParametersError, match=MISSING_KEY):
-            await fx_kit.profiles().apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
-
-    async def test_a_book_of_another_account_is_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Reject applying a profile to a book the account does not own.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        actor, _ = await fx_kit.seed_project()
-        _, foreign_project = await fx_kit.seed_project()
-        profile = await saved(fx_kit, actor)
-        with pytest.raises(NotFoundError):
-            await fx_kit.profiles().apply(actor, foreign_project.id, profile.id, kind=RecipeKind.TEXT)
+            await fx_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
 
 
 class TestDefaultProfileOfANewBook:
@@ -318,11 +287,11 @@ class TestDefaultProfileOfANewBook:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_project()
+        actor, _ = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
-        await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
-        fresh = await second_project(fx_kit, actor)
-        listed = await fx_kit.service().recipes(actor, fresh.id, Stage.GEOMETRY, EVERYTHING)
+        await fx_kit.profiles().set_default(profile, is_default=True)
+        fresh = await second_record(fx_kit, actor)
+        listed = await fx_kit.service().recipes(open_for(actor, fresh.id), Stage.GEOMETRY, EVERYTHING)
         assert [(recipe.kind, recipe.steps == profile.steps, recipe.profile_id) for recipe in listed.items] == [
             (RecipeKind.TEXT, True, profile.id),
             (RecipeKind.COLOR_PICTURE, False, None),
@@ -338,12 +307,12 @@ class TestDefaultProfileOfANewBook:
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
         """
-        actor, _ = await fx_cv_kit.seed_project()
+        actor, _ = await fx_cv_kit.seed_record()
         deskew = ProfileDraft(name=PROFILE_NAME, steps=[Step(processor_key=DESKEW_KEY)])
         profile = await fx_cv_kit.profiles().save(actor, Stage.GEOMETRY, deskew)
-        await fx_cv_kit.profiles().set_default(actor, profile.id, is_default=True)
-        fresh = await second_project(fx_cv_kit, actor)
-        listed = await fx_cv_kit.service().recipes(actor, fresh.id, Stage.GEOMETRY, EVERYTHING)
+        await fx_cv_kit.profiles().set_default(profile, is_default=True)
+        fresh = await second_record(fx_cv_kit, actor)
+        listed = await fx_cv_kit.service().recipes(open_for(actor, fresh.id), Stage.GEOMETRY, EVERYTHING)
         picture = next(recipe for recipe in listed.items if recipe.kind is RecipeKind.COLOR_PICTURE)
         expect([step.processor_key for step in listed.items[0].steps] == [DESKEW_KEY])
         expect(len(picture.steps) > 1)
@@ -356,9 +325,9 @@ class TestDefaultProfileOfANewBook:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, _ = await fx_kit.seed_project()
+        actor, _ = await fx_kit.seed_record()
         await saved(fx_kit, actor)
-        fresh = await second_project(fx_kit, actor)
+        fresh = await second_record(fx_kit, actor)
         assert (await fx_kit.recipe_of(actor, fresh, Stage.GEOMETRY)).profile_id is None
 
     async def test_the_default_of_another_account_is_not_used(self, fx_kit: ProcessingKit) -> None:
@@ -369,9 +338,9 @@ class TestDefaultProfileOfANewBook:
         """
         stranger = Actor(account_id=await commit_account(fx_kit.database))
         profile = await saved(fx_kit, stranger)
-        await fx_kit.profiles().set_default(stranger, profile.id, is_default=True)
-        actor, project = await fx_kit.seed_project()
-        assert (await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)).profile_id is None
+        await fx_kit.profiles().set_default(profile, is_default=True)
+        actor, book_record = await fx_kit.seed_record()
+        assert (await fx_kit.recipe_of(actor, book_record, Stage.GEOMETRY)).profile_id is None
 
     async def test_a_book_that_has_opened_the_stage_keeps_its_recipe(self, fx_kit: ProcessingKit) -> None:
         """Verify choosing a default later does not change the recipes a book has.
@@ -379,11 +348,11 @@ class TestDefaultProfileOfANewBook:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project = await fx_kit.seed_project()
-        await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)
+        actor, book_record = await fx_kit.seed_record()
+        await fx_kit.recipe_of(actor, book_record, Stage.GEOMETRY)
         profile = await saved(fx_kit, actor)
-        await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
-        assert (await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)).profile_id is None
+        await fx_kit.profiles().set_default(profile, is_default=True)
+        assert (await fx_kit.recipe_of(actor, book_record, Stage.GEOMETRY)).profile_id is None
 
     async def test_a_default_with_nothing_that_can_run_falls_back_to_the_built_in_recipe(
         self, fx_kit: ProcessingKit
@@ -393,12 +362,12 @@ class TestDefaultProfileOfANewBook:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project = await fx_kit.seed_project()
+        actor, book_record = await fx_kit.seed_record()
         await store_profile(
             fx_kit,
             make_recipe_profile(account_id=actor.account_id, steps=(Step(processor_key=MISSING_KEY),), is_default=True),
         )
-        assert (await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)).profile_id is None
+        assert (await fx_kit.recipe_of(actor, book_record, Stage.GEOMETRY)).profile_id is None
 
     async def test_a_missing_processor_is_left_out_of_the_default(self, fx_kit: ProcessingKit) -> None:
         """Verify the steps of a default that can run still start the stage.
@@ -406,7 +375,7 @@ class TestDefaultProfileOfANewBook:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project = await fx_kit.seed_project()
+        actor, book_record = await fx_kit.seed_record()
         await store_profile(
             fx_kit,
             make_recipe_profile(
@@ -415,6 +384,6 @@ class TestDefaultProfileOfANewBook:
                 is_default=True,
             ),
         )
-        text = await fx_kit.recipe_of(actor, project, Stage.GEOMETRY)
+        text = await fx_kit.recipe_of(actor, book_record, Stage.GEOMETRY)
         assert [step.processor_key for step in text.steps] == [FAKE_KEY]
         assert text.profile_id is not None

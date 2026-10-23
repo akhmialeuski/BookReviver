@@ -22,7 +22,7 @@ from bookreviver.app.settings import ChangeWaitSettings
 from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.enums import ImagePolicy, Stage, ValueScope
 from bookreviver.domain.errors import BookBusyError, ConflictError, DomainError, NotFoundError
-from bookreviver.domain.ids import ProjectId
+from bookreviver.domain.ids import BookId
 from bookreviver.domain.values import PageStepKey, SliceRequest
 from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories, NoChangeOpenError, UnitOfWork
 from tests.helpers.book_hold import hold_book_in_thread
@@ -34,21 +34,21 @@ from tests.helpers.builders import (
     make_page_stage,
     make_page_step_state,
     make_page_version,
-    make_project,
     make_recipe,
     make_recipe_profile,
+    make_record,
     make_scan,
     make_section,
     make_source,
     make_step_values,
 )
-from tests.helpers.seeding import store_project
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
 
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import Project
+    from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import AccountId
     from tests.contracts.conftest import OwnerFactory
     from tests.helpers.database import UnitOfWorkFactory
@@ -98,11 +98,11 @@ WRITE_METHODS: tuple[str, ...] = (
 class Book(NamedTuple):
     """A stored book and the account that owns it.
 
-    :ivar project: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar owner_id: The account that owns the book.
     """
 
-    project: Project
+    book_record: BookRecord
     owner_id: AccountId
 
 
@@ -130,7 +130,7 @@ class ChangeKind(NamedTuple):
         :rtype: T
         """
         if self.of_book:
-            return await uow.change_book(book.project.id, lambda repos, _project: work(repos))
+            return await uow.change_book(book.book_record.id, lambda repos, _book_record: work(repos))
         return await uow.change(work)
 
     async def read[T](self, uow: UnitOfWork, book: Book, work: Callable[[Any], T]) -> T:
@@ -146,18 +146,18 @@ class ChangeKind(NamedTuple):
         :rtype: T
         """
         if self.of_book:
-            return await uow.read_book(book.project.id, work)
+            return await uow.read_book(book.book_record.id, work)
         return await uow.read(work)
 
-    def lock_of(self, book: Book) -> ProjectId | None:
+    def lock_of(self, book: Book) -> BookId | None:
         """Name what a holder holds to stop a change of this kind.
 
         :param book: The book of the test.
         :type book: Book
-        :returns: The project whose book the change takes, or None for a change of the catalogue.
-        :rtype: ProjectId | None
+        :returns: The book whose store the change takes, or None for a change of the catalogue.
+        :rtype: BookId | None
         """
-        return book.project.id if self.of_book else None
+        return book.book_record.id if self.of_book else None
 
     def rows(self, book: Book, number: int) -> tuple[Any, Any]:
         """Build two rows of two repositories of the store, which differ from those of any other number.
@@ -176,9 +176,7 @@ class ChangeKind(NamedTuple):
             )
         return (
             make_recipe_profile(account_id=book.owner_id, minutes=number),
-            LibraryEntry(
-                project_id=ProjectId(uuid4()), owner_id=book.owner_id, added_at=EPOCH + timedelta(minutes=number)
-            ),
+            LibraryEntry(book_id=BookId(uuid4()), owner_id=book.owner_id, added_at=EPOCH + timedelta(minutes=number)),
         )
 
     def add(self, repos: Any, rows: tuple[Any, Any]) -> None:
@@ -215,7 +213,7 @@ class ChangeKind(NamedTuple):
             }
         listed = repos.library.list_for_owner(book.owner_id, SLICE_ALL).items
         return {profile.id for profile in repos.recipe_profiles.list_for_account(book.owner_id)} | {
-            entry.project_id for entry in listed
+            entry.book_id for entry in listed
         }
 
 
@@ -303,9 +301,9 @@ async def _store_book(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory) -
     :returns: The stored book.
     :rtype: Book
     """
-    project, owner_id = make_project(), await new_owner()
-    await store_project(uow_factory(), project, owner=owner_id)
-    return Book(project=project, owner_id=owner_id)
+    book_record, owner_id = make_record(), await new_owner()
+    await store_book(uow_factory(), book_record, owner=owner_id)
+    return Book(book_record=book_record, owner_id=owner_id)
 
 
 @pytest.fixture
@@ -347,7 +345,7 @@ async def fx_book_rows(fx_uow: UnitOfWorkFactory, fx_book: Book) -> dict[str, Ro
     :returns: The rows by the name of the repository that holds them.
     :rtype: dict[str, Row]
     """
-    project = fx_book.project
+    book_record = fx_book.book_record
     source = make_source()
     scan = make_scan(source=source, number=0)
     page = make_page(scan=scan)
@@ -360,13 +358,13 @@ async def fx_book_rows(fx_uow: UnitOfWorkFactory, fx_book: Book) -> dict[str, Ro
     recipe = make_recipe()
     place = make_book_place()
 
-    def add_rows(repos: BookRepositories, _project: Project) -> None:
+    def add_rows(repos: BookRepositories, _book_record: BookRecord) -> None:
         """Add one row to every repository that holds the content of the book.
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _project: Project of the book, which the work does not need.
-        :type _project: Project
+        :param _book_record: Record of the book, which the work does not need.
+        :type _book_record: BookRecord
         """
         repos.sources.add(source)
         repos.scans.add(scan)
@@ -380,13 +378,13 @@ async def fx_book_rows(fx_uow: UnitOfWorkFactory, fx_book: Book) -> dict[str, Ro
         repos.recipes.add(recipe)
         repos.book_places.save(place)
 
-    await fx_uow().change_book(project.id, add_rows)
+    await fx_uow().change_book(book_record.id, add_rows)
     return {
-        'projects': Row(
-            project,
-            evolve(project, updated_at=project.updated_at + ONE_MINUTE),
-            make_project(title='Another'),
-            project.id,
+        'book_record': Row(
+            book_record,
+            evolve(book_record, updated_at=book_record.updated_at + ONE_MINUTE),
+            make_record(title='Another'),
+            book_record.id,
         ),
         'sources': Row(
             source,
@@ -456,15 +454,15 @@ async def fx_rows(fx_uow: UnitOfWorkFactory, fx_book: Book, fx_book_rows: dict[s
     """
     owner_id = fx_book.owner_id
     profile = make_recipe_profile(account_id=owner_id)
-    entry = await fx_uow().read(lambda repos: repos.library.get(fx_book.project.id))
+    entry = await fx_uow().read(lambda repos: repos.library.get(fx_book.book_record.id))
     await fx_uow().change(lambda repos: repos.recipe_profiles.add(profile))
     return {
         **fx_book_rows,
         'library': Row(
             entry,
             evolve(entry, added_at=entry.added_at + ONE_MINUTE),
-            LibraryEntry(project_id=ProjectId(uuid4()), owner_id=owner_id, added_at=entry.added_at),
-            entry.project_id,
+            LibraryEntry(book_id=BookId(uuid4()), owner_id=owner_id, added_at=entry.added_at),
+            entry.book_id,
         ),
         'recipe_profiles': Row(
             profile,
@@ -571,18 +569,18 @@ class TestChangeEnd:
 
 
 class TestChangeBook:
-    """Contract of UnitOfWork.change_book() on the project it hands its work."""
+    """Contract of UnitOfWork.change_book() on the book it hands its work."""
 
-    async def test_work_receives_the_stored_project(self, fx_uow: UnitOfWorkFactory, fx_book: Book) -> None:
-        """Verify the work is handed the project as stored, beside the repos.
+    async def test_work_receives_the_stored_book(self, fx_uow: UnitOfWorkFactory, fx_book: Book) -> None:
+        """Verify the work is handed the book as stored, beside the repos.
 
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_book: Stored book the change belongs to.
         :type fx_book: Book
         """
-        received = await fx_uow().change_book(fx_book.project.id, lambda _repos, project: project)
-        assert received == fx_book.project
+        received = await fx_uow().change_book(fx_book.book_record.id, lambda _repos, book_record: book_record)
+        assert received == fx_book.book_record
 
     async def test_missing_book_raises_not_found_and_runs_no_work(self, fx_uow: UnitOfWorkFactory) -> None:
         """Verify a change of a book that is not stored raises ``NotFoundError`` before its work runs.
@@ -590,44 +588,44 @@ class TestChangeBook:
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        missing = make_project()
+        missing = make_record()
         ran: list[bool] = []
         uow = fx_uow()
         with pytest.raises(NotFoundError, match=str(missing.id)):
-            await uow.change_book(missing.id, lambda _repos, _project: ran.append(True))
+            await uow.change_book(missing.id, lambda _repos, _book_record: ran.append(True))
         assert ran == []
 
-    async def test_work_receives_the_project_as_the_previous_change_left_it(
+    async def test_work_receives_the_book_as_the_previous_change_left_it(
         self, fx_uow: UnitOfWorkFactory, fx_book: Book
     ) -> None:
-        """Verify a change reads the project once the change before it has committed, not as it was stored first.
+        """Verify a change reads the book once the change before it has committed, not as it was stored first.
 
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_book: Stored book both changes belong to.
         :type fx_book: Book
         """
-        changed = evolve(fx_book.project, image_policy=ImagePolicy.LOSSLESS)
+        changed = evolve(fx_book.book_record, image_policy=ImagePolicy.LOSSLESS)
         first, second = fx_uow(), fx_uow()
-        await first.change_book(fx_book.project.id, lambda repos, _project: repos.projects.update(changed))
-        received = await second.change_book(fx_book.project.id, lambda _repos, project: project)
+        await first.change_book(fx_book.book_record.id, lambda repos, _book_record: repos.book_record.update(changed))
+        received = await second.change_book(fx_book.book_record.id, lambda _repos, book_record: book_record)
         assert received == changed
 
 
 class TestBookLifecycle:
     """Contract of create_book, delete_book and stored_books, which make, remove and list the books."""
 
-    async def test_create_book_stores_the_project_and_returns_it(self, fx_uow: UnitOfWorkFactory) -> None:
-        """Verify a created book holds its project, which a later unit of work reads back unchanged.
+    async def test_create_book_stores_the_book_and_returns_it(self, fx_uow: UnitOfWorkFactory) -> None:
+        """Verify a created book holds its record, which a later unit of work reads back unchanged.
 
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        project = make_project()
-        created = await fx_uow().create_book(project)
-        read = await fx_uow().read_book(project.id, lambda repos: repos.projects.get(project.id))
-        expect(created == project)
-        expect(read == project)
+        book_record = make_record()
+        created = await fx_uow().create_book(book_record)
+        read = await fx_uow().read_book(book_record.id, lambda repos: repos.book_record.get(book_record.id))
+        expect(created == book_record)
+        expect(read == book_record)
         assert_expectations()
 
     async def test_creating_a_stored_book_again_raises_conflict_and_keeps_the_first(
@@ -638,12 +636,14 @@ class TestBookLifecycle:
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        project = make_project(title='First')
-        await fx_uow().create_book(project)
-        duplicate = evolve(project, details=evolve(project.details, title='Second'))
-        with pytest.raises(ConflictError, match=str(project.id)):
+        book_record = make_record(title='First')
+        await fx_uow().create_book(book_record)
+        duplicate = evolve(book_record, details=evolve(book_record.details, title='Second'))
+        with pytest.raises(ConflictError, match=str(book_record.id)):
             await fx_uow().create_book(duplicate)
-        assert await fx_uow().read_book(project.id, lambda repos: repos.projects.get(project.id)) == project
+        assert (
+            await fx_uow().read_book(book_record.id, lambda repos: repos.book_record.get(book_record.id)) == book_record
+        )
 
     async def test_deleted_book_answers_not_found_and_other_books_stay(self, fx_uow: UnitOfWorkFactory) -> None:
         """Verify nothing of a deleted book can be read or changed any more, and another book is left as it was.
@@ -651,26 +651,26 @@ class TestBookLifecycle:
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        doomed, kept = make_project(), make_project()
+        doomed, kept = make_record(), make_record()
 
-        async def book_with_a_page(project: Project) -> None:
-            """Make the book of a project and store one page in it.
+        async def book_with_a_page(book_record: BookRecord) -> None:
+            """Make a book and store one page in it.
 
-            :param project: The project of the book.
-            :type project: Project
+            :param book_record: The record of the book.
+            :type book_record: BookRecord
             """
-            await fx_uow().create_book(project)
-            await fx_uow().change_book(project.id, lambda repos, _project: repos.pages.add(make_page()))
+            await fx_uow().create_book(book_record)
+            await fx_uow().change_book(book_record.id, lambda repos, _book_record: repos.pages.add(make_page()))
 
-        for project in (doomed, kept):
-            await book_with_a_page(project)
+        for book_record in (doomed, kept):
+            await book_with_a_page(book_record)
 
         await fx_uow().delete_book(doomed.id)
 
         with pytest.raises(NotFoundError, match=str(doomed.id)):
-            await fx_uow().read_book(doomed.id, lambda repos: repos.projects.get(doomed.id))
+            await fx_uow().read_book(doomed.id, lambda repos: repos.book_record.get(doomed.id))
         with pytest.raises(NotFoundError, match=str(doomed.id)):
-            await fx_uow().change_book(doomed.id, lambda _repos, _project: None)
+            await fx_uow().change_book(doomed.id, lambda _repos, _book_record: None)
         remaining = await fx_uow().read_book(kept.id, lambda repos: repos.pages.list_window(SLICE_ALL))
         assert remaining.total == 1
 
@@ -680,12 +680,12 @@ class TestBookLifecycle:
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        project = make_project()
-        await fx_uow().create_book(project)
-        await fx_uow().delete_book(project.id)
+        book_record = make_record()
+        await fx_uow().create_book(book_record)
+        await fx_uow().delete_book(book_record.id)
 
-        await fx_uow().delete_book(project.id)
-        await fx_uow().delete_book(make_project().id)
+        await fx_uow().delete_book(book_record.id)
+        await fx_uow().delete_book(make_record().id)
 
         assert list(await fx_uow().stored_books()) == []
 
@@ -695,14 +695,14 @@ class TestBookLifecycle:
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        project = make_project()
-        await fx_uow().create_book(project)
-        await fx_uow().change_book(project.id, lambda repos, _project: repos.pages.add(make_page()))
-        await fx_uow().delete_book(project.id)
+        book_record = make_record()
+        await fx_uow().create_book(book_record)
+        await fx_uow().change_book(book_record.id, lambda repos, _book_record: repos.pages.add(make_page()))
+        await fx_uow().delete_book(book_record.id)
 
-        await fx_uow().create_book(project)
+        await fx_uow().create_book(book_record)
 
-        pages = await fx_uow().read_book(project.id, lambda repos: repos.pages.list_window(SLICE_ALL))
+        pages = await fx_uow().read_book(book_record.id, lambda repos: repos.pages.list_window(SLICE_ALL))
         assert pages.total == 0
 
     async def test_stored_books_lists_the_books_that_have_a_store(self, fx_uow: UnitOfWorkFactory) -> None:
@@ -711,10 +711,10 @@ class TestBookLifecycle:
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        first, second, third = make_project(), make_project(), make_project()
+        first, second, third = make_record(), make_record(), make_record()
         before = list(await fx_uow().stored_books())
-        for project in (first, second, third):
-            await fx_uow().create_book(project)
+        for book_record in (first, second, third):
+            await fx_uow().create_book(book_record)
         await fx_uow().delete_book(second.id)
         assert (before, set(await fx_uow().stored_books())) == ([], {first.id, third.id})
 
@@ -724,7 +724,7 @@ class TestBookLifecycle:
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        missing = make_project()
+        missing = make_record()
         ran: list[bool] = []
         with pytest.raises(NotFoundError, match=str(missing.id)):
             await fx_uow().read_book(missing.id, lambda _repos: ran.append(True))
@@ -742,9 +742,9 @@ class TestRead:
         :param fx_book: Stored book that is read.
         :type fx_book: Book
         """
-        project = fx_book.project
-        read = await fx_uow().read_book(project.id, lambda repos: repos.projects.get(project.id))
-        assert read == project
+        book_record = fx_book.book_record
+        read = await fx_uow().read_book(book_record.id, lambda repos: repos.book_record.get(book_record.id))
+        assert read == book_record
 
     async def test_read_returns_what_the_work_returns(self, fx_uow: UnitOfWorkFactory, fx_book: Book) -> None:
         """Verify ``read`` hands back the value of its work.
@@ -754,8 +754,8 @@ class TestRead:
         :param fx_book: Stored book whose library entry is read.
         :type fx_book: Book
         """
-        entry = await fx_uow().read(lambda repos: repos.library.get(fx_book.project.id))
-        assert (entry.project_id, entry.owner_id) == (fx_book.project.id, fx_book.owner_id)
+        entry = await fx_uow().read(lambda repos: repos.library.get(fx_book.book_record.id))
+        assert (entry.book_id, entry.owner_id) == (fx_book.book_record.id, fx_book.owner_id)
 
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)
     async def test_read_sees_every_write_of_a_committed_change_and_none_of_a_rolled_back_one(
@@ -849,8 +849,10 @@ class TestChangeWait:
         """
         holder, impatient = fx_uow(), fx_uow(wait_seconds=REQUEST_WAIT_SECONDS)
         ran: list[str] = []
-        async with hold_book_in_thread(holder, fx_book.project.id):
-            await impatient.change_book(fx_other_book.project.id, lambda _repos, _project: ran.append(OTHER_BOOK))
+        async with hold_book_in_thread(holder, fx_book.book_record.id):
+            await impatient.change_book(
+                fx_other_book.book_record.id, lambda _repos, _book_record: ran.append(OTHER_BOOK)
+            )
             await impatient.change(lambda _repos: ran.append(CATALOGUE))
             ran_while_held = list(ran)
         assert ran_while_held == [OTHER_BOOK, CATALOGUE]
@@ -868,7 +870,7 @@ class TestChangeWait:
         holder, impatient = fx_uow(), fx_uow(wait_seconds=REQUEST_WAIT_SECONDS)
         ran: list[str] = []
         async with hold_book_in_thread(holder, None):
-            await impatient.change_book(fx_book.project.id, lambda _repos, _project: ran.append(OTHER_BOOK))
+            await impatient.change_book(fx_book.book_record.id, lambda _repos, _book_record: ran.append(OTHER_BOOK))
             ran_while_held = list(ran)
         assert ran_while_held == [OTHER_BOOK]
 
@@ -926,37 +928,37 @@ class TestChangeWait:
         :param fx_book: Stored book both changes belong to.
         :type fx_book: Book
         """
-        project_id = fx_book.project.id
+        book_id = fx_book.book_record.id
         page = make_page()
         holder, first, second = fx_uow(), fx_uow(), fx_uow()
-        await first.change_book(project_id, lambda repos, _project: repos.pages.add(page))
+        await first.change_book(book_id, lambda repos, _book_record: repos.pages.add(page))
 
-        def label_page(repos: BookRepositories, _project: Project) -> None:
+        def label_page(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Read the page and write its label.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: Project of the book, which the work does not need.
-            :type _project: Project
+            :param _book_record: Record of the book, which the work does not need.
+            :type _book_record: BookRecord
             """
             repos.pages.update(evolve(repos.pages.get(page.id), manual_label=FIRST_LABEL))
 
-        def note_page(repos: BookRepositories, _project: Project) -> None:
+        def note_page(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Read the page and write its notes.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: Project of the book, which the work does not need.
-            :type _project: Project
+            :param _book_record: Record of the book, which the work does not need.
+            :type _book_record: BookRecord
             """
             repos.pages.update(evolve(repos.pages.get(page.id), notes=STAMP))
 
-        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder, project_id):
-            tasks.start_soon(first.change_book, project_id, label_page)
+        async with anyio.create_task_group() as tasks, hold_book_in_thread(holder, book_id):
+            tasks.start_soon(first.change_book, book_id, label_page)
             await anyio.wait_all_tasks_blocked()
-            tasks.start_soon(second.change_book, project_id, note_page)
+            tasks.start_soon(second.change_book, book_id, note_page)
             await anyio.wait_all_tasks_blocked()
-        stored = await fx_uow().read_book(project_id, lambda repos: repos.pages.get(page.id))
+        stored = await fx_uow().read_book(book_id, lambda repos: repos.pages.get(page.id))
         assert (stored.manual_label, stored.notes) == (FIRST_LABEL, STAMP)
 
     @pytest.mark.parametrize(KIND_ARG, KIND_PARAMS, ids=KIND_IDS)

@@ -16,7 +16,7 @@ from bookreviver.adapters.jobs.board import InMemoryJobBoard
 if TYPE_CHECKING:
     from bookreviver.adapters.jobs.board import JobRunner
     from bookreviver.domain.entities import Job
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.runtime import Clock, EventPublisher
 
 DEFAULT_KEPT_ENDED: int = 20
@@ -44,7 +44,7 @@ class FakeJobBoard(InMemoryJobBoard):
         """
         super().__init__(runner=runner, publisher=publisher, clock=clock, kept_ended=kept_ended)
         self.put_jobs: list[Job] = []
-        self._being_run: set[ProjectId] = set()
+        self._being_run: set[BookId] = set()
 
     @override
     def put(self, job: Job) -> Job:
@@ -64,23 +64,23 @@ class FakeJobBoard(InMemoryJobBoard):
 
         The jobs of a book run one at a time in the order they were put, and a job a running job puts is run too.
         """
-        books = {job.project_id for job in self.put_jobs}
+        books = {job.book_id for job in self.put_jobs}
         async with anyio.create_task_group() as group:
-            for project_id in books:
-                group.start_soon(self._run_book, project_id)
+            for book_id in books:
+                group.start_soon(self._run_book, book_id)
 
-    async def _run_book(self, project_id: ProjectId) -> None:
+    async def _run_book(self, book_id: BookId) -> None:
         """Run the queue of one book, unless a call that is still running is running it already.
 
         A second server of one book would take the next job while the first job is inside its task.
 
-        :param project_id: Book whose queue is run.
-        :type project_id: ProjectId
+        :param book_id: Book whose queue is run.
+        :type book_id: BookId
         """
-        if project_id in self._being_run:
+        if book_id in self._being_run:
             return
-        self._being_run.add(project_id)
+        self._being_run.add(book_id)
         try:
-            await self._serve(project_id)
+            await self._serve(book_id)
         finally:
-            self._being_run.discard(project_id)
+            self._being_run.discard(book_id)

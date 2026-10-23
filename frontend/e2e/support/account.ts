@@ -272,8 +272,8 @@ export async function writeScansFolder(wideScans: number): Promise<string> {
 }
 
 /** Return the identifier of the book open in the page, read from its address. */
-export function openProjectId(page: Page): string {
-  const id = new URL(page.url()).pathname.match(/\/projects\/([^/]+)/)?.[1];
+export function openBookId(page: Page): string {
+  const id = new URL(page.url()).pathname.match(/\/books\/([^/]+)/)?.[1];
   if (id === undefined) {
     throw new Error(`No book is open at ${page.url()}.`);
   }
@@ -295,7 +295,7 @@ export interface StoredRecipe {
  */
 export async function recipeOf(page: Page, stage: string, kind = 'text'): Promise<StoredRecipe> {
   const response = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/stages/${stage}/recipes`,
+    `/api/v1/books/${openBookId(page)}/stages/${stage}/recipes`,
   );
   const recipe = ((await response.json()) as { items: StoredRecipe[] }).items.find(
     (entry) => entry.kind === kind,
@@ -345,9 +345,9 @@ export interface StoredPlace {
  */
 export async function readPlace(
   page: Page,
-  projectId: string,
+  bookId: string,
 ): Promise<{ status: number; place: StoredPlace | null }> {
-  const response = await page.request.get(`/api/v1/projects/${projectId}/place`);
+  const response = await page.request.get(`/api/v1/books/${bookId}/place`);
   const status = response.status();
   return { status, place: status === 200 ? ((await response.json()) as StoredPlace) : null };
 }
@@ -359,13 +359,11 @@ export async function readPlace(
  * refuses a run while another is going and the screen cannot know of a job before it is told. The collection of old
  * versions that follows a run is stored with the end of the run, so the list is never empty between the two.
  */
-export async function waitForIdleJobs(page: Page, projectId: string): Promise<void> {
+export async function waitForIdleJobs(page: Page, bookId: string): Promise<void> {
   await expect
     .poll(
       async () => {
-        const response = await page.request.get(
-          `/api/v1/projects/${projectId}/jobs?active=true&size=20`,
-        );
+        const response = await page.request.get(`/api/v1/books/${bookId}/jobs?active=true&size=20`);
         const body = (await response.json()) as { items: unknown[] };
         return body.items.length;
       },
@@ -380,8 +378,8 @@ async function patchPageAt(
   position: number,
   changes: Record<string, string>,
 ): Promise<void> {
-  const projectId = openProjectId(page);
-  const listed = await page.request.get(`/api/v1/projects/${projectId}/pages?size=100`);
+  const bookId = openBookId(page);
+  const listed = await page.request.get(`/api/v1/books/${bookId}/pages?size=100`);
   const items = ((await listed.json()) as { items: { id: string; position: number }[] }).items;
   const target = items.find((item) => item.position === position);
   if (target === undefined) {
@@ -389,7 +387,7 @@ async function patchPageAt(
   }
   const cookies = await page.context().cookies();
   const token = cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '';
-  const response = await page.request.patch(`/api/v1/projects/${projectId}/pages/${target.id}`, {
+  const response = await page.request.patch(`/api/v1/books/${bookId}/pages/${target.id}`, {
     headers: { [CSRF_HEADER_NAME]: token },
     data: changes,
   });
@@ -422,13 +420,13 @@ export async function setContentType(
  * text says so, and the detection leaves a content type that was set by hand alone.
  */
 export async function markPagesAsText(page: Page, leftOut: readonly number[] = []): Promise<void> {
-  const projectId = openProjectId(page);
-  const listed = await page.request.get(`/api/v1/projects/${projectId}/pages?size=100`);
+  const bookId = openBookId(page);
+  const listed = await page.request.get(`/api/v1/books/${bookId}/pages?size=100`);
   const items = ((await listed.json()) as { items: { id: string; position: number }[] }).items;
   const cookies = await page.context().cookies();
   const token = cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '';
   for (const item of items.filter((entry) => !leftOut.includes(entry.position))) {
-    const response = await page.request.patch(`/api/v1/projects/${projectId}/pages/${item.id}`, {
+    const response = await page.request.patch(`/api/v1/books/${bookId}/pages/${item.id}`, {
       headers: { [CSRF_HEADER_NAME]: token },
       data: { content_type: 'text' },
     });
@@ -454,7 +452,7 @@ export async function deleteAsReader(page: Page, apiPath: string): Promise<numbe
  * @param stage The stage the book opens on afterwards, such as `geometry` or `page-order`.
  */
 export async function addPlaceholderPages(page: Page, count: number, stage: string): Promise<void> {
-  const projectId = openProjectId(page);
+  const bookId = openBookId(page);
   await page.goto('about:blank');
   const cookies = await page.context().cookies();
   const token = cookies.find((cookie) => cookie.name === CSRF_COOKIE_NAME)?.value ?? '';
@@ -465,13 +463,13 @@ export async function addPlaceholderPages(page: Page, count: number, stage: stri
       kind: 'text',
       label: String(first + offset),
     }));
-    const response = await page.request.post(`/api/v1/projects/${projectId}/pages/batch`, {
+    const response = await page.request.post(`/api/v1/books/${bookId}/pages/batch`, {
       headers: { [CSRF_HEADER_NAME]: token },
       data,
     });
     expect(response.ok()).toBe(true);
   }
-  await page.goto(`/projects/${projectId}/stages/${stage}`);
+  await page.goto(`/books/${bookId}/stages/${stage}`);
 }
 
 /**
@@ -487,7 +485,7 @@ export async function snap(page: Page, name: string): Promise<void> {
 /** Open the Import stage of the open book, which shows its files and their scans, or the drop area of an empty book. */
 export async function openImportStage(page: Page): Promise<void> {
   await page.getByTestId('stage-import').click();
-  await expect(page).toHaveURL(/\/projects\/[^/]+\/stages\/import(\?|$)/);
+  await expect(page).toHaveURL(/\/books\/[^/]+\/stages\/import(\?|$)/);
   await expect(page.getByTestId('stage-screen')).toHaveAttribute('data-stage', 'import');
   await expect(page.getByTestId('stage-title')).toHaveText('Import');
 }
@@ -495,7 +493,7 @@ export async function openImportStage(page: Page): Promise<void> {
 /** Open the Order stage of the open book, which shows its pages as a grid. */
 export async function openOrderStage(page: Page): Promise<void> {
   await page.getByTestId('stage-page-order').click();
-  await expect(page).toHaveURL(/\/projects\/[^/]+\/stages\/page-order(\?|$)/);
+  await expect(page).toHaveURL(/\/books\/[^/]+\/stages\/page-order(\?|$)/);
   await expect(page.getByTestId('order-grid')).toBeVisible();
 }
 
@@ -516,5 +514,5 @@ export async function uploadFolder(page: Page, folder: string, files: number): P
   // The job goes on after the last file is listed, so its row needs the same time as the import
   await expect(page.getByTestId('import-row')).toHaveCount(0, { timeout: IMPORT_TIMEOUT_MS });
   // The import starts the split of the new pages, and until it ends a later stage has no page and refuses a run
-  await waitForIdleJobs(page, openProjectId(page));
+  await waitForIdleJobs(page, openBookId(page));
 }

@@ -7,17 +7,17 @@ from attrs import evolve
 
 from bookreviver.domain.enums import Rendition
 from bookreviver.domain.ids import JobId
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import Renditions
-from tests.helpers.builders import make_page, make_page_version, make_project, make_scan, make_source, new_account_id
-from tests.helpers.seeding import commit_project
+from tests.helpers.builders import make_page, make_page_version, make_record, make_scan, make_source, new_account_id
+from tests.helpers.seeding import commit_record
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, Page, PageVersion, Project, Scan, Source
+    from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion, Scan, Source
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.storage import AssetStore, SourceStore
 
@@ -27,9 +27,9 @@ MAX_UPLOAD_BYTES: int = 1024
 
 
 class Book(NamedTuple):
-    """A project with two sources, each with scans, and a page cut from a scan of the first source.
+    """A book with two sources, each with scans, and a page cut from a scan of the first source.
 
-    :ivar project: The project.
+    :ivar book_record: The record of the book.
     :ivar first: The source that the tests delete.
     :ivar second: The source that has to stay.
     :ivar scans: The scans of the first source, then those of the second, each with its renditions ready.
@@ -37,7 +37,7 @@ class Book(NamedTuple):
     :ivar version: The base version of that page, with its renditions ready.
     """
 
-    project: Project
+    book_record: BookRecord
     first: Source
     second: Source
     scans: list[Scan]
@@ -48,7 +48,7 @@ class Book(NamedTuple):
 async def commit_book(
     database: SqlDatabase, uow: UnitOfWork, sources: SourceStore, assets: AssetStore, owner: Actor | None
 ) -> Book:
-    """Commit and store a project of two sources with scans, and one page cut from a scan of the first source.
+    """Commit and store a book of two sources with scans, and one page cut from a scan of the first source.
 
     Every source has its file in the source store, and every scan and the page have their full image in the asset store.
 
@@ -60,12 +60,12 @@ async def commit_book(
     :type sources: SourceStore
     :param assets: Asset store receiving the renditions of the scans and the image of the page.
     :type assets: AssetStore
-    :param owner: The actor owning the project, or None for an account that acts nowhere else.
+    :param owner: The actor owning the book, or None for an account that acts nowhere else.
     :type owner: Actor | None
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project()
+    book_record = make_record()
     # Each source holds the scans made for it below, which is the number a read of the source counts
     first = evolve(make_source(name='part1.pdf'), scan_count=SCANS_PER_SOURCE)
     second = evolve(make_source(name='part2.pdf', minutes=1), scan_count=SCANS_PER_SOURCE)
@@ -78,19 +78,19 @@ async def commit_book(
     page = make_page(scan=scans[0])
     version = evolve(make_page_version(page_id=page.id), renditions=ready)
     owner_id = new_account_id() if owner is None else owner.account_id
-    await commit_project(
-        database, uow, project, page, owner=owner_id, sources=[first, second], scans=scans, versions=[version]
+    await commit_record(
+        database, uow, book_record, page, owner=owner_id, sources=[first, second], scans=scans, versions=[version]
     )
-    keys = ProjectKeys(project.id)
+    keys = BookKeys(book_record.id)
     for source in (first, second):
         job_id = JobId(uuid4())
-        await sources.stage(project.id, job_id, [upload(source.file_name)], max_bytes=MAX_UPLOAD_BYTES)
-        await sources.promote(project.id, job_id, source.id, names=[source.file_name])
+        await sources.stage(book_record.id, job_id, [upload(source.file_name)], max_bytes=MAX_UPLOAD_BYTES)
+        await sources.promote(book_record.id, job_id, source.id, names=[source.file_name])
     images = [keys.scan_rendition(scan, Rendition.FULL_JPEG) for scan in scans]
     for key in [*images, keys.version_rendition(version, Rendition.FULL_JPEG)]:
         async with assets.writable(key) as path:
             path.write_bytes(IMAGE)
-    return Book(project=project, first=first, second=second, scans=scans, page=page, version=version)
+    return Book(book_record=book_record, first=first, second=second, scans=scans, page=page, version=version)
 
 
 def on_disk(root: Path, book: Book, source: Source) -> tuple[bool, bool]:
@@ -105,7 +105,7 @@ def on_disk(root: Path, book: Book, source: Source) -> tuple[bool, bool]:
     :returns: Whether the source file exists, and whether the full image of its first scan exists.
     :rtype: tuple[bool, bool]
     """
-    keys = ProjectKeys(book.project.id)
+    keys = BookKeys(book.book_record.id)
     scan = next(scan for scan in book.scans if scan.source_id == source.id)
     return (
         (root / keys.source(source.id) / source.file_name).is_file(),

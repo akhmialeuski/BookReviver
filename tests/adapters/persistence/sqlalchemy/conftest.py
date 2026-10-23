@@ -2,7 +2,7 @@
 
 The tests of the write blocks get a catalogue and books whose blocks are timed by a tracer that tells them when a block
 asks for the writer, a second registry of books over the same files whose blocks give up almost at once, as another
-process would, and a project to change.
+process would, and a book to change.
 """
 
 from typing import TYPE_CHECKING
@@ -15,11 +15,11 @@ from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlData
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.values import JobEnd
-from tests.helpers.builders import make_project
+from tests.helpers.builders import make_record
 from tests.helpers.database import BookSessions, copy_schema_template, database_file
 from tests.helpers.fakes_imports import DEFAULT_PARALLEL_SCANS, ImportRig
 from tests.helpers.fakes_jobs import JobFakes, RecordingEventBus
-from tests.helpers.seeding import commit_account, store_project
+from tests.helpers.seeding import commit_account, store_book
 from tests.helpers.tracers import AskingTracer
 from tests.helpers.wait_limits import IMPATIENT_SECONDS
 
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import Job, Project
+    from bookreviver.domain.entities import BookRecord, Job
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import JobControl
@@ -276,9 +276,9 @@ def fx_impatient_uow(fx_traced_database: SqlDatabase, fx_impatient_books: BookDa
 
 
 @pytest.fixture
-async def fx_project(
+async def fx_book(
     fx_traced_database: SqlDatabase, fx_traced_uow: Callable[..., UnitOfWork], fx_tracer: AskingTracer
-) -> Project:
+) -> BookRecord:
     """Commit an account and a book of it, which a ``change_book`` block needs to find.
 
     The blocks that store the book are spans too, which are not what a test looks at, so they are forgotten.
@@ -289,10 +289,10 @@ async def fx_project(
     :type fx_traced_uow: Callable[..., UnitOfWork]
     :param fx_tracer: Tracer of the test.
     :type fx_tracer: AskingTracer
-    :returns: The project.
-    :rtype: Project
+    :returns: The book.
+    :rtype: BookRecord
     """
-    project = make_project()
-    await store_project(fx_traced_uow(), project, owner=await commit_account(fx_traced_database))
+    book_record = make_record()
+    await store_book(fx_traced_uow(), book_record, owner=await commit_account(fx_traced_database))
     fx_tracer.finished.clear()
-    return project
+    return book_record

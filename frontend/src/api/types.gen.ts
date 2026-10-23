@@ -217,6 +217,141 @@ export type BodyVerifyVerifyApiV1AuthVerifyPost = {
 };
 
 /**
+ * BookCreate
+ *
+ * The description of a new book; only the title is required.
+ *
+ * :ivar title: Title of the book.
+ * :ivar subtitle: Words of the title page that explain the title.
+ * :ivar parallel_titles: Titles in other languages that the title page prints beside the title.
+ * :ivar original_title: Title of the original work, for a translation.
+ * :ivar contributors: People who made the book, each with a role, in the order of the title page.
+ * :ivar publisher: Publisher of the book.
+ * :ivar printer: Printing house.
+ * :ivar publication_place: City of publication.
+ * :ivar publication_year: Year of publication as printed, which may be a range or an estimate.
+ * :ivar edition: Edition statement.
+ * :ivar censorship: Censor's permit printed in the book.
+ * :ivar series: Series the book belongs to.
+ * :ivar series_number: Number of the book in its series.
+ * :ivar volume: Volume or part within a multi-volume work.
+ * :ivar languages: ISO 639-3 codes of the languages of the text.
+ * :ivar orthography: Spelling system of the print.
+ * :ivar script: Writing system of the print.
+ * :ivar printed_pagination: Pagination as a catalogue states it.
+ * :ivar height_cm: Height of the book in centimetres.
+ * :ivar illustrations: Illustrations as a catalogue states them.
+ * :ivar binding: Binding or cover of the copy.
+ * :ivar identifiers: Numbers and addresses that identify the book or the copy.
+ * :ivar subjects: Topics of the book.
+ * :ivar rights: Whether the result of the work may be published.
+ * :ivar copy_holder: Owner of the copy that was scanned.
+ * :ivar copy_notes: Marks of the copy that was scanned.
+ * :ivar notes: Free-form notes of the owner.
+ */
+export type BookCreate = {
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Subtitle
+     */
+    subtitle?: string;
+    /**
+     * Parallel Titles
+     */
+    parallel_titles?: Array<string>;
+    /**
+     * Original Title
+     */
+    original_title?: string;
+    /**
+     * Contributors
+     */
+    contributors?: Array<ContributorSchema>;
+    /**
+     * Publisher
+     */
+    publisher?: string;
+    /**
+     * Printer
+     */
+    printer?: string;
+    /**
+     * Publication Place
+     */
+    publication_place?: string;
+    /**
+     * Publication Year
+     */
+    publication_year?: string;
+    /**
+     * Edition
+     */
+    edition?: string;
+    /**
+     * Censorship
+     */
+    censorship?: string;
+    /**
+     * Series
+     */
+    series?: string;
+    /**
+     * Series Number
+     */
+    series_number?: string;
+    /**
+     * Volume
+     */
+    volume?: string;
+    /**
+     * Languages
+     */
+    languages?: Array<string>;
+    orthography?: Orthography;
+    script?: Script;
+    /**
+     * Printed Pagination
+     */
+    printed_pagination?: string;
+    /**
+     * Height Cm
+     */
+    height_cm?: number | null;
+    /**
+     * Illustrations
+     */
+    illustrations?: string;
+    /**
+     * Binding
+     */
+    binding?: string;
+    /**
+     * Identifiers
+     */
+    identifiers?: Array<IdentifierSchema>;
+    /**
+     * Subjects
+     */
+    subjects?: Array<string>;
+    rights?: RightsStatus;
+    /**
+     * Copy Holder
+     */
+    copy_holder?: string;
+    /**
+     * Copy Notes
+     */
+    copy_notes?: string;
+    /**
+     * Notes
+     */
+    notes?: string;
+};
+
+/**
  * BookDetailsSchema
  *
  * Bibliographic description of a book.
@@ -441,6 +576,199 @@ export type BookPlaceSchema = {
      * Updated At
      */
     updated_at: string;
+};
+
+/**
+ * BookSchema
+ *
+ * A book being digitised.
+ *
+ * :ivar id: Identifier of the book.
+ * :ivar details: Bibliographic description of the book.
+ * :ivar image_policy: How the images of the book's scans and page versions are stored.
+ * :ivar cover_page_id: Page the library shows as the cover, the first page of the kind ``cover`` or else the first
+ * page of the book, or None for a book without pages.
+ * :ivar page_count: Number of pages of the book, without the pages kept out of it.
+ * :ivar source_count: Number of sources the book was assembled from.
+ * :ivar scan_count: Number of scans in all the sources.
+ * :ivar progress: The status of every stage of the book, in the order of the pipeline.
+ * :ivar next_stage: The first available stage with work to do or being worked, or None when there is none.
+ * :ivar created_at: When the book was created.
+ * :ivar updated_at: When the book was last changed.
+ */
+export type BookSchema = {
+    /**
+     * Id
+     */
+    id: string;
+    details: BookDetailsSchema;
+    image_policy: ImagePolicy;
+    /**
+     * Cover Page Id
+     */
+    cover_page_id: string | null;
+    /**
+     * Page Count
+     */
+    page_count: number;
+    /**
+     * Source Count
+     */
+    source_count: number;
+    /**
+     * Scan Count
+     */
+    scan_count: number;
+    /**
+     * Progress
+     */
+    progress: Array<StageProgressSchema>;
+    next_stage: Stage | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+};
+
+/**
+ * BookUpdate
+ *
+ * A JSON Merge Patch of a book description: an omitted field is kept and a null one is cleared.
+ *
+ * :ivar title: New title, which may be omitted but not null.
+ * :ivar subtitle: New subtitle, or None to clear it.
+ * :ivar parallel_titles: New titles in other languages, replacing the list, or None to empty it.
+ * :ivar original_title: New title of the original work, or None to clear it.
+ * :ivar contributors: New people who made the book, replacing the list, or None to empty it.
+ * :ivar publisher: New publisher, or None to clear it.
+ * :ivar printer: New printing house, or None to clear it.
+ * :ivar publication_place: New city of publication, or None to clear it.
+ * :ivar publication_year: New year of publication, or None to clear it.
+ * :ivar edition: New edition statement, or None to clear it.
+ * :ivar censorship: New censor's permit, or None to clear it.
+ * :ivar series: New series, or None to clear it.
+ * :ivar series_number: New number in the series, or None to clear it.
+ * :ivar volume: New volume, or None to clear it.
+ * :ivar languages: New ISO 639-3 codes, replacing the list, or None to empty it.
+ * :ivar orthography: New orthography, or None to set it to unknown.
+ * :ivar script: New writing system, or None to set it to unknown.
+ * :ivar printed_pagination: New pagination, or None to clear it.
+ * :ivar height_cm: New height in centimetres, or None to clear it.
+ * :ivar illustrations: New statement of the illustrations, or None to clear it.
+ * :ivar binding: New binding, or None to clear it.
+ * :ivar identifiers: New identifiers, replacing the list, or None to empty it.
+ * :ivar subjects: New topics, replacing the list, or None to empty it.
+ * :ivar rights: New publishing rights, or None to set them to unknown.
+ * :ivar copy_holder: New owner of the scanned copy, or None to clear it.
+ * :ivar copy_notes: New marks of the scanned copy, or None to clear them.
+ * :ivar notes: New notes, or None to clear them.
+ * :ivar image_policy: New way to store the images of new scans and page versions, or None to set the default.
+ */
+export type BookUpdate = {
+    /**
+     * Title
+     */
+    title?: string;
+    /**
+     * Subtitle
+     */
+    subtitle?: string | null;
+    /**
+     * Parallel Titles
+     */
+    parallel_titles?: Array<string> | null;
+    /**
+     * Original Title
+     */
+    original_title?: string | null;
+    /**
+     * Contributors
+     */
+    contributors?: Array<ContributorSchema> | null;
+    /**
+     * Publisher
+     */
+    publisher?: string | null;
+    /**
+     * Printer
+     */
+    printer?: string | null;
+    /**
+     * Publication Place
+     */
+    publication_place?: string | null;
+    /**
+     * Publication Year
+     */
+    publication_year?: string | null;
+    /**
+     * Edition
+     */
+    edition?: string | null;
+    /**
+     * Censorship
+     */
+    censorship?: string | null;
+    /**
+     * Series
+     */
+    series?: string | null;
+    /**
+     * Series Number
+     */
+    series_number?: string | null;
+    /**
+     * Volume
+     */
+    volume?: string | null;
+    /**
+     * Languages
+     */
+    languages?: Array<string> | null;
+    orthography?: Orthography | null;
+    script?: Script | null;
+    /**
+     * Printed Pagination
+     */
+    printed_pagination?: string | null;
+    /**
+     * Height Cm
+     */
+    height_cm?: number | null;
+    /**
+     * Illustrations
+     */
+    illustrations?: string | null;
+    /**
+     * Binding
+     */
+    binding?: string | null;
+    /**
+     * Identifiers
+     */
+    identifiers?: Array<IdentifierSchema> | null;
+    /**
+     * Subjects
+     */
+    subjects?: Array<string> | null;
+    rights?: RightsStatus | null;
+    /**
+     * Copy Holder
+     */
+    copy_holder?: string | null;
+    /**
+     * Copy Notes
+     */
+    copy_notes?: string | null;
+    /**
+     * Notes
+     */
+    notes?: string | null;
+    image_policy?: ImagePolicy | null;
 };
 
 /**
@@ -807,7 +1135,7 @@ export type ImagePathsSchema = {
 /**
  * ImagePolicy
  *
- * How a project stores the ``full`` image of its scans and page versions.
+ * How a book stores the ``full`` image of its scans and page versions.
  *
  * A bilevel image is a lossless PNG under either policy. The policy decides only gray and colour images, and a change
  * applies to images written afterwards, so nothing stored is encoded again.
@@ -830,7 +1158,7 @@ export type JobKind = 'import-source' | 'prepare-pages' | 'run-stage' | 'preview
  * process started, is answered as not found.
  *
  * :ivar id: Identifier of the job.
- * :ivar project_id: Project the job works on.
+ * :ivar book_id: Book the job works on.
  * :ivar kind: What the job does.
  * :ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.
  * :ivar state: Where the job is in its life cycle.
@@ -846,9 +1174,9 @@ export type JobSchema = {
      */
     id: string;
     /**
-     * Project Id
+     * Book Id
      */
-    project_id: string;
+    book_id: string;
     kind: JobKind;
     stage: Stage | null;
     state: JobState;
@@ -1734,6 +2062,32 @@ export type PageVersionSchema = {
 };
 
 /**
+ * Page[BookSchema]
+ */
+export type PageBookSchema = {
+    /**
+     * Items
+     */
+    items: Array<BookSchema>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Page
+     */
+    page: number;
+    /**
+     * Size
+     */
+    size: number;
+    /**
+     * Pages
+     */
+    pages: number;
+};
+
+/**
  * Page[JobSchema]
  */
 export type PageJobSchema = {
@@ -1968,32 +2322,6 @@ export type PageProcessorSchema = {
 };
 
 /**
- * Page[ProjectSchema]
- */
-export type PageProjectSchema = {
-    /**
-     * Items
-     */
-    items: Array<ProjectSchema>;
-    /**
-     * Total
-     */
-    total: number;
-    /**
-     * Page
-     */
-    page: number;
-    /**
-     * Size
-     */
-    size: number;
-    /**
-     * Pages
-     */
-    pages: number;
-};
-
-/**
  * Page[RecipeSchema]
  */
 export type PageRecipeSchema = {
@@ -2124,7 +2452,7 @@ export type PagesMove = {
  *
  * A section to make, or the whole new state of a section that exists.
  *
- * :ivar first_page_id: The page the section starts at, which must be a page of the project.
+ * :ivar first_page_id: The page the section starts at, which must be a page of the book.
  * :ivar name: Name the user sees.
  * :ivar style: How the numbers are written.
  * :ivar start: Number of the first counted page, from 1, and at most 3999 in a Roman style.
@@ -2495,334 +2823,6 @@ export type ProgressSchema = {
 };
 
 /**
- * ProjectCreate
- *
- * The description of a new book; only the title is required.
- *
- * :ivar title: Title of the book.
- * :ivar subtitle: Words of the title page that explain the title.
- * :ivar parallel_titles: Titles in other languages that the title page prints beside the title.
- * :ivar original_title: Title of the original work, for a translation.
- * :ivar contributors: People who made the book, each with a role, in the order of the title page.
- * :ivar publisher: Publisher of the book.
- * :ivar printer: Printing house.
- * :ivar publication_place: City of publication.
- * :ivar publication_year: Year of publication as printed, which may be a range or an estimate.
- * :ivar edition: Edition statement.
- * :ivar censorship: Censor's permit printed in the book.
- * :ivar series: Series the book belongs to.
- * :ivar series_number: Number of the book in its series.
- * :ivar volume: Volume or part within a multi-volume work.
- * :ivar languages: ISO 639-3 codes of the languages of the text.
- * :ivar orthography: Spelling system of the print.
- * :ivar script: Writing system of the print.
- * :ivar printed_pagination: Pagination as a catalogue states it.
- * :ivar height_cm: Height of the book in centimetres.
- * :ivar illustrations: Illustrations as a catalogue states them.
- * :ivar binding: Binding or cover of the copy.
- * :ivar identifiers: Numbers and addresses that identify the book or the copy.
- * :ivar subjects: Topics of the book.
- * :ivar rights: Whether the result of the work may be published.
- * :ivar copy_holder: Owner of the copy that was scanned.
- * :ivar copy_notes: Marks of the copy that was scanned.
- * :ivar notes: Free-form notes of the owner.
- */
-export type ProjectCreate = {
-    /**
-     * Title
-     */
-    title: string;
-    /**
-     * Subtitle
-     */
-    subtitle?: string;
-    /**
-     * Parallel Titles
-     */
-    parallel_titles?: Array<string>;
-    /**
-     * Original Title
-     */
-    original_title?: string;
-    /**
-     * Contributors
-     */
-    contributors?: Array<ContributorSchema>;
-    /**
-     * Publisher
-     */
-    publisher?: string;
-    /**
-     * Printer
-     */
-    printer?: string;
-    /**
-     * Publication Place
-     */
-    publication_place?: string;
-    /**
-     * Publication Year
-     */
-    publication_year?: string;
-    /**
-     * Edition
-     */
-    edition?: string;
-    /**
-     * Censorship
-     */
-    censorship?: string;
-    /**
-     * Series
-     */
-    series?: string;
-    /**
-     * Series Number
-     */
-    series_number?: string;
-    /**
-     * Volume
-     */
-    volume?: string;
-    /**
-     * Languages
-     */
-    languages?: Array<string>;
-    orthography?: Orthography;
-    script?: Script;
-    /**
-     * Printed Pagination
-     */
-    printed_pagination?: string;
-    /**
-     * Height Cm
-     */
-    height_cm?: number | null;
-    /**
-     * Illustrations
-     */
-    illustrations?: string;
-    /**
-     * Binding
-     */
-    binding?: string;
-    /**
-     * Identifiers
-     */
-    identifiers?: Array<IdentifierSchema>;
-    /**
-     * Subjects
-     */
-    subjects?: Array<string>;
-    rights?: RightsStatus;
-    /**
-     * Copy Holder
-     */
-    copy_holder?: string;
-    /**
-     * Copy Notes
-     */
-    copy_notes?: string;
-    /**
-     * Notes
-     */
-    notes?: string;
-};
-
-/**
- * ProjectSchema
- *
- * A book being digitised.
- *
- * :ivar id: Identifier of the project.
- * :ivar details: Bibliographic description of the book.
- * :ivar image_policy: How the images of the project's scans and page versions are stored.
- * :ivar cover_page_id: Page the library shows as the cover, the first page of the kind ``cover`` or else the first
- * page of the book, or None for a book without pages.
- * :ivar page_count: Number of pages of the book, without the pages kept out of it.
- * :ivar source_count: Number of sources the book was assembled from.
- * :ivar scan_count: Number of scans in all the sources.
- * :ivar progress: The status of every stage of the book, in the order of the pipeline.
- * :ivar next_stage: The first available stage with work to do or being worked, or None when there is none.
- * :ivar created_at: When the project was created.
- * :ivar updated_at: When the project was last changed.
- */
-export type ProjectSchema = {
-    /**
-     * Id
-     */
-    id: string;
-    details: BookDetailsSchema;
-    image_policy: ImagePolicy;
-    /**
-     * Cover Page Id
-     */
-    cover_page_id: string | null;
-    /**
-     * Page Count
-     */
-    page_count: number;
-    /**
-     * Source Count
-     */
-    source_count: number;
-    /**
-     * Scan Count
-     */
-    scan_count: number;
-    /**
-     * Progress
-     */
-    progress: Array<StageProgressSchema>;
-    next_stage: Stage | null;
-    /**
-     * Created At
-     */
-    created_at: string;
-    /**
-     * Updated At
-     */
-    updated_at: string;
-};
-
-/**
- * ProjectUpdate
- *
- * A JSON Merge Patch of a book description: an omitted field is kept and a null one is cleared.
- *
- * :ivar title: New title, which may be omitted but not null.
- * :ivar subtitle: New subtitle, or None to clear it.
- * :ivar parallel_titles: New titles in other languages, replacing the list, or None to empty it.
- * :ivar original_title: New title of the original work, or None to clear it.
- * :ivar contributors: New people who made the book, replacing the list, or None to empty it.
- * :ivar publisher: New publisher, or None to clear it.
- * :ivar printer: New printing house, or None to clear it.
- * :ivar publication_place: New city of publication, or None to clear it.
- * :ivar publication_year: New year of publication, or None to clear it.
- * :ivar edition: New edition statement, or None to clear it.
- * :ivar censorship: New censor's permit, or None to clear it.
- * :ivar series: New series, or None to clear it.
- * :ivar series_number: New number in the series, or None to clear it.
- * :ivar volume: New volume, or None to clear it.
- * :ivar languages: New ISO 639-3 codes, replacing the list, or None to empty it.
- * :ivar orthography: New orthography, or None to set it to unknown.
- * :ivar script: New writing system, or None to set it to unknown.
- * :ivar printed_pagination: New pagination, or None to clear it.
- * :ivar height_cm: New height in centimetres, or None to clear it.
- * :ivar illustrations: New statement of the illustrations, or None to clear it.
- * :ivar binding: New binding, or None to clear it.
- * :ivar identifiers: New identifiers, replacing the list, or None to empty it.
- * :ivar subjects: New topics, replacing the list, or None to empty it.
- * :ivar rights: New publishing rights, or None to set them to unknown.
- * :ivar copy_holder: New owner of the scanned copy, or None to clear it.
- * :ivar copy_notes: New marks of the scanned copy, or None to clear them.
- * :ivar notes: New notes, or None to clear them.
- * :ivar image_policy: New way to store the images of new scans and page versions, or None to set the default.
- */
-export type ProjectUpdate = {
-    /**
-     * Title
-     */
-    title?: string;
-    /**
-     * Subtitle
-     */
-    subtitle?: string | null;
-    /**
-     * Parallel Titles
-     */
-    parallel_titles?: Array<string> | null;
-    /**
-     * Original Title
-     */
-    original_title?: string | null;
-    /**
-     * Contributors
-     */
-    contributors?: Array<ContributorSchema> | null;
-    /**
-     * Publisher
-     */
-    publisher?: string | null;
-    /**
-     * Printer
-     */
-    printer?: string | null;
-    /**
-     * Publication Place
-     */
-    publication_place?: string | null;
-    /**
-     * Publication Year
-     */
-    publication_year?: string | null;
-    /**
-     * Edition
-     */
-    edition?: string | null;
-    /**
-     * Censorship
-     */
-    censorship?: string | null;
-    /**
-     * Series
-     */
-    series?: string | null;
-    /**
-     * Series Number
-     */
-    series_number?: string | null;
-    /**
-     * Volume
-     */
-    volume?: string | null;
-    /**
-     * Languages
-     */
-    languages?: Array<string> | null;
-    orthography?: Orthography | null;
-    script?: Script | null;
-    /**
-     * Printed Pagination
-     */
-    printed_pagination?: string | null;
-    /**
-     * Height Cm
-     */
-    height_cm?: number | null;
-    /**
-     * Illustrations
-     */
-    illustrations?: string | null;
-    /**
-     * Binding
-     */
-    binding?: string | null;
-    /**
-     * Identifiers
-     */
-    identifiers?: Array<IdentifierSchema> | null;
-    /**
-     * Subjects
-     */
-    subjects?: Array<string> | null;
-    rights?: RightsStatus | null;
-    /**
-     * Copy Holder
-     */
-    copy_holder?: string | null;
-    /**
-     * Copy Notes
-     */
-    copy_notes?: string | null;
-    /**
-     * Notes
-     */
-    notes?: string | null;
-    image_policy?: ImagePolicy | null;
-};
-
-/**
  * QuadSchema
  *
  * A quadrilateral in the pixels of an image.
@@ -3074,7 +3074,7 @@ export type RunMode = 'keep' | 'skip-own-work' | 'drop-own-work';
  *
  * The scan to bind to a placeholder.
  *
- * :ivar scan_id: Scan to bind, which must be a scan of the project.
+ * :ivar scan_id: Scan to bind, which must be a scan of the book.
  * :ivar take_over: Whether to take the scan from the pages that show it already, such as the page the import made of
  * it, which deletes them.
  */
@@ -3261,7 +3261,7 @@ export type SourceKind = 'pdf' | 'djvu' | 'image';
  * :ivar status: Whether the file was imported, rejected by the import, or skipped by a cancelled one.
  * :ivar rejection: Why a rejected file was refused, or None for a file that was not.
  * :ivar detail: Text that says more than the reason, such as the name of the source a duplicate repeats, or empty.
- * :ivar imported_at: When the file was recorded, which for an imported source is when it became part of the project.
+ * :ivar imported_at: When the file was recorded, which for an imported source is when it became part of the book.
  */
 export type SourceSchema = {
     /**
@@ -3905,7 +3905,7 @@ export type Problem = {
     detail?: string | null;
 };
 
-export type ListProjectsApiV1ProjectsGetData = {
+export type ListBooksApiV1BooksGetData = {
     body?: never;
     path?: never;
     query?: {
@@ -3918,10 +3918,10 @@ export type ListProjectsApiV1ProjectsGetData = {
          */
         size?: number;
     };
-    url: '/api/v1/projects';
+    url: '/api/v1/books';
 };
 
-export type ListProjectsApiV1ProjectsGetErrors = {
+export type ListBooksApiV1BooksGetErrors = {
     /**
      * Validation Error
      */
@@ -3936,25 +3936,25 @@ export type ListProjectsApiV1ProjectsGetErrors = {
     '5XX': Problem;
 };
 
-export type ListProjectsApiV1ProjectsGetError = ListProjectsApiV1ProjectsGetErrors[keyof ListProjectsApiV1ProjectsGetErrors];
+export type ListBooksApiV1BooksGetError = ListBooksApiV1BooksGetErrors[keyof ListBooksApiV1BooksGetErrors];
 
-export type ListProjectsApiV1ProjectsGetResponses = {
+export type ListBooksApiV1BooksGetResponses = {
     /**
      * Successful Response
      */
-    200: PageProjectSchema;
+    200: PageBookSchema;
 };
 
-export type ListProjectsApiV1ProjectsGetResponse = ListProjectsApiV1ProjectsGetResponses[keyof ListProjectsApiV1ProjectsGetResponses];
+export type ListBooksApiV1BooksGetResponse = ListBooksApiV1BooksGetResponses[keyof ListBooksApiV1BooksGetResponses];
 
-export type CreateProjectApiV1ProjectsPostData = {
-    body: ProjectCreate;
+export type CreateBookApiV1BooksPostData = {
+    body: BookCreate;
     path?: never;
     query?: never;
-    url: '/api/v1/projects';
+    url: '/api/v1/books';
 };
 
-export type CreateProjectApiV1ProjectsPostErrors = {
+export type CreateBookApiV1BooksPostErrors = {
     /**
      * Validation Error
      */
@@ -3969,178 +3969,18 @@ export type CreateProjectApiV1ProjectsPostErrors = {
     '5XX': Problem;
 };
 
-export type CreateProjectApiV1ProjectsPostError = CreateProjectApiV1ProjectsPostErrors[keyof CreateProjectApiV1ProjectsPostErrors];
+export type CreateBookApiV1BooksPostError = CreateBookApiV1BooksPostErrors[keyof CreateBookApiV1BooksPostErrors];
 
-export type CreateProjectApiV1ProjectsPostResponses = {
+export type CreateBookApiV1BooksPostResponses = {
     /**
      * Successful Response
      */
-    201: ProjectSchema;
+    201: BookSchema;
 };
 
-export type CreateProjectApiV1ProjectsPostResponse = CreateProjectApiV1ProjectsPostResponses[keyof CreateProjectApiV1ProjectsPostResponses];
+export type CreateBookApiV1BooksPostResponse = CreateBookApiV1BooksPostResponses[keyof CreateBookApiV1BooksPostResponses];
 
-export type DeleteProjectApiV1ProjectsProjectIdDeleteData = {
-    body?: never;
-    path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
-    };
-    query?: never;
-    url: '/api/v1/projects/{project_id}';
-};
-
-export type DeleteProjectApiV1ProjectsProjectIdDeleteErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type DeleteProjectApiV1ProjectsProjectIdDeleteError = DeleteProjectApiV1ProjectsProjectIdDeleteErrors[keyof DeleteProjectApiV1ProjectsProjectIdDeleteErrors];
-
-export type DeleteProjectApiV1ProjectsProjectIdDeleteResponses = {
-    /**
-     * Successful Response
-     */
-    204: void;
-};
-
-export type DeleteProjectApiV1ProjectsProjectIdDeleteResponse = DeleteProjectApiV1ProjectsProjectIdDeleteResponses[keyof DeleteProjectApiV1ProjectsProjectIdDeleteResponses];
-
-export type ProjectApiV1ProjectsProjectIdGetData = {
-    body?: never;
-    path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
-    };
-    query?: never;
-    url: '/api/v1/projects/{project_id}';
-};
-
-export type ProjectApiV1ProjectsProjectIdGetErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type ProjectApiV1ProjectsProjectIdGetError = ProjectApiV1ProjectsProjectIdGetErrors[keyof ProjectApiV1ProjectsProjectIdGetErrors];
-
-export type ProjectApiV1ProjectsProjectIdGetResponses = {
-    /**
-     * Successful Response
-     */
-    200: ProjectSchema;
-};
-
-export type ProjectApiV1ProjectsProjectIdGetResponse = ProjectApiV1ProjectsProjectIdGetResponses[keyof ProjectApiV1ProjectsProjectIdGetResponses];
-
-export type UpdateProjectApiV1ProjectsProjectIdPatchData = {
-    body: ProjectUpdate;
-    path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
-    };
-    query?: never;
-    url: '/api/v1/projects/{project_id}';
-};
-
-export type UpdateProjectApiV1ProjectsProjectIdPatchErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type UpdateProjectApiV1ProjectsProjectIdPatchError = UpdateProjectApiV1ProjectsProjectIdPatchErrors[keyof UpdateProjectApiV1ProjectsProjectIdPatchErrors];
-
-export type UpdateProjectApiV1ProjectsProjectIdPatchResponses = {
-    /**
-     * Successful Response
-     */
-    200: ProjectSchema;
-};
-
-export type UpdateProjectApiV1ProjectsProjectIdPatchResponse = UpdateProjectApiV1ProjectsProjectIdPatchResponses[keyof UpdateProjectApiV1ProjectsProjectIdPatchResponses];
-
-export type ExportProjectApiV1ProjectsProjectIdArchiveGetData = {
-    body?: never;
-    path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
-    };
-    query?: never;
-    url: '/api/v1/projects/{project_id}/archive';
-};
-
-export type ExportProjectApiV1ProjectsProjectIdArchiveGetErrors = {
-    /**
-     * Validation Error
-     */
-    422: HttpValidationError;
-    /**
-     * Client Error
-     */
-    '4XX': Problem;
-    /**
-     * Server Error
-     */
-    '5XX': Problem;
-};
-
-export type ExportProjectApiV1ProjectsProjectIdArchiveGetError = ExportProjectApiV1ProjectsProjectIdArchiveGetErrors[keyof ExportProjectApiV1ProjectsProjectIdArchiveGetErrors];
-
-export type ExportProjectApiV1ProjectsProjectIdArchiveGetResponses = {
-    /**
-     * The archive of the book
-     */
-    200: Blob | File;
-};
-
-export type ExportProjectApiV1ProjectsProjectIdArchiveGetResponse = ExportProjectApiV1ProjectsProjectIdArchiveGetResponses[keyof ExportProjectApiV1ProjectsProjectIdArchiveGetResponses];
-
-export type ImportProjectApiV1ProjectsArchivePostData = {
+export type ImportBookApiV1BooksArchivePostData = {
     /**
      * ArchiveForm
      *
@@ -4158,10 +3998,10 @@ export type ImportProjectApiV1ProjectsArchivePostData = {
     };
     path?: never;
     query?: never;
-    url: '/api/v1/projects/archive';
+    url: '/api/v1/books/archive';
 };
 
-export type ImportProjectApiV1ProjectsArchivePostErrors = {
+export type ImportBookApiV1BooksArchivePostErrors = {
     /**
      * Client Error
      */
@@ -4172,26 +4012,186 @@ export type ImportProjectApiV1ProjectsArchivePostErrors = {
     '5XX': Problem;
 };
 
-export type ImportProjectApiV1ProjectsArchivePostError = ImportProjectApiV1ProjectsArchivePostErrors[keyof ImportProjectApiV1ProjectsArchivePostErrors];
+export type ImportBookApiV1BooksArchivePostError = ImportBookApiV1BooksArchivePostErrors[keyof ImportBookApiV1BooksArchivePostErrors];
 
-export type ImportProjectApiV1ProjectsArchivePostResponses = {
+export type ImportBookApiV1BooksArchivePostResponses = {
     /**
      * Successful Response
      */
-    201: ProjectSchema;
+    201: BookSchema;
 };
 
-export type ImportProjectApiV1ProjectsArchivePostResponse = ImportProjectApiV1ProjectsArchivePostResponses[keyof ImportProjectApiV1ProjectsArchivePostResponses];
+export type ImportBookApiV1BooksArchivePostResponse = ImportBookApiV1BooksArchivePostResponses[keyof ImportBookApiV1BooksArchivePostResponses];
 
-export type ListSourcesApiV1ProjectsProjectIdSourcesGetData = {
+export type DeleteBookApiV1BooksBookIdDeleteData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
+    };
+    query?: never;
+    url: '/api/v1/books/{book_id}';
+};
+
+export type DeleteBookApiV1BooksBookIdDeleteErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type DeleteBookApiV1BooksBookIdDeleteError = DeleteBookApiV1BooksBookIdDeleteErrors[keyof DeleteBookApiV1BooksBookIdDeleteErrors];
+
+export type DeleteBookApiV1BooksBookIdDeleteResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteBookApiV1BooksBookIdDeleteResponse = DeleteBookApiV1BooksBookIdDeleteResponses[keyof DeleteBookApiV1BooksBookIdDeleteResponses];
+
+export type BookApiV1BooksBookIdGetData = {
+    body?: never;
+    path: {
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
+    };
+    query?: never;
+    url: '/api/v1/books/{book_id}';
+};
+
+export type BookApiV1BooksBookIdGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type BookApiV1BooksBookIdGetError = BookApiV1BooksBookIdGetErrors[keyof BookApiV1BooksBookIdGetErrors];
+
+export type BookApiV1BooksBookIdGetResponses = {
+    /**
+     * Successful Response
+     */
+    200: BookSchema;
+};
+
+export type BookApiV1BooksBookIdGetResponse = BookApiV1BooksBookIdGetResponses[keyof BookApiV1BooksBookIdGetResponses];
+
+export type UpdateBookApiV1BooksBookIdPatchData = {
+    body: BookUpdate;
+    path: {
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
+    };
+    query?: never;
+    url: '/api/v1/books/{book_id}';
+};
+
+export type UpdateBookApiV1BooksBookIdPatchErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type UpdateBookApiV1BooksBookIdPatchError = UpdateBookApiV1BooksBookIdPatchErrors[keyof UpdateBookApiV1BooksBookIdPatchErrors];
+
+export type UpdateBookApiV1BooksBookIdPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: BookSchema;
+};
+
+export type UpdateBookApiV1BooksBookIdPatchResponse = UpdateBookApiV1BooksBookIdPatchResponses[keyof UpdateBookApiV1BooksBookIdPatchResponses];
+
+export type ExportBookApiV1BooksBookIdArchiveGetData = {
+    body?: never;
+    path: {
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
+    };
+    query?: never;
+    url: '/api/v1/books/{book_id}/archive';
+};
+
+export type ExportBookApiV1BooksBookIdArchiveGetErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Client Error
+     */
+    '4XX': Problem;
+    /**
+     * Server Error
+     */
+    '5XX': Problem;
+};
+
+export type ExportBookApiV1BooksBookIdArchiveGetError = ExportBookApiV1BooksBookIdArchiveGetErrors[keyof ExportBookApiV1BooksBookIdArchiveGetErrors];
+
+export type ExportBookApiV1BooksBookIdArchiveGetResponses = {
+    /**
+     * The archive of the book
+     */
+    200: Blob | File;
+};
+
+export type ExportBookApiV1BooksBookIdArchiveGetResponse = ExportBookApiV1BooksBookIdArchiveGetResponses[keyof ExportBookApiV1BooksBookIdArchiveGetResponses];
+
+export type ListSourcesApiV1BooksBookIdSourcesGetData = {
+    body?: never;
+    path: {
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: {
         /**
@@ -4209,10 +4209,10 @@ export type ListSourcesApiV1ProjectsProjectIdSourcesGetData = {
          */
         size?: number;
     };
-    url: '/api/v1/projects/{project_id}/sources';
+    url: '/api/v1/books/{book_id}/sources';
 };
 
-export type ListSourcesApiV1ProjectsProjectIdSourcesGetErrors = {
+export type ListSourcesApiV1BooksBookIdSourcesGetErrors = {
     /**
      * Validation Error
      */
@@ -4227,18 +4227,18 @@ export type ListSourcesApiV1ProjectsProjectIdSourcesGetErrors = {
     '5XX': Problem;
 };
 
-export type ListSourcesApiV1ProjectsProjectIdSourcesGetError = ListSourcesApiV1ProjectsProjectIdSourcesGetErrors[keyof ListSourcesApiV1ProjectsProjectIdSourcesGetErrors];
+export type ListSourcesApiV1BooksBookIdSourcesGetError = ListSourcesApiV1BooksBookIdSourcesGetErrors[keyof ListSourcesApiV1BooksBookIdSourcesGetErrors];
 
-export type ListSourcesApiV1ProjectsProjectIdSourcesGetResponses = {
+export type ListSourcesApiV1BooksBookIdSourcesGetResponses = {
     /**
      * Successful Response
      */
     200: PageSourceSchema;
 };
 
-export type ListSourcesApiV1ProjectsProjectIdSourcesGetResponse = ListSourcesApiV1ProjectsProjectIdSourcesGetResponses[keyof ListSourcesApiV1ProjectsProjectIdSourcesGetResponses];
+export type ListSourcesApiV1BooksBookIdSourcesGetResponse = ListSourcesApiV1BooksBookIdSourcesGetResponses[keyof ListSourcesApiV1BooksBookIdSourcesGetResponses];
 
-export type UploadSourcesApiV1ProjectsProjectIdSourcesPostData = {
+export type UploadSourcesApiV1BooksBookIdSourcesPostData = {
     /**
      * UploadForm
      *
@@ -4256,17 +4256,17 @@ export type UploadSourcesApiV1ProjectsProjectIdSourcesPostData = {
     };
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/sources';
+    url: '/api/v1/books/{book_id}/sources';
 };
 
-export type UploadSourcesApiV1ProjectsProjectIdSourcesPostErrors = {
+export type UploadSourcesApiV1BooksBookIdSourcesPostErrors = {
     /**
      * Validation Error
      */
@@ -4281,32 +4281,32 @@ export type UploadSourcesApiV1ProjectsProjectIdSourcesPostErrors = {
     '5XX': Problem;
 };
 
-export type UploadSourcesApiV1ProjectsProjectIdSourcesPostError = UploadSourcesApiV1ProjectsProjectIdSourcesPostErrors[keyof UploadSourcesApiV1ProjectsProjectIdSourcesPostErrors];
+export type UploadSourcesApiV1BooksBookIdSourcesPostError = UploadSourcesApiV1BooksBookIdSourcesPostErrors[keyof UploadSourcesApiV1BooksBookIdSourcesPostErrors];
 
-export type UploadSourcesApiV1ProjectsProjectIdSourcesPostResponses = {
+export type UploadSourcesApiV1BooksBookIdSourcesPostResponses = {
     /**
      * Successful Response
      */
     202: JobSchema;
 };
 
-export type UploadSourcesApiV1ProjectsProjectIdSourcesPostResponse = UploadSourcesApiV1ProjectsProjectIdSourcesPostResponses[keyof UploadSourcesApiV1ProjectsProjectIdSourcesPostResponses];
+export type UploadSourcesApiV1BooksBookIdSourcesPostResponse = UploadSourcesApiV1BooksBookIdSourcesPostResponses[keyof UploadSourcesApiV1BooksBookIdSourcesPostResponses];
 
-export type DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteData = {
+export type DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/sources/unimported';
+    url: '/api/v1/books/{book_id}/sources/unimported';
 };
 
-export type DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteErrors = {
+export type DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteErrors = {
     /**
      * Validation Error
      */
@@ -4321,38 +4321,38 @@ export type DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDelete
     '5XX': Problem;
 };
 
-export type DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteError = DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteErrors[keyof DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteErrors];
+export type DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteError = DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteErrors[keyof DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteErrors];
 
-export type DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteResponses = {
+export type DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteResponses = {
     /**
      * Successful Response
      */
     204: void;
 };
 
-export type DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteResponse = DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteResponses[keyof DeleteUnimportedSourcesApiV1ProjectsProjectIdSourcesUnimportedDeleteResponses];
+export type DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteResponse = DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteResponses[keyof DeleteUnimportedSourcesApiV1BooksBookIdSourcesUnimportedDeleteResponses];
 
-export type DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteData = {
+export type DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteData = {
     body?: never;
     path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
         /**
          * Source Id
          *
          * Identifier of the source
          */
         source_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/sources/{source_id}';
+    url: '/api/v1/books/{book_id}/sources/{source_id}';
 };
 
-export type DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteErrors = {
+export type DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteErrors = {
     /**
      * Validation Error
      */
@@ -4367,38 +4367,38 @@ export type DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteErrors = {
     '5XX': Problem;
 };
 
-export type DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteError = DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteErrors[keyof DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteErrors];
+export type DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteError = DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteErrors[keyof DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteErrors];
 
-export type DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteResponses = {
+export type DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteResponses = {
     /**
      * Successful Response
      */
     204: void;
 };
 
-export type DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteResponse = DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteResponses[keyof DeleteSourceApiV1ProjectsProjectIdSourcesSourceIdDeleteResponses];
+export type DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteResponse = DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteResponses[keyof DeleteSourceApiV1BooksBookIdSourcesSourceIdDeleteResponses];
 
-export type GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetData = {
+export type GetSourceApiV1BooksBookIdSourcesSourceIdGetData = {
     body?: never;
     path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
         /**
          * Source Id
          *
          * Identifier of the source
          */
         source_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/sources/{source_id}';
+    url: '/api/v1/books/{book_id}/sources/{source_id}';
 };
 
-export type GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetErrors = {
+export type GetSourceApiV1BooksBookIdSourcesSourceIdGetErrors = {
     /**
      * Validation Error
      */
@@ -4413,26 +4413,26 @@ export type GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetErrors = {
     '5XX': Problem;
 };
 
-export type GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetError = GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetErrors[keyof GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetErrors];
+export type GetSourceApiV1BooksBookIdSourcesSourceIdGetError = GetSourceApiV1BooksBookIdSourcesSourceIdGetErrors[keyof GetSourceApiV1BooksBookIdSourcesSourceIdGetErrors];
 
-export type GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetResponses = {
+export type GetSourceApiV1BooksBookIdSourcesSourceIdGetResponses = {
     /**
      * Successful Response
      */
     200: SourceSchema;
 };
 
-export type GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetResponse = GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetResponses[keyof GetSourceApiV1ProjectsProjectIdSourcesSourceIdGetResponses];
+export type GetSourceApiV1BooksBookIdSourcesSourceIdGetResponse = GetSourceApiV1BooksBookIdSourcesSourceIdGetResponses[keyof GetSourceApiV1BooksBookIdSourcesSourceIdGetResponses];
 
-export type ListScansApiV1ProjectsProjectIdScansGetData = {
+export type ListScansApiV1BooksBookIdScansGetData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: {
         /**
@@ -4448,10 +4448,10 @@ export type ListScansApiV1ProjectsProjectIdScansGetData = {
          */
         source_id?: string | null;
     };
-    url: '/api/v1/projects/{project_id}/scans';
+    url: '/api/v1/books/{book_id}/scans';
 };
 
-export type ListScansApiV1ProjectsProjectIdScansGetErrors = {
+export type ListScansApiV1BooksBookIdScansGetErrors = {
     /**
      * Validation Error
      */
@@ -4466,38 +4466,38 @@ export type ListScansApiV1ProjectsProjectIdScansGetErrors = {
     '5XX': Problem;
 };
 
-export type ListScansApiV1ProjectsProjectIdScansGetError = ListScansApiV1ProjectsProjectIdScansGetErrors[keyof ListScansApiV1ProjectsProjectIdScansGetErrors];
+export type ListScansApiV1BooksBookIdScansGetError = ListScansApiV1BooksBookIdScansGetErrors[keyof ListScansApiV1BooksBookIdScansGetErrors];
 
-export type ListScansApiV1ProjectsProjectIdScansGetResponses = {
+export type ListScansApiV1BooksBookIdScansGetResponses = {
     /**
      * Successful Response
      */
     200: PageScanSchema;
 };
 
-export type ListScansApiV1ProjectsProjectIdScansGetResponse = ListScansApiV1ProjectsProjectIdScansGetResponses[keyof ListScansApiV1ProjectsProjectIdScansGetResponses];
+export type ListScansApiV1BooksBookIdScansGetResponse = ListScansApiV1BooksBookIdScansGetResponses[keyof ListScansApiV1BooksBookIdScansGetResponses];
 
-export type MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostData = {
+export type MoveSourcePagesApiV1BooksBookIdSourcesSourceIdPagesMovePostData = {
     body: PageAnchorBody;
     path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
         /**
          * Source Id
          *
          * Identifier of the source
          */
         source_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/sources/{source_id}/pages/move';
+    url: '/api/v1/books/{book_id}/sources/{source_id}/pages/move';
 };
 
-export type MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostErrors = {
+export type MoveSourcePagesApiV1BooksBookIdSourcesSourceIdPagesMovePostErrors = {
     /**
      * Validation Error
      */
@@ -4512,26 +4512,26 @@ export type MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostErr
     '5XX': Problem;
 };
 
-export type MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostError = MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostErrors[keyof MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostErrors];
+export type MoveSourcePagesApiV1BooksBookIdSourcesSourceIdPagesMovePostError = MoveSourcePagesApiV1BooksBookIdSourcesSourceIdPagesMovePostErrors[keyof MoveSourcePagesApiV1BooksBookIdSourcesSourceIdPagesMovePostErrors];
 
-export type MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostResponses = {
+export type MoveSourcePagesApiV1BooksBookIdSourcesSourceIdPagesMovePostResponses = {
     /**
      * Successful Response
      */
     204: void;
 };
 
-export type MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostResponse = MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostResponses[keyof MoveSourcePagesApiV1ProjectsProjectIdSourcesSourceIdPagesMovePostResponses];
+export type MoveSourcePagesApiV1BooksBookIdSourcesSourceIdPagesMovePostResponse = MoveSourcePagesApiV1BooksBookIdSourcesSourceIdPagesMovePostResponses[keyof MoveSourcePagesApiV1BooksBookIdSourcesSourceIdPagesMovePostResponses];
 
-export type ListPagesApiV1ProjectsProjectIdPagesGetData = {
+export type ListPagesApiV1BooksBookIdPagesGetData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: {
         /**
@@ -4547,10 +4547,10 @@ export type ListPagesApiV1ProjectsProjectIdPagesGetData = {
          */
         included?: boolean;
     };
-    url: '/api/v1/projects/{project_id}/pages';
+    url: '/api/v1/books/{book_id}/pages';
 };
 
-export type ListPagesApiV1ProjectsProjectIdPagesGetErrors = {
+export type ListPagesApiV1BooksBookIdPagesGetErrors = {
     /**
      * Validation Error
      */
@@ -4565,32 +4565,32 @@ export type ListPagesApiV1ProjectsProjectIdPagesGetErrors = {
     '5XX': Problem;
 };
 
-export type ListPagesApiV1ProjectsProjectIdPagesGetError = ListPagesApiV1ProjectsProjectIdPagesGetErrors[keyof ListPagesApiV1ProjectsProjectIdPagesGetErrors];
+export type ListPagesApiV1BooksBookIdPagesGetError = ListPagesApiV1BooksBookIdPagesGetErrors[keyof ListPagesApiV1BooksBookIdPagesGetErrors];
 
-export type ListPagesApiV1ProjectsProjectIdPagesGetResponses = {
+export type ListPagesApiV1BooksBookIdPagesGetResponses = {
     /**
      * Successful Response
      */
     200: ManifestPagePageSchema;
 };
 
-export type ListPagesApiV1ProjectsProjectIdPagesGetResponse = ListPagesApiV1ProjectsProjectIdPagesGetResponses[keyof ListPagesApiV1ProjectsProjectIdPagesGetResponses];
+export type ListPagesApiV1BooksBookIdPagesGetResponse = ListPagesApiV1BooksBookIdPagesGetResponses[keyof ListPagesApiV1BooksBookIdPagesGetResponses];
 
-export type CreatePageApiV1ProjectsProjectIdPagesPostData = {
+export type CreatePageApiV1BooksBookIdPagesPostData = {
     body: PageCreate;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages';
+    url: '/api/v1/books/{book_id}/pages';
 };
 
-export type CreatePageApiV1ProjectsProjectIdPagesPostErrors = {
+export type CreatePageApiV1BooksBookIdPagesPostErrors = {
     /**
      * Validation Error
      */
@@ -4605,26 +4605,26 @@ export type CreatePageApiV1ProjectsProjectIdPagesPostErrors = {
     '5XX': Problem;
 };
 
-export type CreatePageApiV1ProjectsProjectIdPagesPostError = CreatePageApiV1ProjectsProjectIdPagesPostErrors[keyof CreatePageApiV1ProjectsProjectIdPagesPostErrors];
+export type CreatePageApiV1BooksBookIdPagesPostError = CreatePageApiV1BooksBookIdPagesPostErrors[keyof CreatePageApiV1BooksBookIdPagesPostErrors];
 
-export type CreatePageApiV1ProjectsProjectIdPagesPostResponses = {
+export type CreatePageApiV1BooksBookIdPagesPostResponses = {
     /**
      * Successful Response
      */
     201: PageSchema;
 };
 
-export type CreatePageApiV1ProjectsProjectIdPagesPostResponse = CreatePageApiV1ProjectsProjectIdPagesPostResponses[keyof CreatePageApiV1ProjectsProjectIdPagesPostResponses];
+export type CreatePageApiV1BooksBookIdPagesPostResponse = CreatePageApiV1BooksBookIdPagesPostResponses[keyof CreatePageApiV1BooksBookIdPagesPostResponses];
 
-export type DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteData = {
+export type DeletePageApiV1BooksBookIdPagesPageIdDeleteData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -4633,10 +4633,10 @@ export type DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteData = {
         page_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}';
+    url: '/api/v1/books/{book_id}/pages/{page_id}';
 };
 
-export type DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteErrors = {
+export type DeletePageApiV1BooksBookIdPagesPageIdDeleteErrors = {
     /**
      * Validation Error
      */
@@ -4651,38 +4651,38 @@ export type DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteErrors = {
     '5XX': Problem;
 };
 
-export type DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteError = DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteErrors[keyof DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteErrors];
+export type DeletePageApiV1BooksBookIdPagesPageIdDeleteError = DeletePageApiV1BooksBookIdPagesPageIdDeleteErrors[keyof DeletePageApiV1BooksBookIdPagesPageIdDeleteErrors];
 
-export type DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteResponses = {
+export type DeletePageApiV1BooksBookIdPagesPageIdDeleteResponses = {
     /**
      * Successful Response
      */
     204: void;
 };
 
-export type DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteResponse = DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteResponses[keyof DeletePageApiV1ProjectsProjectIdPagesPageIdDeleteResponses];
+export type DeletePageApiV1BooksBookIdPagesPageIdDeleteResponse = DeletePageApiV1BooksBookIdPagesPageIdDeleteResponses[keyof DeletePageApiV1BooksBookIdPagesPageIdDeleteResponses];
 
-export type PageApiV1ProjectsProjectIdPagesPageIdGetData = {
+export type PageApiV1BooksBookIdPagesPageIdGetData = {
     body?: never;
     path: {
-        /**
-         * Project Id
-         *
-         * Identifier of the project
-         */
-        project_id: string;
         /**
          * Page Id
          *
          * Identifier of the page
          */
         page_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}';
+    url: '/api/v1/books/{book_id}/pages/{page_id}';
 };
 
-export type PageApiV1ProjectsProjectIdPagesPageIdGetErrors = {
+export type PageApiV1BooksBookIdPagesPageIdGetErrors = {
     /**
      * Validation Error
      */
@@ -4697,26 +4697,26 @@ export type PageApiV1ProjectsProjectIdPagesPageIdGetErrors = {
     '5XX': Problem;
 };
 
-export type PageApiV1ProjectsProjectIdPagesPageIdGetError = PageApiV1ProjectsProjectIdPagesPageIdGetErrors[keyof PageApiV1ProjectsProjectIdPagesPageIdGetErrors];
+export type PageApiV1BooksBookIdPagesPageIdGetError = PageApiV1BooksBookIdPagesPageIdGetErrors[keyof PageApiV1BooksBookIdPagesPageIdGetErrors];
 
-export type PageApiV1ProjectsProjectIdPagesPageIdGetResponses = {
+export type PageApiV1BooksBookIdPagesPageIdGetResponses = {
     /**
      * Successful Response
      */
     200: PageSchema;
 };
 
-export type PageApiV1ProjectsProjectIdPagesPageIdGetResponse = PageApiV1ProjectsProjectIdPagesPageIdGetResponses[keyof PageApiV1ProjectsProjectIdPagesPageIdGetResponses];
+export type PageApiV1BooksBookIdPagesPageIdGetResponse = PageApiV1BooksBookIdPagesPageIdGetResponses[keyof PageApiV1BooksBookIdPagesPageIdGetResponses];
 
-export type UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchData = {
+export type UpdatePageApiV1BooksBookIdPagesPageIdPatchData = {
     body: PageUpdate;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -4725,10 +4725,10 @@ export type UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchData = {
         page_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}';
+    url: '/api/v1/books/{book_id}/pages/{page_id}';
 };
 
-export type UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchErrors = {
+export type UpdatePageApiV1BooksBookIdPagesPageIdPatchErrors = {
     /**
      * Validation Error
      */
@@ -4743,26 +4743,26 @@ export type UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchErrors = {
     '5XX': Problem;
 };
 
-export type UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchError = UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchErrors[keyof UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchErrors];
+export type UpdatePageApiV1BooksBookIdPagesPageIdPatchError = UpdatePageApiV1BooksBookIdPagesPageIdPatchErrors[keyof UpdatePageApiV1BooksBookIdPagesPageIdPatchErrors];
 
-export type UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchResponses = {
+export type UpdatePageApiV1BooksBookIdPagesPageIdPatchResponses = {
     /**
      * Successful Response
      */
     200: PageSchema;
 };
 
-export type UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchResponse = UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchResponses[keyof UpdatePageApiV1ProjectsProjectIdPagesPageIdPatchResponses];
+export type UpdatePageApiV1BooksBookIdPagesPageIdPatchResponse = UpdatePageApiV1BooksBookIdPagesPageIdPatchResponses[keyof UpdatePageApiV1BooksBookIdPagesPageIdPatchResponses];
 
-export type MovePageApiV1ProjectsProjectIdPagesPageIdMovePostData = {
+export type MovePageApiV1BooksBookIdPagesPageIdMovePostData = {
     body: PageMove;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -4771,10 +4771,10 @@ export type MovePageApiV1ProjectsProjectIdPagesPageIdMovePostData = {
         page_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/move';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/move';
 };
 
-export type MovePageApiV1ProjectsProjectIdPagesPageIdMovePostErrors = {
+export type MovePageApiV1BooksBookIdPagesPageIdMovePostErrors = {
     /**
      * Validation Error
      */
@@ -4789,32 +4789,32 @@ export type MovePageApiV1ProjectsProjectIdPagesPageIdMovePostErrors = {
     '5XX': Problem;
 };
 
-export type MovePageApiV1ProjectsProjectIdPagesPageIdMovePostError = MovePageApiV1ProjectsProjectIdPagesPageIdMovePostErrors[keyof MovePageApiV1ProjectsProjectIdPagesPageIdMovePostErrors];
+export type MovePageApiV1BooksBookIdPagesPageIdMovePostError = MovePageApiV1BooksBookIdPagesPageIdMovePostErrors[keyof MovePageApiV1BooksBookIdPagesPageIdMovePostErrors];
 
-export type MovePageApiV1ProjectsProjectIdPagesPageIdMovePostResponses = {
+export type MovePageApiV1BooksBookIdPagesPageIdMovePostResponses = {
     /**
      * Successful Response
      */
     200: PageSchema;
 };
 
-export type MovePageApiV1ProjectsProjectIdPagesPageIdMovePostResponse = MovePageApiV1ProjectsProjectIdPagesPageIdMovePostResponses[keyof MovePageApiV1ProjectsProjectIdPagesPageIdMovePostResponses];
+export type MovePageApiV1BooksBookIdPagesPageIdMovePostResponse = MovePageApiV1BooksBookIdPagesPageIdMovePostResponses[keyof MovePageApiV1BooksBookIdPagesPageIdMovePostResponses];
 
-export type MovePagesApiV1ProjectsProjectIdPagesMovePostData = {
+export type MovePagesApiV1BooksBookIdPagesMovePostData = {
     body: PagesMove;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/move';
+    url: '/api/v1/books/{book_id}/pages/move';
 };
 
-export type MovePagesApiV1ProjectsProjectIdPagesMovePostErrors = {
+export type MovePagesApiV1BooksBookIdPagesMovePostErrors = {
     /**
      * Validation Error
      */
@@ -4829,32 +4829,32 @@ export type MovePagesApiV1ProjectsProjectIdPagesMovePostErrors = {
     '5XX': Problem;
 };
 
-export type MovePagesApiV1ProjectsProjectIdPagesMovePostError = MovePagesApiV1ProjectsProjectIdPagesMovePostErrors[keyof MovePagesApiV1ProjectsProjectIdPagesMovePostErrors];
+export type MovePagesApiV1BooksBookIdPagesMovePostError = MovePagesApiV1BooksBookIdPagesMovePostErrors[keyof MovePagesApiV1BooksBookIdPagesMovePostErrors];
 
-export type MovePagesApiV1ProjectsProjectIdPagesMovePostResponses = {
+export type MovePagesApiV1BooksBookIdPagesMovePostResponses = {
     /**
      * Successful Response
      */
     204: void;
 };
 
-export type MovePagesApiV1ProjectsProjectIdPagesMovePostResponse = MovePagesApiV1ProjectsProjectIdPagesMovePostResponses[keyof MovePagesApiV1ProjectsProjectIdPagesMovePostResponses];
+export type MovePagesApiV1BooksBookIdPagesMovePostResponse = MovePagesApiV1BooksBookIdPagesMovePostResponses[keyof MovePagesApiV1BooksBookIdPagesMovePostResponses];
 
-export type FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostData = {
+export type FillBlankPagesApiV1BooksBookIdPagesBlankFillPostData = {
     body: BlankFillChange;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/blank-fill';
+    url: '/api/v1/books/{book_id}/pages/blank-fill';
 };
 
-export type FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostErrors = {
+export type FillBlankPagesApiV1BooksBookIdPagesBlankFillPostErrors = {
     /**
      * Validation Error
      */
@@ -4869,32 +4869,32 @@ export type FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostErrors = {
     '5XX': Problem;
 };
 
-export type FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostError = FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostErrors[keyof FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostErrors];
+export type FillBlankPagesApiV1BooksBookIdPagesBlankFillPostError = FillBlankPagesApiV1BooksBookIdPagesBlankFillPostErrors[keyof FillBlankPagesApiV1BooksBookIdPagesBlankFillPostErrors];
 
-export type FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostResponses = {
+export type FillBlankPagesApiV1BooksBookIdPagesBlankFillPostResponses = {
     /**
      * Successful Response
      */
     204: void;
 };
 
-export type FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostResponse = FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostResponses[keyof FillBlankPagesApiV1ProjectsProjectIdPagesBlankFillPostResponses];
+export type FillBlankPagesApiV1BooksBookIdPagesBlankFillPostResponse = FillBlankPagesApiV1BooksBookIdPagesBlankFillPostResponses[keyof FillBlankPagesApiV1BooksBookIdPagesBlankFillPostResponses];
 
-export type DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostData = {
+export type DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostData = {
     body: ContentDetectionRequest;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/content-types/detect';
+    url: '/api/v1/books/{book_id}/pages/content-types/detect';
 };
 
-export type DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostErrors = {
+export type DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostErrors = {
     /**
      * Validation Error
      */
@@ -4909,32 +4909,32 @@ export type DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostE
     '5XX': Problem;
 };
 
-export type DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostError = DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostErrors[keyof DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostErrors];
+export type DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostError = DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostErrors[keyof DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostErrors];
 
-export type DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostResponses = {
+export type DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostResponses = {
     /**
      * Successful Response
      */
     202: JobSchema;
 };
 
-export type DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostResponse = DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostResponses[keyof DetectContentTypesApiV1ProjectsProjectIdPagesContentTypesDetectPostResponses];
+export type DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostResponse = DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostResponses[keyof DetectContentTypesApiV1BooksBookIdPagesContentTypesDetectPostResponses];
 
-export type NumberPagesApiV1ProjectsProjectIdPagesLabelsPostData = {
+export type NumberPagesApiV1BooksBookIdPagesLabelsPostData = {
     body: LabelRange;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/labels';
+    url: '/api/v1/books/{book_id}/pages/labels';
 };
 
-export type NumberPagesApiV1ProjectsProjectIdPagesLabelsPostErrors = {
+export type NumberPagesApiV1BooksBookIdPagesLabelsPostErrors = {
     /**
      * Validation Error
      */
@@ -4949,32 +4949,32 @@ export type NumberPagesApiV1ProjectsProjectIdPagesLabelsPostErrors = {
     '5XX': Problem;
 };
 
-export type NumberPagesApiV1ProjectsProjectIdPagesLabelsPostError = NumberPagesApiV1ProjectsProjectIdPagesLabelsPostErrors[keyof NumberPagesApiV1ProjectsProjectIdPagesLabelsPostErrors];
+export type NumberPagesApiV1BooksBookIdPagesLabelsPostError = NumberPagesApiV1BooksBookIdPagesLabelsPostErrors[keyof NumberPagesApiV1BooksBookIdPagesLabelsPostErrors];
 
-export type NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponses = {
+export type NumberPagesApiV1BooksBookIdPagesLabelsPostResponses = {
     /**
      * Successful Response
      */
     204: void;
 };
 
-export type NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponse = NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponses[keyof NumberPagesApiV1ProjectsProjectIdPagesLabelsPostResponses];
+export type NumberPagesApiV1BooksBookIdPagesLabelsPostResponse = NumberPagesApiV1BooksBookIdPagesLabelsPostResponses[keyof NumberPagesApiV1BooksBookIdPagesLabelsPostResponses];
 
-export type PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostData = {
+export type PreviewPageNumbersApiV1BooksBookIdPagesLabelsPreviewPostData = {
     body: LabelRange;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/labels/preview';
+    url: '/api/v1/books/{book_id}/pages/labels/preview';
 };
 
-export type PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostErrors = {
+export type PreviewPageNumbersApiV1BooksBookIdPagesLabelsPreviewPostErrors = {
     /**
      * Validation Error
      */
@@ -4989,37 +4989,37 @@ export type PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostErrors
     '5XX': Problem;
 };
 
-export type PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostError = PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostErrors[keyof PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostErrors];
+export type PreviewPageNumbersApiV1BooksBookIdPagesLabelsPreviewPostError = PreviewPageNumbersApiV1BooksBookIdPagesLabelsPreviewPostErrors[keyof PreviewPageNumbersApiV1BooksBookIdPagesLabelsPreviewPostErrors];
 
-export type PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostResponses = {
+export type PreviewPageNumbersApiV1BooksBookIdPagesLabelsPreviewPostResponses = {
     /**
-     * Response Preview Page Numbers Api V1 Projects  Project Id  Pages Labels Preview Post
+     * Response Preview Page Numbers Api V1 Books  Book Id  Pages Labels Preview Post
      *
      * Successful Response
      */
     200: Array<NumberedPageSchema>;
 };
 
-export type PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostResponse = PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostResponses[keyof PreviewPageNumbersApiV1ProjectsProjectIdPagesLabelsPreviewPostResponses];
+export type PreviewPageNumbersApiV1BooksBookIdPagesLabelsPreviewPostResponse = PreviewPageNumbersApiV1BooksBookIdPagesLabelsPreviewPostResponses[keyof PreviewPageNumbersApiV1BooksBookIdPagesLabelsPreviewPostResponses];
 
-export type CreatePagesApiV1ProjectsProjectIdPagesBatchPostData = {
+export type CreatePagesApiV1BooksBookIdPagesBatchPostData = {
     /**
      * Body
      */
     body: Array<PageCreate>;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/batch';
+    url: '/api/v1/books/{book_id}/pages/batch';
 };
 
-export type CreatePagesApiV1ProjectsProjectIdPagesBatchPostErrors = {
+export type CreatePagesApiV1BooksBookIdPagesBatchPostErrors = {
     /**
      * Validation Error
      */
@@ -5034,28 +5034,28 @@ export type CreatePagesApiV1ProjectsProjectIdPagesBatchPostErrors = {
     '5XX': Problem;
 };
 
-export type CreatePagesApiV1ProjectsProjectIdPagesBatchPostError = CreatePagesApiV1ProjectsProjectIdPagesBatchPostErrors[keyof CreatePagesApiV1ProjectsProjectIdPagesBatchPostErrors];
+export type CreatePagesApiV1BooksBookIdPagesBatchPostError = CreatePagesApiV1BooksBookIdPagesBatchPostErrors[keyof CreatePagesApiV1BooksBookIdPagesBatchPostErrors];
 
-export type CreatePagesApiV1ProjectsProjectIdPagesBatchPostResponses = {
+export type CreatePagesApiV1BooksBookIdPagesBatchPostResponses = {
     /**
-     * Response Create Pages Api V1 Projects  Project Id  Pages Batch Post
+     * Response Create Pages Api V1 Books  Book Id  Pages Batch Post
      *
      * Successful Response
      */
     201: Array<PageSchema>;
 };
 
-export type CreatePagesApiV1ProjectsProjectIdPagesBatchPostResponse = CreatePagesApiV1ProjectsProjectIdPagesBatchPostResponses[keyof CreatePagesApiV1ProjectsProjectIdPagesBatchPostResponses];
+export type CreatePagesApiV1BooksBookIdPagesBatchPostResponse = CreatePagesApiV1BooksBookIdPagesBatchPostResponses[keyof CreatePagesApiV1BooksBookIdPagesBatchPostResponses];
 
-export type AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutData = {
+export type AttachScanApiV1BooksBookIdPagesPageIdScanPutData = {
     body: ScanAttach;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -5064,10 +5064,10 @@ export type AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutData = {
         page_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/scan';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/scan';
 };
 
-export type AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutErrors = {
+export type AttachScanApiV1BooksBookIdPagesPageIdScanPutErrors = {
     /**
      * Validation Error
      */
@@ -5082,26 +5082,26 @@ export type AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutErrors = {
     '5XX': Problem;
 };
 
-export type AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutError = AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutErrors[keyof AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutErrors];
+export type AttachScanApiV1BooksBookIdPagesPageIdScanPutError = AttachScanApiV1BooksBookIdPagesPageIdScanPutErrors[keyof AttachScanApiV1BooksBookIdPagesPageIdScanPutErrors];
 
-export type AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponses = {
+export type AttachScanApiV1BooksBookIdPagesPageIdScanPutResponses = {
     /**
      * Successful Response
      */
     200: PageSchema;
 };
 
-export type AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponse = AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponses[keyof AttachScanApiV1ProjectsProjectIdPagesPageIdScanPutResponses];
+export type AttachScanApiV1BooksBookIdPagesPageIdScanPutResponse = AttachScanApiV1BooksBookIdPagesPageIdScanPutResponses[keyof AttachScanApiV1BooksBookIdPagesPageIdScanPutResponses];
 
-export type ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetData = {
+export type ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: {
         /**
@@ -5113,10 +5113,10 @@ export type ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetDat
          */
         size?: number;
     };
-    url: '/api/v1/projects/{project_id}/pagination-sections';
+    url: '/api/v1/books/{book_id}/pagination-sections';
 };
 
-export type ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetErrors = {
+export type ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetErrors = {
     /**
      * Validation Error
      */
@@ -5131,32 +5131,32 @@ export type ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetErr
     '5XX': Problem;
 };
 
-export type ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetError = ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetErrors[keyof ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetErrors];
+export type ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetError = ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetErrors[keyof ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetErrors];
 
-export type ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetResponses = {
+export type ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetResponses = {
     /**
      * Successful Response
      */
     200: PagePaginationSectionSchema;
 };
 
-export type ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetResponse = ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetResponses[keyof ListPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetResponses];
+export type ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetResponse = ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetResponses[keyof ListPaginationSectionsApiV1BooksBookIdPaginationSectionsGetResponses];
 
-export type CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostData = {
+export type CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostData = {
     body: PaginationSectionBody;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pagination-sections';
+    url: '/api/v1/books/{book_id}/pagination-sections';
 };
 
-export type CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostErrors = {
+export type CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostErrors = {
     /**
      * Validation Error
      */
@@ -5171,26 +5171,26 @@ export type CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostE
     '5XX': Problem;
 };
 
-export type CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostError = CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostErrors[keyof CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostErrors];
+export type CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostError = CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostErrors[keyof CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostErrors];
 
-export type CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostResponses = {
+export type CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostResponses = {
     /**
      * Successful Response
      */
     201: PaginationSectionSchema;
 };
 
-export type CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostResponse = CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostResponses[keyof CreatePaginationSectionApiV1ProjectsProjectIdPaginationSectionsPostResponses];
+export type CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostResponse = CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostResponses[keyof CreatePaginationSectionApiV1BooksBookIdPaginationSectionsPostResponses];
 
-export type DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteData = {
+export type DeletePaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdDeleteData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Section Id
          *
@@ -5199,10 +5199,10 @@ export type DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSecti
         section_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pagination-sections/{section_id}';
+    url: '/api/v1/books/{book_id}/pagination-sections/{section_id}';
 };
 
-export type DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteErrors = {
+export type DeletePaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdDeleteErrors = {
     /**
      * Validation Error
      */
@@ -5217,26 +5217,26 @@ export type DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSecti
     '5XX': Problem;
 };
 
-export type DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteError = DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteErrors[keyof DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteErrors];
+export type DeletePaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdDeleteError = DeletePaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdDeleteErrors[keyof DeletePaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdDeleteErrors];
 
-export type DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteResponses = {
+export type DeletePaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdDeleteResponses = {
     /**
      * Successful Response
      */
     204: void;
 };
 
-export type DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteResponse = DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteResponses[keyof DeletePaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdDeleteResponses];
+export type DeletePaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdDeleteResponse = DeletePaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdDeleteResponses[keyof DeletePaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdDeleteResponses];
 
-export type PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutData = {
+export type PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutData = {
     body: PaginationSectionBody;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Section Id
          *
@@ -5245,10 +5245,10 @@ export type PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionI
         section_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pagination-sections/{section_id}';
+    url: '/api/v1/books/{book_id}/pagination-sections/{section_id}';
 };
 
-export type PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutErrors = {
+export type PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutErrors = {
     /**
      * Validation Error
      */
@@ -5263,26 +5263,26 @@ export type PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionI
     '5XX': Problem;
 };
 
-export type PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutError = PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutErrors[keyof PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutErrors];
+export type PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutError = PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutErrors[keyof PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutErrors];
 
-export type PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutResponses = {
+export type PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutResponses = {
     /**
      * Successful Response
      */
     200: PaginationSectionSchema;
 };
 
-export type PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutResponse = PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutResponses[keyof PutPaginationSectionApiV1ProjectsProjectIdPaginationSectionsSectionIdPutResponses];
+export type PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutResponse = PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutResponses[keyof PutPaginationSectionApiV1BooksBookIdPaginationSectionsSectionIdPutResponses];
 
-export type ListStagesApiV1ProjectsProjectIdStagesGetData = {
+export type ListStagesApiV1BooksBookIdStagesGetData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: {
         /**
@@ -5294,10 +5294,10 @@ export type ListStagesApiV1ProjectsProjectIdStagesGetData = {
          */
         size?: number;
     };
-    url: '/api/v1/projects/{project_id}/stages';
+    url: '/api/v1/books/{book_id}/stages';
 };
 
-export type ListStagesApiV1ProjectsProjectIdStagesGetErrors = {
+export type ListStagesApiV1BooksBookIdStagesGetErrors = {
     /**
      * Validation Error
      */
@@ -5312,26 +5312,26 @@ export type ListStagesApiV1ProjectsProjectIdStagesGetErrors = {
     '5XX': Problem;
 };
 
-export type ListStagesApiV1ProjectsProjectIdStagesGetError = ListStagesApiV1ProjectsProjectIdStagesGetErrors[keyof ListStagesApiV1ProjectsProjectIdStagesGetErrors];
+export type ListStagesApiV1BooksBookIdStagesGetError = ListStagesApiV1BooksBookIdStagesGetErrors[keyof ListStagesApiV1BooksBookIdStagesGetErrors];
 
-export type ListStagesApiV1ProjectsProjectIdStagesGetResponses = {
+export type ListStagesApiV1BooksBookIdStagesGetResponses = {
     /**
      * Successful Response
      */
     200: PageStageSummarySchema;
 };
 
-export type ListStagesApiV1ProjectsProjectIdStagesGetResponse = ListStagesApiV1ProjectsProjectIdStagesGetResponses[keyof ListStagesApiV1ProjectsProjectIdStagesGetResponses];
+export type ListStagesApiV1BooksBookIdStagesGetResponse = ListStagesApiV1BooksBookIdStagesGetResponses[keyof ListStagesApiV1BooksBookIdStagesGetResponses];
 
-export type ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData = {
+export type ListStagePagesApiV1BooksBookIdStagesStagePagesGetData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Stage of the pipeline
          */
@@ -5353,10 +5353,10 @@ export type ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetData = {
          */
         size?: number;
     };
-    url: '/api/v1/projects/{project_id}/stages/{stage}/pages';
+    url: '/api/v1/books/{book_id}/stages/{stage}/pages';
 };
 
-export type ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetErrors = {
+export type ListStagePagesApiV1BooksBookIdStagesStagePagesGetErrors = {
     /**
      * Validation Error
      */
@@ -5371,32 +5371,32 @@ export type ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetErrors = {
     '5XX': Problem;
 };
 
-export type ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetError = ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetErrors[keyof ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetErrors];
+export type ListStagePagesApiV1BooksBookIdStagesStagePagesGetError = ListStagePagesApiV1BooksBookIdStagesStagePagesGetErrors[keyof ListStagePagesApiV1BooksBookIdStagesStagePagesGetErrors];
 
-export type ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponses = {
+export type ListStagePagesApiV1BooksBookIdStagesStagePagesGetResponses = {
     /**
      * Successful Response
      */
     200: ManifestPageStagePageSchema;
 };
 
-export type ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponse = ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponses[keyof ListStagePagesApiV1ProjectsProjectIdStagesStagePagesGetResponses];
+export type ListStagePagesApiV1BooksBookIdStagesStagePagesGetResponse = ListStagePagesApiV1BooksBookIdStagesStagePagesGetResponses[keyof ListStagePagesApiV1BooksBookIdStagesStagePagesGetResponses];
 
-export type GetPlaceApiV1ProjectsProjectIdPlaceGetData = {
+export type GetPlaceApiV1BooksBookIdPlaceGetData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/place';
+    url: '/api/v1/books/{book_id}/place';
 };
 
-export type GetPlaceApiV1ProjectsProjectIdPlaceGetErrors = {
+export type GetPlaceApiV1BooksBookIdPlaceGetErrors = {
     /**
      * Validation Error
      */
@@ -5411,9 +5411,9 @@ export type GetPlaceApiV1ProjectsProjectIdPlaceGetErrors = {
     '5XX': Problem;
 };
 
-export type GetPlaceApiV1ProjectsProjectIdPlaceGetError = GetPlaceApiV1ProjectsProjectIdPlaceGetErrors[keyof GetPlaceApiV1ProjectsProjectIdPlaceGetErrors];
+export type GetPlaceApiV1BooksBookIdPlaceGetError = GetPlaceApiV1BooksBookIdPlaceGetErrors[keyof GetPlaceApiV1BooksBookIdPlaceGetErrors];
 
-export type GetPlaceApiV1ProjectsProjectIdPlaceGetResponses = {
+export type GetPlaceApiV1BooksBookIdPlaceGetResponses = {
     /**
      * Successful Response
      */
@@ -5424,23 +5424,23 @@ export type GetPlaceApiV1ProjectsProjectIdPlaceGetResponses = {
     204: void;
 };
 
-export type GetPlaceApiV1ProjectsProjectIdPlaceGetResponse = GetPlaceApiV1ProjectsProjectIdPlaceGetResponses[keyof GetPlaceApiV1ProjectsProjectIdPlaceGetResponses];
+export type GetPlaceApiV1BooksBookIdPlaceGetResponse = GetPlaceApiV1BooksBookIdPlaceGetResponses[keyof GetPlaceApiV1BooksBookIdPlaceGetResponses];
 
-export type PutPlaceApiV1ProjectsProjectIdPlacePutData = {
+export type PutPlaceApiV1BooksBookIdPlacePutData = {
     body: BookPlaceBody;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/place';
+    url: '/api/v1/books/{book_id}/place';
 };
 
-export type PutPlaceApiV1ProjectsProjectIdPlacePutErrors = {
+export type PutPlaceApiV1BooksBookIdPlacePutErrors = {
     /**
      * Validation Error
      */
@@ -5455,26 +5455,26 @@ export type PutPlaceApiV1ProjectsProjectIdPlacePutErrors = {
     '5XX': Problem;
 };
 
-export type PutPlaceApiV1ProjectsProjectIdPlacePutError = PutPlaceApiV1ProjectsProjectIdPlacePutErrors[keyof PutPlaceApiV1ProjectsProjectIdPlacePutErrors];
+export type PutPlaceApiV1BooksBookIdPlacePutError = PutPlaceApiV1BooksBookIdPlacePutErrors[keyof PutPlaceApiV1BooksBookIdPlacePutErrors];
 
-export type PutPlaceApiV1ProjectsProjectIdPlacePutResponses = {
+export type PutPlaceApiV1BooksBookIdPlacePutResponses = {
     /**
      * Successful Response
      */
     200: BookPlaceSchema;
 };
 
-export type PutPlaceApiV1ProjectsProjectIdPlacePutResponse = PutPlaceApiV1ProjectsProjectIdPlacePutResponses[keyof PutPlaceApiV1ProjectsProjectIdPlacePutResponses];
+export type PutPlaceApiV1BooksBookIdPlacePutResponse = PutPlaceApiV1BooksBookIdPlacePutResponses[keyof PutPlaceApiV1BooksBookIdPlacePutResponses];
 
-export type ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetData = {
+export type ListRecipesApiV1BooksBookIdStagesStageRecipesGetData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Stage of the pipeline
          */
@@ -5490,10 +5490,10 @@ export type ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetData = {
          */
         size?: number;
     };
-    url: '/api/v1/projects/{project_id}/stages/{stage}/recipes';
+    url: '/api/v1/books/{book_id}/stages/{stage}/recipes';
 };
 
-export type ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetErrors = {
+export type ListRecipesApiV1BooksBookIdStagesStageRecipesGetErrors = {
     /**
      * Validation Error
      */
@@ -5508,26 +5508,26 @@ export type ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetErrors = {
     '5XX': Problem;
 };
 
-export type ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetError = ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetErrors[keyof ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetErrors];
+export type ListRecipesApiV1BooksBookIdStagesStageRecipesGetError = ListRecipesApiV1BooksBookIdStagesStageRecipesGetErrors[keyof ListRecipesApiV1BooksBookIdStagesStageRecipesGetErrors];
 
-export type ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetResponses = {
+export type ListRecipesApiV1BooksBookIdStagesStageRecipesGetResponses = {
     /**
      * Successful Response
      */
     200: PageRecipeSchema;
 };
 
-export type ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetResponse = ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetResponses[keyof ListRecipesApiV1ProjectsProjectIdStagesStageRecipesGetResponses];
+export type ListRecipesApiV1BooksBookIdStagesStageRecipesGetResponse = ListRecipesApiV1BooksBookIdStagesStageRecipesGetResponses[keyof ListRecipesApiV1BooksBookIdStagesStageRecipesGetResponses];
 
-export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutData = {
+export type PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutData = {
     body: RecipeBody;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Stage of the pipeline
          */
@@ -5540,10 +5540,10 @@ export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutData = {
         recipe_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/recipes/{recipe_id}';
+    url: '/api/v1/books/{book_id}/stages/{stage}/recipes/{recipe_id}';
 };
 
-export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutErrors = {
+export type PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutErrors = {
     /**
      * Validation Error
      */
@@ -5558,26 +5558,26 @@ export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutErrors =
     '5XX': Problem;
 };
 
-export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutError = PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutErrors[keyof PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutErrors];
+export type PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutError = PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutErrors[keyof PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutErrors];
 
-export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutResponses = {
+export type PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutResponses = {
     /**
      * Successful Response
      */
     200: RecipeSchema;
 };
 
-export type PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutResponse = PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutResponses[keyof PutRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPutResponses];
+export type PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutResponse = PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutResponses[keyof PutRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPutResponses];
 
-export type ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostData = {
+export type ResetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPostData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Stage of the pipeline
          */
@@ -5590,10 +5590,10 @@ export type ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPost
         recipe_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/recipes/{recipe_id}/reset';
+    url: '/api/v1/books/{book_id}/stages/{stage}/recipes/{recipe_id}/reset';
 };
 
-export type ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostErrors = {
+export type ResetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPostErrors = {
     /**
      * Validation Error
      */
@@ -5608,36 +5608,36 @@ export type ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPost
     '5XX': Problem;
 };
 
-export type ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostError = ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostErrors[keyof ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostErrors];
+export type ResetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPostError = ResetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPostErrors[keyof ResetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPostErrors];
 
-export type ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostResponses = {
+export type ResetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPostResponses = {
     /**
      * Successful Response
      */
     200: RecipeSchema;
 };
 
-export type ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostResponse = ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostResponses[keyof ResetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPostResponses];
+export type ResetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPostResponse = ResetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPostResponses[keyof ResetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPostResponses];
 
-export type RunStageApiV1ProjectsProjectIdStagesStageRunPostData = {
+export type RunStageApiV1BooksBookIdStagesStageRunPostData = {
     body: StageRunBody;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Stage of the pipeline
          */
         stage: Stage;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/run';
+    url: '/api/v1/books/{book_id}/stages/{stage}/run';
 };
 
-export type RunStageApiV1ProjectsProjectIdStagesStageRunPostErrors = {
+export type RunStageApiV1BooksBookIdStagesStageRunPostErrors = {
     /**
      * Validation Error
      */
@@ -5652,36 +5652,36 @@ export type RunStageApiV1ProjectsProjectIdStagesStageRunPostErrors = {
     '5XX': Problem;
 };
 
-export type RunStageApiV1ProjectsProjectIdStagesStageRunPostError = RunStageApiV1ProjectsProjectIdStagesStageRunPostErrors[keyof RunStageApiV1ProjectsProjectIdStagesStageRunPostErrors];
+export type RunStageApiV1BooksBookIdStagesStageRunPostError = RunStageApiV1BooksBookIdStagesStageRunPostErrors[keyof RunStageApiV1BooksBookIdStagesStageRunPostErrors];
 
-export type RunStageApiV1ProjectsProjectIdStagesStageRunPostResponses = {
+export type RunStageApiV1BooksBookIdStagesStageRunPostResponses = {
     /**
      * Successful Response
      */
     202: JobSchema;
 };
 
-export type RunStageApiV1ProjectsProjectIdStagesStageRunPostResponse = RunStageApiV1ProjectsProjectIdStagesStageRunPostResponses[keyof RunStageApiV1ProjectsProjectIdStagesStageRunPostResponses];
+export type RunStageApiV1BooksBookIdStagesStageRunPostResponse = RunStageApiV1BooksBookIdStagesStageRunPostResponses[keyof RunStageApiV1BooksBookIdStagesStageRunPostResponses];
 
-export type RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostData = {
+export type RunImpactApiV1BooksBookIdStagesStageRunImpactPostData = {
     body: StageRunBody;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Stage of the pipeline
          */
         stage: Stage;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/run-impact';
+    url: '/api/v1/books/{book_id}/stages/{stage}/run-impact';
 };
 
-export type RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostErrors = {
+export type RunImpactApiV1BooksBookIdStagesStageRunImpactPostErrors = {
     /**
      * Validation Error
      */
@@ -5696,36 +5696,36 @@ export type RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostErrors = {
     '5XX': Problem;
 };
 
-export type RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostError = RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostErrors[keyof RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostErrors];
+export type RunImpactApiV1BooksBookIdStagesStageRunImpactPostError = RunImpactApiV1BooksBookIdStagesStageRunImpactPostErrors[keyof RunImpactApiV1BooksBookIdStagesStageRunImpactPostErrors];
 
-export type RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostResponses = {
+export type RunImpactApiV1BooksBookIdStagesStageRunImpactPostResponses = {
     /**
      * Successful Response
      */
     200: RunImpactSchema;
 };
 
-export type RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostResponse = RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostResponses[keyof RunImpactApiV1ProjectsProjectIdStagesStageRunImpactPostResponses];
+export type RunImpactApiV1BooksBookIdStagesStageRunImpactPostResponse = RunImpactApiV1BooksBookIdStagesStageRunImpactPostResponses[keyof RunImpactApiV1BooksBookIdStagesStageRunImpactPostResponses];
 
-export type PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostData = {
+export type PreviewStepApiV1BooksBookIdStagesStagePreviewPostData = {
     body: StepPreviewBody;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Stage of the pipeline
          */
         stage: Stage;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/preview';
+    url: '/api/v1/books/{book_id}/stages/{stage}/preview';
 };
 
-export type PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostErrors = {
+export type PreviewStepApiV1BooksBookIdStagesStagePreviewPostErrors = {
     /**
      * Validation Error
      */
@@ -5740,32 +5740,32 @@ export type PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostErrors = {
     '5XX': Problem;
 };
 
-export type PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostError = PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostErrors[keyof PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostErrors];
+export type PreviewStepApiV1BooksBookIdStagesStagePreviewPostError = PreviewStepApiV1BooksBookIdStagesStagePreviewPostErrors[keyof PreviewStepApiV1BooksBookIdStagesStagePreviewPostErrors];
 
-export type PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponses = {
+export type PreviewStepApiV1BooksBookIdStagesStagePreviewPostResponses = {
     /**
      * Successful Response
      */
     202: JobSchema;
 };
 
-export type PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponse = PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponses[keyof PreviewStepApiV1ProjectsProjectIdStagesStagePreviewPostResponses];
+export type PreviewStepApiV1BooksBookIdStagesStagePreviewPostResponse = PreviewStepApiV1BooksBookIdStagesStagePreviewPostResponses[keyof PreviewStepApiV1BooksBookIdStagesStagePreviewPostResponses];
 
-export type MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostData = {
+export type MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/stages/geometry/measure';
+    url: '/api/v1/books/{book_id}/stages/geometry/measure';
 };
 
-export type MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostErrors = {
+export type MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostErrors = {
     /**
      * Validation Error
      */
@@ -5780,26 +5780,26 @@ export type MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostErrors = {
     '5XX': Problem;
 };
 
-export type MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostError = MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostErrors[keyof MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostErrors];
+export type MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostError = MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostErrors[keyof MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostErrors];
 
-export type MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostResponses = {
+export type MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostResponses = {
     /**
      * Successful Response
      */
     202: JobSchema;
 };
 
-export type MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostResponse = MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostResponses[keyof MeasureBookApiV1ProjectsProjectIdStagesGeometryMeasurePostResponses];
+export type MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostResponse = MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostResponses[keyof MeasureBookApiV1BooksBookIdStagesGeometryMeasurePostResponses];
 
-export type ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData = {
+export type ListPageStagesApiV1BooksBookIdPagesPageIdStagesGetData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -5817,10 +5817,10 @@ export type ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetData = {
          */
         size?: number;
     };
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/stages';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/stages';
 };
 
-export type ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetErrors = {
+export type ListPageStagesApiV1BooksBookIdPagesPageIdStagesGetErrors = {
     /**
      * Validation Error
      */
@@ -5835,26 +5835,26 @@ export type ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetErrors = {
     '5XX': Problem;
 };
 
-export type ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetError = ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetErrors[keyof ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetErrors];
+export type ListPageStagesApiV1BooksBookIdPagesPageIdStagesGetError = ListPageStagesApiV1BooksBookIdPagesPageIdStagesGetErrors[keyof ListPageStagesApiV1BooksBookIdPagesPageIdStagesGetErrors];
 
-export type ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponses = {
+export type ListPageStagesApiV1BooksBookIdPagesPageIdStagesGetResponses = {
     /**
      * Successful Response
      */
     200: PagePageStageSchema;
 };
 
-export type ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponse = ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponses[keyof ListPageStagesApiV1ProjectsProjectIdPagesPageIdStagesGetResponses];
+export type ListPageStagesApiV1BooksBookIdPagesPageIdStagesGetResponse = ListPageStagesApiV1BooksBookIdPagesPageIdStagesGetResponses[keyof ListPageStagesApiV1BooksBookIdPagesPageIdStagesGetResponses];
 
-export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutData = {
+export type ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutData = {
     body: HeadChoice;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -5867,10 +5867,10 @@ export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutData = {
         stage: Stage;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/stages/{stage}';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/stages/{stage}';
 };
 
-export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutErrors = {
+export type ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutErrors = {
     /**
      * Validation Error
      */
@@ -5885,26 +5885,26 @@ export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutErrors =
     '5XX': Problem;
 };
 
-export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutError = ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutErrors[keyof ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutErrors];
+export type ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutError = ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutErrors[keyof ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutErrors];
 
-export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponses = {
+export type ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutResponses = {
     /**
      * Successful Response
      */
     200: PageStageSchema;
 };
 
-export type ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponse = ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponses[keyof ChooseVersionApiV1ProjectsProjectIdPagesPageIdStagesStagePutResponses];
+export type ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutResponse = ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutResponses[keyof ChooseVersionApiV1BooksBookIdPagesPageIdStagesStagePutResponses];
 
-export type ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData = {
+export type ListVersionsApiV1BooksBookIdPagesPageIdVersionsGetData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -5938,10 +5938,10 @@ export type ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetData = {
          */
         mark?: ResultMark | null;
     };
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/versions';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/versions';
 };
 
-export type ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetErrors = {
+export type ListVersionsApiV1BooksBookIdPagesPageIdVersionsGetErrors = {
     /**
      * Validation Error
      */
@@ -5956,26 +5956,26 @@ export type ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetErrors = {
     '5XX': Problem;
 };
 
-export type ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetError = ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetErrors[keyof ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetErrors];
+export type ListVersionsApiV1BooksBookIdPagesPageIdVersionsGetError = ListVersionsApiV1BooksBookIdPagesPageIdVersionsGetErrors[keyof ListVersionsApiV1BooksBookIdPagesPageIdVersionsGetErrors];
 
-export type ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponses = {
+export type ListVersionsApiV1BooksBookIdPagesPageIdVersionsGetResponses = {
     /**
      * Successful Response
      */
     200: PagePageVersionSchema;
 };
 
-export type ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponse = ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponses[keyof ListVersionsApiV1ProjectsProjectIdPagesPageIdVersionsGetResponses];
+export type ListVersionsApiV1BooksBookIdPagesPageIdVersionsGetResponse = ListVersionsApiV1BooksBookIdPagesPageIdVersionsGetResponses[keyof ListVersionsApiV1BooksBookIdPagesPageIdVersionsGetResponses];
 
-export type GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetData = {
+export type GetVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGetData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -5990,10 +5990,10 @@ export type GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetData 
         version_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/versions/{version_id}';
 };
 
-export type GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetErrors = {
+export type GetVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGetErrors = {
     /**
      * Validation Error
      */
@@ -6008,26 +6008,26 @@ export type GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetError
     '5XX': Problem;
 };
 
-export type GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetError = GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetErrors[keyof GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetErrors];
+export type GetVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGetError = GetVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGetErrors[keyof GetVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGetErrors];
 
-export type GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponses = {
+export type GetVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGetResponses = {
     /**
      * Successful Response
      */
     200: PageVersionSchema;
 };
 
-export type GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponse = GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponses[keyof GetVersionApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdGetResponses];
+export type GetVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGetResponse = GetVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGetResponses[keyof GetVersionApiV1BooksBookIdPagesPageIdVersionsVersionIdGetResponses];
 
-export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostData = {
+export type CutVersionTilesApiV1BooksBookIdPagesPageIdVersionsVersionIdTilesPostData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -6042,10 +6042,10 @@ export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTil
         version_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}/tiles';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/versions/{version_id}/tiles';
 };
 
-export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostErrors = {
+export type CutVersionTilesApiV1BooksBookIdPagesPageIdVersionsVersionIdTilesPostErrors = {
     /**
      * Validation Error
      */
@@ -6060,32 +6060,32 @@ export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTil
     '5XX': Problem;
 };
 
-export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostError = CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostErrors[keyof CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostErrors];
+export type CutVersionTilesApiV1BooksBookIdPagesPageIdVersionsVersionIdTilesPostError = CutVersionTilesApiV1BooksBookIdPagesPageIdVersionsVersionIdTilesPostErrors[keyof CutVersionTilesApiV1BooksBookIdPagesPageIdVersionsVersionIdTilesPostErrors];
 
-export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponses = {
+export type CutVersionTilesApiV1BooksBookIdPagesPageIdVersionsVersionIdTilesPostResponses = {
     /**
      * Successful Response
      */
     202: JobSchema;
 };
 
-export type CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponse = CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponses[keyof CutVersionTilesApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdTilesPostResponses];
+export type CutVersionTilesApiV1BooksBookIdPagesPageIdVersionsVersionIdTilesPostResponse = CutVersionTilesApiV1BooksBookIdPagesPageIdVersionsVersionIdTilesPostResponses[keyof CutVersionTilesApiV1BooksBookIdPagesPageIdVersionsVersionIdTilesPostResponses];
 
-export type CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetData = {
+export type CollectableVersionsApiV1BooksBookIdVersionsCollectableGetData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/versions/collectable';
+    url: '/api/v1/books/{book_id}/versions/collectable';
 };
 
-export type CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetErrors = {
+export type CollectableVersionsApiV1BooksBookIdVersionsCollectableGetErrors = {
     /**
      * Validation Error
      */
@@ -6100,32 +6100,32 @@ export type CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetError
     '5XX': Problem;
 };
 
-export type CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetError = CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetErrors[keyof CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetErrors];
+export type CollectableVersionsApiV1BooksBookIdVersionsCollectableGetError = CollectableVersionsApiV1BooksBookIdVersionsCollectableGetErrors[keyof CollectableVersionsApiV1BooksBookIdVersionsCollectableGetErrors];
 
-export type CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetResponses = {
+export type CollectableVersionsApiV1BooksBookIdVersionsCollectableGetResponses = {
     /**
      * Successful Response
      */
     200: CollectionReportSchema;
 };
 
-export type CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetResponse = CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetResponses[keyof CollectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetResponses];
+export type CollectableVersionsApiV1BooksBookIdVersionsCollectableGetResponse = CollectableVersionsApiV1BooksBookIdVersionsCollectableGetResponses[keyof CollectableVersionsApiV1BooksBookIdVersionsCollectableGetResponses];
 
-export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostData = {
+export type CollectVersionsApiV1BooksBookIdVersionsCollectPostData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/versions/collect';
+    url: '/api/v1/books/{book_id}/versions/collect';
 };
 
-export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostErrors = {
+export type CollectVersionsApiV1BooksBookIdVersionsCollectPostErrors = {
     /**
      * Validation Error
      */
@@ -6140,16 +6140,16 @@ export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostErrors = {
     '5XX': Problem;
 };
 
-export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostError = CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostErrors[keyof CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostErrors];
+export type CollectVersionsApiV1BooksBookIdVersionsCollectPostError = CollectVersionsApiV1BooksBookIdVersionsCollectPostErrors[keyof CollectVersionsApiV1BooksBookIdVersionsCollectPostErrors];
 
-export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponses = {
+export type CollectVersionsApiV1BooksBookIdVersionsCollectPostResponses = {
     /**
      * Successful Response
      */
     202: JobSchema;
 };
 
-export type CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponse = CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponses[keyof CollectVersionsApiV1ProjectsProjectIdVersionsCollectPostResponses];
+export type CollectVersionsApiV1BooksBookIdVersionsCollectPostResponse = CollectVersionsApiV1BooksBookIdVersionsCollectPostResponses[keyof CollectVersionsApiV1BooksBookIdVersionsCollectPostResponses];
 
 export type ListProfilesApiV1RecipeProfilesGetData = {
     body?: never;
@@ -6550,15 +6550,15 @@ export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponses = {
 
 export type PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponse = PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponses[keyof PutDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutResponses];
 
-export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostData = {
+export type ApplyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostData = {
     body: ApplyProfileBody;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Profile Id
          *
@@ -6567,10 +6567,10 @@ export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostDa
         profile_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/recipe-profiles/{profile_id}/apply';
+    url: '/api/v1/books/{book_id}/recipe-profiles/{profile_id}/apply';
 };
 
-export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostErrors = {
+export type ApplyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostErrors = {
     /**
      * Validation Error
      */
@@ -6585,26 +6585,26 @@ export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostEr
     '5XX': Problem;
 };
 
-export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostError = ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostErrors[keyof ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostErrors];
+export type ApplyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostError = ApplyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostErrors[keyof ApplyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostErrors];
 
-export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostResponses = {
+export type ApplyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostResponses = {
     /**
      * Successful Response
      */
     201: AppliedProfileSchema;
 };
 
-export type ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostResponse = ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostResponses[keyof ApplyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostResponses];
+export type ApplyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostResponse = ApplyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostResponses[keyof ApplyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostResponses];
 
-export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutData = {
+export type PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutData = {
     body: ProfileLinkBody;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Stage of the pipeline
          */
@@ -6617,10 +6617,10 @@ export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProf
         recipe_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/recipes/{recipe_id}/profile';
+    url: '/api/v1/books/{book_id}/stages/{stage}/recipes/{recipe_id}/profile';
 };
 
-export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutErrors = {
+export type PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutErrors = {
     /**
      * Validation Error
      */
@@ -6635,26 +6635,26 @@ export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProf
     '5XX': Problem;
 };
 
-export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutError = PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutErrors[keyof PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutErrors];
+export type PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutError = PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutErrors[keyof PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutErrors];
 
-export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutResponses = {
+export type PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutResponses = {
     /**
      * Successful Response
      */
     200: RecipeSchema;
 };
 
-export type PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutResponse = PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutResponses[keyof PutRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutResponses];
+export type PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutResponse = PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutResponses[keyof PutRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutResponses];
 
-export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData = {
+export type ListEditsApiV1BooksBookIdPagesPageIdEditsStageGetData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -6676,10 +6676,10 @@ export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetData = {
          */
         size?: number;
     };
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/edits/{stage}';
 };
 
-export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetErrors = {
+export type ListEditsApiV1BooksBookIdPagesPageIdEditsStageGetErrors = {
     /**
      * Validation Error
      */
@@ -6694,26 +6694,26 @@ export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetErrors = {
     '5XX': Problem;
 };
 
-export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetError = ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetErrors[keyof ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetErrors];
+export type ListEditsApiV1BooksBookIdPagesPageIdEditsStageGetError = ListEditsApiV1BooksBookIdPagesPageIdEditsStageGetErrors[keyof ListEditsApiV1BooksBookIdPagesPageIdEditsStageGetErrors];
 
-export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponses = {
+export type ListEditsApiV1BooksBookIdPagesPageIdEditsStageGetResponses = {
     /**
      * Successful Response
      */
     200: PagePageEditSchema;
 };
 
-export type ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponse = ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponses[keyof ListEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGetResponses];
+export type ListEditsApiV1BooksBookIdPagesPageIdEditsStageGetResponse = ListEditsApiV1BooksBookIdPagesPageIdEditsStageGetResponses[keyof ListEditsApiV1BooksBookIdPagesPageIdEditsStageGetResponses];
 
-export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteData = {
+export type DeleteEditApiV1BooksBookIdPagesPageIdEditsStageStepIdDeleteData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -6732,10 +6732,10 @@ export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteDat
         step_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{step_id}';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/edits/{stage}/{step_id}';
 };
 
-export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteErrors = {
+export type DeleteEditApiV1BooksBookIdPagesPageIdEditsStageStepIdDeleteErrors = {
     /**
      * Validation Error
      */
@@ -6750,26 +6750,26 @@ export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteErr
     '5XX': Problem;
 };
 
-export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteError = DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteErrors[keyof DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteErrors];
+export type DeleteEditApiV1BooksBookIdPagesPageIdEditsStageStepIdDeleteError = DeleteEditApiV1BooksBookIdPagesPageIdEditsStageStepIdDeleteErrors[keyof DeleteEditApiV1BooksBookIdPagesPageIdEditsStageStepIdDeleteErrors];
 
-export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteResponses = {
+export type DeleteEditApiV1BooksBookIdPagesPageIdEditsStageStepIdDeleteResponses = {
     /**
      * Successful Response
      */
     204: void;
 };
 
-export type DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteResponse = DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteResponses[keyof DeleteEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdDeleteResponses];
+export type DeleteEditApiV1BooksBookIdPagesPageIdEditsStageStepIdDeleteResponse = DeleteEditApiV1BooksBookIdPagesPageIdEditsStageStepIdDeleteResponses[keyof DeleteEditApiV1BooksBookIdPagesPageIdEditsStageStepIdDeleteResponses];
 
-export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutData = {
+export type PutEditApiV1BooksBookIdPagesPageIdEditsStageStepIdPutData = {
     body: EditForm;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -6788,10 +6788,10 @@ export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutData = {
         step_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{step_id}';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/edits/{stage}/{step_id}';
 };
 
-export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutErrors = {
+export type PutEditApiV1BooksBookIdPagesPageIdEditsStageStepIdPutErrors = {
     /**
      * Validation Error
      */
@@ -6806,26 +6806,26 @@ export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutErrors = 
     '5XX': Problem;
 };
 
-export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutError = PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutErrors[keyof PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutErrors];
+export type PutEditApiV1BooksBookIdPagesPageIdEditsStageStepIdPutError = PutEditApiV1BooksBookIdPagesPageIdEditsStageStepIdPutErrors[keyof PutEditApiV1BooksBookIdPagesPageIdEditsStageStepIdPutErrors];
 
-export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponses = {
+export type PutEditApiV1BooksBookIdPagesPageIdEditsStageStepIdPutResponses = {
     /**
      * Successful Response
      */
     200: PageEditSchema;
 };
 
-export type PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponse = PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponses[keyof PutEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdPutResponses];
+export type PutEditApiV1BooksBookIdPagesPageIdEditsStageStepIdPutResponse = PutEditApiV1BooksBookIdPagesPageIdEditsStageStepIdPutResponses[keyof PutEditApiV1BooksBookIdPagesPageIdEditsStageStepIdPutResponses];
 
-export type CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostData = {
+export type CarryOverEditApiV1BooksBookIdPagesPageIdEditsStageStepIdCarryOverPostData = {
     body: CarryForm;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -6844,10 +6844,10 @@ export type CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryO
         step_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/edits/{stage}/{step_id}/carry-over';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/edits/{stage}/{step_id}/carry-over';
 };
 
-export type CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostErrors = {
+export type CarryOverEditApiV1BooksBookIdPagesPageIdEditsStageStepIdCarryOverPostErrors = {
     /**
      * Validation Error
      */
@@ -6862,26 +6862,26 @@ export type CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryO
     '5XX': Problem;
 };
 
-export type CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostError = CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostErrors[keyof CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostErrors];
+export type CarryOverEditApiV1BooksBookIdPagesPageIdEditsStageStepIdCarryOverPostError = CarryOverEditApiV1BooksBookIdPagesPageIdEditsStageStepIdCarryOverPostErrors[keyof CarryOverEditApiV1BooksBookIdPagesPageIdEditsStageStepIdCarryOverPostErrors];
 
-export type CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostResponses = {
+export type CarryOverEditApiV1BooksBookIdPagesPageIdEditsStageStepIdCarryOverPostResponses = {
     /**
      * Successful Response
      */
     200: CarryOverSchema;
 };
 
-export type CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostResponse = CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostResponses[keyof CarryOverEditApiV1ProjectsProjectIdPagesPageIdEditsStageStepIdCarryOverPostResponses];
+export type CarryOverEditApiV1BooksBookIdPagesPageIdEditsStageStepIdCarryOverPostResponse = CarryOverEditApiV1BooksBookIdPagesPageIdEditsStageStepIdCarryOverPostResponses[keyof CarryOverEditApiV1BooksBookIdPagesPageIdEditsStageStepIdCarryOverPostResponses];
 
-export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetData = {
+export type ListSettingsApiV1BooksBookIdPagesPageIdSettingsStageGetData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -6903,10 +6903,10 @@ export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetData = 
          */
         size?: number;
     };
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/settings/{stage}';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/settings/{stage}';
 };
 
-export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetErrors = {
+export type ListSettingsApiV1BooksBookIdPagesPageIdSettingsStageGetErrors = {
     /**
      * Validation Error
      */
@@ -6921,26 +6921,26 @@ export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetErrors 
     '5XX': Problem;
 };
 
-export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetError = ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetErrors[keyof ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetErrors];
+export type ListSettingsApiV1BooksBookIdPagesPageIdSettingsStageGetError = ListSettingsApiV1BooksBookIdPagesPageIdSettingsStageGetErrors[keyof ListSettingsApiV1BooksBookIdPagesPageIdSettingsStageGetErrors];
 
-export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetResponses = {
+export type ListSettingsApiV1BooksBookIdPagesPageIdSettingsStageGetResponses = {
     /**
      * Successful Response
      */
     200: PagePageStepSettingsSchema;
 };
 
-export type ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetResponse = ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetResponses[keyof ListSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGetResponses];
+export type ListSettingsApiV1BooksBookIdPagesPageIdSettingsStageGetResponse = ListSettingsApiV1BooksBookIdPagesPageIdSettingsStageGetResponses[keyof ListSettingsApiV1BooksBookIdPagesPageIdSettingsStageGetResponses];
 
-export type DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteData = {
+export type DeleteValueApiV1BooksBookIdStagesStageStepsStepIdValuesNameDeleteData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Stage of the pipeline
          */
@@ -6969,10 +6969,10 @@ export type DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDel
          */
         group_label?: string;
     };
-    url: '/api/v1/projects/{project_id}/stages/{stage}/steps/{step_id}/values/{name}';
+    url: '/api/v1/books/{book_id}/stages/{stage}/steps/{step_id}/values/{name}';
 };
 
-export type DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteErrors = {
+export type DeleteValueApiV1BooksBookIdStagesStageStepsStepIdValuesNameDeleteErrors = {
     /**
      * Validation Error
      */
@@ -6987,26 +6987,26 @@ export type DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDel
     '5XX': Problem;
 };
 
-export type DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteError = DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteErrors[keyof DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteErrors];
+export type DeleteValueApiV1BooksBookIdStagesStageStepsStepIdValuesNameDeleteError = DeleteValueApiV1BooksBookIdStagesStageStepsStepIdValuesNameDeleteErrors[keyof DeleteValueApiV1BooksBookIdStagesStageStepsStepIdValuesNameDeleteErrors];
 
-export type DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteResponses = {
+export type DeleteValueApiV1BooksBookIdStagesStageStepsStepIdValuesNameDeleteResponses = {
     /**
      * Successful Response
      */
     200: ValueChangesSchema;
 };
 
-export type DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteResponse = DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteResponses[keyof DeleteValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNameDeleteResponses];
+export type DeleteValueApiV1BooksBookIdStagesStageStepsStepIdValuesNameDeleteResponse = DeleteValueApiV1BooksBookIdStagesStageStepsStepIdValuesNameDeleteResponses[keyof DeleteValueApiV1BooksBookIdStagesStageStepsStepIdValuesNameDeleteResponses];
 
-export type PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutData = {
+export type PutValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePutData = {
     body: ValueForm;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Stage of the pipeline
          */
@@ -7025,10 +7025,10 @@ export type PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutDat
         name: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/stages/{stage}/steps/{step_id}/values/{name}';
+    url: '/api/v1/books/{book_id}/stages/{stage}/steps/{step_id}/values/{name}';
 };
 
-export type PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutErrors = {
+export type PutValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePutErrors = {
     /**
      * Validation Error
      */
@@ -7043,26 +7043,26 @@ export type PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutErr
     '5XX': Problem;
 };
 
-export type PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutError = PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutErrors[keyof PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutErrors];
+export type PutValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePutError = PutValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePutErrors[keyof PutValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePutErrors];
 
-export type PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutResponses = {
+export type PutValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePutResponses = {
     /**
      * Successful Response
      */
     200: ValueChangesSchema;
 };
 
-export type PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutResponse = PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutResponses[keyof PutValueApiV1ProjectsProjectIdStagesStageStepsStepIdValuesNamePutResponses];
+export type PutValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePutResponse = PutValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePutResponses[keyof PutValueApiV1BooksBookIdStagesStageStepsStepIdValuesNamePutResponses];
 
-export type ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteData = {
+export type ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -7081,10 +7081,10 @@ export type ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDelet
         step_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/history/{stage}/{step_id}';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/history/{stage}/{step_id}';
 };
 
-export type ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteErrors = {
+export type ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteErrors = {
     /**
      * Validation Error
      */
@@ -7099,26 +7099,26 @@ export type ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDelet
     '5XX': Problem;
 };
 
-export type ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteError = ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteErrors[keyof ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteErrors];
+export type ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteError = ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteErrors[keyof ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteErrors];
 
-export type ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteResponses = {
+export type ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteResponses = {
     /**
      * Successful Response
      */
     200: ClearedSchema;
 };
 
-export type ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteResponse = ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteResponses[keyof ClearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteResponses];
+export type ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteResponse = ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteResponses[keyof ClearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteResponses];
 
-export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetData = {
+export type ListHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGetData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -7146,10 +7146,10 @@ export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetDat
          */
         size?: number;
     };
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/history/{stage}/{step_id}';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/history/{stage}/{step_id}';
 };
 
-export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetErrors = {
+export type ListHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGetErrors = {
     /**
      * Validation Error
      */
@@ -7164,26 +7164,26 @@ export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetErr
     '5XX': Problem;
 };
 
-export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetError = ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetErrors[keyof ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetErrors];
+export type ListHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGetError = ListHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGetErrors[keyof ListHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGetErrors];
 
-export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetResponses = {
+export type ListHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGetResponses = {
     /**
      * Successful Response
      */
     200: PagePageHistoryEntrySchema;
 };
 
-export type ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetResponse = ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetResponses[keyof ListHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetResponses];
+export type ListHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGetResponse = ListHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGetResponses[keyof ListHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGetResponses];
 
-export type UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostData = {
+export type UndoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPostData = {
     body: UndoForm;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -7202,10 +7202,10 @@ export type UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPos
         step_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/history/{stage}/{step_id}/undo';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/history/{stage}/{step_id}/undo';
 };
 
-export type UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostErrors = {
+export type UndoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPostErrors = {
     /**
      * Validation Error
      */
@@ -7220,26 +7220,26 @@ export type UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPos
     '5XX': Problem;
 };
 
-export type UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostError = UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostErrors[keyof UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostErrors];
+export type UndoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPostError = UndoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPostErrors[keyof UndoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPostErrors];
 
-export type UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostResponses = {
+export type UndoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPostResponses = {
     /**
      * Successful Response
      */
     200: UndoneSchema;
 };
 
-export type UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostResponse = UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostResponses[keyof UndoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostResponses];
+export type UndoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPostResponse = UndoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPostResponses[keyof UndoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPostResponses];
 
-export type PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutData = {
+export type PutMarkApiV1BooksBookIdPagesPageIdVersionsVersionIdMarkPutData = {
     body: ResultMarkForm;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
         /**
          * Page Id
          *
@@ -7254,10 +7254,10 @@ export type PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutData
         version_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/pages/{page_id}/versions/{version_id}/mark';
+    url: '/api/v1/books/{book_id}/pages/{page_id}/versions/{version_id}/mark';
 };
 
-export type PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutErrors = {
+export type PutMarkApiV1BooksBookIdPagesPageIdVersionsVersionIdMarkPutErrors = {
     /**
      * Validation Error
      */
@@ -7272,16 +7272,16 @@ export type PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutErro
     '5XX': Problem;
 };
 
-export type PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutError = PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutErrors[keyof PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutErrors];
+export type PutMarkApiV1BooksBookIdPagesPageIdVersionsVersionIdMarkPutError = PutMarkApiV1BooksBookIdPagesPageIdVersionsVersionIdMarkPutErrors[keyof PutMarkApiV1BooksBookIdPagesPageIdVersionsVersionIdMarkPutErrors];
 
-export type PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutResponses = {
+export type PutMarkApiV1BooksBookIdPagesPageIdVersionsVersionIdMarkPutResponses = {
     /**
      * Successful Response
      */
     200: PageVersionSchema;
 };
 
-export type PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutResponse = PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutResponses[keyof PutMarkApiV1ProjectsProjectIdPagesPageIdVersionsVersionIdMarkPutResponses];
+export type PutMarkApiV1BooksBookIdPagesPageIdVersionsVersionIdMarkPutResponse = PutMarkApiV1BooksBookIdPagesPageIdVersionsVersionIdMarkPutResponses[keyof PutMarkApiV1BooksBookIdPagesPageIdVersionsVersionIdMarkPutResponses];
 
 export type ListProcessorsApiV1ProcessorsGetData = {
     body?: never;
@@ -7325,7 +7325,7 @@ export type ListProcessorsApiV1ProcessorsGetResponses = {
 
 export type ListProcessorsApiV1ProcessorsGetResponse = ListProcessorsApiV1ProcessorsGetResponses[keyof ListProcessorsApiV1ProcessorsGetResponses];
 
-export type CancelJobApiV1JobsJobIdDeleteData = {
+export type CancelJobApiV1BooksBookIdJobsJobIdDeleteData = {
     body?: never;
     path: {
         /**
@@ -7334,12 +7334,18 @@ export type CancelJobApiV1JobsJobIdDeleteData = {
          * Identifier of the job
          */
         job_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/jobs/{job_id}';
+    url: '/api/v1/books/{book_id}/jobs/{job_id}';
 };
 
-export type CancelJobApiV1JobsJobIdDeleteErrors = {
+export type CancelJobApiV1BooksBookIdJobsJobIdDeleteErrors = {
     /**
      * Validation Error
      */
@@ -7354,18 +7360,18 @@ export type CancelJobApiV1JobsJobIdDeleteErrors = {
     '5XX': Problem;
 };
 
-export type CancelJobApiV1JobsJobIdDeleteError = CancelJobApiV1JobsJobIdDeleteErrors[keyof CancelJobApiV1JobsJobIdDeleteErrors];
+export type CancelJobApiV1BooksBookIdJobsJobIdDeleteError = CancelJobApiV1BooksBookIdJobsJobIdDeleteErrors[keyof CancelJobApiV1BooksBookIdJobsJobIdDeleteErrors];
 
-export type CancelJobApiV1JobsJobIdDeleteResponses = {
+export type CancelJobApiV1BooksBookIdJobsJobIdDeleteResponses = {
     /**
      * Successful Response
      */
     200: JobSchema;
 };
 
-export type CancelJobApiV1JobsJobIdDeleteResponse = CancelJobApiV1JobsJobIdDeleteResponses[keyof CancelJobApiV1JobsJobIdDeleteResponses];
+export type CancelJobApiV1BooksBookIdJobsJobIdDeleteResponse = CancelJobApiV1BooksBookIdJobsJobIdDeleteResponses[keyof CancelJobApiV1BooksBookIdJobsJobIdDeleteResponses];
 
-export type ReadJobApiV1JobsJobIdGetData = {
+export type ReadJobApiV1BooksBookIdJobsJobIdGetData = {
     body?: never;
     path: {
         /**
@@ -7374,12 +7380,18 @@ export type ReadJobApiV1JobsJobIdGetData = {
          * Identifier of the job
          */
         job_id: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/jobs/{job_id}';
+    url: '/api/v1/books/{book_id}/jobs/{job_id}';
 };
 
-export type ReadJobApiV1JobsJobIdGetErrors = {
+export type ReadJobApiV1BooksBookIdJobsJobIdGetErrors = {
     /**
      * Validation Error
      */
@@ -7394,26 +7406,26 @@ export type ReadJobApiV1JobsJobIdGetErrors = {
     '5XX': Problem;
 };
 
-export type ReadJobApiV1JobsJobIdGetError = ReadJobApiV1JobsJobIdGetErrors[keyof ReadJobApiV1JobsJobIdGetErrors];
+export type ReadJobApiV1BooksBookIdJobsJobIdGetError = ReadJobApiV1BooksBookIdJobsJobIdGetErrors[keyof ReadJobApiV1BooksBookIdJobsJobIdGetErrors];
 
-export type ReadJobApiV1JobsJobIdGetResponses = {
+export type ReadJobApiV1BooksBookIdJobsJobIdGetResponses = {
     /**
      * Successful Response
      */
     200: JobSchema;
 };
 
-export type ReadJobApiV1JobsJobIdGetResponse = ReadJobApiV1JobsJobIdGetResponses[keyof ReadJobApiV1JobsJobIdGetResponses];
+export type ReadJobApiV1BooksBookIdJobsJobIdGetResponse = ReadJobApiV1BooksBookIdJobsJobIdGetResponses[keyof ReadJobApiV1BooksBookIdJobsJobIdGetResponses];
 
-export type ListProjectJobsApiV1ProjectsProjectIdJobsGetData = {
+export type ListBookJobsApiV1BooksBookIdJobsGetData = {
     body?: never;
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: {
         /**
@@ -7429,10 +7441,10 @@ export type ListProjectJobsApiV1ProjectsProjectIdJobsGetData = {
          */
         active?: boolean;
     };
-    url: '/api/v1/projects/{project_id}/jobs';
+    url: '/api/v1/books/{book_id}/jobs';
 };
 
-export type ListProjectJobsApiV1ProjectsProjectIdJobsGetErrors = {
+export type ListBookJobsApiV1BooksBookIdJobsGetErrors = {
     /**
      * Validation Error
      */
@@ -7447,18 +7459,18 @@ export type ListProjectJobsApiV1ProjectsProjectIdJobsGetErrors = {
     '5XX': Problem;
 };
 
-export type ListProjectJobsApiV1ProjectsProjectIdJobsGetError = ListProjectJobsApiV1ProjectsProjectIdJobsGetErrors[keyof ListProjectJobsApiV1ProjectsProjectIdJobsGetErrors];
+export type ListBookJobsApiV1BooksBookIdJobsGetError = ListBookJobsApiV1BooksBookIdJobsGetErrors[keyof ListBookJobsApiV1BooksBookIdJobsGetErrors];
 
-export type ListProjectJobsApiV1ProjectsProjectIdJobsGetResponses = {
+export type ListBookJobsApiV1BooksBookIdJobsGetResponses = {
     /**
      * Successful Response
      */
     200: PageJobSchema;
 };
 
-export type ListProjectJobsApiV1ProjectsProjectIdJobsGetResponse = ListProjectJobsApiV1ProjectsProjectIdJobsGetResponses[keyof ListProjectJobsApiV1ProjectsProjectIdJobsGetResponses];
+export type ListBookJobsApiV1BooksBookIdJobsGetResponse = ListBookJobsApiV1BooksBookIdJobsGetResponses[keyof ListBookJobsApiV1BooksBookIdJobsGetResponses];
 
-export type ProjectEventsApiV1ProjectsProjectIdEventsGetData = {
+export type BookEventsApiV1BooksBookIdEventsGetData = {
     body?: never;
     headers?: {
         /**
@@ -7468,17 +7480,17 @@ export type ProjectEventsApiV1ProjectsProjectIdEventsGetData = {
     };
     path: {
         /**
-         * Project Id
+         * Book Id
          *
-         * Identifier of the project
+         * Identifier of the book
          */
-        project_id: string;
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/projects/{project_id}/events';
+    url: '/api/v1/books/{book_id}/events';
 };
 
-export type ProjectEventsApiV1ProjectsProjectIdEventsGetErrors = {
+export type BookEventsApiV1BooksBookIdEventsGetErrors = {
     /**
      * Validation Error
      */
@@ -7493,9 +7505,9 @@ export type ProjectEventsApiV1ProjectsProjectIdEventsGetErrors = {
     '5XX': Problem;
 };
 
-export type ProjectEventsApiV1ProjectsProjectIdEventsGetError = ProjectEventsApiV1ProjectsProjectIdEventsGetErrors[keyof ProjectEventsApiV1ProjectsProjectIdEventsGetErrors];
+export type BookEventsApiV1BooksBookIdEventsGetError = BookEventsApiV1BooksBookIdEventsGetErrors[keyof BookEventsApiV1BooksBookIdEventsGetErrors];
 
-export type ProjectEventsApiV1ProjectsProjectIdEventsGetResponses = {
+export type BookEventsApiV1BooksBookIdEventsGetResponses = {
     /**
      * Successful Response
      */

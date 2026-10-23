@@ -18,10 +18,10 @@ from sqlalchemy.pool import QueuePool
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.values import SliceRequest
-from tests.helpers.builders import make_project
+from tests.helpers.builders import make_record, open_for
 from tests.helpers.connections import checked_out_connections
 from tests.helpers.fakes_imports import IMPORT_TIMEOUT_SECONDS, pdf_upload
-from tests.helpers.seeding import store_project
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -130,7 +130,7 @@ class TestRunImportConnections:
         :type fx_uow: UnitOfWorkFactory
         :param fx_books: Registry of the books of the test, which gives the database of the book whose pool is counted.
         :type fx_books: BookDatabases
-        :param fx_owner_id: Committed account owning the project.
+        :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_import_rig: Function building the import rig whose board runs an import on the database.
         :type fx_import_rig: Callable[..., ImportRig]
@@ -154,13 +154,13 @@ class TestRunImportConnections:
         samples = tmp_path / SAMPLES_DIRECTORY
         samples.mkdir()
         owner = Actor(account_id=fx_owner_id)
-        project = make_project()
+        book_record = make_record()
         uow = fx_uow()
-        await store_project(uow, project, owner=fx_owner_id)
-        async with fx_books.use(project.id) as book:
+        await store_book(uow, book_record, owner=fx_owner_id)
+        async with fx_books.use(book_record.id) as book:
             with _counting_connections(book) as peak:
                 job = await rig.service(uow=uow).start_import(
-                    owner, project.id, [pdf_upload(samples, BOOK_PDF, pages=PARALLEL_SCANS)]
+                    open_for(owner, book_record.id), [pdf_upload(samples, BOOK_PDF, pages=PARALLEL_SCANS)]
                 )
                 with anyio.fail_after(IMPORT_TIMEOUT_SECONDS):
                     await rig.fakes.board.run_queued()
@@ -170,7 +170,7 @@ class TestRunImportConnections:
 
         stored = rig.stored_job(job)
         scans = await uow.read_book(
-            project.id, lambda repos: repos.scans.list_window(SliceRequest(limit=PARALLEL_SCANS)).items
+            book_record.id, lambda repos: repos.scans.list_window(SliceRequest(limit=PARALLEL_SCANS)).items
         )
         expect(queued)
         expect(rig.rasterizer.peak == PARALLEL_SCANS)

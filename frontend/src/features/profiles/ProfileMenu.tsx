@@ -60,8 +60,8 @@ export function ProfileMenu({
   const [notice, setNotice] = useState<string | null>(null);
   const profiles = useProfiles(stage);
   const replace = useReplaceProfile();
-  const saveRecipe = useSaveRecipe(processing.projectId);
-  const apply = useApplyProfile(processing.projectId);
+  const saveRecipe = useSaveRecipe(processing.bookId);
+  const apply = useApplyProfile(processing.bookId);
   if (recipe === undefined) {
     return null;
   }
@@ -155,7 +155,7 @@ export function ProfileMenu({
                   try {
                     const kept = processing.dirty
                       ? await saveRecipe.mutateAsync({
-                          path: { project_id: processing.projectId, stage, recipe_id: recipe.id },
+                          path: { book_id: processing.bookId, stage, recipe_id: recipe.id },
                           body: { steps: bodyOf(steps), order: processing.orderMode },
                         })
                       : { steps: bodyOf(steps) };
@@ -224,7 +224,7 @@ export function ProfileMenu({
                         onClick={() =>
                           apply.mutate(
                             {
-                              path: { project_id: processing.projectId, profile_id: profile.id },
+                              path: { book_id: processing.bookId, profile_id: profile.id },
                               body: { kind: recipe.kind },
                             },
                             {

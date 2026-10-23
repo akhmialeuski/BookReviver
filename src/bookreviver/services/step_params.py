@@ -2,7 +2,7 @@
 
 The recipe gives a step its parameters, and a part of the pages may change some of the fields: the odd pages or the even
 pages, the group of the page, or the page itself. ``StepValueLayers`` decides the order. ``PageLayers`` reads what it
-needs for one page: the values of the parts of the project, once for every step of the page, and the place of the page
+needs for one page: the values of the parts of the book, once for every step of the page, and the place of the page
 in the book, once and only when a part of the pages has a value for a step, since a run over a book that has none must
 not pay for it. The reads are synchronous and go through the repositories the caller passes, so a run asks from the work
 of ``UnitOfWork.read``; what has been read stays in the object, and the later calls, in the same transaction or in

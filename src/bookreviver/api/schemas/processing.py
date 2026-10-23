@@ -45,7 +45,7 @@ from bookreviver.domain.enums import (
     WorkerPool,
 )
 from bookreviver.domain.ids import PageId, PageVersionId, RecipeId, RecipeProfileId, StepId
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import RecipeDraft, StageRun, Step, StepPreview, VersionFilter
 
 if TYPE_CHECKING:
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from bookreviver.domain.entities import PageStage, PageVersion, Recipe
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import OrderIssue
 
 STEP_INDEX_OUT_OF_RANGE: str = 'The step index must name one of the steps.'
@@ -497,19 +497,19 @@ class PageVersionSchema(ResponseModel):
     comment: str
 
     @classmethod
-    def of(cls, version: PageVersion, project_id: ProjectId, request: Request) -> Self:
+    def of(cls, version: PageVersion, book_id: BookId, request: Request) -> Self:
         """Build the schema of a version, with the paths of its images once they are written.
 
         :param version: The version.
         :type version: PageVersion
-        :param project_id: Project owning the page, whose keys place the files.
-        :type project_id: ProjectId
+        :param book_id: Book owning the page, whose keys place the files.
+        :type book_id: BookId
         :param request: The request, whose application knows the route that serves the images.
         :type request: Request
         :returns: The schema.
         :rtype: Self
         """
-        keys = ProjectKeys(project_id)
+        keys = BookKeys(book_id)
         ready = version.renditions is not None and version.renditions.ready
         images = None
         preview = None

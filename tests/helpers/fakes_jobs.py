@@ -13,6 +13,7 @@ from attrs import Factory, field, frozen
 from dishka import AnyOf, Provider, Scope, provide
 
 from bookreviver.adapters.events.broadcast import InProcessEventBus
+from bookreviver.domain.events import BookChanged
 from bookreviver.ports.runtime import Clock, EventPublisher, EventStream, JobBoard
 from tests.helpers.builders import EPOCH
 from tests.helpers.clock import FixedClock
@@ -20,11 +21,12 @@ from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.scripted_runner import ScriptedRunner
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator
+    from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 
     from bookreviver.adapters.jobs.board import JobRunner
+    from bookreviver.domain.enums import BookResource
     from bookreviver.domain.events import DomainEvent
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
 
 EVENT_QUEUE_SIZE: int = 16
 
@@ -33,6 +35,7 @@ class RecordingEventBus(InProcessEventBus):
     """The in-process event bus, recording every published event and announcing its first subscriber.
 
     :ivar published: Every published event, in the order it was published.
+    :ivar after_publish: Coroutine function run with each event once it was delivered, or None.
     :ivar subscribed: Set once a subscription is in place.
     :ivar open_subscriptions: Number of subscriptions entered and not yet left.
     """
@@ -41,10 +44,19 @@ class RecordingEventBus(InProcessEventBus):
         """Start with nothing published and nobody subscribed."""
         super().__init__(queue_size=EVENT_QUEUE_SIZE)
         self.published: list[DomainEvent] = []
+        self.after_publish: Callable[[DomainEvent], Awaitable[None]] | None = None
         self.subscribed = anyio.Event()
         self.open_subscriptions = 0
         # Set and replaced by every new subscription, so a waiter for a count is woken by each one and misses none
         self._arrival = anyio.Event()
+
+    def changed_parts(self) -> list[frozenset[BookResource]]:
+        """List the parts each committed change of a book that was published wrote, in the order they were published.
+
+        :returns: The parts of every ``BookChanged``, one entry for each.
+        :rtype: list[frozenset[BookResource]]
+        """
+        return [event.resources for event in self.published if isinstance(event, BookChanged)]
 
     async def wait_for_subscriptions(self, count: int) -> None:
         """Return once at least ``count`` subscriptions are open at the same time.
@@ -57,25 +69,27 @@ class RecordingEventBus(InProcessEventBus):
 
     @override
     async def publish(self, event: DomainEvent) -> None:
-        """Record the event, then deliver it as the in-process bus does.
+        """Record the event, deliver it as the in-process bus does, then run the hook.
 
-        :param event: Event to deliver, carrying the project it belongs to.
+        :param event: Event to deliver, carrying the book it belongs to.
         :type event: DomainEvent
         """
         self.published.append(event)
         await super().publish(event)
+        if self.after_publish is not None:
+            await self.after_publish(event)
 
     @override
     @asynccontextmanager
-    async def subscribe(self, project_id: ProjectId) -> AsyncGenerator[AsyncIterator[DomainEvent]]:
+    async def subscribe(self, book_id: BookId) -> AsyncGenerator[AsyncIterator[DomainEvent]]:
         """Subscribe as the in-process bus does, announcing the subscription once it is in place and counting it.
 
-        :param project_id: Project whose events are delivered.
-        :type project_id: ProjectId
+        :param book_id: Book whose events are delivered.
+        :type book_id: BookId
         :returns: Generator yielding once the reader of every event published since entry.
         :rtype: AsyncGenerator[AsyncIterator[DomainEvent]]
         """
-        async with super().subscribe(project_id) as events:
+        async with super().subscribe(book_id) as events:
             self.open_subscriptions += 1
             self.subscribed.set()
             arrived, self._arrival = self._arrival, anyio.Event()

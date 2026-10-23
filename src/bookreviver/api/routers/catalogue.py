@@ -2,7 +2,7 @@
 
 ``GET /processors`` lists the processors the application can run, each with the JSON Schema of its parameters,
 from which the interface builds the settings form. The catalogue is the same for every account, so the route asks for
-no project.
+no book.
 """
 
 from typing import Annotated

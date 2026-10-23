@@ -76,12 +76,12 @@ class TestCreateAppWithFrontend:
         assert response.text == APP_JS
 
     async def test_client_side_route_falls_back_to_the_index_page(self, fx_client: httpx.AsyncClient) -> None:
-        """Verify a browser that opens or reloads ``/projects/<id>`` gets the page the router then resolves.
+        """Verify a browser that opens or reloads ``/books/<id>`` gets the page the router then resolves.
 
         :param fx_client: Client talking to the application with a build in place.
         :type fx_client: httpx.AsyncClient
         """
-        response = await fx_client.get('/projects/0d4cf2a6', headers=HTML_ACCEPT)
+        response = await fx_client.get('/books/0d4cf2a6', headers=HTML_ACCEPT)
 
         assert response.status_code == HTTPStatus.OK
         assert response.text == INDEX_HTML
@@ -102,7 +102,7 @@ class TestCreateAppWithFrontend:
         :param fx_client: Client talking to the application with a build in place.
         :type fx_client: httpx.AsyncClient
         """
-        response = await fx_client.get('/api/v1/projects', headers=HTML_ACCEPT)
+        response = await fx_client.get('/api/v1/books', headers=HTML_ACCEPT)
 
         assert response.status_code == HTTPStatus.OK
         assert response.headers['content-type'] == 'application/json'
@@ -141,7 +141,7 @@ class TestCreateAppWithoutFrontend:
         :param fx_client: Client talking to the application without a build.
         :type fx_client: httpx.AsyncClient
         """
-        api = await fx_client.get('/api/v1/projects')
+        api = await fx_client.get('/api/v1/books')
         root = await fx_client.get('/', headers=HTML_ACCEPT)
 
         assert api.status_code == HTTPStatus.OK

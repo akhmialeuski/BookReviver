@@ -12,19 +12,20 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Form, Path, Request, status
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.auth import ActorDep
+from bookreviver.api.access import open_book
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.edits import CarryForm, CarryOverSchema, EditForm, PageEditSchema
 from bookreviver.api.schemas.page_history import PageHistoryEntrySchema
 from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import Stage
-from bookreviver.domain.ids import PageId, ProjectId, StepId
+from bookreviver.domain.ids import PageId, StepId
 from bookreviver.domain.values import PageStepKey, Slice
+from bookreviver.services.book import Book
 from bookreviver.services.edits import EditService
 from bookreviver.services.page_carry import CarryOverService
 
-router = APIRouter(prefix='/projects', tags=['edits'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
+router = APIRouter(prefix='/books', tags=['edits'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 # The form may hold a file, so the schema says it is a multipart form, and the generated client sends it as one
 MULTIPART_FORM: str = 'multipart/form-data'
@@ -34,12 +35,10 @@ MULTIPART_FORM: str = 'multipart/form-data'
 class EditPath:
     """The identifiers in the address of the edits of one stage of one page.
 
-    :ivar project_id: Identifier of the project.
     :ivar page_id: Identifier of the page.
     :ivar stage: The stage.
     """
 
-    project_id: Annotated[ProjectId, Path(description='Identifier of the project')]
     page_id: Annotated[PageId, Path(description='Identifier of the page')]
     stage: Annotated[Stage, Path(description='Stage of the step that reads the edit')]
 
@@ -59,23 +58,23 @@ class StepEditPath(EditPath):
         return PageStepKey(self.page_id, self.stage, self.step_id)
 
 
-@router.get('/{project_id}/pages/{page_id}/edits/{stage}')
+@router.get('/{book_id}/pages/{page_id}/edits/{stage}')
 async def list_edits(
+    book: Annotated[Book, Depends(open_book)],
     address: Annotated[EditPath, Depends()],
     params: Annotated[Params, Depends()],
-    actor: ActorDep,
     request: Request,
     edits: FromDishka[EditService],
 ) -> Page[PageEditSchema]:
     """List the manual edits of one stage of a page, by processor.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page and the stage.
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
+    :param address: Identifiers of the book, the page and the stage.
     :type address: EditPath
     :param params: Page number and size from the query.
     :type params: Params
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param request: The request, whose application knows the route that serves a mask.
     :type request: Request
     :param edits: Edit service of the request.
@@ -95,16 +94,16 @@ async def list_edits(
         return PageEditSchema.of(edit, request)
 
     pager = Pager[PageEdit, PageEditSchema](params, to_schema)
-    found = await edits.list(actor, address.project_id, address.page_id, address.stage)
+    found = await edits.list(book, address.page_id, address.stage)
     window = found[pager.request.offset : pager.request.offset + pager.request.limit]
     return pager.page(Slice(items=window, total=len(found)))
 
 
-@router.put('/{project_id}/pages/{page_id}/edits/{stage}/{step_id}')
+@router.put('/{book_id}/pages/{page_id}/edits/{stage}/{step_id}')
 async def put_edit(
+    book: Annotated[Book, Depends(open_book)],
     address: Annotated[StepEditPath, Depends()],
     form: Annotated[EditForm, Form(media_type=MULTIPART_FORM)],
-    actor: ActorDep,
     request: Request,
     edits: FromDishka[EditService],
 ) -> PageEditSchema:
@@ -114,12 +113,12 @@ async def put_edit(
     answer is 422 for an edit the processor of the step does not read, and nothing is processed by this request.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page, the stage and the step.
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
+    :param address: Identifiers of the book, the page, the stage and the step.
     :type address: StepEditPath
     :param form: The editor, the shape and the mask.
     :type form: EditForm
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param request: The request, whose application knows the route that serves a mask.
     :type request: Request
     :param edits: Edit service of the request.
@@ -127,32 +126,34 @@ async def put_edit(
     :returns: The edit as stored, with its hash.
     :rtype: PageEditSchema
     """
-    stored = await edits.save(actor, address.project_id, address.key, form.to_edit(), form.mask)
+    stored = await edits.save(book, address.key, form.to_edit(), form.mask)
     return PageEditSchema.of(stored, request)
 
 
-@router.delete('/{project_id}/pages/{page_id}/edits/{stage}/{step_id}', status_code=status.HTTP_204_NO_CONTENT)
+@router.delete('/{book_id}/pages/{page_id}/edits/{stage}/{step_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_edit(
-    address: Annotated[StepEditPath, Depends()], actor: ActorDep, edits: FromDishka[EditService]
+    book: Annotated[Book, Depends(open_book)],
+    address: Annotated[StepEditPath, Depends()],
+    edits: FromDishka[EditService],
 ) -> None:
     """Delete the edit a step of a recipe reads, and mark the stage of the page stale.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page, the stage and the step.
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
+    :param address: Identifiers of the book, the page, the stage and the step.
     :type address: StepEditPath
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param edits: Edit service of the request.
     :type edits: EditService
     """
-    await edits.delete(actor, address.project_id, address.key)
+    await edits.delete(book, address.key)
 
 
-@router.post('/{project_id}/pages/{page_id}/edits/{stage}/{step_id}/carry-over')
+@router.post('/{book_id}/pages/{page_id}/edits/{stage}/{step_id}/carry-over')
 async def carry_over_edit(
+    book: Annotated[Book, Depends(open_book)],
     address: Annotated[StepEditPath, Depends()],
     form: CarryForm,
-    actor: ActorDep,
     carry: FromDishka[CarryOverService],
 ) -> CarryOverSchema:
     """Carry the shape this page has set by hand for a step over to other pages, as one batch, and mark them stale.
@@ -165,18 +166,18 @@ async def carry_over_edit(
     belongs to one page, and for a carry-over to the selected pages that names none.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the source page, the stage and the step.
+    :param book: The book the path names, open for the signed-in account.
+    :type book: Book
+    :param address: Identifiers of the book, the source page, the stage and the step.
     :type address: StepEditPath
     :param form: The pages to carry the shape to, and whether to write over a shape of their own.
     :type form: CarryForm
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param carry: Carry-over service of the request.
     :type carry: CarryOverService
     :returns: The batch, the changes written and the pages skipped.
     :rtype: CarryOverSchema
     """
-    carried = await carry.carry(actor, address.project_id, form.to_request(address.key))
+    carried = await carry.carry(book, form.to_request(address.key))
     return CarryOverSchema(
         batch_id=carried.batch_id,
         changes=[PageHistoryEntrySchema.model_validate(change) for change in carried.changes],

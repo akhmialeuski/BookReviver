@@ -12,23 +12,23 @@ from fastapi_pagination import Page
 from bookreviver.api.pagination import MANIFEST_MAX_SIZE
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.enums import ImagePolicy, PageOrigin, Rendition
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import Renditions
-from tests.helpers.builders import make_page, make_page_version, make_project, make_scan, make_source, new_account_id
-from tests.helpers.seeding import commit_project, store_project
+from tests.helpers.builders import make_page, make_page_version, make_record, make_scan, make_source, new_account_id
+from tests.helpers.seeding import commit_record, store_book
 
 if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, PageVersion, Project
+    from bookreviver.domain.entities import Actor, BookRecord, PageVersion
     from bookreviver.domain.entities import Page as BookPage
     from bookreviver.ports.storage import AssetStore
     from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
-PROJECTS_PATH: str = '/api/v1/projects'
+BOOKS_PATH: str = '/api/v1/books'
 IIIF_PATH: str = '/api/v1/iiif'
 ORDER_KEY_FIELD: str = 'order_key'
 THUMBNAIL_CONTENT: bytes = b'thumbnail'
@@ -46,19 +46,19 @@ class Book(NamedTuple):
     placeholder without a version, and the page with the key ``a1`` is kept out of the book and has a base version
     whose images are not cut yet.
 
-    :ivar project: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar pages: The pages in the order they were stored.
     :ivar versions: The base versions of the first and the last page.
     """
 
-    project: Project
+    book_record: BookRecord
     pages: list[BookPage]
     versions: list[PageVersion]
 
     @property
     def path(self) -> str:
-        """The path of the project's page manifest."""
-        return f'{PROJECTS_PATH}/{self.project.id}/pages'
+        """The path of the book's page manifest."""
+        return f'{BOOKS_PATH}/{self.book_record.id}/pages'
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project()
+    book_record = make_record()
     source = make_source()
     scans = [make_scan(source=source, number=number) for number in range(2)]
     shown = [scans[0], None, scans[1]]
@@ -82,10 +82,10 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
         evolve(make_page_version(page_id=pages[0].id), renditions=Renditions(ready=True)),
         make_page_version(page_id=pages[2].id),
     ]
-    await store_project(
-        fx_uow(), project, *pages, owner=fx_actor.account_id, sources=[source], scans=scans, versions=versions
+    await store_book(
+        fx_uow(), book_record, *pages, owner=fx_actor.account_id, sources=[source], scans=scans, versions=versions
     )
-    return Book(project, pages, versions)
+    return Book(book_record, pages, versions)
 
 
 async def _list_pages(client: httpx.AsyncClient, path: str, **params: int) -> httpx.Response:
@@ -104,7 +104,7 @@ async def _list_pages(client: httpx.AsyncClient, path: str, **params: int) -> ht
 
 
 class TestListPages:
-    """Tests for GET /projects/{project_id}/pages."""
+    """Tests for GET /books/{book_id}/pages."""
 
     async def test_lists_the_pages_in_book_order_without_their_order_keys(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -156,7 +156,7 @@ class TestListPages:
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         """
-        keys = ProjectKeys(fx_book.project.id)
+        keys = BookKeys(fx_book.book_record.id)
         version = fx_book.versions[0]
         async with fx_asset_store.writable(keys.version_rendition(version, Rendition.THUMBNAIL)) as path:
             path.write_bytes(THUMBNAIL_CONTENT)
@@ -175,9 +175,9 @@ class TestListPages:
     async def test_full_image_path_has_the_extension_of_the_format_recorded_with_the_version(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, full: Rendition
     ) -> None:
-        """Verify the path of the full image names the format its version was stored in, whatever the project's policy.
+        """Verify the path of the full image names the format its version was stored in, whatever the book's policy.
 
-        The project's policy is the opposite of what the version records, as after a change of the policy.
+        The book's policy is the opposite of what the version records, as after a change of the policy.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -189,16 +189,16 @@ class TestListPages:
         :type full: Rendition
         """
         policy = ImagePolicy.LOSSLESS if full is Rendition.FULL_JPEG else ImagePolicy.COMPACT
-        project = evolve(make_project(), image_policy=policy)
+        book_record = evolve(make_record(), image_policy=policy)
         page = make_page()
         version = evolve(make_page_version(page_id=page.id), renditions=Renditions(ready=True, full=full))
-        await store_project(fx_uow(), project, page, owner=fx_actor.account_id, versions=[version])
+        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, versions=[version])
 
-        response = await _list_pages(fx_client, f'{PROJECTS_PATH}/{project.id}/pages')
+        response = await _list_pages(fx_client, f'{BOOKS_PATH}/{book_record.id}/pages')
 
         images = Page[PageSchema].model_validate_json(response.content).items[0].images
         assert images is not None
-        expected = f'{IIIF_PATH}/{ProjectKeys(project.id).version_rendition(version, full)}'
+        expected = f'{IIIF_PATH}/{BookKeys(book_record.id).version_rendition(version, full)}'
         assert images.full == expected
 
     async def test_pages_through_the_book_with_positions_of_the_whole_book(
@@ -239,10 +239,10 @@ class TestListPages:
         """
         assert (await _list_pages(fx_client, fx_book.path, **{PAGE_SIZE_PARAM: size})).status_code == expected
 
-    async def test_another_accounts_project_is_not_found(
+    async def test_another_accounts_book_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify the pages of another account's project cannot be listed.
+        """Verify the pages of another account's book cannot be listed.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -251,16 +251,16 @@ class TestListPages:
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        project = make_project()
-        await commit_project(fx_database, fx_uow(), project, make_page(), owner=new_account_id())
+        book_record = make_record()
+        await commit_record(fx_database, fx_uow(), book_record, make_page(), owner=new_account_id())
 
-        response = await fx_client.get(f'{PROJECTS_PATH}/{project.id}/pages')
+        response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/pages')
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 class TestGetPage:
-    """Tests for GET /projects/{project_id}/pages/{page_id}."""
+    """Tests for GET /books/{book_id}/pages/{page_id}."""
 
     async def test_returns_the_page_with_its_position_and_images(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -300,10 +300,10 @@ class TestGetPage:
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
-    async def test_missing_page_and_page_of_another_project_are_not_found(
+    async def test_missing_page_and_page_of_another_book_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_book: Book, fx_actor: Actor
     ) -> None:
-        """Verify an identifier no page has, and a page of another project of the account, both answer 404.
+        """Verify an identifier no page has, and a page of another book of the account, both answer 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -314,18 +314,18 @@ class TestGetPage:
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        other = make_project()
+        other = make_record()
         foreign = make_page()
-        await store_project(fx_uow(), other, foreign, owner=fx_actor.account_id)
+        await store_book(fx_uow(), other, foreign, owner=fx_actor.account_id)
 
         responses = [await fx_client.get(f'{fx_book.path}/{page_id}') for page_id in (uuid4(), foreign.id)]
 
         assert [response.status_code for response in responses] == [status.HTTP_404_NOT_FOUND] * 2
 
-    async def test_page_of_another_accounts_project_is_not_found(
+    async def test_page_of_another_accounts_book_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify a page of another account's project answers exactly like a missing one.
+        """Verify a page of another account's book answers exactly like a missing one.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -334,10 +334,10 @@ class TestGetPage:
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        project = make_project()
+        book_record = make_record()
         page = make_page()
-        await commit_project(fx_database, fx_uow(), project, page, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), book_record, page, owner=new_account_id())
 
-        response = await fx_client.get(f'{PROJECTS_PATH}/{project.id}/pages/{page.id}')
+        response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/pages/{page.id}')
 
         assert response.status_code == status.HTTP_404_NOT_FOUND

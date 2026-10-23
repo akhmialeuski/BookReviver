@@ -45,11 +45,11 @@ export function SplitSection({
   items: readonly StripItem[];
   current: StripItem;
 }): React.JSX.Element | null {
-  const { projectId, stage } = processing;
-  const run = useRunStage(projectId);
-  const { save: saveEdit, remove: deleteEdit } = useEditChanges(projectId);
-  const activeJobs = useActiveJobs(projectId);
-  const runInFlight = useRunInFlight(projectId);
+  const { bookId, stage } = processing;
+  const run = useRunStage(bookId);
+  const { save: saveEdit, remove: deleteEdit } = useEditChanges(bookId);
+  const activeJobs = useActiveJobs(bookId);
+  const runInFlight = useRunInFlight(bookId);
   const [asking, setAsking] = useState<UnsplitQuestion | null>(null);
   const scanId = current.page.scan_id;
   const scanPages =
@@ -61,7 +61,7 @@ export function SplitSection({
         );
   // The page that shows the scan whole, or its left half, is the one the stage runs on and the edit belongs to
   const driver = scanPages[0];
-  const edits = useEdits(projectId, driver?.id, stage);
+  const edits = useEdits(bookId, driver?.id, stage);
   if (driver === undefined) {
     return null;
   }
@@ -73,7 +73,7 @@ export function SplitSection({
   const busy = runInFlight || saveEdit.isPending || deleteEdit.isPending;
   const idle = (activeJobs.data?.length ?? 0) === 0 && !busy && !processing.dirty;
   const path = {
-    project_id: projectId,
+    book_id: bookId,
     page_id: driver.id,
     stage,
     step_id: autoStep?.step_id ?? '',
@@ -84,7 +84,7 @@ export function SplitSection({
       return;
     }
     run.mutate({
-      path: { project_id: projectId, stage },
+      path: { book_id: bookId, stage },
       body: confirm ? { page_ids: [driver.id], confirm_unsplit: true } : { page_ids: [driver.id] },
     });
   };

@@ -5,7 +5,7 @@ import { shouldRetry } from '@/shared/http/retry';
  * The one TanStack Query client of the application.
  *
  * Server state lives here. Data stays fresh for a short while so moving between screens does not refetch at once,
- * and the project event stream patches or invalidates the affected queries when the server changes something.
+ * and the event stream of a book patches or invalidates the affected queries when the server changes something.
  * A failed query is tried again only when the failure can pass, so an ended session or a missing book is shown at
  * once and not after the retries.
  */

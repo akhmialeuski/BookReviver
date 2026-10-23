@@ -75,7 +75,7 @@ export function AccountMenu(): React.JSX.Element {
 export function AppHeader(): React.JSX.Element | null {
   const session = useSession();
   const signOut = useSignOut();
-  const inBook = useMatch({ from: '/_authenticated/projects/$projectId', shouldThrow: false });
+  const inBook = useMatch({ from: '/_authenticated/books/$bookId', shouldThrow: false });
 
   if (inBook !== undefined) {
     return null;
@@ -84,7 +84,7 @@ export function AppHeader(): React.JSX.Element | null {
   return (
     <header className="border-b">
       <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-4 px-4">
-        <Link to="/projects" className="text-lg font-semibold tracking-tight">
+        <Link to="/books" className="text-lg font-semibold tracking-tight">
           {MESSAGES.app.name}
         </Link>
         <div className="flex items-center gap-3">

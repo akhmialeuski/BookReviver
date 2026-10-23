@@ -25,9 +25,9 @@ from bookreviver.domain.errors import DomainError
 from bookreviver.ports.processing import StepExecutor
 from bookreviver.ports.storage import SourceStore
 from bookreviver.ports.tracing import Tracer
+from bookreviver.services.books import BooksService
 from bookreviver.services.outdated_results import OutdatedResults
 from bookreviver.services.pages import PageService
-from bookreviver.services.projects import ProjectService
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -64,7 +64,7 @@ async def prepare_start(container: AsyncContainer) -> None:
     await container.get(StepExecutor)
     await (await container.get(SourceStore)).discard_all_staged()
     async with container() as request:
-        await (await request.get(ProjectService)).sweep()
+        await (await request.get(BooksService)).sweep()
         await (await request.get(OutdatedResults)).mark_stale()
         await (await request.get(PageService)).remake_outdated_leaves()
 

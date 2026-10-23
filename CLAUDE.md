@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-BookReviver digitises old printed books, mainly pre-reform Russian and Belarusian. One project is one book, moving
+BookReviver digitises old printed books, mainly pre-reform Russian and Belarusian. Each book moves
 through stages that stay viewable and re-runnable at any time. The rules below and the import-linter contracts in the
 gate describe the structure the code keeps, and the OpenAPI schema in `docs/openapi.json` describes the API.
 
@@ -39,12 +39,13 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 - FastAPI specifics: `Annotated` dependency aliases, prefix and tags on the `APIRouter`, return types instead of
   `response_model` where they match, `EventSourceResponse` for SSE, `app.frontend()` for the built frontend,
   `fastapi dev` and `fastapi run` with the `[tool.fastapi]` entrypoint.
-- A route annotates its parameters in place (`Annotated[ProjectId, Path()]`, `FromDishka[ProjectService]`), with no
+- A route annotates its parameters in place (`Annotated[BookId, Path()]`, `FromDishka[BooksService]`), with no
   module-level alias made only to keep an import at runtime. `ruff.toml` lists the `fastapi.APIRouter` methods and
   `dishka.integrations.fastapi.inject` under `runtime-evaluated-decorators`, and ruff resolves `@router.get` to
   them, so it keeps the imports those annotations need. A dependency shared by many routers, such as `ActorDep`,
-  stays an alias in its own module. A route docstring puts a form feed (`\N{FORM FEED}`) before its reST fields,
-  because FastAPI ends the OpenAPI description there.
+  stays an alias in its own module. One that reads a path parameter, such as `open_book`, is written in place, since
+  ruff's `FAST003` does not follow an alias to the path parameter it reads. A route docstring puts a form feed
+  (`\N{FORM FEED}`) before its reST fields, because FastAPI ends the OpenAPI description there.
 
 ## Architecture rules
 
@@ -58,14 +59,19 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 - A route validates input, calls one service method and returns a typed response: the resource schema, or
   fastapi-pagination's `Page[T]` for a collection. Every error is an RFC 9457 problem from fastapi-problem, mapped from
   domain errors in the one handler registered in `app`.
+- Who may work on what is decided only by the FastAPI dependencies of `api/access.py`. `open_book` and `open_profile`
+  open a book or a recipe profile of the signed-in account and answer one of another account like a missing one, and
+  `own_books` and `own_profiles` read the account's lists. Services, the domain and the jobs check no owner and choose
+  no account's records: a use case works on the `Book` or `RecipeProfile` it is given, and takes an account only as the
+  owner of a record it creates. A route of a book declares `Annotated[Book, Depends(open_book)]` in place.
 - All request input is validated by Pydantic before the route runs: bodies, query models (`Annotated[Model, Query()]`),
   forms and headers, built on the shared `RequestModel` base and the constrained types in `api/schemas/types.py`.
   Handlers never check raw input by hand.
 - HTTP status codes come from `fastapi.status` or `http.HTTPStatus`, never as number literals, in code and in tests.
 - Everything on the event loop is async: the API and the ports of files, jobs, events and HTTP. The persistence
-  repositories are synchronous and run only inside the work a service hands to `UnitOfWork.read` or `change` of the
-  catalogue, or `read_book` or `change_book` of one book, which the adapter runs in a worker thread as one transaction
-  of that file. The owner of a book is checked once, by `Library.open` in the services, before the book is read. Other blocking library calls go through
+  repositories are synchronous and run only inside the work a service or an access dependency hands to
+  `UnitOfWork.read` or `change` of the catalogue, or `read_book` or `change_book` of one book, which the adapter runs in
+  a worker thread as one transaction of that file. Other blocking library calls go through
   `anyio.to_thread.run_sync` inside adapters, keyword arguments through `functools.partial`. Heavy work (parsing,
   rasterising, tiling, OCR, LLM calls) runs only in background jobs, whose entry points live in `app` and call one
   service method.

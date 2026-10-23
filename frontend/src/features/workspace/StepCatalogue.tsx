@@ -39,8 +39,8 @@ export function StepCatalogue({
   /** Called with the identifier the server gave the new step and its place from zero, so the step can be opened. */
   onAdded: (stepId: string, index: number) => void;
 }): React.JSX.Element | null {
-  const { projectId, stage, recipe, catalogue } = processing;
-  const save = useSaveRecipe(projectId);
+  const { bookId, stage, recipe, catalogue } = processing;
+  const save = useSaveRecipe(bookId);
   const [open, setOpen] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
   if (recipe === undefined) {
@@ -63,7 +63,7 @@ export function StepCatalogue({
     setRefusal(null);
     save.mutate(
       {
-        path: { project_id: projectId, stage, recipe_id: recipe.id },
+        path: { book_id: bookId, stage, recipe_id: recipe.id },
         body: { steps: bodyOf(addStep(saved, processor, index)), order: processing.orderMode },
       },
       {

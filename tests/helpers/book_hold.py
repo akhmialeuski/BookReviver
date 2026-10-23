@@ -16,7 +16,7 @@ import anyio
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import UnitOfWork
 
 # The longest a blocked change holds its thread when a test fails before it lets the change go
@@ -24,7 +24,7 @@ HOLD_LIMIT_SECONDS: float = 30.0
 
 
 @asynccontextmanager
-async def hold_book_in_thread(uow: UnitOfWork, project_id: ProjectId | None = None) -> AsyncIterator[None]:
+async def hold_book_in_thread(uow: UnitOfWork, book_id: BookId | None = None) -> AsyncIterator[None]:
     """Hold a book by a change whose work blocks the thread it runs in until the block ends.
 
     Every other change of the same store waits behind the held one. A change of another book, or of the catalogue when a
@@ -32,8 +32,8 @@ async def hold_book_in_thread(uow: UnitOfWork, project_id: ProjectId | None = No
 
     :param uow: Unit of work whose change holds the book.
     :type uow: UnitOfWork
-    :param project_id: Project whose book is held, or None for the catalogue.
-    :type project_id: ProjectId | None
+    :param book_id: Book that is held, or None for the catalogue.
+    :type book_id: BookId | None
     :returns: Iterator yielding once the work of the change has started, and letting it commit when the block ends.
     :rtype: AsyncIterator[None]
     """
@@ -52,10 +52,10 @@ async def hold_book_in_thread(uow: UnitOfWork, project_id: ProjectId | None = No
         release.wait(timeout=HOLD_LIMIT_SECONDS)
 
     async with anyio.create_task_group() as tasks:
-        if project_id is None:
+        if book_id is None:
             tasks.start_soon(uow.change, block)
         else:
-            tasks.start_soon(uow.change_book, project_id, block)
+            tasks.start_soon(uow.change_book, book_id, block)
         await inside.wait()
         try:
             yield

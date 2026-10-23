@@ -22,19 +22,19 @@ from bookreviver.domain.entities import PageStepState
 from bookreviver.domain.enums import CarryScope, ChangeSource, PageOrigin, StepLayer
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.history import CarryOver
+from bookreviver.services.books import book_pages
 from bookreviver.services.page_batches import PageBatch
-from bookreviver.services.projects import book_pages
 from bookreviver.services.recipes import find_step
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bookreviver.domain.entities import Actor, Page, PageStage, Project
-    from bookreviver.domain.ids import PageId, ProjectId
+    from bookreviver.domain.entities import BookRecord, Page
+    from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import CarryRequest
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
-    from bookreviver.services.library import Library
+    from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
 
 SELECTED_NEEDS_PAGES: str = 'A carry-over to the selected pages names at least one page.'
@@ -44,51 +44,45 @@ MASK_NOT_CARRIED: str = 'The edit of this step is a mask painted on one page, wh
 class CarryOverService:
     """Carries the shape a page has set by hand over to the following, the selected or the same kind pages."""
 
-    def __init__(self, *, uow: UnitOfWork, library: Library, records: StageRecords, clock: Clock) -> None:
+    def __init__(self, *, uow: UnitOfWork, records: StageRecords, clock: Clock) -> None:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request, whose ``change_book`` ends the carry-over.
         :type uow: UnitOfWork
-        :param library: Library that opens the books of the acting account.
-        :type library: Library
         :param records: Writer of the stage records, which a changed edit marks stale.
         :type records: StageRecords
         :param clock: Clock stamping the states and the changes.
         :type clock: Clock
         """
         self._uow = uow
-        self._library = library
         self._records = records
         self._clock = clock
 
-    async def carry(self, actor: Actor, project_id: ProjectId, request: CarryRequest) -> CarryOver:
+    async def carry(self, book: Book, request: CarryRequest) -> CarryOver:
         """Write the shape a page has set by hand for a step to other pages, as one batch.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book: The open book.
+        :type book: Book
         :param request: The source page, the stage and the step, and the pages the shape goes to.
         :type request: CarryRequest
         :returns: The batch, the changes written and the pages skipped for a shape of their own.
         :rtype: CarryOver
-        :raises NotFoundError: If the actor has no such project, the project has no such page, no recipe of the stage
+        :raises NotFoundError: If the book has no such page, no recipe of the stage
                                has the step, or the source page has no shape set by hand.
         :raises InvalidParametersError: If the scope is the selected pages and none is named, or the edit is a mask.
         """
-        await self._library.open(actor, project_id)
         key = request.key
 
-        def work(repos: BookRepositories, _project: Project) -> tuple[CarryOver, list[PageStage]]:
+        def work(repos: BookRepositories, _book_record: BookRecord) -> CarryOver:
             """Write the shape to every target page as one batch, and mark their stages stale.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it, which the work does not need.
-            :type _project: Project
-            :returns: The batch, the changes written and the pages skipped, and the stage records that became stale.
-            :rtype: tuple[CarryOver, list[PageStage]]
-            :raises NotFoundError: If the project has no such page, no recipe of the
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
+            :type _book_record: BookRecord
+            :returns: The batch, the changes written and the pages skipped.
+            :rtype: CarryOver
+            :raises NotFoundError: If the book has no such page, no recipe of the
                                    stage has the step, or the source page has no shape set by hand.
             :raises InvalidParametersError: If the scope is the selected pages and none is named, or the edit is a mask.
             """
@@ -122,14 +116,11 @@ class CarryOverService:
             for state in carried:
                 batch.write(state, StepLayer.HAND, shape)
             changes = batch.flush()
-            stale: list[PageStage] = []
             for change in changes:
-                stale.extend(self._records.mark_stale(repos, change.page_id, change.stage))
-            return CarryOver(batch_id=batch.batch_id, changes=tuple(changes), skipped=tuple(skipped)), stale
+                self._records.mark_stale(repos, change.page_id, change.stage)
+            return CarryOver(batch_id=batch.batch_id, changes=tuple(changes), skipped=tuple(skipped))
 
-        carry_over, stale = await self._uow.change_book(project_id, work)
-        await self._records.announce(project_id, stale)
-        return carry_over
+        return await self._uow.change_book(book.id, work)
 
     @staticmethod
     def _targets(repos: BookRepositories, request: CarryRequest, source: Page) -> Sequence[Page]:
@@ -144,7 +135,7 @@ class CarryOverService:
         :returns: The pages in book order for the following pages and the pages of the kind, and as read for the
                   selected ones.
         :rtype: Sequence[Page]
-        :raises NotFoundError: If a selected page is not one of the project.
+        :raises NotFoundError: If a selected page is not one of the book.
         :raises InvalidParametersError: If the scope is the selected pages and none is named.
         """
         key = request.key

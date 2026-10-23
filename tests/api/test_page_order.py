@@ -12,8 +12,8 @@ from fastapi_pagination import Page
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.errors import AnchorInsideMovedPagesError
-from tests.helpers.builders import make_page, make_project, make_scan, make_source, new_account_id
-from tests.helpers.seeding import commit_project, store_project
+from tests.helpers.builders import make_page, make_record, make_scan, make_source, new_account_id
+from tests.helpers.seeding import commit_record, store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -22,13 +22,13 @@ if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, Project, Source
+    from bookreviver.domain.entities import Actor, BookRecord, Source
     from bookreviver.domain.entities import Page as BookPage
     from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
-PROJECTS_PATH: str = '/api/v1/projects'
+BOOKS_PATH: str = '/api/v1/books'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
 DETAIL_FIELD: str = 'detail'
@@ -39,21 +39,21 @@ SECOND_SOURCE_PAGES: int = 2
 class Book(NamedTuple):
     """A book of two sources whose five pages stand one after the other in the order of their upload.
 
-    :ivar project: The project of the book, owned by the signed-in account.
+    :ivar book_record: The record of the book, owned by the signed-in account.
     :ivar first: The source of the first three pages.
     :ivar second: The source of the last two pages.
     :ivar pages: The pages in book order.
     """
 
-    project: Project
+    book_record: BookRecord
     first: Source
     second: Source
     pages: list[BookPage]
 
     @property
     def path(self) -> str:
-        """The path of the project's resources."""
-        return f'{PROJECTS_PATH}/{self.project.id}'
+        """The path of the book's resources."""
+        return f'{BOOKS_PATH}/{self.book_record.id}'
 
     def ids(self, *indexes: int) -> list[str]:
         """Return the identifiers of pages as text, which is how a request names them.
@@ -77,7 +77,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project()
+    book_record = make_record()
     first, second = (
         make_source(name='part1.pdf'),
         make_source(name='part2.pdf'),
@@ -88,8 +88,8 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     ]
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(scans))
     pages = [make_page(order_key=key, scan=scan) for key, scan in zip(keys, scans, strict=True)]
-    await store_project(fx_uow(), project, *pages, owner=fx_actor.account_id, sources=[first, second], scans=scans)
-    return Book(project=project, first=first, second=second, pages=pages)
+    await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id, sources=[first, second], scans=scans)
+    return Book(book_record=book_record, first=first, second=second, pages=pages)
 
 
 async def _manifest(client: httpx.AsyncClient, book: Book, **params: Any) -> Page[PageSchema]:
@@ -123,7 +123,7 @@ def _order(manifest: Page[PageSchema], book: Book) -> list[int]:
 
 
 class TestMovePage:
-    """Tests for POST /projects/{project_id}/pages/{page_id}/move."""
+    """Tests for POST /books/{book_id}/pages/{page_id}/move."""
 
     @pytest.mark.parametrize(
         ('anchor_field', 'expected'),
@@ -222,7 +222,7 @@ class TestMovePage:
     async def test_missing_anchor_and_page_of_another_account_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify an unknown anchor, and a project of another account, answer 404.
+        """Verify an unknown anchor, and a book of another account, answer 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -233,15 +233,15 @@ class TestMovePage:
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        stranger = make_project()
+        stranger = make_record()
         page = make_page()
-        await commit_project(fx_database, fx_uow(), stranger, page, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), stranger, page, owner=new_account_id())
 
         unknown = await fx_client.post(
             f'{fx_book.path}/pages/{fx_book.pages[1].id}/move', json={'before_page_id': str(uuid4())}
         )
         foreign = await fx_client.post(
-            f'{PROJECTS_PATH}/{stranger.id}/pages/{page.id}/move', json={'before_page_id': str(page.id)}
+            f'{BOOKS_PATH}/{stranger.id}/pages/{page.id}/move', json={'before_page_id': str(page.id)}
         )
 
         expect(unknown.status_code == status.HTTP_404_NOT_FOUND)
@@ -250,7 +250,7 @@ class TestMovePage:
 
 
 class TestMovePages:
-    """Tests for POST /projects/{project_id}/pages/move."""
+    """Tests for POST /books/{book_id}/pages/move."""
 
     async def test_puts_the_group_in_a_run_in_book_order_and_answers_without_a_body(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -318,10 +318,10 @@ class TestMovePages:
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
-    async def test_page_of_another_project_is_not_found(
+    async def test_page_of_another_book_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify a group that names a page of another project is answered 404.
+        """Verify a group that names a page of another book is answered 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -332,9 +332,9 @@ class TestMovePages:
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        other = make_project()
+        other = make_record()
         page = make_page()
-        await store_project(fx_uow(), other, page, owner=fx_actor.account_id)
+        await store_book(fx_uow(), other, page, owner=fx_actor.account_id)
 
         response = await fx_client.post(
             f'{fx_book.path}/pages/move',
@@ -345,7 +345,7 @@ class TestMovePages:
 
 
 class TestMoveSourcePages:
-    """Tests for POST /projects/{project_id}/sources/{source_id}/pages/move."""
+    """Tests for POST /books/{book_id}/sources/{source_id}/pages/move."""
 
     async def test_puts_every_page_of_the_source_after_the_page_in_one_request(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -402,7 +402,7 @@ class TestMoveSourcePages:
 
 
 class TestListIncludedPages:
-    """Tests for the ``included`` filter of GET /projects/{project_id}/pages."""
+    """Tests for the ``included`` filter of GET /books/{book_id}/pages."""
 
     async def test_lists_only_the_pages_of_the_book_numbered_among_themselves(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_uow: UnitOfWorkFactory
@@ -417,7 +417,8 @@ class TestListIncludedPages:
         :type fx_uow: UnitOfWorkFactory
         """
         await fx_uow().change_book(
-            fx_book.project.id, lambda repos, _project: repos.pages.update(evolve(fx_book.pages[1], included=False))
+            fx_book.book_record.id,
+            lambda repos, _book_record: repos.pages.update(evolve(fx_book.pages[1], included=False)),
         )
 
         everything = await _manifest(fx_client, fx_book)

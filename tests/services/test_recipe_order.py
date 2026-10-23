@@ -9,6 +9,7 @@ from bookreviver.domain.enums import OrderMode, OrderRuleKind, RecipeKind, Stage
 from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.values import ProfileDraft, RecipeDraft, Step
 from bookreviver.services.recipe_order import RecipeOrder
+from tests.helpers.builders import open_for
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.processors import (
     FIRST_KEY,
@@ -232,11 +233,11 @@ class TestSavePaths:
         :param fx_ordered_kit: The kit over the processors that declare a place.
         :type fx_ordered_kit: ProcessingKit
         """
-        actor, project = await fx_ordered_kit.seed_project()
+        actor, book_record = await fx_ordered_kit.seed_record()
         with pytest.raises(InvalidParametersError, match=THIRD_REASON):
-            await fx_ordered_kit.edit_recipe(actor, project, Stage.GEOMETRY, draft_of(THIRD_KEY, SECOND_KEY))
+            await fx_ordered_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, draft_of(THIRD_KEY, SECOND_KEY))
         saved = await fx_ordered_kit.edit_recipe(
-            actor, project, Stage.GEOMETRY, draft_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE)
+            actor, book_record, Stage.GEOMETRY, draft_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE)
         )
         assert [step.processor_key for step in saved.steps] == [THIRD_KEY, SECOND_KEY]
 
@@ -248,12 +249,12 @@ class TestSavePaths:
         :param fx_ordered_kit: The kit over the processors that declare a place.
         :type fx_ordered_kit: ProcessingKit
         """
-        actor, project = await fx_ordered_kit.seed_project()
+        actor, book_record = await fx_ordered_kit.seed_record()
         wrong = draft_of(THIRD_KEY, SECOND_KEY)
         with pytest.raises(InvalidParametersError, match=THIRD_REASON):
-            await fx_ordered_kit.edit_recipe(actor, project, Stage.GEOMETRY, wrong, RecipeKind.BLANK)
+            await fx_ordered_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, wrong, RecipeKind.BLANK)
         saved = await fx_ordered_kit.edit_recipe(
-            actor, project, Stage.GEOMETRY, draft_of(FIRST_KEY, SECOND_KEY), RecipeKind.BLANK
+            actor, book_record, Stage.GEOMETRY, draft_of(FIRST_KEY, SECOND_KEY), RecipeKind.BLANK
         )
         assert [step.processor_key for step in saved.steps] == [FIRST_KEY, SECOND_KEY]
 
@@ -265,12 +266,12 @@ class TestSavePaths:
         :param fx_ordered_kit: The kit over the processors that declare a place.
         :type fx_ordered_kit: ProcessingKit
         """
-        actor, project = await fx_ordered_kit.seed_project()
+        actor, book_record = await fx_ordered_kit.seed_record()
         profiles = fx_ordered_kit.profiles()
         with pytest.raises(InvalidParametersError, match=THIRD_REASON):
             await profiles.save(actor, Stage.GEOMETRY, profile_draft_of(THIRD_KEY, SECOND_KEY))
         profile = await profiles.save(
             actor, Stage.GEOMETRY, profile_draft_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE)
         )
-        applied = await profiles.apply(actor, project.id, profile.id, kind=RecipeKind.TEXT)
+        applied = await profiles.apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
         assert [step.processor_key for step in applied.recipe.steps] == [THIRD_KEY, SECOND_KEY]

@@ -271,7 +271,7 @@ class IdentifierScheme(LabeledStrEnum):
 
 
 class ImagePolicy(LabeledStrEnum):
-    """How a project stores the ``full`` image of its scans and page versions.
+    """How a book stores the ``full`` image of its scans and page versions.
 
     A bilevel image is a lossless PNG under either policy. The policy decides only gray and colour images, and a change
     applies to images written afterwards, so nothing stored is encoded again.
@@ -735,7 +735,7 @@ class BookResource(LabeledStrEnum):
     book is opened.
     """
 
-    PROJECT = 'project', 'The description of the book'
+    RECORD = 'record', 'The description of the book'
     SOURCES = 'sources', 'The uploaded files of the book'
     SCANS = 'scans', 'The scans of the files'
     PAGES = 'pages', 'The pages, their order, their labels and their groups'
@@ -744,15 +744,6 @@ class BookResource(LabeledStrEnum):
     SETTINGS = 'settings', 'The settings and the edits of the steps on the pages'
     HISTORY = 'history', 'The history of the steps on the pages'
     RECIPES = 'recipes', 'The recipes of the stages'
-
-
-class PageChange(LabeledStrEnum):
-    """What a use case did to the pages of a book, which the ``PagesChanged`` event reports."""
-
-    MOVED = 'moved', 'Moved'
-    EDITED = 'edited', 'Edited'
-    ADDED = 'added', 'Added'
-    REMOVED = 'removed', 'Removed'
 
 
 class NewPageOrigin(LabeledStrEnum):
@@ -1071,7 +1062,7 @@ class JobKind(LabeledStrEnum):
 
     @classmethod
     def processing(cls) -> frozenset[JobKind]:
-        """Return the kinds of job that read and write the versions of pages, of which a project runs one at a time.
+        """Return the kinds of job that read and write the versions of pages, of which a book runs one at a time.
 
         A run, a preview and a tile cutting write the files of versions they may have found made already, and a
         collection deletes them, so no two of them may overlap, and two of one kind would write the same files. A
@@ -1085,7 +1076,7 @@ class JobKind(LabeledStrEnum):
 
     @classmethod
     def requested(cls) -> frozenset[JobKind]:
-        """Return the kinds of processing job that the user asks for, of which a project has one queued or running.
+        """Return the kinds of processing job that the user asks for, of which a book has one queued or running.
 
         :returns: A run, a preview and a measure of the book.
         :rtype: frozenset[JobKind]
@@ -1094,12 +1085,12 @@ class JobKind(LabeledStrEnum):
 
     @classmethod
     def preemptive(cls) -> frozenset[JobKind]:
-        """Return the kinds of job that cancel a preview of the project instead of being refused by it.
+        """Return the kinds of job that cancel a preview of the book instead of being refused by it.
 
         A preview is a look at one page that the editor of a step asks for by itself and the reader asks for with a
         switch, and it changes nothing that is current: it writes versions of the preview scale only, which no run and
         no measure reads, under identifiers that name that scale. A run and a measure of the book are what the reader
-        pressed a button for, so a preview that happens to be in the way gives the project up, queued or running.
+        pressed a button for, so a preview that happens to be in the way gives the book up, queued or running.
 
         :returns: A run and a measure of the book.
         :rtype: frozenset[JobKind]
@@ -1108,7 +1099,7 @@ class JobKind(LabeledStrEnum):
 
     @classmethod
     def housekeeping(cls) -> frozenset[JobKind]:
-        """Return the kinds of processing job that the application queues for itself, of which a project has one.
+        """Return the kinds of processing job that the application queues for itself, of which a book has one.
 
         A job of these kinds never refuses what the user asks for. The request is stored and waits, and starts when
         the housekeeping job ends.
@@ -1166,7 +1157,7 @@ class UploadProblem(LabeledStrEnum):
 class RejectionReason(LabeledStrEnum):
     """Why one file of an upload was not imported, while the other files of the upload were."""
 
-    DUPLICATE = 'duplicate', 'The project already has this file.'
+    DUPLICATE = 'duplicate', 'The book already has this file.'
     UNREADABLE = 'unreadable', 'The file cannot be read as a source.'
     UNSUPPORTED_TYPE = 'unsupported-type', 'The type of the file is not accepted as a source.'
     SYSTEM_FILE = 'system-file', 'The file is a system file of the operating system, not a part of the book.'
@@ -1252,7 +1243,7 @@ FILE_TYPE_SUFFIXES: dict[FileType, frozenset[str]] = {
 class Rendition(LabeledStrEnum):
     """One of the derived files of a scan or a page version, named by its value inside their directory.
 
-    ``full`` is a JPEG or a PNG as the project's ``ImagePolicy`` and the colour of the image decide, so it has one
+    ``full`` is a JPEG or a PNG as the book's ``ImagePolicy`` and the colour of the image decide, so it has one
     member per format. ``preview`` and ``thumb`` are always JPEG.
     """
 
@@ -1284,7 +1275,7 @@ class SpanAttribute(LabeledStrEnum):
     STATUS = 'status', 'HTTP status of the answer'
     JOB_KIND = 'job.kind', 'Kind of the job'
     JOB_ID = 'job.id', 'Identifier of the job'
-    BOOK = 'book', 'Identifier of the project the block holds'
+    BOOK = 'book', 'Identifier of the book the block holds'
     PAGE = 'page', 'Identifier of the page'
     STAGE = 'stage', 'Stage of the run'
     RUN_OUTCOME = 'run.outcome', 'What the run came to on the page'

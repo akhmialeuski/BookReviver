@@ -9,8 +9,8 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import ConflictError, NotFoundError
-from bookreviver.domain.ids import JobId, PageId, ProjectId, SourceId, StorageKey
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.ids import BookId, JobId, PageId, SourceId, StorageKey
+from bookreviver.domain.keys import BookKeys
 from tests.helpers.builders import make_page_version
 from tests.helpers.storage import WriterFailedError, abandon_write
 
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
-KEYS: ProjectKeys = ProjectKeys(ProjectId(uuid4()))
+KEYS: BookKeys = BookKeys(BookId(uuid4()))
 PAGE_ID: PageId = PageId(uuid4())
 PAGE_PREFIX: StorageKey = KEYS.page(PAGE_ID)
 FILE_KEY: StorageKey = KEYS.version_rendition(make_page_version(page_id=PAGE_ID), Rendition.FULL_JPEG)
@@ -33,9 +33,9 @@ COPY_KEY: StorageKey = KEYS.version_rendition(make_page_version(page_id=PageId(u
 TILE_NAME: str = 'info.json'
 CASE_ARG: str = 'case'
 KEY_ARG: str = 'key'
-OUTSIDE_ASSETS_MATCH: str = 'does not lie under the assets directory of a project'
+OUTSIDE_ASSETS_MATCH: str = 'does not lie under the assets directory of a book'
 SOURCE_FILE_KEY: StorageKey = StorageKey(f'{KEYS.source(SourceId(uuid4()))}/book.pdf')
-# Keys that are not under the assets of a project, by the name of their case; the names are fixed so that every worker
+# Keys that are not under the assets of a book, by the name of their case; the names are fixed so that every worker
 # of a parallel run collects the same tests, while some keys hold a new identifier on each import
 OUTSIDE_ASSETS_KEYS: dict[str, str] = {
     'empty': '',
@@ -47,12 +47,12 @@ OUTSIDE_ASSETS_KEYS: dict[str, str] = {
     'upload': KEYS.incoming(JobId(uuid4())),
     'sources-area': KEYS.sources_area,
     'source-file': SOURCE_FILE_KEY,
-    # The whole area is removed by delete_project alone
+    # The whole area is removed by delete_book alone
     'assets-area': KEYS.assets_area,
     'climbing-out-of-assets': f'{KEYS.assets_area}/../sources',
     'empty-segment': f'{PAGE_PREFIX}//full.jpg',
     'not-a-project': f'projects/book/assets/{Rendition.FULL_JPEG}',
-    'project-in-other-spelling': f'projects/{str(KEYS.project_id).upper()}/assets/book/typesetting',
+    'project-in-other-spelling': f'projects/{str(KEYS.book_id).upper()}/assets/book/typesetting',
 }
 OLD_CONTENT: bytes = b'old image'
 NEW_CONTENT: bytes = b'new image'
@@ -370,7 +370,7 @@ class TestCopy:
         assert await _read_file(fx_asset_store, COPY_KEY) == OLD_CONTENT
 
     async def test_refuses_a_target_outside_assets(self, fx_asset_store: AssetStore) -> None:
-        """Verify a copy cannot land among the sources of a project.
+        """Verify a copy cannot land among the sources of a book.
 
         :param fx_asset_store: Asset store of the storage backend under test.
         :type fx_asset_store: AssetStore
@@ -426,7 +426,7 @@ class TestDeletePrefix:
 
     @pytest.mark.parametrize(KEY_ARG, OUTSIDE_ASSETS_KEYS.values(), ids=OUTSIDE_ASSETS_KEYS.keys())
     async def test_refuses_keys_outside_assets(self, fx_asset_store: AssetStore, key: str) -> None:
-        """Verify only keys under a project's ``assets/`` are accepted, so a wrong key cannot erase a source.
+        """Verify only keys under a book's ``assets/`` are accepted, so a wrong key cannot erase a source.
 
         :param fx_asset_store: Asset store of the storage backend under test.
         :type fx_asset_store: AssetStore
@@ -482,7 +482,7 @@ class TestSizeOf:
 
     @pytest.mark.parametrize(KEY_ARG, OUTSIDE_ASSETS_KEYS.values(), ids=OUTSIDE_ASSETS_KEYS.keys())
     async def test_refuses_keys_outside_assets(self, fx_asset_store: AssetStore, key: str) -> None:
-        """Verify only keys under a project's ``assets/`` are measured, as only they are deleted.
+        """Verify only keys under a book's ``assets/`` are measured, as only they are deleted.
 
         :param fx_asset_store: Asset store of the storage backend under test.
         :type fx_asset_store: AssetStore
@@ -493,16 +493,16 @@ class TestSizeOf:
             await fx_asset_store.size_of(StorageKey(key))
 
 
-class TestDeleteProject:
-    """Contract of AssetStore.delete_project()."""
+class TestDeleteBook:
+    """Contract of AssetStore.delete_book()."""
 
-    async def test_removes_every_derived_file_of_the_project_only(self, fx_asset_store: AssetStore) -> None:
-        """Verify the project's page image and pyramid are gone and another project's page image stays.
+    async def test_removes_every_derived_file_of_the_book_only(self, fx_asset_store: AssetStore) -> None:
+        """Verify the book's page image and pyramid are gone and another book's page image stays.
 
         :param fx_asset_store: Asset store of the storage backend under test.
         :type fx_asset_store: AssetStore
         """
-        keys, other_keys = ProjectKeys(ProjectId(uuid4())), ProjectKeys(ProjectId(uuid4()))
+        keys, other_keys = BookKeys(BookId(uuid4())), BookKeys(BookId(uuid4()))
         version = make_page_version(page_id=PageId(uuid4()))
         full, tiles = (
             keys.version_rendition(version, Rendition.FULL_JPEG),
@@ -513,22 +513,22 @@ class TestDeleteProject:
         await _store_directory(fx_asset_store, key=tiles, content=NEW_CONTENT)
         await _store_file(fx_asset_store, key=other_full, content=NEW_CONTENT)
 
-        await fx_asset_store.delete_project(keys.project_id)
+        await fx_asset_store.delete_book(keys.book_id)
 
         expect(not await _is_stored(fx_asset_store, full))
         expect(not await _is_stored(fx_asset_store, tiles))
         expect(await _is_stored(fx_asset_store, other_full))
         assert_expectations()
 
-    async def test_project_without_files_is_not_an_error(self, fx_asset_store: AssetStore) -> None:
-        """Verify deleting a project that never had a derived file succeeds, as for a project never imported.
+    async def test_book_without_files_is_not_an_error(self, fx_asset_store: AssetStore) -> None:
+        """Verify deleting a book that never had a derived file succeeds, as for a book never imported.
 
         :param fx_asset_store: Asset store of the storage backend under test.
         :type fx_asset_store: AssetStore
         """
-        keys = ProjectKeys(ProjectId(uuid4()))
+        keys = BookKeys(BookId(uuid4()))
 
-        await fx_asset_store.delete_project(keys.project_id)
+        await fx_asset_store.delete_book(keys.book_id)
 
         assert not await _is_stored(
             fx_asset_store, keys.version_rendition(make_page_version(page_id=PageId(uuid4())), Rendition.FULL_JPEG)

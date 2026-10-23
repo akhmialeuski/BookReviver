@@ -1,17 +1,17 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { ArrowDownUpIcon, FileImageIcon, FileTextIcon, ListOrderedIcon } from 'lucide-react';
-import type { PageSchema, ProjectSchema, ScanSchema } from '@/api';
+import type { BookSchema, PageSchema, ScanSchema } from '@/api';
 import {
-  projectApiV1ProjectsProjectIdGetQueryKey,
-  updateProjectApiV1ProjectsProjectIdPatchMutation,
+  bookApiV1BooksBookIdGetQueryKey,
+  updateBookApiV1BooksBookIdPatchMutation,
 } from '@/api/@tanstack/react-query.gen';
 import { planSave, toFields } from '@/features/about/fields';
 import { SuggestionBox } from '@/features/about/SuggestionBanners';
 import { planSuggestion } from '@/features/about/suggestion';
+import { DeleteSourceDialog } from '@/features/books/DeleteSourceDialog';
 import { formatRuns, pageRunsOf, resolutionOf } from '@/features/import/facts';
 import type { ImportedSource } from '@/features/import/queries';
-import { DeleteSourceDialog } from '@/features/projects/DeleteSourceDialog';
 import { FactList } from '@/features/workspace/FactList';
 import { PanelHeading } from '@/features/workspace/PanelHeading';
 import { StagePanel } from '@/features/workspace/StagePanel';
@@ -34,12 +34,12 @@ import { ErrorAlert } from '@/shared/ui/error-alert';
  */
 
 export function FilePanel({
-  project,
+  book,
   source,
   scans,
   pages,
 }: {
-  project: ProjectSchema;
+  book: BookSchema;
   source: ImportedSource;
   /** The scans of the file that are loaded, from which its resolution is read. */
   scans: readonly ScanSchema[];
@@ -48,10 +48,10 @@ export function FilePanel({
 }): React.JSX.Element {
   const queryClient = useQueryClient();
   const use = useMutation({
-    ...updateProjectApiV1ProjectsProjectIdPatchMutation(),
+    ...updateBookApiV1BooksBookIdPatchMutation(),
     onSuccess: (updated) => {
       queryClient.setQueryData(
-        projectApiV1ProjectsProjectIdGetQueryKey({ path: { project_id: updated.id } }),
+        bookApiV1BooksBookIdGetQueryKey({ path: { book_id: updated.id } }),
         updated,
       );
     },
@@ -62,7 +62,7 @@ export function FilePanel({
   const runs = pageRunsOf(pages, source.id);
   const placed = runs.reduce((sum, run) => sum + run.last - run.first + 1, 0);
   const resolution = resolutionOf(scans);
-  const fields = toFields(project);
+  const fields = toFields(book);
   const plan = planSuggestion(fields, source.suggestion);
   const facts = [
     { label: labels.type, value: MESSAGES.import.files.kinds[source.file_type] },
@@ -88,8 +88,8 @@ export function FilePanel({
     ) : (
       <Button asChild variant="outline" className="justify-start">
         <Link
-          to="/projects/$projectId/stages/$stage"
-          params={{ projectId: project.id, stage: 'page-order' }}
+          to="/books/$bookId/stages/$stage"
+          params={{ bookId: book.id, stage: 'page-order' }}
           search={{ source: source.id }}
         >
           {icon}
@@ -113,7 +113,7 @@ export function FilePanel({
                 pending={use.isPending}
                 onUse={() =>
                   use.mutate({
-                    path: { project_id: project.id },
+                    path: { book_id: book.id },
                     body: planSave(fields, plan.changes).patch,
                   })
                 }
@@ -147,7 +147,7 @@ export function FilePanel({
       }}
       footer={
         <div className="grid gap-2">
-          <DeleteSourceDialog projectId={project.id} source={source} />
+          <DeleteSourceDialog bookId={book.id} source={source} />
           <p className="text-xs text-muted-foreground">{labels.deleteNote}</p>
         </div>
       }

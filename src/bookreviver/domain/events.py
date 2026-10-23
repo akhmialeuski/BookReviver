@@ -1,8 +1,9 @@
 """Domain events published while use cases run, delivered to the browser as server-sent events.
 
-Each event names what changed in the book, so the browser reads again only the part it shows: a job, a source with its
-scans, the images of one scan, the order of the pages, one page version, the stage of a page, or the description of
-the book.
+A committed change of a book is one ``BookChanged``, which the unit of work publishes with the parts of the book the
+change wrote, so the browser reads again only those parts. The jobs live in the memory of the process and raise no
+version of the book, so a job publishes ``JobChanged`` with the whole job, and a version a page gains is announced by
+``PageVersionReady`` with its identifier, which a preview waits for.
 """
 
 from typing import TYPE_CHECKING
@@ -10,21 +11,19 @@ from typing import TYPE_CHECKING
 from attrs import frozen
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from bookreviver.domain.entities import Job, PageStage, PageVersion, Scan, Source
-    from bookreviver.domain.enums import BookResource, PageChange
-    from bookreviver.domain.ids import PageId, ProjectId
+    from bookreviver.domain.entities import Job, PageVersion
+    from bookreviver.domain.enums import BookResource
+    from bookreviver.domain.ids import BookId
 
 
 @frozen(kw_only=True)
 class DomainEvent:
-    """Something that happened within one project.
+    """Something that happened within one book.
 
-    :ivar project_id: Project the event belongs to, whose subscribers receive it.
+    :ivar book_id: Book the event belongs to, whose subscribers receive it.
     """
 
-    project_id: ProjectId
+    book_id: BookId
 
 
 @frozen(kw_only=True)
@@ -38,41 +37,6 @@ class JobChanged(DomainEvent):
 
 
 @frozen(kw_only=True)
-class SourceImported(DomainEvent):
-    """A source and its scans were committed to the project.
-
-    :ivar source: The imported source.
-    """
-
-    source: Source
-
-
-@frozen(kw_only=True)
-class ScanReady(DomainEvent):
-    """The derived files of a scan can be shown.
-
-    :ivar scan: The scan whose renditions are ready.
-    """
-
-    scan: Scan
-
-
-@frozen(kw_only=True)
-class PagesChanged(DomainEvent):
-    """Pages of the book were added, removed or moved, or their labels or kinds changed.
-
-    A use case that changes many pages publishes one event naming all of them, so the event stream does not grow with
-    the size of a group.
-
-    :ivar page_ids: Pages the change touched, in book order where the use case knows it.
-    :ivar change: What was done to them.
-    """
-
-    page_ids: Sequence[PageId]
-    change: PageChange
-
-
-@frozen(kw_only=True)
 class PageVersionReady(DomainEvent):
     """A page version has its result.
 
@@ -80,21 +44,6 @@ class PageVersionReady(DomainEvent):
     """
 
     version: PageVersion
-
-
-@frozen(kw_only=True)
-class PageStageChanged(DomainEvent):
-    """The current version or the state of a stage of a page changed.
-
-    :ivar stage: The record of the stage in its new state.
-    """
-
-    stage: PageStage
-
-
-@frozen(kw_only=True)
-class ProjectChanged(DomainEvent):
-    """The description of the book changed."""
 
 
 @frozen(kw_only=True)

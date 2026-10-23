@@ -53,8 +53,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Job, Page, PaginationSection, Scan, Source
     from bookreviver.domain.enums import Rendition, SourceKind
-    from bookreviver.domain.events import DomainEvent
-    from bookreviver.domain.ids import JobId, ProjectId, SourceId
+    from bookreviver.domain.ids import BookId, JobId, SourceId
     from bookreviver.domain.values import JobEnd, SourceAnalysis, UploadedSource
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.processing import Processor
@@ -100,13 +99,13 @@ class StoredBook(NamedTuple):
         return [labels[page.id] for page in self.pages]
 
 
-async def stored_book(uow: UnitOfWork, project_id: ProjectId) -> StoredBook:
-    """Read the sources, scans, pages and pagination sections of a project as committed.
+async def stored_book(uow: UnitOfWork, book_id: BookId) -> StoredBook:
+    """Read the sources, scans, pages and pagination sections of a book as committed.
 
     :param uow: Unit of work to read through.
     :type uow: UnitOfWork
-    :param project_id: Project owning the rows.
-    :type project_id: ProjectId
+    :param book_id: Book owning the rows.
+    :type book_id: BookId
     :returns: The rows, read in one transaction.
     :rtype: StoredBook
     """
@@ -126,7 +125,7 @@ async def stored_book(uow: UnitOfWork, project_id: ProjectId) -> StoredBook:
             sections=list(repos.pagination_sections.list_all()),
         )
 
-    return await uow.read_book(project_id, work)
+    return await uow.read_book(book_id, work)
 
 
 def pdf_upload(
@@ -209,29 +208,6 @@ class TickingClock(FixedClock):
         moment = self.moment
         self.moment += TICK
         return moment
-
-
-class HookedEventBus(RecordingEventBus):
-    """The recording event bus, with a hook run after each event is delivered.
-
-    :ivar after_publish: Coroutine function run with each event once it was delivered, or None.
-    """
-
-    def __init__(self) -> None:
-        """Start with no hook."""
-        super().__init__()
-        self.after_publish: Callable[[DomainEvent], Awaitable[None]] | None = None
-
-    @override
-    async def publish(self, event: DomainEvent) -> None:
-        """Deliver the event as the recording bus does, then run the hook.
-
-        :param event: Event to deliver, carrying the project it belongs to.
-        :type event: DomainEvent
-        """
-        await super().publish(event)
-        if self.after_publish is not None:
-            await self.after_publish(event)
 
 
 class WatchedInspector(SourceInspector):
@@ -406,11 +382,11 @@ class CrashingSourceStore(LocalSourceStore):
     fail_on_promote: Exception | None = None
 
     @override
-    async def promote(self, project_id: ProjectId, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
+    async def promote(self, book_id: BookId, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
         """Promote the files, unless the test made this promotion crash.
 
-        :param project_id: Project owning the upload and the source.
-        :type project_id: ProjectId
+        :param book_id: Book owning the upload and the source.
+        :type book_id: BookId
         :param job_id: Import job whose upload holds the files.
         :type job_id: JobId
         :param source_id: Source the files become.
@@ -426,7 +402,7 @@ class CrashingSourceStore(LocalSourceStore):
         if (failure := self.fail_on_promote) is not None:
             self.fail_on_promote = None
             raise failure
-        await super().promote(project_id, job_id, source_id, names=names)
+        await super().promote(book_id, job_id, source_id, names=names)
 
 
 @frozen(kw_only=True)
@@ -437,7 +413,7 @@ class ImportRig:
     :ivar new_uow: Function opening a unit of work over ``database``, as a new request or job would get.
     :ivar fakes: The recording event bus, the clock and the board, which the job tests share. The board runs a job
                  through the import service of the rig when a test calls ``run_queued``.
-    :ivar events: The event bus of ``fakes``, seen as the hooked bus it is.
+    :ivar events: The event bus of ``fakes``.
     :ivar sources: Local source store, whose promotion can crash.
     :ivar assets: Local asset store.
     :ivar inspector: Real inspector, watched.
@@ -450,7 +426,7 @@ class ImportRig:
     database: SqlDatabase
     new_uow: UnitOfWorkFactory
     fakes: JobFakes
-    events: HookedEventBus
+    events: RecordingEventBus
     sources: CrashingSourceStore
     assets: LocalAssetStore
     inspector: WatchedInspector
@@ -490,7 +466,7 @@ class ImportRig:
             thumbnail_long_side_px=imaging.thumbnail_long_side_px,
             jpeg_quality=imaging.jpeg_quality,
         )
-        events = HookedEventBus()
+        events = RecordingEventBus()
         # The board needs the service of the rig to run a job, and the rig needs the board, so the rig is found when a
         # job runs
         built: list[ImportRig] = []
@@ -590,7 +566,6 @@ class ImportRig:
                 inspector=self.inspector, rasterizer=self.rasterizer, tiler=self.tiler, runner=self.runner()
             ),
             runtime=ImportRuntime(
-                publisher=self.fakes.events,
                 clock=self.fakes.clock,
                 order_keys=FractionalOrderKeys(),
                 limits=ImportLimits(max_files=max_files, max_bytes=max_bytes, parallel_scans=parallel_scans),

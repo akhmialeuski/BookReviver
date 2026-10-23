@@ -16,17 +16,17 @@ from PIL import Image
 
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.enums import PageKind, PageOrigin, Rendition, VersionState
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import Renditions
 from bookreviver.services.base_versions import BaseVersions
-from tests.helpers.builders import EPOCH, make_page, make_project, make_scan, make_source, new_account_id
-from tests.helpers.seeding import commit_project, store_project
+from tests.helpers.builders import EPOCH, make_page, make_record, make_scan, make_source, new_account_id
+from tests.helpers.seeding import commit_record, store_book
 
 if TYPE_CHECKING:
     import httpx
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Actor, Project, Scan
+    from bookreviver.domain.entities import Actor, BookRecord, Scan
     from bookreviver.domain.entities import Page as BookPage
     from bookreviver.ports.storage import AssetStore
     from tests.helpers.board_idle import JobsIdle
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
-PROJECTS_PATH: str = '/api/v1/projects'
+BOOKS_PATH: str = '/api/v1/books'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
 DETAIL_FIELD: str = 'detail'
@@ -45,21 +45,21 @@ SCAN_SIZE_PX: tuple[int, int] = (120, 160)
 class Book(NamedTuple):
     """A book of the signed-in account: one page cut from a scan, a placeholder, and a second scan no page shows.
 
-    :ivar project: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar shown: The page the import made of the first scan.
     :ivar placeholder: The placeholder after it.
     :ivar spare: A cut scan of another source that no page shows.
     """
 
-    project: Project
+    book_record: BookRecord
     shown: BookPage
     placeholder: BookPage
     spare: Scan
 
     @property
     def pages_path(self) -> str:
-        """The path of the project's pages."""
-        return f'{PROJECTS_PATH}/{self.project.id}/pages'
+        """The path of the book's pages."""
+        return f'{BOOKS_PATH}/{self.book_record.id}/pages'
 
     @property
     def batch_path(self) -> str:
@@ -91,7 +91,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project()
+    book_record = make_record()
     first, second = make_source(name='a.pdf'), make_source(name='b.jpg')
     scans = [
         evolve(
@@ -105,9 +105,9 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
     shown = make_page(order_key='a0', scan=scans[0])
     placeholder = evolve(make_page(order_key='a1'), kind=PageKind.COVER, notes='Missing')
     base = BaseVersions.split_none(page=shown, scan=scans[0], state=VersionState.READY, moment=EPOCH)
-    await store_project(
+    await store_book(
         fx_uow(),
-        project,
+        book_record,
         shown,
         placeholder,
         owner=fx_actor.account_id,
@@ -115,11 +115,11 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
         scans=scans,
         versions=[base],
     )
-    keys = ProjectKeys(project.id)
+    keys = BookKeys(book_record.id)
     for scan in scans:
         async with fx_asset_store.writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
             path.write_bytes(_jpeg())
-    return Book(project=project, shown=shown, placeholder=placeholder, spare=scans[1])
+    return Book(book_record=book_record, shown=shown, placeholder=placeholder, spare=scans[1])
 
 
 async def _page(client: httpx.AsyncClient, book: Book, page_id: object) -> PageSchema:
@@ -138,7 +138,7 @@ async def _page(client: httpx.AsyncClient, book: Book, page_id: object) -> PageS
 
 
 class TestCreatePage:
-    """Tests for POST /projects/{project_id}/pages."""
+    """Tests for POST /books/{book_id}/pages."""
 
     async def test_adds_a_placeholder_that_has_no_images_and_points_to_it(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -186,7 +186,7 @@ class TestCreatePage:
         body = {'origin': 'blank', 'kind': 'endpaper', 'after_page_id': str(fx_book.shown.id)}
 
         response = await fx_client.post(fx_book.pages_path, json=body)
-        await fx_idle(fx_book.project.id)
+        await fx_idle(fx_book.book_record.id)
 
         created = PageSchema.model_validate_json(response.content)
         leaf = await _page(fx_client, fx_book, created.id)
@@ -213,11 +213,11 @@ class TestCreatePage:
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        project = make_project()
-        await store_project(fx_uow(), project, owner=fx_actor.account_id)
+        book_record = make_record()
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
 
         response = await fx_client.post(
-            f'{PROJECTS_PATH}/{project.id}/pages', json={'origin': 'blank', 'kind': 'blank'}
+            f'{BOOKS_PATH}/{book_record.id}/pages', json={'origin': 'blank', 'kind': 'blank'}
         )
 
         expect(response.status_code == status.HTTP_409_CONFLICT)
@@ -239,7 +239,7 @@ class TestCreatePage:
         body = {'origin': 'blank', 'kind': 'blank', 'width_px': 50, 'height_px': 70, 'dpi': 200}
 
         response = await fx_client.post(fx_book.pages_path, json=body)
-        await fx_idle(fx_book.project.id)
+        await fx_idle(fx_book.book_record.id)
 
         leaf = await _page(fx_client, fx_book, PageSchema.model_validate_json(response.content).id)
         assert leaf.images is not None
@@ -287,10 +287,10 @@ class TestCreatePage:
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
-    async def test_unknown_anchor_and_project_of_another_account_are_not_found(
+    async def test_unknown_anchor_and_book_of_another_account_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify an anchor that is no page of the project, and a project of another account, answer 404.
+        """Verify an anchor that is no page of the book, and a book of another account, answer 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -301,14 +301,14 @@ class TestCreatePage:
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         """
-        stranger = make_project()
-        await commit_project(fx_database, fx_uow(), stranger, owner=new_account_id())
+        stranger = make_record()
+        await commit_record(fx_database, fx_uow(), stranger, owner=new_account_id())
 
         unknown = await fx_client.post(
             fx_book.pages_path, json={'origin': 'placeholder', 'kind': 'text', 'after_page_id': str(uuid4())}
         )
         foreign = await fx_client.post(
-            f'{PROJECTS_PATH}/{stranger.id}/pages', json={'origin': 'placeholder', 'kind': 'text'}
+            f'{BOOKS_PATH}/{stranger.id}/pages', json={'origin': 'placeholder', 'kind': 'text'}
         )
 
         expect(unknown.status_code == status.HTTP_404_NOT_FOUND)
@@ -317,7 +317,7 @@ class TestCreatePage:
 
 
 class TestCreatePages:
-    """Tests for POST /projects/{project_id}/pages/batch."""
+    """Tests for POST /books/{book_id}/pages/batch."""
 
     async def test_adds_the_list_in_order_and_answers_every_page(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -407,7 +407,7 @@ class TestCreatePages:
 
 
 class TestDeletePage:
-    """Tests for DELETE /projects/{project_id}/pages/{page_id}."""
+    """Tests for DELETE /books/{book_id}/pages/{page_id}."""
 
     async def test_deletes_the_page_and_leaves_the_scan_to_be_bound_again(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_uow: UnitOfWorkFactory
@@ -427,7 +427,7 @@ class TestDeletePage:
         response = await fx_client.delete(f'{fx_book.pages_path}/{fx_book.shown.id}')
 
         again = await fx_client.get(f'{fx_book.pages_path}/{fx_book.shown.id}')
-        kept = await fx_uow().read_book(fx_book.project.id, lambda repos: repos.scans.list_by_ids([scan_id]))
+        kept = await fx_uow().read_book(fx_book.book_record.id, lambda repos: repos.scans.list_by_ids([scan_id]))
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
         expect(again.status_code == status.HTTP_404_NOT_FOUND)
         expect([scan.id for scan in kept] == [scan_id])
@@ -447,7 +447,7 @@ class TestDeletePage:
 
 
 class TestAttachScan:
-    """Tests for PUT /projects/{project_id}/pages/{page_id}/scan."""
+    """Tests for PUT /books/{book_id}/pages/{page_id}/scan."""
 
     async def test_binds_the_scan_and_the_job_writes_the_images_of_the_page(
         self, fx_client: httpx.AsyncClient, fx_idle: JobsIdle, fx_book: Book
@@ -464,7 +464,7 @@ class TestAttachScan:
         response = await fx_client.put(
             f'{fx_book.pages_path}/{fx_book.placeholder.id}/scan', json={'scan_id': str(fx_book.spare.id)}
         )
-        await fx_idle(fx_book.project.id)
+        await fx_idle(fx_book.book_record.id)
 
         bound = PageSchema.model_validate_json(response.content)
         ready = await _page(fx_client, fx_book, fx_book.placeholder.id)
@@ -496,7 +496,7 @@ class TestAttachScan:
 
         refused = await fx_client.put(path, json=body)
         taken = await fx_client.put(path, json={**body, 'take_over': True})
-        await fx_idle(fx_book.project.id)
+        await fx_idle(fx_book.book_record.id)
 
         gone = await fx_client.get(f'{fx_book.pages_path}/{fx_book.shown.id}')
         expect(refused.status_code == status.HTTP_409_CONFLICT)
@@ -546,10 +546,10 @@ class TestAttachScan:
         expect(response.json()[DETAIL_FIELD] == 'Only a missing page can take a scan.')
         assert_expectations()
 
-    async def test_scan_of_another_project_and_unknown_scan_are_not_found(
+    async def test_scan_of_another_book_and_unknown_scan_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify a scan is bound only through the project that holds it.
+        """Verify a scan is bound only through the book that holds it.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -560,10 +560,10 @@ class TestAttachScan:
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        other = make_project()
+        other = make_record()
         source = make_source()
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
-        await store_project(fx_uow(), other, owner=fx_actor.account_id, sources=[source], scans=[scan])
+        await store_book(fx_uow(), other, owner=fx_actor.account_id, sources=[source], scans=[scan])
         path = f'{fx_book.pages_path}/{fx_book.placeholder.id}/scan'
 
         foreign = await fx_client.put(path, json={'scan_id': str(scan.id)})

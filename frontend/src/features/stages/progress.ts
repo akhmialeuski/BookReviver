@@ -1,4 +1,4 @@
-import type { ProjectSchema, Stage, StageStatus } from '@/api';
+import type { BookSchema, Stage, StageStatus } from '@/api';
 import { STAGES } from '@/features/stages/stages';
 
 /**
@@ -20,7 +20,7 @@ export interface StageSegment {
  * @param progress The status of each stage, as the book carries it.
  * @returns One segment per stage, where a stage the book has no entry for counts as not available.
  */
-export function progressSegments(progress: ProjectSchema['progress']): StageSegment[] {
+export function progressSegments(progress: BookSchema['progress']): StageSegment[] {
   const statuses = new Map(progress.map((entry) => [entry.stage, entry.status]));
   return STAGES.map(({ stage }) => ({ stage, status: statuses.get(stage) ?? 'unavailable' }));
 }
@@ -28,16 +28,16 @@ export function progressSegments(progress: ProjectSchema['progress']): StageSegm
 /**
  * Give the stage a book goes to next with its status, which is the reason it is next.
  *
- * @param project The book.
+ * @param book The book.
  * @returns The next stage, or null when everything that can be done is done.
  */
 export function nextStageOf(
-  project: Pick<ProjectSchema, 'progress' | 'next_stage'>,
+  book: Pick<BookSchema, 'progress' | 'next_stage'>,
 ): StageSegment | null {
-  const { next_stage: stage } = project;
+  const { next_stage: stage } = book;
   if (stage === null) {
     return null;
   }
-  const segment = progressSegments(project.progress).find((entry) => entry.stage === stage);
+  const segment = progressSegments(book.progress).find((entry) => entry.stage === stage);
   return segment ?? { stage, status: 'unavailable' };
 }

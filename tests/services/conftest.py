@@ -8,7 +8,6 @@ from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.values import JobEnd
 from bookreviver.plugins.split_none import SplitNone
-from bookreviver.services.library import Library
 from bookreviver.services.pagination import PaginationService
 from tests.helpers.builders import EPOCH
 from tests.helpers.clock import FixedClock
@@ -199,17 +198,15 @@ def fx_service(
 
 
 @pytest.fixture
-def fx_pagination_over(fx_events: RecordingEventBus, fx_clock: FixedClock) -> Callable[[UnitOfWork], PaginationService]:
+def fx_pagination_over(fx_clock: FixedClock) -> Callable[[UnitOfWork], PaginationService]:
     """Return a function building the pagination service over a unit of work the test made.
 
-    :param fx_events: Recording event bus the service publishes to.
-    :type fx_events: RecordingEventBus
     :param fx_clock: Clock stopped at the epoch.
     :type fx_clock: FixedClock
     :returns: Function building a service over the given unit of work.
     :rtype: Callable[[UnitOfWork], PaginationService]
     """
-    return lambda uow: PaginationService(uow=uow, library=Library(uow=uow), publisher=fx_events, clock=fx_clock)
+    return lambda uow: PaginationService(uow=uow, clock=fx_clock)
 
 
 @pytest.fixture

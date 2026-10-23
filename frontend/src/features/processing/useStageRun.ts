@@ -88,10 +88,10 @@ export function useStageRun(
   current: StripItem | undefined,
   selected: ReadonlySet<string>,
 ): StageRun {
-  const { projectId, stage, recipe } = processing;
-  const run = useRunStage(projectId);
-  const activeJobs = useActiveJobs(projectId);
-  const runInFlight = useRunInFlight(projectId);
+  const { bookId, stage, recipe } = processing;
+  const run = useRunStage(bookId);
+  const activeJobs = useActiveJobs(bookId);
+  const runInFlight = useRunInFlight(bookId);
   const impact = useRunImpact();
   const [confirming, setConfirming] = useState<StageRunBody | null>(null);
   const [overwriting, setOverwriting] = useState<{
@@ -102,8 +102,7 @@ export function useStageRun(
 
   const choices = scopeChoices(items, current?.page.id, selected);
 
-  const send = (body: StageRunBody): void =>
-    run.mutate({ path: { project_id: projectId, stage }, body });
+  const send = (body: StageRunBody): void => run.mutate({ path: { book_id: bookId, stage }, body });
 
   const bodyOf = ({
     scope,
@@ -148,7 +147,7 @@ export function useStageRun(
     }
     // A mode that takes work away asks first, with the number of pages it takes it from, unless it takes none
     impact.mutate(
-      { path: { project_id: projectId, stage }, body },
+      { path: { book_id: bookId, stage }, body },
       {
         onSuccess: (counted) => {
           if (counted.affected === 0) {

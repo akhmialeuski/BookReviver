@@ -20,7 +20,7 @@ const sdk = vi.hoisted(() => ({ save: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  putRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdPut: sdk.save,
+  putRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdPut: sdk.save,
 }));
 
 const A_REASON = 'B reads what A leaves, so it usually comes after A.';

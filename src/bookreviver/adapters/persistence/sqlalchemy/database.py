@@ -108,7 +108,7 @@ if TYPE_CHECKING:
     from sqlalchemy.pool import ConnectionPoolEntry
 
     from bookreviver.domain.enums import BlockKind
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.tracing import StartedSpan, Tracer
 
 SQLITE_DIALECT: str = 'sqlite'
@@ -406,7 +406,7 @@ class SqlDatabase:
             return work(session)
 
     async def write[T](
-        self, work: Callable[[Session], T], *, kind: BlockKind, book: ProjectId | None, wait_seconds: float
+        self, work: Callable[[Session], T], *, kind: BlockKind, book: BookId | None, wait_seconds: float
     ) -> T:
         """Run ``work`` in a worker thread on a session of a transaction that writes, and commit it when it returns.
 
@@ -419,8 +419,8 @@ class SqlDatabase:
         :type work: Callable[[Session], T]
         :param kind: Kind of the block, which its span carries.
         :type kind: BlockKind
-        :param book: Project the block holds, or None for a block outside the content of a book.
-        :type book: ProjectId | None
+        :param book: Book the block holds, or None for a block outside the content of a book.
+        :type book: BookId | None
         :param wait_seconds: How long the write waits for the queue before it gives up.
         :type wait_seconds: float
         :returns: What the work returns.

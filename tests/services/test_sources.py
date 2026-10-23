@@ -11,15 +11,14 @@ from bookreviver.adapters.storage import LocalSourceStore
 from bookreviver.domain.enums import JobKind, RejectionReason, Rendition, SourceStatus
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import SourceId
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import SliceRequest
-from bookreviver.services.library import Library
 from bookreviver.services.sources import SourceService
 from tests.helpers.books import SCANS_PER_SOURCE, commit_book, on_disk
-from tests.helpers.builders import make_job, make_project, make_source
+from tests.helpers.builders import make_job, make_record, make_source, open_for
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.scripted_runner import ScriptedRunner
-from tests.helpers.seeding import store_project
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -27,8 +26,8 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.storage import LocalAssetStore
-    from bookreviver.domain.entities import Actor, Project, Source
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.entities import Actor, BookRecord, Source
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.storage import AssetStore, SourceStore
     from tests.helpers.books import Book
@@ -58,11 +57,11 @@ class SourceStoreFailingOnce(LocalSourceStore):
         self._failed = False
 
     @override
-    async def delete_source(self, project_id: ProjectId, source_id: SourceId) -> None:
+    async def delete_source(self, book_id: BookId, source_id: SourceId) -> None:
         """Fail on the first call, as a storage outage would, and remove the source's files on the later ones.
 
-        :param project_id: Project owning the source.
-        :type project_id: ProjectId
+        :param book_id: Book owning the source.
+        :type book_id: BookId
         :param source_id: Source whose files are removed.
         :type source_id: SourceId
         :raises StoreFailedError: On the first call, with nothing removed.
@@ -70,7 +69,7 @@ class SourceStoreFailingOnce(LocalSourceStore):
         if not self._failed:
             self._failed = True
             raise StoreFailedError
-        await super().delete_source(project_id, source_id)
+        await super().delete_source(book_id, source_id)
 
 
 @pytest.fixture
@@ -101,7 +100,7 @@ def _service(uow: UnitOfWork, board: FakeJobBoard, sources: SourceStore, assets:
     :returns: The service.
     :rtype: SourceService
     """
-    return SourceService(uow=uow, library=Library(uow=uow), board=board, sources=sources, assets=assets)
+    return SourceService(uow=uow, board=board, sources=sources, assets=assets)
 
 
 @pytest.fixture
@@ -148,13 +147,13 @@ def fx_flaky_service(
     return lambda: _service(fx_uow(), fx_import_board, sources, fx_asset_store)
 
 
-async def _record_unimported(uow: UnitOfWork, project_id: ProjectId) -> tuple[Source, Source]:
-    """Record a rejected and a skipped file of a project, after the sources of a book made by ``commit_book``.
+async def _record_unimported(uow: UnitOfWork, book_id: BookId) -> tuple[Source, Source]:
+    """Record a rejected and a skipped file of a book, after the sources made by ``commit_book``.
 
     :param uow: Unit of work to commit through.
     :type uow: UnitOfWork
-    :param project_id: Project the files were uploaded to.
-    :type project_id: ProjectId
+    :param book_id: Book the files were uploaded to.
+    :type book_id: BookId
     :returns: The rejected file and the skipped file, in the order they were recorded.
     :rtype: tuple[Source, Source]
     """
@@ -173,24 +172,24 @@ async def _record_unimported(uow: UnitOfWork, project_id: ProjectId) -> tuple[So
         file_type=None,
     )
 
-    def record(repos: BookRepositories, _project: Project) -> None:
-        """Add the two files to the project.
+    def record(repos: BookRepositories, _book_record: BookRecord) -> None:
+        """Add the two files to the book.
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _project: The project as the change finds it, which the work does not need.
-        :type _project: Project
+        :param _book_record: The record of the book as the change finds it, which the work does not need.
+        :type _book_record: BookRecord
         """
         repos.sources.add(rejected)
         repos.sources.add(skipped)
 
-    await uow.change_book(project_id, record)
+    await uow.change_book(book_id, record)
     return rejected, skipped
 
 
 @pytest.fixture
 async def fx_unimported(fx_uow: UnitOfWorkFactory, fx_book: Book) -> tuple[Source, Source]:
-    """Record a rejected and a skipped file in the project of the book of the acting account.
+    """Record a rejected and a skipped file in the book of the acting account.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
@@ -199,7 +198,7 @@ async def fx_unimported(fx_uow: UnitOfWorkFactory, fx_book: Book) -> tuple[Sourc
     :returns: The rejected file and the skipped file.
     :rtype: tuple[Source, Source]
     """
-    return await _record_unimported(fx_uow(), fx_book.project.id)
+    return await _record_unimported(fx_uow(), fx_book.book_record.id)
 
 
 @pytest.fixture
@@ -266,8 +265,8 @@ class TestList:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        everything = await fx_service().list(fx_actor, fx_book.project.id, SliceRequest())
-        window = await fx_service().list(fx_actor, fx_book.project.id, SliceRequest(offset=1, limit=1))
+        everything = await fx_service().list(open_for(fx_actor, fx_book.book_record.id), SliceRequest())
+        window = await fx_service().list(open_for(fx_actor, fx_book.book_record.id), SliceRequest(offset=1, limit=1))
 
         expect(everything.items == [fx_book.first, fx_book.second])
         expect((window.items, window.total) == ([fx_book.second], 2))
@@ -286,47 +285,36 @@ class TestList:
         :type fx_service: Callable[[], SourceService]
         :param fx_book: Book of the acting account.
         :type fx_book: Book
-        :param fx_unimported: The rejected file and the skipped file recorded in the project of the book.
+        :param fx_unimported: The rejected file and the skipped file recorded in the book.
         :type fx_unimported: tuple[Source, Source]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
         rejected, skipped = fx_unimported
 
-        imported = await fx_service().list(fx_actor, fx_book.project.id, SliceRequest())
+        imported = await fx_service().list(open_for(fx_actor, fx_book.book_record.id), SliceRequest())
         report = await fx_service().list(
-            fx_actor, fx_book.project.id, SliceRequest(), statuses=(SourceStatus.REJECTED, SourceStatus.SKIPPED)
+            open_for(fx_actor, fx_book.book_record.id),
+            SliceRequest(),
+            statuses=(SourceStatus.REJECTED, SourceStatus.SKIPPED),
         )
-        everything = await fx_service().list(fx_actor, fx_book.project.id, SliceRequest(), statuses=tuple(SourceStatus))
+        everything = await fx_service().list(
+            open_for(fx_actor, fx_book.book_record.id), SliceRequest(), statuses=tuple(SourceStatus)
+        )
 
         expect(imported.items == [fx_book.first, fx_book.second])
         expect((report.items, report.total) == ([rejected, skipped], 2))
         expect(everything.items == [fx_book.first, fx_book.second, rejected, skipped])
         assert_expectations()
 
-    async def test_another_accounts_project_is_not_found(
-        self, fx_service: Callable[[], SourceService], fx_strangers_book: Book, fx_actor: Actor
-    ) -> None:
-        """Verify the sources of another account's project cannot be listed.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], SourceService]
-        :param fx_strangers_book: Book of another account.
-        :type fx_strangers_book: Book
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        """
-        with pytest.raises(NotFoundError):
-            await fx_service().list(fx_actor, fx_strangers_book.project.id, SliceRequest())
-
 
 class TestGet:
     """Tests for SourceService.get()."""
 
-    async def test_returns_the_source_of_the_project(
+    async def test_returns_the_source_of_the_book(
         self, fx_service: Callable[[], SourceService], fx_book: Book, fx_actor: Actor
     ) -> None:
-        """Verify a source is read by its identifier through its project.
+        """Verify a source is read by its identifier through its book.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
@@ -335,12 +323,12 @@ class TestGet:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        assert await fx_service().get(fx_actor, fx_book.project.id, fx_book.second.id) == fx_book.second
+        assert await fx_service().get(open_for(fx_actor, fx_book.book_record.id), fx_book.second.id) == fx_book.second
 
-    async def test_source_of_another_project_of_the_actor_is_not_found(
+    async def test_source_of_another_book_of_the_actor_is_not_found(
         self, fx_service: Callable[[], SourceService], fx_uow: UnitOfWorkFactory, fx_book: Book, fx_actor: Actor
     ) -> None:
-        """Verify a source is found only through the project holding it, even for an owner of both projects.
+        """Verify a source is found only through the book holding it, even for an owner of both books.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
@@ -351,40 +339,35 @@ class TestGet:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        other = make_project()
-        await store_project(fx_uow(), other, owner=fx_actor.account_id)
+        other = make_record()
+        await store_book(fx_uow(), other, owner=fx_actor.account_id)
 
         with pytest.raises(NotFoundError):
-            await fx_service().get(fx_actor, other.id, fx_book.first.id)
+            await fx_service().get(open_for(fx_actor, other.id), fx_book.first.id)
 
-    async def test_missing_source_and_a_strangers_source_are_not_found(
+    async def test_missing_source_and_a_source_of_another_book_are_not_found(
         self, fx_service: Callable[[], SourceService], fx_book: Book, fx_strangers_book: Book, fx_actor: Actor
     ) -> None:
-        """Verify an identifier no source has and a source of another account's project answer alike.
+        """Verify an identifier no source has and a source of another book answer alike.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
         :param fx_book: Book of the acting account.
         :type fx_book: Book
-        :param fx_strangers_book: Book of another account.
+        :param fx_strangers_book: Another book, whose source the acting account's book does not have.
         :type fx_strangers_book: Book
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        attempts = [
-            (fx_book.project.id, SourceId(uuid4())),
-            (fx_strangers_book.project.id, fx_strangers_book.first.id),
-        ]
-
-        for project_id, source_id in attempts:
+        for source_id in (SourceId(uuid4()), fx_strangers_book.first.id):
             with pytest.raises(NotFoundError):
-                await fx_service().get(fx_actor, project_id, source_id)
+                await fx_service().get(open_for(fx_actor, fx_book.book_record.id), source_id)
 
 
 class TestScans:
     """Tests for SourceService.scans()."""
 
-    async def test_lists_the_scans_of_the_project_source_by_source(
+    async def test_lists_the_scans_of_the_book_source_by_source(
         self, fx_service: Callable[[], SourceService], fx_book: Book, fx_actor: Actor
     ) -> None:
         """Verify the scans of every source come in import order and by number, with the whole count in the total.
@@ -396,7 +379,7 @@ class TestScans:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        scans = await fx_service().scans(fx_actor, fx_book.project.id, SliceRequest())
+        scans = await fx_service().scans(open_for(fx_actor, fx_book.book_record.id), SliceRequest())
 
         expect(scans.items == fx_book.scans)
         expect(scans.total == len(fx_book.scans))
@@ -415,17 +398,17 @@ class TestScans:
         :type fx_actor: Actor
         """
         window = await fx_service().scans(
-            fx_actor, fx_book.project.id, SliceRequest(offset=1, limit=1), source_id=fx_book.second.id
+            open_for(fx_actor, fx_book.book_record.id), SliceRequest(offset=1, limit=1), source_id=fx_book.second.id
         )
 
         expect(window.items == [fx_book.scans[SCANS_PER_SOURCE + 1]])
         expect(window.total == SCANS_PER_SOURCE)
         assert_expectations()
 
-    async def test_source_of_another_project_is_not_found(
+    async def test_source_of_another_book_is_not_found(
         self, fx_service: Callable[[], SourceService], fx_uow: UnitOfWorkFactory, fx_book: Book, fx_actor: Actor
     ) -> None:
-        """Verify the scans of a source are listed only through the project holding it.
+        """Verify the scans of a source are listed only through the book holding it.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
@@ -436,26 +419,11 @@ class TestScans:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        other = make_project()
-        await store_project(fx_uow(), other, owner=fx_actor.account_id)
+        other = make_record()
+        await store_book(fx_uow(), other, owner=fx_actor.account_id)
 
         with pytest.raises(NotFoundError):
-            await fx_service().scans(fx_actor, other.id, SliceRequest(), source_id=fx_book.first.id)
-
-    async def test_another_accounts_project_is_not_found(
-        self, fx_service: Callable[[], SourceService], fx_strangers_book: Book, fx_actor: Actor
-    ) -> None:
-        """Verify the scans of another account's project cannot be listed.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], SourceService]
-        :param fx_strangers_book: Book of another account.
-        :type fx_strangers_book: Book
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        """
-        with pytest.raises(NotFoundError):
-            await fx_service().scans(fx_actor, fx_strangers_book.project.id, SliceRequest())
+            await fx_service().scans(open_for(fx_actor, other.id), SliceRequest(), source_id=fx_book.first.id)
 
 
 class TestDelete:
@@ -482,15 +450,15 @@ class TestDelete:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        await fx_service().delete(fx_actor, fx_book.project.id, fx_book.first.id)
+        await fx_service().delete(open_for(fx_actor, fx_book.book_record.id), fx_book.first.id)
 
         uow = fx_uow()
-        remaining = await fx_service().list(fx_actor, fx_book.project.id, SliceRequest())
-        scans = await fx_service().scans(fx_actor, fx_book.project.id, SliceRequest())
-        image = ProjectKeys(fx_book.project.id).version_rendition(fx_book.version, Rendition.FULL_JPEG)
-        page = await uow.read_book(fx_book.project.id, lambda repos: repos.pages.get(fx_book.page.id))
+        remaining = await fx_service().list(open_for(fx_actor, fx_book.book_record.id), SliceRequest())
+        scans = await fx_service().scans(open_for(fx_actor, fx_book.book_record.id), SliceRequest())
+        image = BookKeys(fx_book.book_record.id).version_rendition(fx_book.version, Rendition.FULL_JPEG)
+        page = await uow.read_book(fx_book.book_record.id, lambda repos: repos.pages.get(fx_book.page.id))
         versions = await uow.read_book(
-            fx_book.project.id, lambda repos: repos.page_versions.list_for_page(fx_book.page.id)
+            fx_book.book_record.id, lambda repos: repos.page_versions.list_for_page(fx_book.page.id)
         )
         expect(remaining.items == [fx_book.second])
         expect(scans.items == fx_book.scans[SCANS_PER_SOURCE:])
@@ -509,7 +477,7 @@ class TestDelete:
         fx_storage_root: Path,
         fx_actor: Actor,
     ) -> None:
-        """Verify a source cannot be deleted while the project imports, whose job may be writing its scans.
+        """Verify a source cannot be deleted while the book imports, whose job may be writing its scans.
 
         A queued job is active, as a running one is.
 
@@ -524,19 +492,19 @@ class TestDelete:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        fx_import_board.put(make_job(project_id=fx_book.project.id, kind=JobKind.IMPORT_SOURCE))
+        fx_import_board.put(make_job(book_id=fx_book.book_record.id, kind=JobKind.IMPORT_SOURCE))
 
         with pytest.raises(ConflictError):
-            await fx_service().delete(fx_actor, fx_book.project.id, fx_book.first.id)
+            await fx_service().delete(open_for(fx_actor, fx_book.book_record.id), fx_book.first.id)
 
-        expect(await fx_service().get(fx_actor, fx_book.project.id, fx_book.first.id) == fx_book.first)
+        expect(await fx_service().get(open_for(fx_actor, fx_book.book_record.id), fx_book.first.id) == fx_book.first)
         expect(on_disk(fx_storage_root, fx_book, fx_book.first) == (True, True))
         assert_expectations()
 
     async def test_finished_import_does_not_block_the_deletion(
         self, fx_service: Callable[[], SourceService], fx_import_board: FakeJobBoard, fx_book: Book, fx_actor: Actor
     ) -> None:
-        """Verify an import that has ended leaves the project free to delete the source, by hand.
+        """Verify an import that has ended leaves the book free to delete the source, by hand.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
@@ -547,13 +515,13 @@ class TestDelete:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        fx_import_board.put(make_job(project_id=fx_book.project.id, kind=JobKind.IMPORT_SOURCE))
+        fx_import_board.put(make_job(book_id=fx_book.book_record.id, kind=JobKind.IMPORT_SOURCE))
         await fx_import_board.run_queued()
 
-        await fx_service().delete(fx_actor, fx_book.project.id, fx_book.first.id)
+        await fx_service().delete(open_for(fx_actor, fx_book.book_record.id), fx_book.first.id)
 
         with pytest.raises(NotFoundError):
-            await fx_service().get(fx_actor, fx_book.project.id, fx_book.first.id)
+            await fx_service().get(open_for(fx_actor, fx_book.book_record.id), fx_book.first.id)
 
     async def test_failed_deletion_keeps_the_source_and_a_repeat_finishes_it(
         self, fx_flaky_service: Callable[[], SourceService], fx_book: Book, fx_storage_root: Path, fx_actor: Actor
@@ -570,34 +538,15 @@ class TestDelete:
         :type fx_actor: Actor
         """
         with pytest.raises(StoreFailedError):
-            await fx_flaky_service().delete(fx_actor, fx_book.project.id, fx_book.first.id)
-        kept = await fx_flaky_service().get(fx_actor, fx_book.project.id, fx_book.first.id)
-        await fx_flaky_service().delete(fx_actor, fx_book.project.id, fx_book.first.id)
+            await fx_flaky_service().delete(open_for(fx_actor, fx_book.book_record.id), fx_book.first.id)
+        kept = await fx_flaky_service().get(open_for(fx_actor, fx_book.book_record.id), fx_book.first.id)
+        await fx_flaky_service().delete(open_for(fx_actor, fx_book.book_record.id), fx_book.first.id)
 
         expect(kept == fx_book.first)
         expect(on_disk(fx_storage_root, fx_book, fx_book.first) == (False, False))
         with pytest.raises(NotFoundError):
-            await fx_flaky_service().get(fx_actor, fx_book.project.id, fx_book.first.id)
+            await fx_flaky_service().get(open_for(fx_actor, fx_book.book_record.id), fx_book.first.id)
         assert_expectations()
-
-    async def test_source_of_another_account_is_not_found_and_kept(
-        self, fx_service: Callable[[], SourceService], fx_strangers_book: Book, fx_storage_root: Path, fx_actor: Actor
-    ) -> None:
-        """Verify the actor cannot delete another account's source, whose files stay.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], SourceService]
-        :param fx_strangers_book: Book of another account.
-        :type fx_strangers_book: Book
-        :param fx_storage_root: Storage root both stores share.
-        :type fx_storage_root: Path
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        """
-        with pytest.raises(NotFoundError):
-            await fx_service().delete(fx_actor, fx_strangers_book.project.id, fx_strangers_book.first.id)
-
-        assert on_disk(fx_storage_root, fx_strangers_book, fx_strangers_book.first) == (True, True)
 
 
 class TestDeleteUnimported:
@@ -609,7 +558,7 @@ class TestDeleteUnimported:
     ) -> None:
         """Verify the report of an import is closed, and the sources of the book, their scans and files stay.
 
-        The rejected and the skipped file are recorded in the project by the ``fx_unimported`` fixture.
+        The rejected and the skipped file are recorded in the book by the ``fx_unimported`` fixture.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
@@ -620,10 +569,12 @@ class TestDeleteUnimported:
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        await fx_service().delete_unimported(fx_actor, fx_book.project.id)
+        await fx_service().delete_unimported(open_for(fx_actor, fx_book.book_record.id))
 
-        everything = await fx_service().list(fx_actor, fx_book.project.id, SliceRequest(), statuses=tuple(SourceStatus))
-        scans = await fx_service().scans(fx_actor, fx_book.project.id, SliceRequest())
+        everything = await fx_service().list(
+            open_for(fx_actor, fx_book.book_record.id), SliceRequest(), statuses=tuple(SourceStatus)
+        )
+        scans = await fx_service().scans(open_for(fx_actor, fx_book.book_record.id), SliceRequest())
         expect(everything.items == [fx_book.first, fx_book.second])
         expect(scans.items == fx_book.scans)
         expect(on_disk(fx_storage_root, fx_book, fx_book.first) == (True, True))
@@ -637,7 +588,7 @@ class TestDeleteUnimported:
         fx_unimported: tuple[Source, Source],
         fx_actor: Actor,
     ) -> None:
-        """Verify the report is not closed while the project imports, since the import is writing it.
+        """Verify the report is not closed while the book imports, since the import is writing it.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
@@ -645,43 +596,19 @@ class TestDeleteUnimported:
         :type fx_import_board: FakeJobBoard
         :param fx_book: Book of the acting account.
         :type fx_book: Book
-        :param fx_unimported: The rejected file and the skipped file recorded in the project of the book.
+        :param fx_unimported: The rejected file and the skipped file recorded in the book.
         :type fx_unimported: tuple[Source, Source]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        fx_import_board.put(make_job(project_id=fx_book.project.id, kind=JobKind.IMPORT_SOURCE))
+        fx_import_board.put(make_job(book_id=fx_book.book_record.id, kind=JobKind.IMPORT_SOURCE))
 
         with pytest.raises(ConflictError):
-            await fx_service().delete_unimported(fx_actor, fx_book.project.id)
+            await fx_service().delete_unimported(open_for(fx_actor, fx_book.book_record.id))
 
         report = await fx_service().list(
-            fx_actor, fx_book.project.id, SliceRequest(), statuses=(SourceStatus.REJECTED, SourceStatus.SKIPPED)
+            open_for(fx_actor, fx_book.book_record.id),
+            SliceRequest(),
+            statuses=(SourceStatus.REJECTED, SourceStatus.SKIPPED),
         )
         assert report.items == list(fx_unimported)
-
-    async def test_project_of_another_account_is_not_found_and_keeps_its_report(
-        self,
-        fx_service: Callable[[], SourceService],
-        fx_uow: UnitOfWorkFactory,
-        fx_strangers_book: Book,
-        fx_actor: Actor,
-    ) -> None:
-        """Verify the actor cannot close the report of another account's project, whose files stay.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], SourceService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_strangers_book: Book of another account.
-        :type fx_strangers_book: Book
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        """
-        recorded = await _record_unimported(fx_uow(), fx_strangers_book.project.id)
-
-        with pytest.raises(NotFoundError):
-            await fx_service().delete_unimported(fx_actor, fx_strangers_book.project.id)
-
-        kept = await fx_uow().read_book(fx_strangers_book.project.id, lambda repos: repos.sources.list_unimported())
-        assert list(kept) == list(recorded)

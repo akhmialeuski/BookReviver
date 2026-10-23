@@ -4,8 +4,8 @@ import { expect } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   uploadFolder,
   waitForIdleJobs,
@@ -59,7 +59,7 @@ test('the grid is off until chosen, then shown over the editor of every Geometry
     await openLibrary(page);
     await createBook(page, 'A book with a grid');
     await uploadFolder(page, folder, PAGES);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     await markPagesAsText(page);
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);
@@ -141,7 +141,7 @@ test('the grid is off until chosen, then shown over the editor of every Geometry
     await dragFrom(page, layer, await pairOf(layer, 'data-handle-top-left'), CORNER_DRAG);
     await expect(layer).not.toHaveAttribute('data-corner-top-left', `${corner.x},${corner.y}`);
     await expect(grid).toBeVisible();
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
   });
 
   await test.step('the button switches the grid off, and it stays off on another step and after a reload', async () => {

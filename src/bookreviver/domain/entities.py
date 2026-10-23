@@ -62,11 +62,11 @@ if TYPE_CHECKING:
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.ids import (
         AccountId,
+        BookId,
         ChangeBatchId,
         JobId,
         PageId,
         PaginationSectionId,
-        ProjectId,
         RecipeId,
         RecipeProfileId,
         ScanId,
@@ -109,23 +109,23 @@ class Actor:
 
 
 @frozen(kw_only=True)
-class Project:
+class BookRecord:
     """One book being digitised: its description and the settings of the work on it.
 
-    The project knows nothing of accounts, so a book moves between instances of the application as it is. The account
+    The record knows nothing of accounts, so a book moves between instances of the application as it is. The account
     that owns it is a :class:`LibraryEntry` of the library. The files the book was assembled from are its sources,
-    which the project does not name.
+    which the record does not name.
 
-    :ivar id: Identifier of the project.
+    :ivar id: Identifier of the book.
     :ivar details: Bibliographic description of the book.
-    :ivar image_policy: How the ``full`` images of the project's scans and page versions are stored.
-    :ivar created_at: When the project was created.
-    :ivar updated_at: When the project was last changed.
+    :ivar image_policy: How the ``full`` images of the book's scans and page versions are stored.
+    :ivar created_at: When the book was created.
+    :ivar updated_at: When the book was last changed.
     """
 
     DEFAULT_IMAGE_POLICY: ClassVar[ImagePolicy] = ImagePolicy.COMPACT
 
-    id: ProjectId
+    id: BookId
     details: BookDetails
     image_policy: ImagePolicy = DEFAULT_IMAGE_POLICY
     created_at: datetime
@@ -136,19 +136,19 @@ class Project:
 class LibraryEntry:
     """A book in the library of the account that owns it, the only account that may read or change the book.
 
-    :ivar project_id: The book.
+    :ivar book_id: The book.
     :ivar owner_id: Account owning the book.
     :ivar added_at: When the book joined the library, which orders the owner's list of books, the newest first.
     """
 
-    project_id: ProjectId
+    book_id: BookId
     owner_id: AccountId
     added_at: datetime
 
     @property
-    def id(self) -> ProjectId:
+    def id(self) -> BookId:
         """The identifier the entry is stored under, which is its book's: a book is in one library."""
-        return self.project_id
+        return self.book_id
 
     def is_owned_by(self, actor: Actor) -> bool:
         """Return whether the actor owns the book.
@@ -162,10 +162,10 @@ class LibraryEntry:
 
 
 @frozen(kw_only=True)
-class ProjectOverview:
-    """A project as shown in a list, with the size of its book, counted when read.
+class BookOverview:
+    """A book as shown in a list, with its size counted when read.
 
-    :ivar project: The listed project.
+    :ivar book_record: The record of the listed book.
     :ivar page_count: Number of pages of the book, without the pages kept out of it.
     :ivar source_count: Number of sources the book was assembled from.
     :ivar scan_count: Number of scans in all the sources.
@@ -176,7 +176,7 @@ class ProjectOverview:
                     None before it has.
     """
 
-    project: Project
+    book_record: BookRecord
     page_count: int = field(default=0, validator=validators.ge(0))
     source_count: int = field(default=0, validator=validators.ge(0))
     scan_count: int = field(default=0, validator=validators.ge(0))
@@ -200,15 +200,15 @@ class Source:
     :ivar file_name: Name the browser sent, with the relative path of a directory upload sanitised.
     :ivar files: Staged files, the main file first; more than one only for an indirect DjVu document.
     :ivar size_bytes: Total size of the files in bytes.
-    :ivar sha256: SHA-256 digest of the main file, which refuses a second upload of the same file to the project.
+    :ivar sha256: SHA-256 digest of the main file, which refuses a second upload of the same file to the book.
     :ivar scan_count: Number of scans the source holds.
-    :ivar metadata: Technical metadata of the format, which stays here and is never copied into the project.
+    :ivar metadata: Technical metadata of the format, which stays here and is never copied into the book.
     :ivar suggestion: Values of the book description found in the file, which fill only empty description fields.
     :ivar status: Whether the file was imported, rejected or skipped.
     :ivar rejection: Why a rejected file was refused, or None for a file that was not.
     :ivar detail: Text for the reader that says more than the reason, such as the name of the source a duplicate
                   repeats, or empty.
-    :ivar imported_at: When the file was recorded, which for an imported source is when it became part of the project.
+    :ivar imported_at: When the file was recorded, which for an imported source is when it became part of the book.
     """
 
     id: SourceId
@@ -267,7 +267,7 @@ class Page:
     A page is cut from a scan by the page split, or added by the user in the page order stage as a blank leaf or a
     placeholder. It keeps its own copy of its image in its base version, so nothing about it depends on its source,
     and its identity survives reordering, splitting again and re-running stages. Its position is the order of its key
-    among the keys of the project's pages, and the position number shown to the user is computed when it is read.
+    among the keys of the book's pages, and the position number shown to the user is computed when it is read.
 
     :ivar id: Identifier of the page, which names its storage directory.
     :ivar order_key: Fractional index string whose byte order is the order of the pages in the book.
@@ -407,7 +407,7 @@ class PaginationSection(PaginationSectionDraft):
     def clashes_with(self, other: PaginationSection) -> bool:
         """Tell whether the two sections start at one page and would take the same pages, so the later one wins.
 
-        :param other: Another section of the project.
+        :param other: Another section of the book.
         :type other: PaginationSection
         :returns: True when both start at the same page and are both of the main flow, or are series that share a kind.
         :rtype: bool
@@ -544,7 +544,7 @@ class PageOverview:
     """A page of the book with what a client shows of it: its place in the book and the image it starts from.
 
     :ivar page: The page of the book.
-    :ivar position: Place of the page in the book from zero, counted over every page of the project, excluded or not.
+    :ivar position: Place of the page in the book from zero, counted over every page, excluded or not.
     :ivar image_version: The version whose renditions show the page: the current version of the latest stage that has
                          an image, which is the base version until a later stage makes one, or None for a page that
                          has no image yet, such as a placeholder.
@@ -572,7 +572,7 @@ class Job:
     import the whole import, which reports its files and scans inside the task.
 
     :ivar id: Identifier of the job.
-    :ivar project_id: Project the job works on.
+    :ivar book_id: Book the job works on.
     :ivar kind: What the job does.
     :ivar state: Where the job is in its life cycle.
     :ivar progress: How many of its tasks are done.
@@ -586,7 +586,7 @@ class Job:
     """
 
     id: JobId
-    project_id: ProjectId
+    book_id: BookId
     kind: JobKind
     state: JobState = JobState.QUEUED
     progress: Progress = field(factory=Progress)
@@ -614,7 +614,7 @@ class Job:
 
 @frozen(kw_only=True)
 class Recipe:
-    """The ordered steps of one stage for one kind of page, saved in a project.
+    """The ordered steps of one stage for one kind of page, saved in a book.
 
     A stage that has recipes has exactly one for each ``RecipeKind``, and a page is processed by the recipe of its kind.
     The name of a recipe is the label of its kind.
