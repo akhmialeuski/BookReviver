@@ -223,8 +223,8 @@ export function useMeasureBook(projectId: string) {
 /**
  * Count what a collection would delete from the book now: the versions and the bytes of their files.
  *
- * The count is read again each time the question is asked, since a run or a mark changes it, so the query is on only
- * while the dialog that shows it is open.
+ * The query is on only while the dialog that shows it is open, and a run or a mark, which changes the count, reads it
+ * again through the `book-changed` event of the versions.
  *
  * @param projectId The book.
  * @param enabled Whether the question is being asked.

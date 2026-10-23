@@ -127,7 +127,7 @@ export function OrderScreen({
     [pages, sections.data],
   );
   const sectionOfPage = useMemo(() => spanOfPages(spans), [spans]);
-  const preview = usePreviewLabels(projectId, pages, draft, manifest.dataUpdatedAt);
+  const preview = usePreviewLabels(projectId, pages, draft);
   // The grid is a step behind the server while a change is in flight or a read is on its way
   const busy = useIsMutating() > 0 || manifest.isFetching || preview.isFetching;
 

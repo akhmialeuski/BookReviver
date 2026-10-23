@@ -1,6 +1,7 @@
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import type { Stage } from '@/api';
 import {
+  collectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetQueryKey,
   listPagesApiV1ProjectsProjectIdPagesGetQueryKey,
   listPaginationSectionsApiV1ProjectsProjectIdPaginationSectionsGetQueryKey,
   listProjectJobsApiV1ProjectsProjectIdJobsGetQueryKey,
@@ -186,6 +187,15 @@ export function invalidateAllVersions(queryClient: QueryClient, projectId: strin
   });
   return queryClient.invalidateQueries({
     queryKey: [{ _id, baseUrl, path: { project_id: projectId } }],
+  });
+}
+
+/** Refresh the count of what a collection of old versions of a book would delete, which every new or marked result changes. */
+export function invalidateCollectable(queryClient: QueryClient, projectId: string): Promise<void> {
+  return queryClient.invalidateQueries({
+    queryKey: collectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetQueryKey({
+      path: { project_id: projectId },
+    }),
   });
 }
 
