@@ -101,6 +101,9 @@ source = ["src"]
 [tool.pytest.ini_options]
 # Tests run in parallel, one worker per CPU; `-n 0` runs them in one process, as a debugger needs
 addopts = "--strict-markers --strict-config -n auto"
+markers = [
+    "timing: asserts a time limit, which a machine busy with every core holds only by chance, so the crap gate runs it alone",
+]
 testpaths = ["tests"]
 # A deprecation raised from the project's own modules fails the run, since the project can fix it. One raised inside a
 # dependency, such as the `declarative_mixin` call of advanced-alchemy under SQLAlchemy 2.1, is only the dependency's

@@ -7,7 +7,9 @@ if [[ -z ${base} ]] && ! base="$(git symbolic-ref --quiet --short refs/remotes/o
   echo 'crap-gate: origin/HEAD is not set. Run git remote set-head origin --auto, or set CRAP_GATE_BASE.' >&2
   exit 2
 fi
-uv run pytest -q --cov --cov-branch --cov-report=json:coverage.json --cov-report=xml:coverage.xml
+# A test that asserts a time limit runs alone after the suite, since every core busy with tracing breaks the limit
+uv run pytest -q -m 'not timing' --cov --cov-branch --cov-report=json:coverage.json --cov-report=xml:coverage.xml
+uv run pytest -q -n 0 -m timing
 uv run ruff check src --select C901 --config 'lint.mccabe.max-complexity=0' --output-format json --exit-zero >ruff.json
 uv run --no-project tools/crap_gate.py crap --ruff-json ruff.json --python-coverage coverage.json \
   --baseline crap-baseline.json

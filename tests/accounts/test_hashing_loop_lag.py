@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
     from tests.helpers.fakes_accounts import RecordingMailer, Visitor
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.timing]
 
 EMAIL: str = 'reader@example.org'
 WARM_UP_EMAIL: str = 'warm-up@example.org'
