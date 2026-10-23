@@ -6,9 +6,10 @@ import pytest
 from attrs import evolve
 
 from bookreviver.domain.enums import OrderMode, RecipeKind, Stage
-from bookreviver.domain.errors import InvalidParametersError, NotFoundError
+from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.values import ProfileDraft, RecipeDraft, RecipeKey, SliceRequest, Step
 from tests.helpers.builders import make_record, open_for
+from tests.helpers.processing import account_books
 from tests.helpers.processors import SECOND_KEY, THIRD_KEY
 from tests.helpers.seeding import store_book
 
@@ -143,9 +144,9 @@ class TestReplaceProfile:
         """
         actor, _ = await fx_ordered_kit.seed_record()
         profile = await save_profile(fx_ordered_kit, actor)
-        await fx_ordered_kit.profiles().set_default(actor, profile.id, is_default=True)
+        await fx_ordered_kit.profiles().set_default(profile, is_default=True)
         draft = ProfileDraft(name=RENAMED, steps=BROKEN_ORDER, order=OrderMode.FREE)
-        replaced = await fx_ordered_kit.profiles().replace(actor, profile.id, draft)
+        replaced = await fx_ordered_kit.profiles().replace(profile, draft)
         stored = await fx_ordered_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id))
         assert stored == replaced
         assert (stored.name, stored.order, stored.stage, stored.is_default) == (
@@ -167,9 +168,7 @@ class TestReplaceProfile:
         actor, _ = await fx_ordered_kit.seed_record()
         profile = await save_profile(fx_ordered_kit, actor)
         with pytest.raises(InvalidParametersError):
-            await fx_ordered_kit.profiles().replace(
-                actor, profile.id, ProfileDraft(name=PROFILE_NAME, steps=BROKEN_ORDER)
-            )
+            await fx_ordered_kit.profiles().replace(profile, ProfileDraft(name=PROFILE_NAME, steps=BROKEN_ORDER))
         stored = await fx_ordered_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id))
         assert stored == profile
 
@@ -183,7 +182,7 @@ class TestReplaceProfile:
         profile = await save_profile(fx_ordered_kit, actor)
         with pytest.raises(InvalidParametersError):
             await fx_ordered_kit.profiles().replace(
-                actor, profile.id, ProfileDraft(name=PROFILE_NAME, steps=[Step(processor_key=CLEANUP_KEY)])
+                profile, ProfileDraft(name=PROFILE_NAME, steps=[Step(processor_key=CLEANUP_KEY)])
             )
 
     async def test_the_recipes_made_from_the_profile_are_not_changed(self, fx_ordered_kit: ProcessingKit) -> None:
@@ -194,25 +193,11 @@ class TestReplaceProfile:
         """
         actor, book_record = await fx_ordered_kit.seed_record()
         profile = await save_profile(fx_ordered_kit, actor)
-        applied = await fx_ordered_kit.profiles().apply(
-            open_for(actor, book_record.id), profile.id, kind=RecipeKind.TEXT
-        )
+        applied = await fx_ordered_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
         await fx_ordered_kit.profiles().replace(
-            actor, profile.id, ProfileDraft(name=RENAMED, steps=[Step(processor_key=SECOND_KEY)])
+            profile, ProfileDraft(name=RENAMED, steps=[Step(processor_key=SECOND_KEY)])
         )
         assert await stored_recipe(fx_ordered_kit, book_record.id, applied.recipe) == applied.recipe
-
-    async def test_a_profile_of_another_account_is_not_found(self, fx_ordered_kit: ProcessingKit) -> None:
-        """Reject replacing a profile the account does not own.
-
-        :param fx_ordered_kit: Kit over processors that declare a place.
-        :type fx_ordered_kit: ProcessingKit
-        """
-        owner, _ = await fx_ordered_kit.seed_record()
-        stranger, _ = await fx_ordered_kit.seed_record()
-        profile = await save_profile(fx_ordered_kit, owner)
-        with pytest.raises(NotFoundError):
-            await fx_ordered_kit.profiles().replace(stranger, profile.id, ProfileDraft(name=RENAMED, steps=KEPT_ORDER))
 
 
 class TestRecipeLink:
@@ -227,7 +212,7 @@ class TestRecipeLink:
         actor, book_record = await fx_ordered_kit.seed_record()
         profile = await save_profile(fx_ordered_kit, actor)
         applied = (
-            await fx_ordered_kit.profiles().apply(open_for(actor, book_record.id), profile.id, kind=RecipeKind.BLANK)
+            await fx_ordered_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.BLANK)
         ).recipe
         assert (await stored_recipe(fx_ordered_kit, book_record.id, applied)).profile_id == profile.id
 
@@ -241,7 +226,7 @@ class TestRecipeLink:
         """
         actor, _ = await fx_ordered_kit.seed_record()
         profile = await save_profile(fx_ordered_kit, actor)
-        await fx_ordered_kit.profiles().set_default(actor, profile.id, is_default=True)
+        await fx_ordered_kit.profiles().set_default(profile, is_default=True)
         fresh = await another_book(fx_ordered_kit, actor)
         recipe = await fx_ordered_kit.recipe_of(actor, fresh, Stage.GEOMETRY)
         assert recipe.profile_id == profile.id
@@ -256,7 +241,7 @@ class TestRecipeLink:
         profile = await save_profile(fx_ordered_kit, actor)
         recipe = await fx_ordered_kit.recipe_of(actor, book_record, Stage.GEOMETRY)
         key = RecipeKey(Stage.GEOMETRY, recipe.id)
-        linked = await fx_ordered_kit.profiles().link(open_for(actor, book_record.id), key, profile.id)
+        linked = await fx_ordered_kit.profiles().link(open_for(actor, book_record.id), key, profile)
         assert linked == evolve(recipe, profile_id=profile.id)
         assert await stored_recipe(fx_ordered_kit, book_record.id, recipe) == linked
         unlinked = await fx_ordered_kit.profiles().link(open_for(actor, book_record.id), key, None)
@@ -271,7 +256,7 @@ class TestRecipeLink:
         actor, book_record = await fx_ordered_kit.seed_record()
         profile = await save_profile(fx_ordered_kit, actor)
         applied = (
-            await fx_ordered_kit.profiles().apply(open_for(actor, book_record.id), profile.id, kind=RecipeKind.TEXT)
+            await fx_ordered_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
         ).recipe
         edited = RecipeDraft(steps=[Step(processor_key=SECOND_KEY, enabled=False), Step(processor_key=THIRD_KEY)])
         saved = await fx_ordered_kit.service().save_recipe(
@@ -288,9 +273,9 @@ class TestRecipeLink:
         actor, book_record = await fx_ordered_kit.seed_record()
         profile = await save_profile(fx_ordered_kit, actor)
         applied = (
-            await fx_ordered_kit.profiles().apply(open_for(actor, book_record.id), profile.id, kind=RecipeKind.TEXT)
+            await fx_ordered_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
         ).recipe
-        await fx_ordered_kit.profiles().remove(actor, profile.id)
+        await fx_ordered_kit.profiles().remove(profile, await account_books(fx_ordered_kit, actor))
         assert (await stored_recipe(fx_ordered_kit, book_record.id, applied)).profile_id is None
 
     async def test_a_profile_of_another_stage_is_refused(self, fx_ordered_kit: ProcessingKit) -> None:
@@ -304,22 +289,5 @@ class TestRecipeLink:
         recipe = await fx_ordered_kit.recipe_of(actor, book_record, Stage.GEOMETRY)
         with pytest.raises(InvalidParametersError):
             await fx_ordered_kit.profiles().link(
-                open_for(actor, book_record.id), RecipeKey(Stage.GEOMETRY, recipe.id), cleanup.id
+                open_for(actor, book_record.id), RecipeKey(Stage.GEOMETRY, recipe.id), cleanup
             )
-
-    async def test_a_profile_or_a_book_of_another_account_is_not_found(self, fx_ordered_kit: ProcessingKit) -> None:
-        """Reject linking with a profile the account does not own, and linking a recipe of a book it does not own.
-
-        :param fx_ordered_kit: Kit over processors that declare a place.
-        :type fx_ordered_kit: ProcessingKit
-        """
-        owner, book_record = await fx_ordered_kit.seed_record()
-        stranger, foreign_record = await fx_ordered_kit.seed_record()
-        theirs = await save_profile(fx_ordered_kit, stranger)
-        recipe = await fx_ordered_kit.recipe_of(owner, book_record, Stage.GEOMETRY)
-        key = RecipeKey(Stage.GEOMETRY, recipe.id)
-        with pytest.raises(NotFoundError):
-            await fx_ordered_kit.profiles().link(open_for(owner, book_record.id), key, theirs.id)
-        with pytest.raises(NotFoundError):
-            await fx_ordered_kit.profiles().link(open_for(stranger, foreign_record.id), key, theirs.id)
-        assert (await stored_recipe(fx_ordered_kit, book_record.id, recipe)).profile_id is None

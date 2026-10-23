@@ -165,7 +165,7 @@ def make_record(*, title: str = 'Book', minutes: int = 0) -> BookRecord:
 
 
 def open_for(actor: Actor, book_id: BookId) -> Book:
-    """Open a book for the actor as ``BooksService.open`` does, without reading the library.
+    """Open a book for the actor as the access dependency ``open_book`` does, without reading the library.
 
     :param actor: Account the book is opened for, which the test made its owner.
     :type actor: Actor

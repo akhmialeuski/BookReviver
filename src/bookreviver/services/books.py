@@ -1,11 +1,9 @@
 """Use cases of books: listing, creating, describing, exporting, importing and deleting them.
 
-A use case of one book works on a ``Book`` that ``open`` gave, once per request, after it found the entry of the book
-in the library and checked its owner. A book of another account is reported exactly like a missing one. An answer of
-"forbidden" would confirm that a book with that identifier exists, so the identifiers of other accounts' books could be
-probed. The lookups ``book_page`` and ``book_pages`` are synchronous
-functions over repositories: the work of ``UnitOfWork.read_book`` or ``change_book`` calls them with the repositories
-it receives, and a caller outside a transaction wraps the call in ``UnitOfWork.read_book``.
+A use case works on the ``Book`` objects it is given and checks no owner: the access dependencies of the API open a
+book of the signed-in account, and they choose the books of a list. The lookups ``book_page`` and ``book_pages`` are
+synchronous functions over repositories: the work of ``UnitOfWork.read_book`` or ``change_book`` calls them with the
+repositories it receives, and a caller outside a transaction wraps the call in ``UnitOfWork.read_book``.
 
 A book is deleted files first, then its store, and the library entry last. Every use case of the book needs the entry,
 a repeated deletion included, so an entry deleted first would leave the files of a failed deletion out of every
@@ -21,12 +19,11 @@ from uuid import uuid4
 from attrs import evolve, frozen
 
 from bookreviver.domain.entities import BookRecord, LibraryEntry
-from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import BookId
 from bookreviver.domain.values import ArchivedBook, Slice, SliceRequest
-from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from typing import BinaryIO
 
     from bookreviver.domain.changes import BookChanges
@@ -38,6 +35,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories, PageRepository, UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
+    from bookreviver.services.book import Book
     from bookreviver.services.stage_summaries import StageSummaries
 
 # How many pages are read from the book at a time, when a use case needs all of them
@@ -101,25 +99,21 @@ class BooksService:
         self._files = files
         self._stages = stages
 
-    async def list(self, actor: Actor, request: SliceRequest) -> Slice[BookOverview]:
-        """Return a window of the actor's books, the latest added first.
+    async def overviews(self, books: Slice[Book]) -> Slice[BookOverview]:
+        """Return the overview of each book of a window, in the order given.
 
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param request: Offset and limit of the window.
-        :type request: SliceRequest
-        :returns: The books of the window with their counts and progress, and the number of all the
-                  actor's books.
+        :param books: The open books of the window, and the number of all the books the window was cut from.
+        :type books: Slice[Book]
+        :returns: The books of the window with their counts and progress, and the same total.
         :rtype: Slice[BookOverview]
         """
-        window = await self._uow.read(lambda repos: repos.library.list_for_owner(actor.account_id, request))
-        return Slice(items=[await self._overview(entry.book_id) for entry in window.items], total=window.total)
+        return Slice(items=[await self._overview(book.id) for book in books.items], total=books.total)
 
-    async def create(self, actor: Actor, details: BookDetails) -> BookOverview:
-        """Create an empty book owned by the actor: its store first, then its entry in the library.
+    async def create(self, owner: Actor, details: BookDetails) -> BookOverview:
+        """Create an empty book of an account: its store first, then its entry in the library.
 
-        :param actor: Account acting in the current request, which becomes the owner.
-        :type actor: Actor
+        :param owner: Account the entry of the library names as the owner.
+        :type owner: Actor
         :param details: Description of the book.
         :type details: BookDetails
         :returns: The stored book, which has no pages, sources or scans yet.
@@ -129,25 +123,9 @@ class BooksService:
         book_record = await self._uow.create_book(
             BookRecord(id=BookId(uuid4()), details=details, created_at=moment, updated_at=moment)
         )
-        entry = LibraryEntry(book_id=book_record.id, owner_id=actor.account_id, added_at=moment)
+        entry = LibraryEntry(book_id=book_record.id, owner_id=owner.account_id, added_at=moment)
         await self._uow.change(lambda repos: repos.library.add(entry))
         return await self._overview(book_record.id)
-
-    async def open(self, actor: Actor, book_id: BookId) -> Book:
-        """Open a book of the actor, which every use case of one book works on.
-
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
-        :returns: The open book.
-        :rtype: Book
-        :raises NotFoundError: If the library has no such book, or the book belongs to another account.
-        """
-        entry = await self._uow.read(lambda repos: repos.library.get(book_id))
-        if not entry.is_owned_by(actor):
-            raise NotFoundError(book_id)
-        return Book(entry.book_id, entry.owner_id)
 
     async def get(self, book: Book) -> BookOverview:
         """Return the book.
@@ -251,15 +229,15 @@ class BooksService:
         database = await self._uow.snapshot_book(book.id)
         return ArchivedBook(title=book_record.details.title, pieces=self._files.archive.export(book.id, database))
 
-    async def import_archive(self, actor: Actor, archive: BinaryIO) -> BookOverview:
-        """Take the archive of a book in as a new book of the actor, under a new identifier.
+    async def import_archive(self, owner: Actor, archive: BinaryIO) -> BookOverview:
+        """Take the archive of a book in as a new book of an account, under a new identifier.
 
         The archive is unpacked database first, then the database is brought to this release and the record of its book
         renamed, and the entry of the library comes last, as for a book created here. A failure removes what was
         unpacked, and an import broken off is a store without an entry, which the start pass removes.
 
-        :param actor: Account acting in the current request, which becomes the owner.
-        :type actor: Actor
+        :param owner: Account the entry of the library names as the owner.
+        :type owner: Actor
         :param archive: The archive, a file that can be read from any position.
         :type archive: BinaryIO
         :returns: The new book with its counts and progress.
@@ -274,7 +252,7 @@ class BooksService:
         except Exception:
             await self._erase(book_id)
             raise
-        entry = LibraryEntry(book_id=book_id, owner_id=actor.account_id, added_at=self._clock.now())
+        entry = LibraryEntry(book_id=book_id, owner_id=owner.account_id, added_at=self._clock.now())
         await self._uow.change(lambda repos: repos.library.add(entry))
         return await self._overview(book_id)
 
@@ -312,9 +290,8 @@ class BooksService:
     async def delete(self, book: Book) -> None:
         """Delete the book's source files and derived files, then its store, then its entry in the library.
 
-        The book is open, so its owner was checked before any file goes, and the files go outside any transaction, so
-        a slow store holds no lock of the book. A failure at any step leaves the entry in place, and calling this
-        again finishes the deletion.
+        The files go outside any transaction, so a slow store holds no lock of the book. A failure at any step leaves
+        the entry in place, and calling this again finishes the deletion.
 
         :param book: The open book.
         :type book: Book
@@ -323,22 +300,17 @@ class BooksService:
         # The entry goes last: only an existing entry lets a repeated call reach what a failed call left behind
         await self._forget(book.id)
 
-    async def delete_all(self, actor: Actor) -> None:
-        """Delete every book of the actor with all its files, which must happen before its account is deleted.
+    async def delete_all(self, books: Iterable[Book]) -> None:
+        """Delete the books with all their files, as the deletion of the account that owns them needs.
 
-        Each book is deleted in transactions of its own, files first, so a failure keeps the books not yet
-        deleted, and calling this again deletes them. The first window of the actor's books is read again after
-        every window, since the deleted books leave it.
+        Each book is deleted in transactions of its own, files first, so a failure keeps the books not yet deleted,
+        and calling this again with the books that are left deletes them.
 
-        :param actor: Account whose books are deleted.
-        :type actor: Actor
+        :param books: The books to delete.
+        :type books: Iterable[Book]
         """
-        while True:
-            window = await self._uow.read(lambda repos: repos.library.list_for_owner(actor.account_id, SliceRequest()))
-            if not window.items:
-                return
-            for entry in window.items:
-                await self.delete(Book(entry.book_id, entry.owner_id))
+        for book in books:
+            await self.delete(book)
 
     async def sweep(self) -> None:
         """Finish the creations and deletions of books that were broken off half way, which is a pass of the start.

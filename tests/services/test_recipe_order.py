@@ -273,5 +273,5 @@ class TestSavePaths:
         profile = await profiles.save(
             actor, Stage.GEOMETRY, profile_draft_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE)
         )
-        applied = await profiles.apply(open_for(actor, book_record.id), profile.id, kind=RecipeKind.TEXT)
+        applied = await profiles.apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
         assert [step.processor_key for step in applied.recipe.steps] == [THIRD_KEY, SECOND_KEY]

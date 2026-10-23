@@ -193,7 +193,7 @@ class TestRecipesOfAStage:
                 name=PROFILE_NAME, steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAM: TEMPLATE_STRENGTH})]
             ),
         )
-        await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
+        await fx_kit.profiles().set_default(profile, is_default=True)
         found = (
             await fx_kit.service().recipes(open_for(actor, book_record.id), Stage.GEOMETRY, SliceRequest(limit=10))
         ).items
@@ -376,7 +376,7 @@ class TestResetToTheDefaultSteps:
                 name=PROFILE_NAME, steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAM: TEMPLATE_STRENGTH})]
             ),
         )
-        await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
+        await fx_kit.profiles().set_default(profile, is_default=True)
         found = (
             await fx_kit.service().recipes(open_for(actor, book_record.id), Stage.GEOMETRY, SliceRequest(limit=10))
         ).items
