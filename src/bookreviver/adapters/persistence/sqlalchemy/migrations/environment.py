@@ -1,6 +1,9 @@
-"""The Alembic environment of the schema, from advanced-alchemy's synchronous template.
+"""The Alembic environment shared by the two schemas, from advanced-alchemy's synchronous template.
 
-Alembic runs this module for every command that touches the database or compares it with the tables. The engine and
+The catalogue and the file of a book each have a directory of revisions, and the ``env.py`` of each directory calls
+:func:`run` with its :class:`~bookreviver.adapters.persistence.sqlalchemy.database.Schema`, which picks the metadata of
+the tables the revisions build. Alembic runs that module for every command that touches a database or compares it with
+the tables. The engine and
 the version table come from ``SqlDatabase.config`` through advanced-alchemy's ``AlembicCommandConfig``, so a
 migration runs on the application's own engine of the writer, with no ``alembic.ini`` and no second connection
 setting. The options of autogenerate are set here, where Alembic reads them: advanced-alchemy 1.11.0 builds its
@@ -11,7 +14,7 @@ Every command runs its revisions in one transaction together with the row of the
 applies whole or not at all. The transaction begins with ``BEGIN IMMEDIATE``, as every transaction of that engine does,
 and the driver commits or rolls it back. A migration also runs with foreign keys off. The engine turns them on for
 every connection, and batch mode changes a table by copying it, dropping the old one and renaming the copy, so
-dropping the old ``projects`` with keys on would cascade and delete every source, scan, page and job of every book.
+dropping the old ``projects`` with keys on would cascade and delete every source, scan and page of the book.
 SQLite ignores the pragma inside a transaction, so it is set on the driver connection before the transaction begins,
 and ``PRAGMA foreign_key_check`` runs in the transaction before its commit: a migration that left a row whose key
 points nowhere is rolled back and fails the command. See https://alembic.sqlalchemy.org/en/latest/batch.html.
@@ -22,10 +25,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import sqlalchemy
 from alembic import context
-from alembic.autogenerate import rewriter
 from sqlalchemy.dialects.sqlite.base import SQLiteDialect
-
-from bookreviver.adapters.persistence.sqlalchemy.tables import ProjectRow
 
 if TYPE_CHECKING:
     from advanced_alchemy.alembic.commands import AlembicCommandConfig
@@ -35,14 +35,9 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
     from sqlalchemy.types import TypeEngine
 
-__all__ = (
-    'compare_type',
-    'do_run_migrations',
-    'render_item',
-    'run_migrations_offline',
-    'run_migrations_online',
-    'set_foreign_keys',
-)
+    from bookreviver.adapters.persistence.sqlalchemy.database import Schema
+
+__all__ = ('compare_type', 'do_run_migrations', 'render_item', 'run', 'set_foreign_keys')
 
 # SQLite's rules for the affinity of a declared type, applied in order, see
 # https://www.sqlite.org/datatype3.html#determination_of_column_affinity; a type matching none is NUMERIC
@@ -54,12 +49,6 @@ SQLITE_AFFINITY_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     ((SQLITE_BLOB_AFFINITY,), SQLITE_BLOB_AFFINITY),
     (('REAL', 'FLOA', 'DOUB'), 'REAL'),
 )
-
-# The Alembic configuration advanced-alchemy builds from SqlDatabase.config
-config = cast('AlembicCommandConfig', context.config)
-writer = rewriter.Rewriter()
-# Every table of the adapter shares one metadata with the account tables, and importing the tables registers them
-target_metadata: MetaData = ProjectRow.metadata
 
 
 def render_item(type_: str, obj: object, autogen_context: AutogenContext) -> str | Literal[False]:
@@ -136,10 +125,15 @@ def compare_type(
     return _sqlite_affinity(declared) != _sqlite_affinity(inspected_type.compile(dialect=dialect))
 
 
-def run_migrations_offline() -> None:
+def run_migrations_offline(config: AlembicCommandConfig, target_metadata: MetaData) -> None:
     """Write the SQL of the migrations to the output instead of running it, with only the URL of the database.
 
     The foreign key pragmas of SQLite are not written, so SQL meant for SQLite runs with the keys off.
+
+    :param config: The Alembic configuration advanced-alchemy builds from ``SqlDatabase.config``.
+    :type config: AlembicCommandConfig
+    :param target_metadata: Metadata of the tables of the schema.
+    :type target_metadata: MetaData
     """
     context.configure(
         url=config.db_url,
@@ -151,7 +145,6 @@ def run_migrations_offline() -> None:
         version_table_pk=config.version_table_pk,
         render_as_batch=True,
         render_item=render_item,
-        process_revision_directives=writer,
     )
 
     with context.begin_transaction():
@@ -173,11 +166,15 @@ def set_foreign_keys(connection: Connection, *, enabled: bool) -> None:
         cursor.execute(f'PRAGMA foreign_keys={"ON" if enabled else "OFF"}')
 
 
-def do_run_migrations(connection: Connection) -> None:
+def do_run_migrations(connection: Connection, config: AlembicCommandConfig, target_metadata: MetaData) -> None:
     """Run the migrations on ``connection`` in one transaction, with foreign keys off and checked in it.
 
     :param connection: Connection of the application's engine, not yet in a transaction.
     :type connection: Connection
+    :param config: The Alembic configuration advanced-alchemy builds from ``SqlDatabase.config``.
+    :type config: AlembicCommandConfig
+    :param target_metadata: Metadata of the tables of the schema.
+    :type target_metadata: MetaData
     :raises RuntimeError: When a migration left rows whose foreign key refers to no row, after the transaction holding
         the migrations and their version row is rolled back.
     """
@@ -194,7 +191,6 @@ def do_run_migrations(connection: Connection) -> None:
         version_table_pk=config.version_table_pk,
         render_as_batch=True,
         render_item=render_item,
-        process_revision_directives=writer,
     )
 
     try:
@@ -213,15 +209,21 @@ def do_run_migrations(connection: Connection) -> None:
         set_foreign_keys(connection, enabled=True)
 
 
-def run_migrations_online() -> None:
-    """Run the migrations on a connection of the application's engine of the writer, and close its connections."""
+def run(schema: Schema) -> None:
+    """Run the command Alembic was asked for on the database of the configuration, with the tables of ``schema``.
+
+    Online, the migrations run on a connection of the application's engine of the writer, whose connections are then
+    closed.
+
+    :param schema: The schema of the directory whose ``env.py`` Alembic runs.
+    :type schema: Schema
+    """
+    config = cast('AlembicCommandConfig', context.config)
+    target_metadata = schema.metadata
+    if context.is_offline_mode():
+        run_migrations_offline(config, target_metadata)
+        return
     connectable = cast('Engine', config.engine)
     with connectable.connect() as connection:
-        do_run_migrations(connection)
+        do_run_migrations(connection, config, target_metadata)
     connectable.dispose()
-
-
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
