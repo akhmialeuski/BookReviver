@@ -45,6 +45,9 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
+# Reports tools/crap-gate.sh writes for the CRAP gate
+coverage.json
+ruff.json
 *.cover
 .hypothesis/
 .pytest_cache/

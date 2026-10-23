@@ -1,0 +1,15 @@
+{
+  "size": {
+    "src/bookreviver/adapters/persistence/sqlalchemy/mappers.py": 622,
+    "src/bookreviver/adapters/persistence/sqlalchemy/repositories.py": 960,
+    "src/bookreviver/domain/enums.py": 685,
+    "src/bookreviver/domain/values.py": 538,
+    "src/bookreviver/services/imports.py::ImportRun._cut": 51,
+    "src/bookreviver/services/imports.py::ImportRun._import_source": 84,
+    "src/bookreviver/services/pages.py": 582,
+    "src/bookreviver/services/pagination.py::PaginationService._plan": 63,
+    "src/bookreviver/services/spread_splits.py::SpreadSplit.split": 56,
+    "src/bookreviver/services/stage_runs.py::StageWork._make_version": 94
+  },
+  "version": 1
+}

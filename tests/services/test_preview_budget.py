@@ -30,7 +30,7 @@ from tests.helpers.samples import ANGLE_TOLERANCE, png_bytes, text_page, turned
 if TYPE_CHECKING:
     from tests.helpers.processing import ProcessingKit
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.timing]
 
 DESKEW_KEY: str = 'geometry.deskew'
 NANOSECONDS_PER_MILLISECOND: int = 1_000_000
