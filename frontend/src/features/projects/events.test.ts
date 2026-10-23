@@ -1,7 +1,11 @@
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JobSchema } from '@/api';
-import { readJobApiV1JobsJobIdGetQueryKey } from '@/api/@tanstack/react-query.gen';
+import {
+  collectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetQueryKey,
+  readJobApiV1JobsJobIdGetQueryKey,
+} from '@/api/@tanstack/react-query.gen';
+import { numberingPreviewKey } from '@/features/order/usePreviewLabels';
 import { pagesScope, versionReadyKey } from '@/features/projects/queries';
 import {
   applyProjectEvent,
@@ -102,6 +106,24 @@ describe('applyProjectEvent', () => {
 
     expect(invalidated()).toContain(read);
     expect(sync.version).toBe(2);
+  });
+
+  it('marks the previews of a numbering stale when the pages change, and the count of a collection when the versions do', () => {
+    const preview = [...numberingPreviewKey(PROJECT_ID), { first: 'pg-1' }];
+    const collectable = collectableVersionsApiV1ProjectsProjectIdVersionsCollectableGetQueryKey({
+      path: { project_id: PROJECT_ID },
+    });
+    queryClient.setQueryData(preview, new Map());
+    queryClient.setQueryData(collectable, { versions: 0, bytes: 0 });
+
+    applyProjectEvent(queryClient, PROJECT_ID, change(['pages']), sync);
+    vi.advanceTimersByTime(BURST_DELAY_MS);
+    expect(queryClient.getQueryState(preview)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(collectable)?.isInvalidated).toBe(false);
+
+    applyProjectEvent(queryClient, PROJECT_ID, change(['versions'], 3), sync);
+    vi.advanceTimersByTime(BURST_DELAY_MS);
+    expect(queryClient.getQueryState(collectable)?.isInvalidated).toBe(true);
   });
 
   it('reads a part once for a burst of changes of it, one per page of a run', () => {

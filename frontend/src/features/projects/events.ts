@@ -1,11 +1,13 @@
 import type { QueryClient } from '@tanstack/react-query';
 import type { JobSchema, JobState } from '@/api';
 import { readJobApiV1JobsJobIdGetQueryKey } from '@/api/@tanstack/react-query.gen';
+import { numberingPreviewKey } from '@/features/order/usePreviewLabels';
 import { invalidateHistory, invalidatePageLayers } from '@/features/processing/historyQueries';
 import {
   invalidateAllRecipes,
   invalidateAllStageRows,
   invalidateAllVersions,
+  invalidateCollectable,
   invalidateJobs,
   invalidatePages,
   invalidateProject,
@@ -177,8 +179,10 @@ export async function refreshPart(
       return;
     case 'pages':
       // A section follows its first page, and pages added, removed or moved change the counts and rows of every stage
+      // and the labels a numbering would write
       await Promise.all([
         invalidatePages(queryClient, projectId),
+        queryClient.invalidateQueries({ queryKey: numberingPreviewKey(projectId) }),
         invalidateSections(queryClient, projectId),
         invalidateStageSummary(queryClient, projectId),
         invalidateAllStageRows(queryClient, projectId),
@@ -187,9 +191,11 @@ export async function refreshPart(
       ]);
       return;
     case 'versions':
-      // The rows of the stages draw the versions, and the manifest shows the image of the latest one
+      // The rows of the stages draw the versions, the manifest shows the image of the latest one, and a collection
+      // counts the old ones
       await Promise.all([
         invalidateAllVersions(queryClient, projectId),
+        invalidateCollectable(queryClient, projectId),
         invalidatePages(queryClient, projectId),
         invalidateAllStageRows(queryClient, projectId),
       ]);

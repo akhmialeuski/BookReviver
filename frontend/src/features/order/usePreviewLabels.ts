@@ -8,9 +8,14 @@ import { type NumberingDraft, numberingBody, pagesInRange } from '@/features/ord
  *
  * The server works the labels out by the same rule that saves them, so what the grid shows is what "Apply numbers"
  * stores. The answer is a map from page to its new label, and the previous answer stays on screen while the next
- * is on its way, so the numbers do not blink as the reader types. The pages that moved or changed since the answer
- * was asked make it stale, which `pagesStamp` tells: it is the time the manifest was last read.
+ * is on its way, so the numbers do not blink as the reader types. A change of the pages of the book makes every answer
+ * stale, so the `book-changed` event of the pages marks them under {@link numberingPreviewKey}.
  */
+
+/** The key every preview of a numbering of a book extends, by the body it asks about. */
+export function numberingPreviewKey(projectId: string): readonly string[] {
+  return ['order', 'numbering-preview', projectId];
+}
 
 /**
  * Ask for the preview of a numbering.
@@ -18,19 +23,17 @@ import { type NumberingDraft, numberingBody, pagesInRange } from '@/features/ord
  * @param projectId The book.
  * @param pages The pages of the book in book order.
  * @param draft What the numbering panel holds, or null while the panel is closed.
- * @param pagesStamp When the manifest was last read, which makes the preview be asked again after the pages change.
  * @returns The new label of every page the numbering counts, by page id.
  */
 export function usePreviewLabels(
   projectId: string,
   pages: readonly PageSchema[],
   draft: NumberingDraft | null,
-  pagesStamp: number,
 ): UseQueryResult<Map<string, string>> {
   // A range that runs backwards or leaves the book is refused by the server, so it is not asked
   const body = draft === null || pagesInRange(pages, draft) === null ? null : numberingBody(draft);
   return useQuery({
-    queryKey: ['order', 'numbering-preview', projectId, body, pagesStamp],
+    queryKey: [...numberingPreviewKey(projectId), body],
     queryFn: async ({ signal }) => {
       if (body === null) {
         return new Map<string, string>();
