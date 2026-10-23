@@ -9,7 +9,7 @@ from typing import Annotated
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Request
 
-from bookreviver.api.book import open_book
+from bookreviver.api.access import open_book
 from bookreviver.api.routers.processing import VersionPath
 from bookreviver.api.schemas.processing import PageVersionSchema
 from bookreviver.api.schemas.result_marks import ResultMarkForm

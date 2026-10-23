@@ -13,6 +13,7 @@ from attrs import evolve
 from dishka import Provider, Scope, provide
 
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
+from bookreviver.api.access import books_of
 from bookreviver.domain.entities import Actor, PageStage
 from bookreviver.domain.enums import (
     ImagePolicy,
@@ -25,7 +26,7 @@ from bookreviver.domain.enums import (
     VersionState,
 )
 from bookreviver.domain.keys import BookKeys
-from bookreviver.domain.values import PageStageKey, PageStepKey, RecipeKey, Renditions, SliceRequest
+from bookreviver.domain.values import PageStageKey, PageStepKey, RecipeKey, Renditions, Slice, SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog, StepExecutor
 from bookreviver.services.edits import EditService
@@ -67,13 +68,14 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, Recipe, Scan
+    from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, Recipe, RecipeProfile, Scan
     from bookreviver.domain.ids import BookId, JobId, PageVersionId
-    from bookreviver.domain.values import JobEnd, MetadataMap, RecipeDraft, Slice
+    from bookreviver.domain.values import JobEnd, MetadataMap, RecipeDraft
     from bookreviver.ports.persistence import BookRepositories, PageVersionRepository, UnitOfWork
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.storage import AssetStore
+    from bookreviver.services.book import Book
     from bookreviver.services.pages import PageService
     from tests.helpers.database import UnitOfWorkFactory
 
@@ -640,3 +642,32 @@ class InProcessExecutorProvider(Provider):
         :rtype: StepExecutor
         """
         return InProcessStepExecutor(catalogue)
+
+
+async def account_profiles(kit: ProcessingKit, actor: Actor, stage: Stage | None = None) -> Slice[RecipeProfile]:
+    """Read every profile of an account, as the access dependency ``own_profiles`` reads one window of them.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param actor: Account owning the profiles.
+    :type actor: Actor
+    :param stage: The stage whose profiles are wanted, or None for every stage.
+    :type stage: Stage | None
+    :returns: The profiles in the order of the stages, then by creation, and their number.
+    :rtype: Slice[RecipeProfile]
+    """
+    profiles = await kit.uow().read(lambda repos: repos.recipe_profiles.list_for_account(actor.account_id, stage))
+    return Slice(items=list(profiles), total=len(profiles))
+
+
+async def account_books(kit: ProcessingKit, actor: Actor) -> list[Book]:
+    """Read every book of an account, as the access dependencies hand them to a service.
+
+    :param kit: What the processing services of the test share.
+    :type kit: ProcessingKit
+    :param actor: Account owning the books.
+    :type actor: Actor
+    :returns: The open books of the account.
+    :rtype: list[Book]
+    """
+    return await books_of(kit.uow(), actor.account_id)

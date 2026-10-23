@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Annotated, Final
 from dishka.integrations.fastapi import FromDishka, inject
 from fastapi import Depends, Request, Response
 
-from bookreviver.api.book import open_book
+from bookreviver.api.access import open_book
 from bookreviver.services.book import Book
 from bookreviver.services.freshness import BookFreshness
 

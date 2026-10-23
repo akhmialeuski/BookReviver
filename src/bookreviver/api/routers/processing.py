@@ -14,7 +14,7 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Path, Request, status
 from fastapi_pagination import Page, Params
 
-from bookreviver.api.book import open_book
+from bookreviver.api.access import open_book
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.routers.pages import PagePath

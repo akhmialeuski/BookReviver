@@ -13,8 +13,8 @@ from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
 from bookreviver.adapters.storage import LocalAssetStore, LocalBookArchive, LocalSourceStore
-from bookreviver.domain.entities import Actor
-from bookreviver.domain.values import SliceRequest
+from bookreviver.domain.values import Slice, SliceRequest
+from bookreviver.services.book import Book
 from bookreviver.services.books import BooksService, BookStores
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import EPOCH, make_job, make_page, make_page_stage, make_record
@@ -75,9 +75,10 @@ def _add_stage_record(repos: BookRepositories, _book_record: BookRecord, *, page
 
 
 async def _statements_of_list(uow: UnitOfWork, board: JobBoard, owner_id: AccountId, window: int, root: Path) -> int:
-    """List the owner's books through the books service and count the statements every engine sends meanwhile.
+    """List the owner's books as the list route does and count the statements every engine sends for their overviews.
 
-    The counter listens on the ``Engine`` class, so the statements of the catalogue and of the file of every book count.
+    The window of the owner's books is read from the catalogue first, as the access dependency reads it, and the
+    counter then listens on the ``Engine`` class, so the statements of the file of every book count.
 
     :param uow: Unit of work over the catalogue and the books of the test.
     :type uow: UnitOfWork
@@ -100,10 +101,13 @@ async def _statements_of_list(uow: UnitOfWork, board: JobBoard, owner_id: Accoun
         ),
         stages=StageSummaries(catalogue=FakeCatalogue([]), board=board),
     )
+    request = SliceRequest(limit=window)
+    entries = await uow.read(lambda repos: repos.library.list_for_owner(owner_id, request))
+    opened = Slice(items=[Book(entry.book_id, entry.owner_id) for entry in entries.items], total=entries.total)
     counter = StatementCounter()
     event.listen(Engine, STATEMENT_EVENT, counter)
     try:
-        books = await service.list(Actor(account_id=owner_id), SliceRequest(limit=window))
+        books = await service.overviews(opened)
     finally:
         event.remove(Engine, STATEMENT_EVENT, counter)
     assert len(books.items) == window
@@ -112,7 +116,7 @@ async def _statements_of_list(uow: UnitOfWork, board: JobBoard, owner_id: Accoun
 
 
 class TestBookList:
-    """Tests for the statements ``BooksService.list`` sends to SQLite."""
+    """Tests for the statements ``BooksService.overviews`` sends to SQLite for a window of books."""
 
     async def test_every_book_of_a_window_adds_the_same_number_of_statements(
         self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, tmp_path: Path

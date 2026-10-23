@@ -4,7 +4,6 @@ import io
 import zipfile
 from datetime import timedelta
 from typing import TYPE_CHECKING, override
-from uuid import uuid4
 
 import anyio
 import pytest
@@ -12,12 +11,11 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.storage import LocalBookArchive, LocalSourceStore
+from bookreviver.api.access import AccountBooks, books_of
 from bookreviver.domain.changes import BookChanges, BookDetailsChanges
 from bookreviver.domain.enums import ImagePolicy, Orthography
 from bookreviver.domain.errors import DomainError, NotFoundError
-from bookreviver.domain.ids import BookId
-from bookreviver.domain.values import BookDetails, SliceRequest
-from bookreviver.services.book import Book
+from bookreviver.domain.values import BookDetails, Slice, SliceRequest
 from bookreviver.services.books import BooksService, BookStores
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import EPOCH, make_page, make_record, make_scan, make_source, new_account_id, open_for
@@ -35,7 +33,8 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.storage import LocalAssetStore
-    from bookreviver.domain.entities import Actor, BookRecord
+    from bookreviver.domain.entities import Actor, BookOverview, BookRecord
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from tests.helpers.database import UnitOfWorkFactory
 
@@ -175,7 +174,7 @@ def fx_files(fx_source_store: LocalSourceStore, fx_asset_store: LocalAssetStore,
 
 
 class TestList:
-    """Tests for BooksService.list()."""
+    """Tests for the list of books: the books of the access dependencies, then BooksService.overviews()."""
 
     async def test_lists_only_the_actors_books_newest_first(
         self,
@@ -203,7 +202,7 @@ class TestList:
         ):
             await commit_record(fx_database, fx_uow(), book_record, owner=owner)
 
-        result = await fx_service().list(fx_actor, SliceRequest())
+        result = await _listed(fx_service(), fx_uow(), fx_actor)
 
         expect([item.book_record.id for item in result.items] == [newer.id, older.id])
         expect(result.total == 2)
@@ -237,74 +236,6 @@ class TestCreate:
         expect((stored.created_at, stored.updated_at) == (NOW, NOW))
         expect(overview.page_count == 0)
         assert_expectations()
-
-
-class TestOpen:
-    """Tests for BooksService.open(), the one place that checks an account may work on a book."""
-
-    async def test_opens_a_book_of_the_actor(
-        self, fx_service: Callable[[], BooksService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
-    ) -> None:
-        """Verify a book of the actor opens with its identifier and its owner.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
-
-        assert await fx_service().open(fx_actor, book_record.id) == Book(book_record.id, fx_actor.account_id)
-
-    async def test_a_book_of_another_account_is_not_found(
-        self,
-        fx_service: Callable[[], BooksService],
-        fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
-        fx_actor: Actor,
-    ) -> None:
-        """Verify a book of another account answers like a missing book, so nobody learns that it exists.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], BooksService]
-        :param fx_database: Catalogue of the test.
-        :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        """
-        book_record = make_record()
-        await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id())
-
-        with pytest.raises(NotFoundError) as refused:
-            await fx_service().open(fx_actor, book_record.id)
-
-        missing_id = BookId(uuid4())
-        with pytest.raises(NotFoundError) as missing:
-            await fx_service().open(fx_actor, missing_id)
-        assert str(refused.value).replace(str(book_record.id), '') == str(missing.value).replace(str(missing_id), '')
-
-    async def test_a_book_that_is_not_listed_is_not_found(
-        self, fx_service: Callable[[], BooksService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
-    ) -> None:
-        """Verify a book that has a store and no entry, which is a creation broken off half way, cannot be opened.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        """
-        book_record = make_record()
-        await fx_uow().create_book(book_record)
-
-        with pytest.raises(NotFoundError):
-            await fx_service().open(fx_actor, book_record.id)
 
 
 class TestGet:
@@ -472,7 +403,7 @@ class TestDelete:
 
 
 class TestDeleteAll:
-    """Tests for BooksService.delete_all()."""
+    """Tests for AccountBooks.delete_all(), which deletes the books of an account before the account goes."""
 
     async def test_removes_every_book_of_the_actor_with_its_files(
         self,
@@ -503,7 +434,7 @@ class TestDeleteAll:
             await commit_record(fx_database, fx_uow(), book_record, pages[book_record.id], owner=owner)
             await fx_files.store(book_record.id, pages[book_record.id])
 
-        await fx_service().delete_all(fx_actor)
+        await AccountBooks(uow=fx_uow(), books=fx_service()).delete_all(fx_actor.account_id)
 
         remaining = await fx_uow().read(lambda repos: repos.library.list_for_owner(fx_actor.account_id, SliceRequest()))
         expect(remaining.total == 0)
@@ -513,16 +444,34 @@ class TestDeleteAll:
         assert_expectations()
 
     async def test_actor_without_books_is_not_an_error(
-        self, fx_service: Callable[[], BooksService], fx_actor: Actor
+        self, fx_service: Callable[[], BooksService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
         """Verify deleting the books of an account that has none succeeds, as for a fresh account.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], BooksService]
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         """
-        await fx_service().delete_all(fx_actor)
+        await AccountBooks(uow=fx_uow(), books=fx_service()).delete_all(fx_actor.account_id)
+
+
+async def _listed(service: BooksService, uow: UnitOfWork, actor: Actor) -> Slice[BookOverview]:
+    """List the books of the actor as the list route does: the books the access dependencies read, then their overviews.
+
+    :param service: The book service of the request.
+    :type service: BooksService
+    :param uow: Unit of work the books of the actor are read through.
+    :type uow: UnitOfWork
+    :param actor: Account whose books are listed.
+    :type actor: Actor
+    :returns: The overviews of the actor's books, the latest added first, and their number.
+    :rtype: Slice[BookOverview]
+    """
+    books = await books_of(uow, actor.account_id)
+    return await service.overviews(Slice(items=books, total=len(books)))
 
 
 async def _archive(service: BooksService, actor: Actor, book_id: BookId) -> io.BytesIO:
@@ -571,7 +520,7 @@ class TestExportAndImport:
 
         copy_id = imported.book_record.id
         pages = await fx_uow().read_book(copy_id, lambda repos: repos.pages.list_window(SliceRequest()).items)
-        listed = await fx_service().list(fx_actor, SliceRequest())
+        listed = await _listed(fx_service(), fx_uow(), fx_actor)
         expect(copy_id != book_record.id)
         expect(imported.book_record.details == book_record.details)
         expect([stored.id for stored in pages] == [page.id])
@@ -600,7 +549,7 @@ class TestExportAndImport:
             await fx_service().import_archive(fx_actor, written)
 
         expect(await fx_uow().stored_books() == [])
-        expect((await fx_service().list(fx_actor, SliceRequest())).total == 0)
+        expect((await _listed(fx_service(), fx_uow(), fx_actor)).total == 0)
         assert_expectations()
 
 

@@ -6,10 +6,11 @@ import pytest
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import OrderMode, RecipeKind, Stage
-from bookreviver.domain.errors import InvalidParametersError, NotFoundError
+from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.values import ProfileDraft, SliceRequest, Step
 from bookreviver.services.recipe_profiles import COPY_NAME
 from tests.helpers.builders import make_record, open_for
+from tests.helpers.processing import account_books, account_profiles
 from tests.helpers.processors import FakeProcessor, SecondProcessor, ThirdProcessor
 from tests.helpers.seeding import store_book
 
@@ -84,8 +85,10 @@ class TestBooksOfAProfile:
         other = await another_book(fx_kit, actor)
         profile = await save_profile(fx_kit, actor)
         for target in (book_record, other, book_record):
-            await fx_kit.profiles().apply(open_for(actor, target.id), profile.id, kind=RecipeKind.TEXT)
-        listed = await fx_kit.profiles().library(actor, None, EVERYTHING)
+            await fx_kit.profiles().apply(open_for(actor, target.id), profile, kind=RecipeKind.TEXT)
+        listed = await fx_kit.profiles().library(
+            await account_profiles(fx_kit, actor, None), await account_books(fx_kit, actor)
+        )
         assert [(item.profile.id, item.books) for item in listed.items] == [(profile.id, BOOKS_OF_ONE_PROFILE)]
 
     async def test_a_profile_that_no_book_uses_has_none(self, fx_kit: ProcessingKit) -> None:
@@ -96,9 +99,11 @@ class TestBooksOfAProfile:
         """
         actor, book_record = await fx_kit.seed_record()
         used = await save_profile(fx_kit, actor)
-        unused = await fx_kit.profiles().duplicate(actor, used.id)
-        await fx_kit.profiles().apply(open_for(actor, book_record.id), used.id, kind=RecipeKind.TEXT)
-        listed = await fx_kit.profiles().library(actor, None, EVERYTHING)
+        unused = await fx_kit.profiles().duplicate(used)
+        await fx_kit.profiles().apply(open_for(actor, book_record.id), used, kind=RecipeKind.TEXT)
+        listed = await fx_kit.profiles().library(
+            await account_profiles(fx_kit, actor, None), await account_books(fx_kit, actor)
+        )
         assert {item.profile.id: item.books for item in listed.items} == {used.id: 1, unused.id: 0}
 
     async def test_the_books_of_another_account_do_not_count(self, fx_kit: ProcessingKit) -> None:
@@ -111,7 +116,9 @@ class TestBooksOfAProfile:
         stranger, _ = await fx_kit.seed_record()
         await save_profile(fx_kit, stranger)
         mine = await save_profile(fx_kit, actor)
-        listed = await fx_kit.profiles().library(actor, Stage.GEOMETRY, EVERYTHING)
+        listed = await fx_kit.profiles().library(
+            await account_profiles(fx_kit, actor, Stage.GEOMETRY), await account_books(fx_kit, actor)
+        )
         assert ([item.profile.id for item in listed.items], listed.total) == ([mine.id], 1)
 
     async def test_deleting_a_profile_removes_it_from_the_library(self, fx_kit: ProcessingKit) -> None:
@@ -122,9 +129,11 @@ class TestBooksOfAProfile:
         """
         actor, book_record = await fx_kit.seed_record()
         profile = await save_profile(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(open_for(actor, book_record.id), profile.id, kind=RecipeKind.TEXT)
-        await fx_kit.profiles().remove(actor, profile.id)
-        listed = await fx_kit.profiles().library(actor, None, EVERYTHING)
+        applied = await fx_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
+        await fx_kit.profiles().remove(profile, await account_books(fx_kit, actor))
+        listed = await fx_kit.profiles().library(
+            await account_profiles(fx_kit, actor, None), await account_books(fx_kit, actor)
+        )
         kept = await fx_kit.uow().read_book(book_record.id, lambda repos: repos.recipes.get(applied.recipe.id))
         assert (listed.total, kept.profile_id) == (0, None)
 
@@ -138,11 +147,11 @@ class TestBooksOfAProfile:
         other = await another_book(fx_kit, actor)
         profile = await save_profile(fx_kit, actor)
         applied = [
-            await fx_kit.profiles().apply(open_for(actor, target.id), profile.id, kind=RecipeKind.TEXT)
+            await fx_kit.profiles().apply(open_for(actor, target.id), profile, kind=RecipeKind.TEXT)
             for target in (book_record, other)
         ]
 
-        await fx_kit.profiles().remove(actor, profile.id)
+        await fx_kit.profiles().remove(profile, await account_books(fx_kit, actor))
 
         async def recipe_of(target: BookRecord, recipe_id: RecipeId) -> Recipe:
             """Read a recipe of a book as committed.
@@ -175,8 +184,8 @@ class TestDuplicateProfile:
         """
         actor, _ = await fx_kit.seed_record()
         profile = await save_profile(fx_kit, actor)
-        await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
-        copy = await fx_kit.profiles().duplicate(actor, profile.id)
+        await fx_kit.profiles().set_default(profile, is_default=True)
+        copy = await fx_kit.profiles().duplicate(profile)
         stored, original = await fx_kit.uow().read(
             lambda repos: (repos.recipe_profiles.get(copy.id), repos.recipe_profiles.get(profile.id))
         )
@@ -186,18 +195,6 @@ class TestDuplicateProfile:
         expect((stored.stage, stored.order, stored.is_default) == (Stage.GEOMETRY, OrderMode.USUAL, False))
         expect(original.is_default)
         assert_expectations()
-
-    async def test_the_profile_of_another_account_cannot_be_copied(self, fx_kit: ProcessingKit) -> None:
-        """Reject a copy of a profile the account does not own, as a missing one is rejected.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        actor, _ = await fx_kit.seed_record()
-        stranger, _ = await fx_kit.seed_record()
-        foreign = await save_profile(fx_kit, stranger)
-        with pytest.raises(NotFoundError):
-            await fx_kit.profiles().duplicate(actor, foreign.id)
 
 
 class TestImportProfile:
@@ -238,7 +235,7 @@ class TestImportProfile:
         )
         with pytest.raises(InvalidParametersError, match=f'{MISSING_KEY}, geometry.also'):
             await fx_kit.profiles().import_profile(actor, Stage.GEOMETRY, draft)
-        assert (await fx_kit.profiles().profiles(actor, None, EVERYTHING)).total == 0
+        assert (await account_profiles(fx_kit, actor, None)).total == 0
 
     async def test_a_file_whose_steps_do_not_fit_their_processor_is_refused(self, fx_kit: ProcessingKit) -> None:
         """Reject a file with a parameter the processor does not know, as saving a profile rejects it.

@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
-from bookreviver.api.book import open_book
+from bookreviver.api.access import open_book
 from bookreviver.api.schemas.imports import UploadForm
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.services.book import Book

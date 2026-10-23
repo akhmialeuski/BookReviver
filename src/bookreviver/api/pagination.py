@@ -37,6 +37,18 @@ class ManifestParams(Params):
 ManifestPage = CustomizedPage[Page[PageItemT], UseParams(ManifestParams), UseName(MANIFEST_PAGE_NAME)]
 
 
+def slice_request(params: Params) -> SliceRequest:
+    """Return the slice of a collection the page parameters ask for.
+
+    :param params: Page number and size fastapi-pagination parsed from the query.
+    :type params: Params
+    :returns: The offset and the limit of the window.
+    :rtype: SliceRequest
+    """
+    raw = params.to_raw_params().as_limit_offset()
+    return SliceRequest(offset=raw.offset or 0, limit=raw.limit or params.size)
+
+
 class Pager[ItemT, SchemaT: BaseModel]:
     """Turns page parameters into a slice request, and a slice into a typed page of schemas."""
 
@@ -54,8 +66,7 @@ class Pager[ItemT, SchemaT: BaseModel]:
     @property
     def request(self) -> SliceRequest:
         """The slice of the collection the page parameters ask for."""
-        raw = self._params.to_raw_params().as_limit_offset()
-        return SliceRequest(offset=raw.offset or 0, limit=raw.limit or self._params.size)
+        return slice_request(self._params)
 
     def page(self, result: Slice[ItemT]) -> Page[SchemaT]:
         """Wrap a slice of domain objects as a page of response schemas.

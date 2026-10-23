@@ -710,7 +710,7 @@ export const duplicateProfileApiV1RecipeProfilesProfileIdDuplicatePost = <ThrowO
 /**
  * Delete Profile
  *
- * Delete a profile, which changes no recipe of any book.
+ * Delete a profile, which changes no step of any recipe and only clears the links to it.
  */
 export const deleteProfileApiV1RecipeProfilesProfileIdDelete = <ThrowOnError extends boolean = false>(options: Options<DeleteProfileApiV1RecipeProfilesProfileIdDeleteData, ThrowOnError>): RequestResult<DeleteProfileApiV1RecipeProfilesProfileIdDeleteResponses, DeleteProfileApiV1RecipeProfilesProfileIdDeleteErrors, ThrowOnError> => (options.client ?? client).delete<DeleteProfileApiV1RecipeProfilesProfileIdDeleteResponses, DeleteProfileApiV1RecipeProfilesProfileIdDeleteErrors, ThrowOnError>({ url: '/api/v1/recipe-profiles/{profile_id}', ...options });
 

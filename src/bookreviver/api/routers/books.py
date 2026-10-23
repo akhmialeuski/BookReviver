@@ -18,13 +18,14 @@ from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page, Params
 from pydantic import ValidationError
 
+from bookreviver.api.access import open_book, own_books
 from bookreviver.api.auth import ActorDep
-from bookreviver.api.book import open_book
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.books import ArchiveForm, BookCreate, BookSchema, BookUpdate
 from bookreviver.domain.entities import BookOverview
+from bookreviver.domain.values import Slice
 from bookreviver.services.book import Book
 from bookreviver.services.books import BooksService
 
@@ -71,22 +72,24 @@ one_book = APIRouter(prefix='/books', route_class=DishkaRoute, dependencies=[Dep
 
 @collection.get('')
 async def list_books(
-    actor: ActorDep, params: Annotated[Params, Depends()], books: FromDishka[BooksService]
+    params: Annotated[Params, Depends()],
+    window: Annotated[Slice[Book], Depends(own_books)],
+    books: FromDishka[BooksService],
 ) -> Page[BookSchema]:
     """List the books of the signed-in account, the latest added first.
 
     \N{FORM FEED}
-    :param actor: The signed-in account.
-    :type actor: Actor
     :param params: Page number and size from the query.
     :type params: Params
+    :param window: The books of the signed-in account the page asks for.
+    :type window: Slice[Book]
     :param books: Books service of the request.
     :type books: BooksService
     :returns: One page of the account's books.
     :rtype: Page[BookSchema]
     """
     pager = Pager[BookOverview, BookSchema](params, BookSchema.from_overview)
-    return pager.page(await books.list(actor, pager.request))
+    return pager.page(await books.overviews(window))
 
 
 @collection.post('', status_code=status.HTTP_201_CREATED)

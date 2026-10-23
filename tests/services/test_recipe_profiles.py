@@ -8,9 +8,10 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import RecipeKind, Stage, StageState
-from bookreviver.domain.errors import InvalidParametersError, NotFoundError
+from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.values import PageStageKey, ProfileDraft, SliceRequest, Step
 from tests.helpers.builders import make_page_stage, make_recipe_profile, make_record, open_for
+from tests.helpers.processing import account_books, account_profiles
 from tests.helpers.processors import FakeProcessor
 from tests.helpers.seeding import commit_account, store_book
 
@@ -92,7 +93,7 @@ class TestSaveProfile:
         """
         actor, _ = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
-        listed = await fx_kit.profiles().profiles(actor, None, EVERYTHING)
+        listed = await account_profiles(fx_kit, actor, None)
         assert [(step.params[STRENGTH], step.enabled) for step in listed.items[0].steps] == [(3, False), (2, True)]
         assert (profile.stage, profile.name, profile.is_default) == (Stage.GEOMETRY, PROFILE_NAME, False)
 
@@ -134,8 +135,8 @@ class TestChangeProfile:
         await saved(fx_kit, other, OTHER_NAME)
         cleaning = ProfileDraft(name=OTHER_NAME, steps=[Step(processor_key=fx_kit.cleanup.spec.key)])
         cleanup = await fx_kit.profiles().save(actor, Stage.CLEANUP, cleaning)
-        everything = await fx_kit.profiles().profiles(actor, None, EVERYTHING)
-        geometry = await fx_kit.profiles().profiles(actor, Stage.GEOMETRY, EVERYTHING)
+        everything = await account_profiles(fx_kit, actor, None)
+        geometry = await account_profiles(fx_kit, actor, Stage.GEOMETRY)
         assert ([profile.id for profile in everything.items], everything.total) == ([mine.id, cleanup.id], 2)
         assert [profile.id for profile in geometry.items] == [mine.id]
 
@@ -147,7 +148,7 @@ class TestChangeProfile:
         """
         actor, _ = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
-        renamed = await fx_kit.profiles().rename(actor, profile.id, OTHER_NAME)
+        renamed = await fx_kit.profiles().rename(profile, OTHER_NAME)
         assert (renamed.name, renamed.steps) == (OTHER_NAME, profile.steps)
         assert await fx_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id)) == renamed
 
@@ -160,9 +161,9 @@ class TestChangeProfile:
         actor, _ = await fx_kit.seed_record()
         first = await saved(fx_kit, actor)
         second = await saved(fx_kit, actor, OTHER_NAME)
-        await fx_kit.profiles().set_default(actor, first.id, is_default=True)
-        await fx_kit.profiles().set_default(actor, second.id, is_default=True)
-        listed = await fx_kit.profiles().profiles(actor, Stage.GEOMETRY, EVERYTHING)
+        await fx_kit.profiles().set_default(first, is_default=True)
+        await fx_kit.profiles().set_default(second, is_default=True)
+        listed = await account_profiles(fx_kit, actor, Stage.GEOMETRY)
         assert [(profile.id, profile.is_default) for profile in listed.items] == [(first.id, False), (second.id, True)]
 
     async def test_a_default_can_be_given_up(self, fx_kit: ProcessingKit) -> None:
@@ -173,8 +174,8 @@ class TestChangeProfile:
         """
         actor, _ = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
-        await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
-        await fx_kit.profiles().set_default(actor, profile.id, is_default=False)
+        await fx_kit.profiles().set_default(profile, is_default=True)
+        await fx_kit.profiles().set_default(profile, is_default=False)
         default = await fx_kit.uow().read(
             lambda repos: repos.recipe_profiles.find_default(actor.account_id, Stage.GEOMETRY)
         )
@@ -188,31 +189,11 @@ class TestChangeProfile:
         """
         actor, book_record = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(open_for(actor, book_record.id), profile.id, kind=RecipeKind.TEXT)
-        await fx_kit.profiles().remove(actor, profile.id)
+        applied = await fx_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
+        await fx_kit.profiles().remove(profile, await account_books(fx_kit, actor))
         kept = await fx_kit.uow().read_book(book_record.id, lambda repos: repos.recipes.get(applied.recipe.id))
         assert kept.steps == profile.steps
-        assert (await fx_kit.profiles().profiles(actor, None, EVERYTHING)).total == 0
-
-    async def test_a_profile_of_another_account_is_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Reject every change of a profile by an account that does not own it.
-
-        :param fx_kit: What the processing services of the test share.
-        :type fx_kit: ProcessingKit
-        """
-        owner, _ = await fx_kit.seed_record()
-        stranger, stranger_record = await fx_kit.seed_record()
-        profile = await saved(fx_kit, owner)
-        service = fx_kit.profiles()
-        with pytest.raises(NotFoundError):
-            await service.rename(stranger, profile.id, OTHER_NAME)
-        with pytest.raises(NotFoundError):
-            await service.set_default(stranger, profile.id, is_default=True)
-        with pytest.raises(NotFoundError):
-            await service.remove(stranger, profile.id)
-        with pytest.raises(NotFoundError):
-            await service.apply(open_for(stranger, stranger_record.id), profile.id, kind=RecipeKind.TEXT)
-        assert await fx_kit.uow().read(lambda repos: repos.recipe_profiles.get(profile.id)) == profile
+        assert (await account_profiles(fx_kit, actor, None)).total == 0
 
 
 class TestApplyProfile:
@@ -229,7 +210,7 @@ class TestApplyProfile:
         actor, book_record = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
         other = await second_record(fx_kit, actor)
-        applied = await fx_kit.profiles().apply(open_for(actor, other.id), profile.id, kind=RecipeKind.BW_PICTURE)
+        applied = await fx_kit.profiles().apply(open_for(actor, other.id), profile, kind=RecipeKind.BW_PICTURE)
         picture = await fx_kit.recipe_of(actor, other, Stage.GEOMETRY, RecipeKind.BW_PICTURE)
         text = await fx_kit.recipe_of(actor, other, Stage.GEOMETRY)
         expect(applied.recipe.steps == profile.steps)
@@ -252,7 +233,7 @@ class TestApplyProfile:
         seeded = make_page_stage(page_id=page.id, recipe_id=recipe.id)
         await fx_kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.page_stages.save(seeded))
         profile = await saved(fx_kit, actor)
-        await fx_kit.profiles().apply(open_for(actor, book_record.id), profile.id, kind=RecipeKind.TEXT)
+        await fx_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
         record = await fx_kit.uow().read_book(
             book_record.id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
         )
@@ -276,7 +257,7 @@ class TestApplyProfile:
                 ),
             ),
         )
-        applied = await fx_kit.profiles().apply(open_for(actor, book_record.id), profile.id, kind=RecipeKind.TEXT)
+        applied = await fx_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
         assert [step.processor_key for step in applied.recipe.steps] == [FAKE_KEY]
         assert applied.missing_processors == (MISSING_KEY,)
 
@@ -292,7 +273,7 @@ class TestApplyProfile:
             make_recipe_profile(account_id=actor.account_id, steps=(Step(processor_key=MISSING_KEY),)),
         )
         with pytest.raises(InvalidParametersError, match=MISSING_KEY):
-            await fx_kit.profiles().apply(open_for(actor, book_record.id), profile.id, kind=RecipeKind.TEXT)
+            await fx_kit.profiles().apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
 
 
 class TestDefaultProfileOfANewBook:
@@ -308,7 +289,7 @@ class TestDefaultProfileOfANewBook:
         """
         actor, _ = await fx_kit.seed_record()
         profile = await saved(fx_kit, actor)
-        await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
+        await fx_kit.profiles().set_default(profile, is_default=True)
         fresh = await second_record(fx_kit, actor)
         listed = await fx_kit.service().recipes(open_for(actor, fresh.id), Stage.GEOMETRY, EVERYTHING)
         assert [(recipe.kind, recipe.steps == profile.steps, recipe.profile_id) for recipe in listed.items] == [
@@ -329,7 +310,7 @@ class TestDefaultProfileOfANewBook:
         actor, _ = await fx_cv_kit.seed_record()
         deskew = ProfileDraft(name=PROFILE_NAME, steps=[Step(processor_key=DESKEW_KEY)])
         profile = await fx_cv_kit.profiles().save(actor, Stage.GEOMETRY, deskew)
-        await fx_cv_kit.profiles().set_default(actor, profile.id, is_default=True)
+        await fx_cv_kit.profiles().set_default(profile, is_default=True)
         fresh = await second_record(fx_cv_kit, actor)
         listed = await fx_cv_kit.service().recipes(open_for(actor, fresh.id), Stage.GEOMETRY, EVERYTHING)
         picture = next(recipe for recipe in listed.items if recipe.kind is RecipeKind.COLOR_PICTURE)
@@ -357,7 +338,7 @@ class TestDefaultProfileOfANewBook:
         """
         stranger = Actor(account_id=await commit_account(fx_kit.database))
         profile = await saved(fx_kit, stranger)
-        await fx_kit.profiles().set_default(stranger, profile.id, is_default=True)
+        await fx_kit.profiles().set_default(profile, is_default=True)
         actor, book_record = await fx_kit.seed_record()
         assert (await fx_kit.recipe_of(actor, book_record, Stage.GEOMETRY)).profile_id is None
 
@@ -370,7 +351,7 @@ class TestDefaultProfileOfANewBook:
         actor, book_record = await fx_kit.seed_record()
         await fx_kit.recipe_of(actor, book_record, Stage.GEOMETRY)
         profile = await saved(fx_kit, actor)
-        await fx_kit.profiles().set_default(actor, profile.id, is_default=True)
+        await fx_kit.profiles().set_default(profile, is_default=True)
         assert (await fx_kit.recipe_of(actor, book_record, Stage.GEOMETRY)).profile_id is None
 
     async def test_a_default_with_nothing_that_can_run_falls_back_to_the_built_in_recipe(

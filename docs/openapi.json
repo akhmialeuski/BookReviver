@@ -5234,7 +5234,7 @@
           "profiles"
         ],
         "summary": "Delete Profile",
-        "description": "Delete a profile, which changes no recipe of any book.",
+        "description": "Delete a profile, which changes no step of any recipe and only clears the links to it.",
         "operationId": "delete_profile_api_v1_recipe_profiles__profile_id__delete",
         "parameters": [
           {

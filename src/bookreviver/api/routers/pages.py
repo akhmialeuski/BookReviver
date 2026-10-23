@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Annotated
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Body, Depends, Path, Request, Response, status
 
-from bookreviver.api.book import open_book
+from bookreviver.api.access import open_book
 from bookreviver.api.freshness import fresh_book
 from bookreviver.api.pagination import ManifestPage, Pager
 from bookreviver.api.route_names import RouteName

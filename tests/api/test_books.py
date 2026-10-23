@@ -1,6 +1,7 @@
 """Tests for the book endpoints, on the SQLite file and the local stores under the test's data directory."""
 
 import json
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, NamedTuple
 from urllib.parse import quote
 
@@ -335,14 +336,29 @@ class TestCreateBook:
         assert_expectations()
 
 
+class InvisibleBook(StrEnum):
+    """How a book no account can open is stored, for the cases of the read of one book."""
+
+    OTHER_ACCOUNT = 'other-account'
+    UNKNOWN = 'unknown'
+    UNLISTED = 'unlisted'
+
+
 class TestGetBook:
     """Tests for GET /books/{book_id}."""
 
-    @pytest.mark.parametrize('owned_by_other', [True, False], ids=['other-account', 'unknown'])
+    @pytest.mark.parametrize('stored', list(InvisibleBook))
     async def test_invisible_book_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, *, owned_by_other: bool
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        *,
+        stored: InvisibleBook,
     ) -> None:
-        """Verify another account's book answers exactly like a book that does not exist.
+        """Verify another account's book, and a store with no entry in the library, answer like a missing book.
+
+        A store with no entry is a creation broken off half way, which no account can open.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -350,12 +366,14 @@ class TestGetBook:
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param owned_by_other: Whether the book is stored for another account, rather than not stored at all.
-        :type owned_by_other: bool
+        :param stored: How the book is stored: for another account, not at all, or as a store with no entry.
+        :type stored: InvisibleBook
         """
         book_record = make_record()
-        if owned_by_other:
+        if stored is InvisibleBook.OTHER_ACCOUNT:
             await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id())
+        elif stored is InvisibleBook.UNLISTED:
+            await fx_uow().create_book(book_record)
 
         response = await fx_client.get(_book_path(book_record.id))
 

@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, Header, Path
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from fastapi_pagination import Page
 
-from bookreviver.api.book import open_book
+from bookreviver.api.access import open_book
 from bookreviver.api.pagination import Pager
 from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.jobs import (

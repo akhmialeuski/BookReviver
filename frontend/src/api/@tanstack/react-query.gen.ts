@@ -1620,7 +1620,7 @@ export const duplicateProfileApiV1RecipeProfilesProfileIdDuplicatePostMutation =
 /**
  * Delete Profile
  *
- * Delete a profile, which changes no recipe of any book.
+ * Delete a profile, which changes no step of any recipe and only clears the links to it.
  */
 export const deleteProfileApiV1RecipeProfilesProfileIdDeleteMutation = (options?: Partial<Options<DeleteProfileApiV1RecipeProfilesProfileIdDeleteData>>): UseMutationOptions<DeleteProfileApiV1RecipeProfilesProfileIdDeleteResponse, DeleteProfileApiV1RecipeProfilesProfileIdDeleteError, Options<DeleteProfileApiV1RecipeProfilesProfileIdDeleteData>> => {
     const mutationOptions: UseMutationOptions<DeleteProfileApiV1RecipeProfilesProfileIdDeleteResponse, DeleteProfileApiV1RecipeProfilesProfileIdDeleteError, Options<DeleteProfileApiV1RecipeProfilesProfileIdDeleteData>> = {

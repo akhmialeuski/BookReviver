@@ -1,7 +1,7 @@
-"""One open book: a book of the acting account, opened once when a request or a job reaches it.
+"""One open book, opened once when a request or a job reaches it.
 
-Only ``BooksService.open`` opens a book for an account, after it has checked the owner, so a use case that takes a
-``Book`` works on a book its actor may work on and checks nothing itself.
+For a request, the access dependency ``open_book`` of the API opens a book of the signed-in account after it has
+checked the owner, so a use case that takes a ``Book`` works on it and checks nothing itself.
 """
 
 from typing import TYPE_CHECKING
