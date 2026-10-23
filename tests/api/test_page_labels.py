@@ -46,7 +46,7 @@ LAYOUT: list[tuple[PageKind, bool]] = [
 class Book(NamedTuple):
     """A book of five labelled pages of the signed-in account.
 
-    :ivar book_record: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar pages: The pages in book order.
     """
 
@@ -159,7 +159,7 @@ NUMBER_CASES: list[NumberCase] = [
 
 
 class TestUpdatePage:
-    """Tests for PATCH /projects/{project_id}/pages/{page_id}."""
+    """Tests for PATCH /books/{book_id}/pages/{page_id}."""
 
     @pytest.mark.parametrize('case', FIELD_CASES, ids=[f'{case.field}-{case.sent}' for case in FIELD_CASES])
     async def test_changes_the_field_sent_and_keeps_the_others(
@@ -242,7 +242,7 @@ class TestUpdatePage:
     async def test_missing_page_and_page_of_another_account_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify a page that does not exist and a page of another account's project both answer 404.
+        """Verify a page that does not exist and a page of another account's book both answer 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -266,7 +266,7 @@ class TestUpdatePage:
 
 
 class TestNumberPages:
-    """Tests for POST /projects/{project_id}/pages/labels."""
+    """Tests for POST /books/{book_id}/pages/labels."""
 
     @pytest.mark.parametrize('case', NUMBER_CASES, ids=[f'{case.style}-{case.bracketed}' for case in NUMBER_CASES])
     async def test_writes_the_labels_of_every_style_skipping_pages_kept_out_and_kinds_to_skip(

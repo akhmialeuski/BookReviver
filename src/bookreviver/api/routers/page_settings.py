@@ -42,7 +42,7 @@ router = APIRouter(prefix='/books', tags=['page-settings'], route_class=DishkaRo
 class SettingsPath:
     """The identifiers in the address of the settings of one stage of one page.
 
-    :ivar book_id: Identifier of the project.
+    :ivar book_id: Identifier of the book.
     :ivar page_id: Identifier of the page.
     :ivar stage: The stage.
     """
@@ -87,7 +87,7 @@ async def list_settings(
     the groups for the step, and with the parameters the step runs with on the page.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page and the stage.
+    :param address: Identifiers of the book, the page and the stage.
     :type address: SettingsPath
     :param params: Page number and size from the query.
     :type params: Params
@@ -131,7 +131,7 @@ async def put_value(
     nothing is processed by this request.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the stage, the step and the field.
+    :param address: Identifiers of the book, the stage, the step and the field.
     :type address: FieldPath
     :param form: The pages and the value.
     :type form: ValueForm
@@ -160,7 +160,7 @@ async def delete_value(
     The answer is 404 when none of the pages has a value of its own for the field, or the step is not one of the stage.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the stage, the step and the field.
+    :param address: Identifiers of the book, the stage, the step and the field.
     :type address: FieldPath
     :param target: The pages, the odd pages, the even pages or the group the value was set for.
     :type target: ValueTargetModel

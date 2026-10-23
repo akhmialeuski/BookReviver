@@ -46,7 +46,7 @@ PARAMS: str = 'params'
 class Book(NamedTuple):
     """A book of the signed-in account with three pages and the step of its geometry recipe.
 
-    :ivar book_record: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar pages: The pages in book order.
     :ivar step_id: Identifier of the only step of the geometry recipe of text pages.
     """
@@ -279,7 +279,7 @@ class TestRefusals:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     async def test_a_page_of_another_book_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
-        """Verify a page that is not one of the project is refused like a missing page.
+        """Verify a page that is not one of the book is refused like a missing page.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient

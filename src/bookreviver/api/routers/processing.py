@@ -51,9 +51,9 @@ router = APIRouter(prefix='/books', tags=['processing'], route_class=DishkaRoute
 
 @dataclass(frozen=True)
 class StagePath:
-    """The identifiers in the address of one stage of a project, read together so a route keeps to a few parameters.
+    """The identifiers in the address of one stage of a book, read together so a route keeps to a few parameters.
 
-    :ivar book_id: Identifier of the project.
+    :ivar book_id: Identifier of the book.
     :ivar stage: The stage.
     """
 
@@ -63,9 +63,9 @@ class StagePath:
 
 @dataclass(frozen=True)
 class RecipePath:
-    """The identifiers in the address of one recipe of a stage of a project.
+    """The identifiers in the address of one recipe of a stage of a book.
 
-    :ivar book_id: Identifier of the project.
+    :ivar book_id: Identifier of the book.
     :ivar stage: The stage.
     :ivar recipe_id: Identifier of the recipe.
     """
@@ -77,9 +77,9 @@ class RecipePath:
 
 @dataclass(frozen=True)
 class PageStagePath:
-    """The identifiers in the address of one stage of one page of a project.
+    """The identifiers in the address of one stage of one page of a book.
 
-    :ivar book_id: Identifier of the project.
+    :ivar book_id: Identifier of the book.
     :ivar page_id: Identifier of the page.
     :ivar stage: The stage.
     """
@@ -91,9 +91,9 @@ class PageStagePath:
 
 @dataclass(frozen=True)
 class VersionPath:
-    """The identifiers in the address of one version of a page of a project.
+    """The identifiers in the address of one version of a page of a book.
 
-    :ivar book_id: Identifier of the project.
+    :ivar book_id: Identifier of the book.
     :ivar page_id: Identifier of the page.
     :ivar version_id: Identifier of the version.
     """
@@ -111,10 +111,10 @@ async def list_recipes(
     processing: FromDishka[ProcessingService],
     order: FromDishka[RecipeOrder],
 ) -> Page[RecipeSchema]:
-    """List the recipes of a stage, one for each kind of page, which a project creates the first time it is asked.
+    """List the recipes of a stage, one for each kind of page, which a book creates the first time it is asked.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project and the stage.
+    :param address: Identifiers of the book and the stage.
     :type address: StagePath
     :param params: Page number and size from the query.
     :type params: Params
@@ -147,7 +147,7 @@ async def put_recipe(
     answer.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the stage and the recipe.
+    :param address: Identifiers of the book, the stage and the recipe.
     :type address: RecipePath
     :param body: The steps and the order to keep.
     :type body: RecipeBody
@@ -181,7 +181,7 @@ async def reset_recipe(
     identifier and its kind, and every step in it is new. The answer is 404 for a stage that has no steps by default.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the stage and the recipe.
+    :param address: Identifiers of the book, the stage and the recipe.
     :type address: RecipePath
     :param actor: The signed-in account.
     :type actor: Actor
@@ -205,13 +205,13 @@ async def run_stage(
 ) -> JobSchema:
     """Run a stage over some pages, each by the recipe of its kind, in the background, and answer with the queued job.
 
-    The job makes a version for every step on every page and reports one step of progress for each page. A project runs
+    The job makes a version for every step on every page and reports one step of progress for each page. A book runs
     one stage at a time, and another run while one is queued or running answers 409. A run keeps the settings the pages
     changed for its steps and the manual edits they read. A mode that takes the edits or the settings away answers 409
     until the body confirms it, when it would take them from any page.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project and the stage.
+    :param address: Identifiers of the book and the stage.
     :type address: StagePath
     :param body: The pages, or every page with an image, and the mode.
     :type body: StageRunBody
@@ -240,7 +240,7 @@ async def run_impact(
     for them. Nothing is written and nothing is queued.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project and the stage.
+    :param address: Identifiers of the book and the stage.
     :type address: StagePath
     :param body: The run, with its mode.
     :type body: StageRunBody
@@ -268,7 +268,7 @@ async def preview_step(
     version of the stage.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project and the stage.
+    :param address: Identifiers of the book and the stage.
     :type address: StagePath
     :param body: The page, the steps as the form has them, and the step whose result is wanted.
     :type body: StepPreviewBody
@@ -294,10 +294,10 @@ async def measure_book(
     The job reads the line height and the frame of the block of text that ``geometry.crop`` recorded on every page, and
     writes the median line height and a page size of the median block with its margins into the parameters of the
     ``geometry.normalize`` step of every Geometry recipe, which marks the pages of those recipes stale. A preview of the
-    project is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.
+    book is cancelled, and a run, a tile cutting or a collection that is queued or running answers 409.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
@@ -319,7 +319,7 @@ async def list_page_stages(
     """List the stages a page has been through, with the current version and the state of each, in pipeline order.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project and of the page.
+    :param address: Identifiers of the book and of the page.
     :type address: PagePath
     :param params: Page number and size from the query.
     :type params: Params
@@ -346,7 +346,7 @@ async def choose_version(
     The version must be ready and made by a full run of this page in this stage. The answer is 409 for one that is not.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page and the stage.
+    :param address: Identifiers of the book, the page and the stage.
     :type address: PageStagePath
     :param body: The version to make current.
     :type body: HeadChoice
@@ -375,7 +375,7 @@ async def list_versions(
     recipe of the stage has is a 404. With ``mark`` it holds the versions carrying that mark only.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project and of the page.
+    :param address: Identifiers of the book and of the page.
     :type address: PagePath
     :param query: Page number and size, and the stage, the step, the scale and the mark to list.
     :type query: VersionQuery
@@ -390,7 +390,7 @@ async def list_versions(
     """
 
     def to_schema(version: PageVersion) -> PageVersionSchema:
-        """Build the schema of one version of this project.
+        """Build the schema of one version of this book.
 
         :param version: The version.
         :type version: PageVersion
@@ -414,7 +414,7 @@ async def get_version(
     """Return one version of a page, with its provenance, its transform and the paths of its images.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page and the version.
+    :param address: Identifiers of the book, the page and the version.
     :type address: VersionPath
     :param actor: The signed-in account.
     :type actor: Actor
@@ -436,7 +436,7 @@ async def cut_version_tiles(
     """Cut the tile pyramid of a version in the background, which a viewer asks for when a version has none.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page and the version.
+    :param address: Identifiers of the book, the page and the version.
     :type address: VersionPath
     :param actor: The signed-in account.
     :type actor: Actor
@@ -457,10 +457,10 @@ async def collectable_versions(
 ) -> CollectionReportSchema:
     """Count the versions a collection would delete now and the space their files take, and change nothing.
 
-    The versions are the ones ``POST /projects/{project_id}/versions/collect`` deletes, chosen by the same rule.
+    The versions are the ones ``POST /books/{book_id}/versions/collect`` deletes, chosen by the same rule.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
@@ -485,7 +485,7 @@ async def collect_versions(
     its row. A collection that is queued or running already is the answer. A run queues one by itself when it ends.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor

@@ -21,9 +21,9 @@ ACCOUNT_DOMAIN: str = 'example.org'
 
 
 class BookContent(TypedDict, total=False):
-    """What a seeded book holds besides its project and its pages, each part left out when a test needs none.
+    """What a seeded book holds besides its record and its pages, each part left out when a test needs none.
 
-    :ivar sources: Sources of the project.
+    :ivar sources: Sources of the book.
     :ivar scans: Scans of those sources.
     :ivar versions: Versions of the pages.
     """
@@ -86,7 +86,7 @@ async def ensure_account(database: SqlDatabase, account_id: AccountId) -> None:
 async def store_book(
     uow: UnitOfWork, book_record: BookRecord, *pages: Page, owner: AccountId, **content: Unpack[BookContent]
 ) -> None:
-    """Store a book with its project, then its sources, their scans, its pages and their versions, and list it.
+    """Store a book with its record, then its sources, their scans, its pages and their versions, and list it.
 
     The store of the book is made first, then the content of the book is stored by ``change_book``, and the library entry
     of the owner is added last, as the creation of a book does. The entry names an account, so the catalogue must store
@@ -94,13 +94,13 @@ async def store_book(
 
     :param uow: Unit of work to store through, over a catalogue that stores the account owning the book.
     :type uow: UnitOfWork
-    :param book_record: Project to store.
+    :param book_record: Record of the book to store.
     :type book_record: BookRecord
-    :param pages: Pages of the project, which may show the given scans.
+    :param pages: Pages of the book, which may show the given scans.
     :type pages: Page
     :param owner: Account owning the book.
     :type owner: AccountId
-    :param content: The sources of the project, their scans and the versions of the pages, as far as the book has them.
+    :param content: The sources of the book, their scans and the versions of the pages, as far as the book has them.
     :type content: Unpack[BookContent]
     """
 
@@ -109,7 +109,7 @@ async def store_book(
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: Project of the book, which the work does not need.
+        :param _book_record: Record of the book, which the work does not need.
         :type _book_record: BookRecord
         """
         repos.sources.add_many(content.get('sources', ()))
@@ -137,13 +137,13 @@ async def commit_record(
     :type database: SqlDatabase
     :param uow: Unit of work to store the book through, over the same catalogue.
     :type uow: UnitOfWork
-    :param book_record: Project to store.
+    :param book_record: Record of the book to store.
     :type book_record: BookRecord
-    :param pages: Pages of the project, which may show the given scans.
+    :param pages: Pages of the book, which may show the given scans.
     :type pages: Page
     :param owner: Account owning the book, which is committed first unless the catalogue stores it.
     :type owner: AccountId
-    :param content: The sources of the project, their scans and the versions of the pages, as far as the book has them.
+    :param content: The sources of the book, their scans and the versions of the pages, as far as the book has them.
     :type content: Unpack[BookContent]
     """
     await ensure_account(database, owner)

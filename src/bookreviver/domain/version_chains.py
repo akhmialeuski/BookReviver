@@ -34,7 +34,7 @@ def collectable_versions(
 ) -> set[PageVersionId]:
     """Choose the versions that may be deleted: the eligible ones that no version that stays reads, directly or not.
 
-    :param inputs: The input of every version of a project, or None for a base version, which has none.
+    :param inputs: The input of every version of a book, or None for a base version, which has none.
     :type inputs: Mapping[PageVersionId, PageVersionId | None]
     :param eligible: The versions that may go, which are not base versions and, for a preview, are old enough.
     :type eligible: Collection[PageVersionId]

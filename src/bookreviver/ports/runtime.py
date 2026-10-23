@@ -101,7 +101,7 @@ class JobBoard(ABC):
     def jobs(self, book_id: BookId, *, active: bool) -> Sequence[Job]:
         """Return the jobs of a book the process holds, the newest first.
 
-        :param book_id: Project whose jobs are listed.
+        :param book_id: Book whose jobs are listed.
         :type book_id: BookId
         :param active: Whether to list only the jobs that are queued or running.
         :type active: bool
@@ -113,7 +113,7 @@ class JobBoard(ABC):
     def jobs_of(self, book_ids: Collection[BookId], *, active: bool) -> Sequence[Job]:
         """Return the jobs of several books the process holds, the newest first.
 
-        :param book_ids: Projects whose jobs are listed.
+        :param book_ids: Books whose jobs are listed.
         :type book_ids: Collection[BookId]
         :param active: Whether to list only the jobs that are queued or running.
         :type active: bool
@@ -155,15 +155,15 @@ class EventPublisher(ABC):
 
     @abstractmethod
     async def publish(self, event: DomainEvent) -> None:
-        """Deliver the event to every current subscriber of its project.
+        """Deliver the event to every current subscriber of its book.
 
-        :param event: Event to deliver, carrying the project it belongs to.
+        :param event: Event to deliver, carrying the book it belongs to.
         :type event: DomainEvent
         """
 
 
 class EventStream(ABC):
-    """Subscribes to the domain events of one project.
+    """Subscribes to the domain events of one book.
 
     A subscription is a resource with a start and an end, so it is an async context manager. Entering it subscribes,
     so every event published from then on is kept for the subscriber, even before the first read. Leaving it
@@ -172,9 +172,9 @@ class EventStream(ABC):
 
     @abstractmethod
     def subscribe(self, book_id: BookId) -> AbstractAsyncContextManager[AsyncIterator[DomainEvent]]:
-        """Return a subscription to the project's events.
+        """Return a subscription to the book's events.
 
-        :param book_id: Project whose events are delivered.
+        :param book_id: Book whose events are delivered.
         :type book_id: BookId
         :returns: Context manager that subscribes when entered, yields the iterator of every event published since,
                   and unsubscribes when left.

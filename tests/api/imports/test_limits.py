@@ -53,7 +53,7 @@ def fx_settings(fx_settings: Settings) -> Settings:
 
 
 class TestUploadLimits:
-    """Tests for the limits of POST /projects/{project_id}/sources."""
+    """Tests for the limits of POST /books/{book_id}/sources."""
 
     async def test_upload_of_more_files_than_the_parser_accepts_by_default_is_accepted(
         self, fx_client: httpx.AsyncClient, fx_import: ImportWatch, fx_book: BookRecord
@@ -64,7 +64,7 @@ class TestUploadLimits:
         :type fx_client: httpx.AsyncClient
         :param fx_import: Reader of the imports the application runs.
         :type fx_import: ImportWatch
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         """
         response = await fx_client.post(
@@ -87,7 +87,7 @@ class TestUploadLimits:
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         """
         response = await fx_client.post(
@@ -107,7 +107,7 @@ class TestUploadLimits:
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param extra_files: Number of files past the limit of the upload rule.
         :type extra_files: int
@@ -128,7 +128,7 @@ class TestUploadLimits:
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_book: Project of the signed-in account.
+        :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         """
         response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book.id), files=_text_files(2, size=MAX_BYTES))

@@ -28,9 +28,9 @@ router = APIRouter(prefix='/books', tags=['pagination'], route_class=DishkaRoute
 
 @dataclass(frozen=True)
 class SectionPath:
-    """The identifiers in the address of one pagination section of a project.
+    """The identifiers in the address of one pagination section of a book.
 
-    :ivar book_id: Identifier of the project.
+    :ivar book_id: Identifier of the book.
     :ivar section_id: Identifier of the section.
     """
 
@@ -45,10 +45,10 @@ async def list_pagination_sections(
     actor: ActorDep,
     pagination: FromDishka[PaginationService],
 ) -> Page[PaginationSectionSchema]:
-    """List the pagination sections of a project in book order, which is the order of the pages they start at.
+    """List the pagination sections of a book in book order, which is the order of the pages they start at.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param params: Page number and size from the query.
     :type params: Params
@@ -56,7 +56,7 @@ async def list_pagination_sections(
     :type actor: Actor
     :param pagination: Pagination service of the request.
     :type pagination: PaginationService
-    :returns: One page of the sections of the project.
+    :returns: One page of the sections of the book.
     :rtype: Page[PaginationSectionSchema]
     """
     pager = Pager[PaginationSection, PaginationSectionSchema](params, PaginationSectionSchema.of)
@@ -72,11 +72,11 @@ async def create_pagination_section(
 ) -> PaginationSectionSchema:
     """Make a section that starts at a page, and renumber the pages it takes.
 
-    The answer is 404 when the page is not a page of the project, and 409 when another section that takes the same
+    The answer is 404 when the page is not a page of the book, and 409 when another section that takes the same
     pages starts at that page already, or when a number does not fit the style, such as 4000 in Roman numerals.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param body: The first page, the name, the style, the first number, the prefix, the display and the kinds.
     :type body: PaginationSectionBody
@@ -99,11 +99,11 @@ async def put_pagination_section(
 ) -> PaginationSectionSchema:
     """Replace the first page and the rule of a section, and renumber the pages.
 
-    The answer is 404 when the section or the page is not of the project, and 409 when another section that takes the
+    The answer is 404 when the section or the page is not of the book, and 409 when another section that takes the
     same pages starts at that page, or when a number does not fit the style.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project and the section.
+    :param address: Identifiers of the book and the section.
     :type address: SectionPath
     :param body: The first page, the name, the style, the first number, the prefix, the display and the kinds.
     :type body: PaginationSectionBody
@@ -125,7 +125,7 @@ async def delete_pagination_section(
     """Remove a section, so its pages fall to the section before it, and renumber them.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project and the section.
+    :param address: Identifiers of the book and the section.
     :type address: SectionPath
     :param actor: The signed-in account.
     :type actor: Actor

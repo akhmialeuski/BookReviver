@@ -91,7 +91,7 @@ def _save_records(repos: BookRepositories, _book_record: BookRecord, *, records:
 
     :param repos: Repositories of the transaction.
     :type repos: BookRepositories
-    :param _book_record: Project of the book, which the work does not need.
+    :param _book_record: Record of the book, which the work does not need.
     :type _book_record: BookRecord
     :param records: Records to save.
     :type records: Sequence[PageStage]
@@ -105,7 +105,7 @@ def _save_values(repos: BookRepositories, _book_record: BookRecord, *, values: S
 
     :param repos: Repositories of the transaction.
     :type repos: BookRepositories
-    :param _book_record: Project of the book, which the work does not need.
+    :param _book_record: Record of the book, which the work does not need.
     :type _book_record: BookRecord
     :param values: Values to save.
     :type values: Sequence[StepValues]
@@ -119,7 +119,7 @@ def _add_head(repos: BookRepositories, _book_record: BookRecord, *, version: Pag
 
     :param repos: Repositories of the transaction.
     :type repos: BookRepositories
-    :param _book_record: Project of the book, which the work does not need.
+    :param _book_record: Record of the book, which the work does not need.
     :type _book_record: BookRecord
     :param version: Version to add.
     :type version: PageVersion
@@ -131,13 +131,13 @@ def _add_head(repos: BookRepositories, _book_record: BookRecord, *, version: Pag
 
 
 async def _store_page(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory) -> tuple[BookId, PageId]:
-    """Store a project with one page, each in the change that owns it.
+    """Store a book with one page, each in the change that owns it.
 
     :param uow_factory: Function opening a new unit of work over the database of the test.
     :type uow_factory: UnitOfWorkFactory
     :param new_owner: Function creating an account the database accepts as an owner.
     :type new_owner: OwnerFactory
-    :returns: The identifiers of the project and its page.
+    :returns: The identifiers of the book and its page.
     :rtype: tuple[BookId, PageId]
     """
     book_record = make_record()
@@ -160,9 +160,9 @@ def _blank_page(order_key: str) -> Page:
 async def _add_marked_head(uow: UnitOfWork, book_id: BookId, page: Page) -> PageVersionId:
     """Store a base version of a page and a version of the geometry stage marked for review.
 
-    :param uow: Unit of work to add to, in which the project of the page is stored.
+    :param uow: Unit of work to add to, in which the book of the page is stored.
     :type uow: UnitOfWork
-    :param book_id: Identifier of the project of the page.
+    :param book_id: Identifier of the book of the page.
     :type book_id: BookId
     :param page: The page, which is stored.
     :type page: Page
@@ -211,7 +211,7 @@ def _version(
 
 
 class TestRecipeRepository:
-    """Tests for the recipes of a project."""
+    """Tests for the recipes of a book."""
 
     async def test_stage_has_one_recipe_for_each_kind(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
@@ -256,7 +256,7 @@ class TestRecipeRepository:
     async def test_list_for_book_returns_the_recipes_of_each_stage_in_pipeline_order(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the recipes of another project are left out, and the stages keep the pipeline order.
+        """Verify the recipes of another book are left out, and the stages keep the pipeline order.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -325,7 +325,7 @@ class TestRecipeRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.recipes.add(recipe)
@@ -341,7 +341,7 @@ class TestRecipeRepository:
     async def test_deleting_the_book_deletes_its_recipes(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the recipes go with their project.
+        """Verify the recipes go with their book.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -377,7 +377,7 @@ class TestPageStageRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_stages.save(make_page_stage(page_id=page_id))
@@ -488,7 +488,7 @@ class TestPageStageRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             for stage in (Stage.CLEANUP, Stage.PAGE_SPLIT, Stage.GEOMETRY):
@@ -565,7 +565,7 @@ class TestPageStageRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.recipes.add(recipe)
@@ -654,7 +654,7 @@ class TestPageStageRepository:
     async def test_head_ids_lists_the_current_versions_of_a_book(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the identifiers of the head versions of the project's records are listed once each.
+        """Verify the identifiers of the head versions of the book's records are listed once each.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -671,7 +671,7 @@ class TestPageStageRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_versions.add_many([base, version])
@@ -686,7 +686,7 @@ class TestPageStageRepository:
     ) -> None:
         """Verify one grouped count gives each stage its states and marks, and leaves out what does not count.
 
-        A mark on a failed page, a placeholder and the pages of another project are not counted.
+        A mark on a failed page, a placeholder and the pages of another book are not counted.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -746,7 +746,7 @@ class TestPageStageRepository:
     ) -> None:
         """Verify the pages a run stopped at a step are counted by step, and partial in the tally of the stage.
 
-        A page run through every step, a failed record, a placeholder and the pages of another project are left out.
+        A page run through every step, a failed record, a placeholder and the pages of another book are left out.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -799,7 +799,7 @@ class TestPageStageRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_versions.add_many([base, version])
@@ -829,7 +829,7 @@ class TestPageStageRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_stages.save(make_page_stage(page_id=page_id))
@@ -871,7 +871,7 @@ class TestPageStepStateRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_step_states.save(first)
@@ -906,7 +906,7 @@ class TestPageStepStateRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             for state in states:
@@ -962,7 +962,7 @@ class TestPageStepStateRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_step_states.save(cleanup)
@@ -997,7 +997,7 @@ class TestPageStepStateRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_step_states.save(first)
@@ -1031,7 +1031,7 @@ class TestPageStepStateRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_step_states.save(on_first)
@@ -1085,7 +1085,7 @@ class TestPageStepStateRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_step_states.save(state)
@@ -1118,7 +1118,7 @@ class TestStepValuesRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.step_values.save(first)
@@ -1157,7 +1157,7 @@ class TestStepValuesRepository:
     async def test_lists_keep_the_steps_and_the_books_apart(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the values of another step and another book are not listed, and a project lists every stage.
+        """Verify the values of another step and another book are not listed, and a book lists every stage.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -1265,7 +1265,7 @@ class TestStepValuesRepository:
     async def test_deleting_the_book_deletes_its_values(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the values of a project are removed with it and those of another project stay.
+        """Verify the values of a book are removed with it and those of another book stay.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -1334,7 +1334,7 @@ class TestPageHistoryRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project of the book.
+            :param _book_record: The record of the book.
             :type _book_record: BookRecord
             """
             repos.pages.add(other)
@@ -1373,7 +1373,7 @@ class TestPageHistoryRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             for change in written[:2]:
@@ -1384,7 +1384,7 @@ class TestPageHistoryRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_history.add_many(written[2:5])
@@ -1455,7 +1455,7 @@ class TestPageHistoryRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             :returns: The changes as stored, with their sequence.
             :rtype: list[PageHistoryEntry]
@@ -1521,7 +1521,7 @@ class TestPageHistoryRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.pages.add(other_page)
@@ -1587,7 +1587,7 @@ class TestPageHistoryRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             :returns: The added change as stored.
             :rtype: PageHistoryEntry
@@ -1789,7 +1789,7 @@ class TestPageVersionProcessing:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_versions.add_many([base, feeder, head, orphan, recent, old_preview, young_preview])
@@ -1852,7 +1852,7 @@ class TestPageVersionProcessing:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.page_versions.add_many([base, first, second, reader, chain_start, chain_end])

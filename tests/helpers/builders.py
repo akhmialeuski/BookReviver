@@ -144,13 +144,13 @@ def new_account_id() -> AccountId:
 
 
 def make_record(*, title: str = 'Book', minutes: int = 0) -> BookRecord:
-    """Build a project updated ``minutes`` after the epoch.
+    """Build a book updated ``minutes`` after the epoch.
 
     :param title: Title of the book.
     :type title: str
-    :param minutes: Minutes after ``EPOCH`` the project was created and last updated.
+    :param minutes: Minutes after ``EPOCH`` the book was created and last updated.
     :type minutes: int
-    :returns: A project with a fresh identifier and no source.
+    :returns: A book with a fresh identifier and no source.
     :rtype: BookRecord
     """
     moment = EPOCH + timedelta(minutes=minutes)
@@ -182,9 +182,9 @@ def make_page(
     kind: PageKind = PageKind.TEXT,
     group_label: str = '',
 ) -> Page:
-    """Build an included page of the given project, cut from the whole of a scan or a placeholder without one.
+    """Build an included page of the given book, cut from the whole of a scan or a placeholder without one.
 
-    :param order_key: Order key placing the page in the book, unique within the project.
+    :param order_key: Order key placing the page in the book, unique within the book.
     :type order_key: str
     :param scan: Scan the page shows whole, or None for a placeholder.
     :type scan: Scan | None
@@ -217,7 +217,7 @@ def make_section(
 ) -> PaginationSection:
     """Build a pagination section that starts at a page, numbering from 1 with no prefix and no name.
 
-    :param page: Page the section starts at, whose project the section takes.
+    :param page: Page the section starts at, whose book the section takes.
     :type page: Page
     :param style: How the numbers are written, Arabic unless given.
     :type style: LabelStyle
@@ -225,7 +225,7 @@ def make_section(
     :type display: NumberDisplay
     :param kinds: Kinds of page a series by kind takes, none for a section of the main flow.
     :type kinds: frozenset[PageKind]
-    :param minutes: Minutes after ``EPOCH`` the section was made, which orders the sections of a project.
+    :param minutes: Minutes after ``EPOCH`` the section was made, which orders the sections of a book.
     :type minutes: int
     :returns: A section with a fresh identifier, which a test changes with ``evolve`` for the rest of its fields.
     :rtype: PaginationSection
@@ -269,7 +269,7 @@ def make_source(*, name: str = 'book.pdf', minutes: int = 0) -> Source:
 def make_scan(*, source: Source, number: int) -> Scan:
     """Build a grayscale scan of a source.
 
-    :param source: Source holding the scan, whose project the scan belongs to.
+    :param source: Source holding the scan, whose book the scan belongs to.
     :type source: Source
     :param number: Position of the scan in its source, starting at 0.
     :type number: int
@@ -309,7 +309,7 @@ def make_job(
 ) -> Job:
     """Build a job created ``minutes`` after the epoch, an import job unless told otherwise.
 
-    :param book_id: Project the job imports into.
+    :param book_id: Book the job imports into.
     :type book_id: BookId
     :param state: State of the job.
     :type state: JobState

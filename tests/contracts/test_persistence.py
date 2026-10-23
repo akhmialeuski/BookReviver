@@ -90,7 +90,7 @@ FIRST_PART_PDF: str = 'part1.pdf'
 SECOND_PART_PDF: str = 'part2.pdf'
 NOTES_TXT: str = 'notes.txt'
 # The text for the reader of a file that the import rejected
-REJECTION_DETAIL: str = 'The project already has this file as book.pdf.'
+REJECTION_DETAIL: str = 'The book already has this file as book.pdf.'
 # Keys of the recorded size of a version, and the key of the processor that draws a blank leaf
 HEIGHT_PX: str = 'height_px'
 WIDTH_PX: str = 'width_px'
@@ -100,11 +100,11 @@ BLANK_PROCESSOR_KEY: str = 'pages.blank'
 async def _add_book(uow: UnitOfWork, book_record: BookRecord) -> list[Page]:
     """Add a source of ``PAGE_COUNT`` scans and one page per scan, the last kept out of the book, in one change.
 
-    The change is ``change_book`` of the project, so the project must be stored already.
+    The change is ``change_book`` of the book, so the book must be stored already.
 
-    :param uow: Unit of work to add with, in which the project is stored.
+    :param uow: Unit of work to add with, in which the book is stored.
     :type uow: UnitOfWork
-    :param book_record: Project of the book.
+    :param book_record: The record of the book.
     :type book_record: BookRecord
     :returns: The pages in book order.
     :rtype: list[Page]
@@ -119,7 +119,7 @@ async def _add_book(uow: UnitOfWork, book_record: BookRecord) -> list[Page]:
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: Project of the book, which the work does not need.
+        :param _book_record: Record of the book, which the work does not need.
         :type _book_record: BookRecord
         """
         repos.sources.add(source)
@@ -131,7 +131,7 @@ async def _add_book(uow: UnitOfWork, book_record: BookRecord) -> list[Page]:
 
 
 def _unimported(*, status: SourceStatus, name: str, minutes: int = 0, typed: bool = True) -> Source:
-    """Build a rejected or a skipped file of a project, which holds no scan and whose digest follows from its name.
+    """Build a rejected or a skipped file of a book, which holds no scan and whose digest follows from its name.
 
     :param status: Rejected or skipped.
     :type status: SourceStatus
@@ -170,12 +170,12 @@ def _entry(owner_id: AccountId, *, minutes: int = 0) -> LibraryEntry:
 
 
 class TestBookRecordRepository:
-    """Contract of ProjectRepository, the one project row of a book."""
+    """Contract of BookRecordRepository, the one record of a book."""
 
     async def test_created_book_reads_back_after_commit(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the project a book is created with is visible to a later unit of work, unchanged.
+        """Verify the record a book is created with is visible to a later unit of work, unchanged.
 
         :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -295,7 +295,7 @@ class TestBookRecordRepository:
         async def cover_of(book: BookRecord) -> PageId | None:
             """Read the cover the overview of a book names.
 
-            :param book: The project of the book.
+            :param book: The record of the book.
             :type book: BookRecord
             :returns: The cover page, or None.
             :rtype: PageId | None
@@ -451,7 +451,7 @@ class TestSourceRepository:
     async def test_added_source_reads_back_and_lists_in_import_order(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify committed sources read back unchanged and list by import time, without other projects' sources.
+        """Verify committed sources read back unchanged and list by import time, without other books' sources.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -519,7 +519,7 @@ class TestSourceRepository:
     async def test_same_file_in_another_book_is_stored(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the digest is unique only within a project, so two books may share a file such as a cover.
+        """Verify the digest is unique only within a book, so two books may share a file such as a cover.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -546,7 +546,7 @@ class TestSourceRepository:
         assert counts == [1, 1]
 
     async def test_source_of_a_missing_book_raises_not_found(self, fx_uow: UnitOfWorkFactory) -> None:
-        """Verify a source needs its project, reported by the missing identifier.
+        """Verify a source needs its book, reported by the missing identifier.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -560,7 +560,7 @@ class TestSourceRepository:
     async def test_delete_cascades_to_its_scans_only(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify deleting a source removes its scans and leaves the scans of the project's other sources.
+        """Verify deleting a source removes its scans and leaves the scans of the book's other sources.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -603,11 +603,11 @@ class TestSourceRepository:
         await uow.change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(version))
 
         def delete_the_source(repos: BookRepositories, _book_record: BookRecord) -> None:
-            """Delete the only source of the project, which the work finds by listing.
+            """Delete the only source of the book, which the work finds by listing.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.sources.delete(repos.sources.list_all()[0].id)
@@ -676,7 +676,7 @@ class TestScanRepository:
     async def test_list_for_book_follows_the_import_order_of_sources(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the scans of a project list source by source in import order, sliced, with the full total.
+        """Verify the scans of a book list source by source in import order, sliced, with the full total.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -722,7 +722,7 @@ class TestScanRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.scans.add(scan)
@@ -734,7 +734,7 @@ class TestScanRepository:
     async def test_list_unready_returns_the_scans_without_ready_renditions_in_import_order(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the unready scans of a project list source by source and by number, without ready or foreign ones.
+        """Verify the unready scans of a book list source by source and by number, without ready or foreign ones.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -768,7 +768,7 @@ class TestScanRepository:
     async def test_list_unready_is_empty_for_a_book_with_every_scan_ready(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify a project whose scans are all ready, or that has none, has nothing left to cut.
+        """Verify a book whose scans are all ready, or that has none, has nothing left to cut.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -787,7 +787,7 @@ class TestScanRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.sources.add(source)
@@ -872,7 +872,7 @@ class TestPageRepository:
     async def test_last_order_key_is_the_greatest_of_the_book(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the last key is the greatest in byte order, None for an empty book, and blind to other projects.
+        """Verify the last key is the greatest in byte order, None for an empty book, and blind to other books.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -941,7 +941,7 @@ class TestPageRepository:
     async def test_count_before_is_the_position_in_the_book(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify a page counts the pages before it in byte order, excluded ones included, and none of another project.
+        """Verify a page counts the pages before it in byte order, excluded ones included, and none of another book.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -1053,7 +1053,7 @@ class TestPageRepository:
     async def test_list_by_ids_refuses_a_missing_page_and_a_page_of_another_book(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify one identifier that names no page of the project fails the whole read, naming that identifier.
+        """Verify one identifier that names no page of the book fails the whole read, naming that identifier.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -1124,7 +1124,7 @@ class TestPageRepository:
     async def test_neighbour_key_is_the_nearest_key_on_a_side_without_the_excluded_pages(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the nearest key before or after another, in byte order, skipping pages left out and other projects.
+        """Verify the nearest key before or after another, in byte order, skipping pages left out and other books.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -1198,7 +1198,7 @@ class TestPageRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             :returns: The pages as the transaction reads them after the update.
             :rtype: list[Page]
@@ -1311,7 +1311,7 @@ class TestPageRepository:
     async def test_page_of_a_missing_parent_raises_not_found(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify a page needs its project and the scan it names, reported by the missing identifier.
+        """Verify a page needs its book and the scan it names, reported by the missing identifier.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -1380,7 +1380,7 @@ class TestPageVersionRepository:
         """Verify the versions still to write come back earliest first, and nothing else does.
 
         Ready and running versions, versions of other processors, such as the half of a split spread that failed, and
-        versions of another project are left out.
+        versions of another book are left out.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -1428,7 +1428,7 @@ class TestPageVersionRepository:
         """Verify only the recorded sizes of base versions of included pages cut from a scan are returned.
 
         A page kept out, a generated leaf, a later version, a leaf drawn in place of a scan, a version recording no size
-        and another project's page take no part.
+        and another book's page take no part.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -1510,7 +1510,7 @@ class TestPageVersionRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             :param blank_fill: What the blank page is filled with.
             :type blank_fill: BlankFill
@@ -1552,7 +1552,7 @@ class TestPageVersionRepository:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, which the work does not need.
+            :param _book_record: Record of the book, which the work does not need.
             :type _book_record: BookRecord
             :param content_type: Content type the page gets.
             :type content_type: ContentType
@@ -1830,7 +1830,7 @@ class TestSourceStatus:
     async def test_unimported_sources_list_in_recorded_order_inside_the_book(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the rejected and skipped files of a project list earliest first, without imported or foreign ones.
+        """Verify the rejected and skipped files of a book list earliest first, without imported or foreign ones.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -1854,7 +1854,7 @@ class TestSourceStatus:
     async def test_delete_unimported_keeps_imported_sources_and_other_books(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify closing the report of an import deletes the project's rejected and skipped files and nothing else.
+        """Verify closing the report of an import deletes the book's rejected and skipped files and nothing else.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
@@ -1889,7 +1889,7 @@ class TestSourceStatus:
     async def test_book_overview_counts_imported_sources_only(
         self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
     ) -> None:
-        """Verify the source count of a project does not include its rejected and skipped files.
+        """Verify the source count of a book does not include its rejected and skipped files.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory

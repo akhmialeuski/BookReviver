@@ -20,7 +20,7 @@ export function numberingPreviewKey(bookId: string): readonly string[] {
 /**
  * Ask for the preview of a numbering.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param pages The pages of the book in book order.
  * @param draft What the numbering panel holds, or null while the panel is closed.
  * @returns The new label of every page the numbering counts, by page id.

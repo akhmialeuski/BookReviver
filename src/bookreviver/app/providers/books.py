@@ -1,4 +1,4 @@
-"""Provider of the projects feature: the services of projects, pages, places, sources and scans, and their runtime."""
+"""Provider of the books feature: the services of books, pages, places, sources and scans, and their runtime."""
 
 from dishka import Provider, Scope, provide
 
@@ -21,7 +21,7 @@ from bookreviver.services.steps import StepRunner
 
 
 class BooksProvider(Provider):
-    """Builds the project, page, place and source services, one per request."""
+    """Builds the book, page, place and source services, one per request."""
 
     scope = Scope.REQUEST
 
@@ -83,7 +83,7 @@ class BooksProvider(Provider):
     def books(
         self, uow: UnitOfWork, library: Library, clock: Clock, files: BookStores, stages: StageSummaries
     ) -> BooksService:
-        """Build the project service over the request's unit of work.
+        """Build the books service over the request's unit of work.
 
         :param uow: Unit of work of the current request.
         :type uow: UnitOfWork
@@ -95,7 +95,7 @@ class BooksProvider(Provider):
         :type files: BookStores
         :param stages: Sums of the stages of books of the request.
         :type stages: StageSummaries
-        :returns: The project service of the request.
+        :returns: The books service of the request.
         :rtype: BooksService
         """
         return BooksService(uow=uow, library=library, clock=clock, files=files, stages=stages)

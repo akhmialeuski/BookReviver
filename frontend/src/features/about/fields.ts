@@ -98,7 +98,7 @@ export interface SavePlan {
 /**
  * Take the editable fields of a book as the server holds them.
  *
- * @param project The book.
+ * @param book The book.
  * @returns Its description without the derived `primary_author`, with its image policy.
  */
 export function toFields(book: BookSchema): EditableFields {

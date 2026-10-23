@@ -102,7 +102,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> BookRecord:
     :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
-    :returns: The stored project.
+    :returns: The stored book.
     :rtype: BookRecord
     """
     book_record = make_record()
@@ -111,9 +111,9 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> BookRecord:
 
 
 def recipes_path(book_record: BookRecord) -> str:
-    """Return the path of the recipes of the geometry stage of a project.
+    """Return the path of the recipes of the geometry stage of a book.
 
-    :param book_record: The project.
+    :param book_record: The book.
     :type book_record: BookRecord
     :returns: The path of the request.
     :rtype: str
@@ -124,11 +124,11 @@ def recipes_path(book_record: BookRecord) -> str:
 async def recipe_of(
     client: httpx.AsyncClient, book_record: BookRecord, kind: RecipeKind = RecipeKind.TEXT
 ) -> RecipeSchema:
-    """Read the recipe of a kind of the geometry stage of a project, which the first read creates.
+    """Read the recipe of a kind of the geometry stage of a book, which the first read creates.
 
     :param client: Client of the running application.
     :type client: httpx.AsyncClient
-    :param book_record: The project.
+    :param book_record: The book.
     :type book_record: BookRecord
     :param kind: The kind of page, text unless given.
     :type kind: RecipeKind
@@ -142,11 +142,11 @@ async def recipe_of(
 
 
 async def recipe_url(client: httpx.AsyncClient, book_record: BookRecord, kind: RecipeKind = RecipeKind.TEXT) -> str:
-    """Give the path of the recipe of a kind of the geometry stage of a project.
+    """Give the path of the recipe of a kind of the geometry stage of a book.
 
     :param client: Client of the running application.
     :type client: httpx.AsyncClient
-    :param book_record: The project.
+    :param book_record: The book.
     :type book_record: BookRecord
     :param kind: The kind of page, text unless given.
     :type kind: RecipeKind

@@ -49,7 +49,7 @@ CASE_ARG: str = 'case'
 class Book(NamedTuple):
     """A book of two sources whose pages stand one after the other in the order of their upload.
 
-    :ivar book_record: The project of the book.
+    :ivar book_record: The record of the book.
     :ivar first: The source of the first three pages.
     :ivar second: The source of the last two pages.
     :ivar pages: The five pages in book order.
@@ -135,7 +135,7 @@ async def _commit_book(uow: UnitOfWork, owner: Actor) -> Book:
 
     :param uow: Unit of work to commit through, over a database that stores the account of the owner.
     :type uow: UnitOfWork
-    :param owner: Account owning the project.
+    :param owner: Account owning the book.
     :type owner: Actor
     :returns: The stored book.
     :rtype: Book
@@ -160,9 +160,9 @@ async def _book_order(service: PageService, actor: Actor, book_id: BookId) -> li
 
     :param service: Page service to read through.
     :type service: PageService
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :returns: The identifiers of every page, first page first.
     :rtype: list[PageId]
@@ -346,7 +346,7 @@ class TestMove:
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
     ) -> None:
-        """Verify an unknown page, an unknown anchor and another account's project all answer not found.
+        """Verify an unknown page, an unknown anchor and another account's book all answer not found.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -499,7 +499,7 @@ class TestMoveGroup:
         fx_page_writes: PageWrites,
         fx_actor: Actor,
     ) -> None:
-        """Verify a group naming a page of another project is refused whole, without moving the others.
+        """Verify a group naming a page of another book is refused whole, without moving the others.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -616,7 +616,7 @@ class TestMoveSource:
     async def test_source_of_another_book_is_not_found(
         self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify a source is found only through the project that holds it.
+        """Verify a source is found only through the book that holds it.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]

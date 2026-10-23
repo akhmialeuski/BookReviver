@@ -55,7 +55,7 @@ STEP_INDEXES: tuple[int, ...] = tuple(range(STEP_COUNT))
 class StagedBook:
     """A book whose four pages stand differently in a stage with a recipe of three steps.
 
-    :ivar book_record: The project.
+    :ivar book_record: The record of the book.
     :ivar step_ids: The steps of the recipe of text pages of the stage, in order.
     :ivar full: Page run through every step.
     :ivar partial: Page run through the first step only.
@@ -85,7 +85,7 @@ async def chain_of(kit: ProcessingKit, book_id: BookId, page: Page, stage: Stage
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page

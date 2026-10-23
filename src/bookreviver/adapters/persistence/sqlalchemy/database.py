@@ -419,7 +419,7 @@ class SqlDatabase:
         :type work: Callable[[Session], T]
         :param kind: Kind of the block, which its span carries.
         :type kind: BlockKind
-        :param book: Project the block holds, or None for a block outside the content of a book.
+        :param book: Book the block holds, or None for a block outside the content of a book.
         :type book: BookId | None
         :param wait_seconds: How long the write waits for the queue before it gives up.
         :type wait_seconds: float

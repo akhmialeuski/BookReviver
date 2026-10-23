@@ -76,7 +76,7 @@ async def seed_book(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[Page]]:
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :returns: The actor, the project and the pages in book order.
+    :returns: The actor, the book and the pages in book order.
     :rtype: tuple[Actor, BookRecord, list[Page]]
     """
     actor, book_record = await kit.seed_record()
@@ -93,7 +93,7 @@ async def margins_of(kit: ProcessingKit, book_id: BookId, page: Page) -> PageVer
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
@@ -277,7 +277,7 @@ class TestMarginsAfterSelectContent:
 
         :param kit: What the processing services of the test share.
         :type kit: ProcessingKit
-        :returns: The actor, the project and the pages in book order.
+        :returns: The actor, the book and the pages in book order.
         :rtype: tuple[Actor, BookRecord, list[Page]]
         """
         actor, book_record, pages = await seed_book(kit)

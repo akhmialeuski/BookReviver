@@ -8,11 +8,11 @@ scans cut.
 
 A run imports every file on its own, so one broken file never cancels the others. In its first phase it groups the
 staged files into sources and stores each source, its scans and the pages the scans give the book in one
-``change_book`` of its own, with the enrichment of the book description, so a source is either fully in the project or
+``change_book`` of its own, with the enrichment of the book description, so a source is either fully in the book or
 not at all. Every file of the upload is a row of ``sources``: an imported one joins the book, one that a check refused
 is stored as rejected with its reason, and when the job is cancelled each file it did not reach is stored as skipped.
 The rows that are not imported are the report of the import, which the reader reads and then closes. In its second
-phase the run cuts the images of every scan of the project that has none, which covers the scans of the sources just
+phase the run cuts the images of every scan of the book that has none, which covers the scans of the sources just
 stored and the scans a cancelled or interrupted import left behind. Inspection, rasterising and processing run outside
 any transaction, and the work of a transaction holds only the reads that decide and the writes. The staged upload is
 removed when the run ends, however it ends.
@@ -85,11 +85,11 @@ if TYPE_CHECKING:
     from bookreviver.services.processing_parts import ProcessingParts
     from bookreviver.services.steps import StepRunner
 
-IMPORT_ACTIVE: str = 'This project is already importing files. Wait for the import to finish, or cancel it.'
+IMPORT_ACTIVE: str = 'This book is already importing files. Wait for the import to finish, or cancel it.'
 NO_SOURCE_IMPORTED: str = 'None of the uploaded files could be imported.'
 # The processor of the page split that decides for each scan, whose recipe an import runs on the new pages
 AUTOMATIC_SPLIT: str = 'split.auto'
-# Kinds of job that import files, of which a project runs one at a time
+# Kinds of job that import files, of which a book runs one at a time
 IMPORT_JOBS: frozenset[JobKind] = frozenset({JobKind.IMPORT_SOURCE})
 
 logger = logging.getLogger(__name__)
@@ -221,7 +221,7 @@ class ImportRun:
         self._total = len(self._files)
 
     async def execute(self) -> None:
-        """Import the staged files as sources, then cut the images of every scan of the project that has none.
+        """Import the staged files as sources, then cut the images of every scan of the book that has none.
 
         :raises JobCancelledError: If the job was cancelled, which the first report after it finds out.
         """
@@ -299,7 +299,7 @@ class ImportRun:
             await self._reject(
                 uploaded.names,
                 RejectionReason.DUPLICATE,
-                f'The project already has this file as {twin.file_name}.',
+                f'The book already has this file as {twin.file_name}.',
                 uploaded=uploaded,
             )
             return
@@ -339,7 +339,7 @@ class ImportRun:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param book_record: The project as the change finds it.
+            :param book_record: The record of the book as the change finds it.
             :type book_record: BookRecord
             :returns: The pages as stored.
             :rtype: list[Page]
@@ -383,7 +383,7 @@ class ImportRun:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the retraction does not need.
+            :param _book_record: The record of the book as the change finds it, which the retraction does not need.
             :type _book_record: BookRecord
             """
             for page in pages:
@@ -410,7 +410,7 @@ class ImportRun:
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param book_record: The project as the change of the source found it.
+        :param book_record: The record of the book as the change of the source found it.
         :type book_record: BookRecord
         :param suggestion: Description fields found in the source, empty where nothing was found.
         :type suggestion: MetadataSuggestion
@@ -420,7 +420,7 @@ class ImportRun:
             repos.book_record.update(evolve(book_record, details=details, updated_at=self._clock.now()))
 
     async def _cut_scans(self) -> None:
-        """Cut the images of every scan of the project that has none, a few at a time, in the order of the book.
+        """Cut the images of every scan of the book that has none, a few at a time, in the order of the book.
 
         :raises JobCancelledError: If the job was cancelled and no cutter failed.
         :raises DomainError: If cutting one scan failed on a rule of the domain, which stops the others.
@@ -429,7 +429,7 @@ class ImportRun:
         """
 
         def read(repos: BookRepositories) -> tuple[Sequence[Scan], dict[SourceId, SourceKind]]:
-            """Read the scans without renditions and the kinds of the sources of the project.
+            """Read the scans without renditions and the kinds of the sources of the book.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
@@ -462,7 +462,7 @@ class ImportRun:
     async def _cut(self, kind: SourceKind, scan: Scan) -> None:
         """Write the four renditions of a scan and the base version of its pages, then mark the scan ready.
 
-        The format of ``full`` is chosen here, from the colour of the scan and the image policy of the project as it is
+        The format of ``full`` is chosen here, from the colour of the scan and the image policy of the book as it is
         now, and recorded with the scan, so a later change of the policy changes no stored path. The base version of a
         page copies that format along with the image. What an earlier attempt left in the directories of the scan and
         of the versions is removed first, since a stored file is never replaced. The files are written outside any
@@ -478,13 +478,14 @@ class ImportRun:
         """
 
         def start(repos: BookRepositories, book_record: BookRecord) -> tuple[BookRecord, list[Page]]:
-            """Read the project and the pages of the scan.
+            """Read the record of the book and the pages of the scan.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param book_record: The project as the change finds it, whose image policy chooses the format of the scan.
+            :param book_record: The record of the book as the change finds it, whose image policy chooses the format of
+                                the scan.
             :type book_record: BookRecord
-            :returns: The project, and the pages cut from the scan.
+            :returns: The record of the book, and the pages cut from the scan.
             :rtype: tuple[BookRecord, list[Page]]
             """
             return book_record, list(repos.pages.list_for_scan(scan.id))
@@ -523,7 +524,7 @@ class ImportRun:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the check does not need.
+            :param _book_record: The record of the book as the change finds it, which the check does not need.
             :type _book_record: BookRecord
             :returns: Whether the scan and its pages were still the ones the versions were made for.
             :rtype: bool
@@ -607,7 +608,7 @@ class ImportRun:
 
 
 class ImportService:
-    """Accepts uploads for the owner of a project, and runs the import jobs they become."""
+    """Accepts uploads for the owner of a book, and runs the import jobs they become."""
 
     def __init__(
         self,
@@ -643,30 +644,30 @@ class ImportService:
         self._limits = runtime.limits
 
     async def authorize_upload(self, actor: Actor, book_id: BookId) -> None:
-        """Refuse an upload the actor may not make, or the project cannot take now, before any file is read.
+        """Refuse an upload the actor may not make, or the book cannot take now, before any file is read.
 
         The API calls this before it parses the body of the request, so a refused caller costs the server no upload
         to spool, and ``start_import`` repeats it, since a caller of the service needs no API.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Project to import into.
+        :param book_id: Book to import into.
         :type book_id: BookId
-        :raises NotFoundError: If the actor has no such project.
-        :raises ConflictError: If the project already has an import queued or running.
+        :raises NotFoundError: If the actor has no such book.
+        :raises ConflictError: If the book already has an import queued or running.
         """
         await self._library.open(actor, book_id)
         self._refuse_active_import(book_id)
 
     def _refuse_active_import(self, book_id: BookId) -> None:
-        """Refuse a project that has an import queued or running.
+        """Refuse a book that has an import queued or running.
 
         Only reads the board, so it is called for an early answer from ``authorize_upload``, and again right before
         the job is put, with no ``await`` in between, which gives the answer that holds.
 
-        :param book_id: Project to import into.
+        :param book_id: Book to import into.
         :type book_id: BookId
-        :raises ConflictError: If the project already has an import queued or running.
+        :raises ConflictError: If the book already has an import queued or running.
         """
         if any(job.kind in IMPORT_JOBS for job in self._board.jobs(book_id, active=True)):
             raise ConflictError(IMPORT_ACTIVE)
@@ -680,16 +681,16 @@ class ImportService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Project to import into.
+        :param book_id: Book to import into.
         :type book_id: BookId
         :param files: The uploaded files.
         :type files: Sequence[IncomingFile]
         :returns: The queued job, whose request lists the staged files.
         :rtype: Job
-        :raises NotFoundError: If the actor has no such project.
+        :raises NotFoundError: If the actor has no such book.
         :raises UploadRejectedError: If there are no files or too many, a file has no usable name or a path that leaves
                                      its folder, two files share a path, or the upload is larger than allowed.
-        :raises ConflictError: If the project already has an import queued or running.
+        :raises ConflictError: If the book already has an import queued or running.
         """
         await self.authorize_upload(actor, book_id)
         if not files:
@@ -756,8 +757,8 @@ class ImportService:
         """Queue a run of the page split on the pages an import made, when the recipe of text pages decides it.
 
         The book gets its pages with no action of the user, even with the tab closed. The pages of an import are text
-        until their content is detected. A book whose recipe was chosen by hand is left as it is, and so is a book whose
-        project is processing something already, since the user can run
+        until their content is detected. A book whose recipe was chosen by hand is left as it is, and so is a book that
+        is processing something already, since the user can run
         the stage. Neither is an error of the import, which has succeeded.
 
         :param job: The import job that ended.

@@ -86,7 +86,7 @@ class TestPrimaryAuthor:
 
         :param contributors: Contributors of the description, in title page order.
         :type contributors: tuple[Contributor, ...]
-        :param expected: Name the project list must show.
+        :param expected: Name the book list must show.
         :type expected: str
         """
         assert BookDetails(title=TITLE, contributors=contributors).primary_author == expected
@@ -136,7 +136,7 @@ class TestFillFrom:
         )
 
     def test_never_touches_the_title(self) -> None:
-        """Verify a title the file suggests does not replace the one the project was created with."""
+        """Verify a title the file suggests does not replace the one the book was created with."""
         assert BookDetails(title=TITLE).fill_from(MetadataSuggestion(title='From the file')).title == TITLE
 
     def test_an_empty_suggestion_changes_nothing(self) -> None:

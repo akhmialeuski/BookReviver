@@ -61,7 +61,7 @@ class Rig:
     :ivar tiler: The fake tiler.
     :ivar writer: The fake writer of renditions.
     :ivar fake: The fake processor the catalogue offers beside ``split.none``.
-    :ivar keys: Keys of the project of the scan.
+    :ivar keys: Keys of the book of the scan.
     :ivar scan: A scan whose ``full`` image is not stored yet.
     :ivar version: The pending base version of a page shown from the scan.
     """

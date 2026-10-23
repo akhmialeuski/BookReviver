@@ -33,7 +33,7 @@ async def get_place(
     """Return the place the signed-in account left the book at, or 204 when it has not worked on the book yet.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param actor: The signed-in account.
     :type actor: Actor
@@ -58,7 +58,7 @@ async def put_place(
     """Replace the place the signed-in account left the book at.
 
     \N{FORM FEED}
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param body: Where the reader is in the book.
     :type body: BookPlaceBody

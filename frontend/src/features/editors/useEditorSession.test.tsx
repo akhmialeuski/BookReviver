@@ -521,7 +521,7 @@ describe('useEditorSession', () => {
   });
 
   it('asks for the run again when the server is busy with a job the list did not show yet', async () => {
-    sdk.run.mockRejectedValueOnce(new ProblemError('The project is processing.', 409, null, []));
+    sdk.run.mockRejectedValueOnce(new ProblemError('The book is processing.', 409, null, []));
     await render();
 
     await typeAngle('2.5');

@@ -2,7 +2,7 @@
 
 The tests of the write blocks get a catalogue and books whose blocks are timed by a tracer that tells them when a block
 asks for the writer, a second registry of books over the same files whose blocks give up almost at once, as another
-process would, and a project to change.
+process would, and a book to change.
 """
 
 from typing import TYPE_CHECKING
@@ -289,7 +289,7 @@ async def fx_book(
     :type fx_traced_uow: Callable[..., UnitOfWork]
     :param fx_tracer: Tracer of the test.
     :type fx_tracer: AskingTracer
-    :returns: The project.
+    :returns: The book.
     :rtype: BookRecord
     """
     book_record = make_record()

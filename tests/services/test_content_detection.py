@@ -92,13 +92,13 @@ def pages_of(kit: ProcessingKit) -> PageService:
 
 
 async def book_of(kit: ProcessingKit, kinds: list[PageKind]) -> tuple[Actor, BookRecord, list[Page]]:
-    """Seed a project with a page of each kind, every one with its scan and a ready base version.
+    """Seed a book with a page of each kind, every one with its scan and a ready base version.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param kinds: Kind of each page, in book order.
     :type kinds: list[PageKind]
-    :returns: The actor, the project and its pages.
+    :returns: The actor, the book and its pages.
     :rtype: tuple[Actor, BookRecord, list[Page]]
     """
     actor, book_record = await kit.seed_record()
@@ -117,7 +117,7 @@ async def keep(
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: Page to change.
     :type page: Page
@@ -141,7 +141,7 @@ async def geometry_records(kit: ProcessingKit, book_record: BookRecord, pages: l
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_record: Project owning the pages.
+    :param book_record: Record of the book owning the pages.
     :type book_record: BookRecord
     :param pages: Pages that have been through the Geometry stage.
     :type pages: list[Page]
@@ -152,7 +152,7 @@ async def geometry_records(kit: ProcessingKit, book_record: BookRecord, pages: l
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: Project of the book, which the work does not need.
+        :param _book_record: Record of the book, which the work does not need.
         :type _book_record: BookRecord
         """
         for page in pages:
@@ -168,9 +168,9 @@ async def detect(
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: Project whose pages are detected.
+    :param book_record: Record of the book whose pages are detected.
     :type book_record: BookRecord
     :param page_ids: The pages to detect, or None for those that are not detected yet.
     :type page_ids: list[PageId] | None
@@ -187,7 +187,7 @@ async def stored(kit: ProcessingKit, book_id: BookId, page: Page) -> Page:
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
@@ -202,7 +202,7 @@ async def geometry_state(kit: ProcessingKit, book_id: BookId, page: Page) -> Sta
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
@@ -427,7 +427,7 @@ class TestStartDetection:
         assert_expectations()
 
     async def test_a_second_request_while_one_is_queued_is_refused(self, fx_probe_kit: ProbeKitFactory) -> None:
-        """Verify one detection of the project at a time, so the pages of the second request are not silently dropped.
+        """Verify one detection of the book at a time, so the pages of the second request are not silently dropped.
 
         :param fx_probe_kit: Function building the processing kit with the fake processor.
         :type fx_probe_kit: ProbeKitFactory
@@ -505,7 +505,7 @@ async def delete_the_page(kit: ProcessingKit, book_id: BookId, page: Page) -> No
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: Page to delete.
     :type page: Page
@@ -518,7 +518,7 @@ async def set_the_type_by_hand(kit: ProcessingKit, book_id: BookId, page: Page) 
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: Page to change.
     :type page: Page
@@ -531,7 +531,7 @@ async def detect_the_same_type(kit: ProcessingKit, book_id: BookId, page: Page) 
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: Page to change.
     :type page: Page
@@ -583,7 +583,7 @@ class TestApplyStep:
 
             :param self: The detector that probes.
             :type self: ContentDetector
-            :param book_id: Project owning the page.
+            :param book_id: Book owning the page.
             :type book_id: BookId
             :param base: The base version of the page.
             :type base: PageVersion

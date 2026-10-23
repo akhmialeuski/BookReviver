@@ -57,7 +57,7 @@ TEXT_CLEANUP_STEPS: tuple[str, ...] = (
 )
 TEXT_STRENGTH: int = 2
 EVERYTHING: SliceRequest = SliceRequest(limit=100)
-BUSY_REASON: str = 'project is busy'
+BUSY_REASON: str = 'book is busy'
 METHOD_PARAMETER: str = 'method'
 MODE_PARAMETER: str = 'mode'
 REMOVED_PARAMETER: str = 'removed'
@@ -75,9 +75,9 @@ async def recipes_of(
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: Project whose recipes are read.
+    :param book_record: Record of the book whose recipes are read.
     :type book_record: BookRecord
     :param stage: The stage.
     :type stage: Stage
@@ -93,7 +93,7 @@ async def save_stage_records(kit: ProcessingKit, book_record: BookRecord, *recor
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_record: Project owning the pages of the records.
+    :param book_record: Record of the book owning the pages of the records.
     :type book_record: BookRecord
     :param records: The records to store.
     :type records: PageStage
@@ -104,7 +104,7 @@ async def save_stage_records(kit: ProcessingKit, book_record: BookRecord, *recor
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: Project of the book, which the work does not need.
+        :param _book_record: Record of the book, which the work does not need.
         :type _book_record: BookRecord
         """
         for record in records:
@@ -118,7 +118,7 @@ async def geometry_state(kit: ProcessingKit, book_id: BookId, page: Page) -> Sta
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
@@ -308,7 +308,7 @@ class TestRecipes:
             await fx_kit.service().recipes(actor, book_record.id, Stage.IMPORT, EVERYTHING)
 
     async def test_book_of_another_account_is_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Verify a project of another account is reported like a missing one.
+        """Verify a book of another account is reported like a missing one.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -467,7 +467,7 @@ class TestStartRun:
         assert_expectations()
 
     async def test_second_run_while_one_is_active_is_a_conflict(self, fx_kit: ProcessingKit) -> None:
-        """Reject a run while another job that processes the project is queued or running.
+        """Reject a run while another job that processes the book is queued or running.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -478,7 +478,7 @@ class TestStartRun:
             await fx_kit.service().start_run(actor, book_record.id, Stage.CLEANUP, StageRun(stage=Stage.CLEANUP))
 
     async def test_preview_and_collection_are_refused_while_a_run_is_active(self, fx_kit: ProcessingKit) -> None:
-        """Reject a preview and a collection while a run of the project is queued, since the project processes one thing.
+        """Reject a preview and a collection while a run of the book is queued, since the book processes one thing.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -523,7 +523,7 @@ class TestStartRun:
         assert_expectations()
 
     async def test_page_of_another_book_is_not_found(self, fx_kit: ProcessingKit) -> None:
-        """Reject a run that names a page the project does not have.
+        """Reject a run that names a page the book does not have.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
@@ -571,7 +571,7 @@ class ReadGate:
         async def gated[T](book_id: BookId, work: Callable[[BookRepositories], T]) -> T:
             """Read as the unit of work does, and wait on the first call until every unit of work has read.
 
-            :param book_id: Project whose book is read.
+            :param book_id: Book that is read.
             :type book_id: BookId
             :param work: Function over the repositories of the transaction.
             :type work: Callable[[BookRepositories], T]

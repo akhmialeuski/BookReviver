@@ -6,7 +6,7 @@ import { invalidateJobReads, invalidateJobs } from '@/features/books/queries';
 import { keepListening } from '@/features/books/reconnect';
 
 /**
- * Keeps the open book up to date while its page is shown, by listening to the project's event stream.
+ * Keeps the open book up to date while its page is shown, by listening to its event stream.
  *
  * The stream is read with the generated server-sent events client, which sends the session cookie and gives the
  * name and data of every event. The connection is closed when the page is left. The generated client ends its stream

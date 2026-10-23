@@ -77,7 +77,7 @@ class TestWriteBlockSpan:
 
         :param fx_traced_uow: Function opening a unit of work over the traced catalogue and books.
         :type fx_traced_uow: Callable[..., UnitOfWork]
-        :param fx_book: Committed project of the database.
+        :param fx_book: Committed book of the database.
         :type fx_book: BookRecord
         :param fx_tracer: Tracer of the test.
         :type fx_tracer: AskingTracer
@@ -102,7 +102,7 @@ class TestWriteBlockSpan:
 
         :param fx_traced_uow: Function opening a unit of work over the traced catalogue and books.
         :type fx_traced_uow: Callable[..., UnitOfWork]
-        :param fx_book: Committed project of the database.
+        :param fx_book: Committed book of the database.
         :type fx_book: BookRecord
         :param fx_tracer: Tracer of the test.
         :type fx_tracer: AskingTracer
@@ -121,7 +121,7 @@ class TestWriteBlockSpan:
 
         :param fx_traced_uow: Function opening a unit of work over the traced catalogue and books.
         :type fx_traced_uow: Callable[..., UnitOfWork]
-        :param fx_book: Committed project of the database.
+        :param fx_book: Committed book of the database.
         :type fx_book: BookRecord
         :param fx_tracer: Tracer of the test.
         :type fx_tracer: AskingTracer
@@ -132,7 +132,7 @@ class TestWriteBlockSpan:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book.
+            :param _book_record: Record of the book.
             :type _book_record: BookRecord
             :raises RuntimeError: Always, after the page is written.
             """
@@ -171,7 +171,7 @@ class TestWriteBlockSpan:
 
         :param fx_traced_uow: Function opening a unit of work over the traced catalogue and books.
         :type fx_traced_uow: Callable[..., UnitOfWork]
-        :param fx_book: Committed project of the database.
+        :param fx_book: Committed book of the database.
         :type fx_book: BookRecord
         :param fx_tracer: Tracer of the test.
         :type fx_tracer: AskingTracer
@@ -223,7 +223,7 @@ class TestWaitForTheWriter:
 
         :param fx_traced_uow: Function opening a unit of work over the traced catalogue and books.
         :type fx_traced_uow: Callable[..., UnitOfWork]
-        :param fx_book: Committed project of the database.
+        :param fx_book: Committed book of the database.
         :type fx_book: BookRecord
         :param fx_tracer: Tracer of the test.
         :type fx_tracer: AskingTracer
@@ -270,7 +270,7 @@ class TestWaitForTheWriter:
         :param fx_impatient_uow: Function opening a unit of work over a registry of the same books, whose queues are its
                                  own and whose connections give up after a few milliseconds.
         :type fx_impatient_uow: Callable[..., UnitOfWork]
-        :param fx_book: Committed project of the book.
+        :param fx_book: Committed record of the book.
         :type fx_book: BookRecord
         :param fx_tracer: Tracer of the test.
         :type fx_tracer: AskingTracer

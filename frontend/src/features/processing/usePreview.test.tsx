@@ -13,7 +13,7 @@ import { ProblemError } from '@/shared/http/problem';
  * The preview of the form: it asks once the form has stood still for 400 ms, shows the version the server announces,
  * asks nothing again for a form it has shown, and waits when another job of the book is going.
  *
- * The generated client is replaced by functions the test answers, and the event stream by calls of `applyProjectEvent`,
+ * The generated client is replaced by functions the test answers, and the event stream by calls of `applyBookEvent`,
  * which is what the stream does with an event.
  */
 

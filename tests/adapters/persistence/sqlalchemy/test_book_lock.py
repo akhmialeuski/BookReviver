@@ -49,7 +49,7 @@ class TestMoveAgainstJobWrite:
 
         :param fx_traced_uow: Function opening a unit of work over the traced catalogue and books.
         :type fx_traced_uow: Callable[..., UnitOfWork]
-        :param fx_book: Committed project of the database, whose book has no page yet.
+        :param fx_book: Committed book of the database, which has no page yet.
         :type fx_book: BookRecord
         :param fx_tracer: Tracer of the test, which tells when the job has asked for its change.
         :type fx_tracer: AskingTracer
@@ -66,7 +66,7 @@ class TestMoveAgainstJobWrite:
 
             :param repos: BookRepositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, whose pages are listed.
+            :param _book_record: Record of the book, whose pages are listed.
             :type _book_record: BookRecord
             """
             window = repos.pages.list_window(SliceRequest())
@@ -81,7 +81,7 @@ class TestMoveAgainstJobWrite:
 
             :param repos: BookRepositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: Project of the book, whose pages are listed.
+            :param _book_record: Record of the book, whose pages are listed.
             :type _book_record: BookRecord
             """
             window = repos.pages.list_window(SliceRequest())

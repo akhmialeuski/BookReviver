@@ -254,11 +254,11 @@ async def _migrate(database: SqlDatabase, command: Callable[..., None], *args: s
 
 
 async def _commit_book(database: SqlDatabase) -> BookId:
-    """Commit a project with a page cut from a scan, its source and the page's version.
+    """Commit a book with a page cut from a scan, its source and the page's version.
 
     :param database: Migrated database of a book to commit into.
     :type database: SqlDatabase
-    :returns: Identifier of the project.
+    :returns: Identifier of the book.
     :rtype: BookId
     """
     book_record = make_record()

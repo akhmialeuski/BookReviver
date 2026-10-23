@@ -1,6 +1,6 @@
-"""Background jobs as the account holder sees them: their state, cancellation and the live events of a project.
+"""Background jobs as the account holder sees them: their state, cancellation and the live events of a book.
 
-A job belongs to a project, so every use case checks that the acting account owns the project. A job or a project of
+A job belongs to a book, so every use case checks that the acting account owns the book. A job or a book of
 another account is reported as missing rather than forbidden, so no account learns what another one has. The jobs
 live in the memory of the API process, on the job board, so a job the process does not hold, such as one that ended
 before the process started, is missing too.
@@ -32,16 +32,16 @@ if TYPE_CHECKING:
 
 
 class JobService:
-    """Reads and cancels jobs, and opens the event stream of a project, for the account that owns the project."""
+    """Reads and cancels jobs, and opens the event stream of a book, for the account that owns the book."""
 
     def __init__(self, *, library: Library, board: JobBoard, stream: EventStream, sources: SourceStore) -> None:
         """Build the service over the ports of one request.
 
-        :param library: Library that checks who owns a project.
+        :param library: Library that checks who owns a book.
         :type library: Library
         :param board: Board holding the jobs of every book.
         :type board: JobBoard
-        :param stream: Source of the project's events.
+        :param stream: Source of the book's events.
         :type stream: EventStream
         :param sources: Store of the uploads, which holds the files of an import that is cancelled before it begins.
         :type sources: SourceStore
@@ -52,7 +52,7 @@ class JobService:
         self._sources = sources
 
     async def get(self, actor: Actor, job_id: JobId) -> Job:
-        """Return a job of one of the actor's projects.
+        """Return a job of one of the actor's books.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -60,18 +60,18 @@ class JobService:
         :type job_id: JobId
         :returns: The job as the board holds it.
         :rtype: Job
-        :raises NotFoundError: If the board does not hold the job, or the job belongs to another account's project.
+        :raises NotFoundError: If the board does not hold the job, or the job belongs to another account's book.
         """
         job = self._board.get(job_id)
         await self._library.open(actor, job.book_id)
         return job
 
     async def list_for_book(self, actor: Actor, book_id: BookId, request: SliceRequest, *, active: bool) -> Slice[Job]:
-        """Return a window of the jobs of one of the actor's projects, the newest first.
+        """Return a window of the jobs of one of the actor's books, the newest first.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param request: Offset and limit of the window.
         :type request: SliceRequest
@@ -79,7 +79,7 @@ class JobService:
         :type active: bool
         :returns: The jobs of the window, and the number of jobs the filter matches.
         :rtype: Slice[Job]
-        :raises NotFoundError: If the project does not exist or belongs to another account.
+        :raises NotFoundError: If the book does not exist or belongs to another account.
         """
         await self._library.open(actor, book_id)
         jobs = self._board.jobs(book_id, active=active)
@@ -97,7 +97,7 @@ class JobService:
         :type job_id: JobId
         :returns: The job in the cancelled state, with the time it finished.
         :rtype: Job
-        :raises NotFoundError: If the board does not hold the job, or the job belongs to another account's project.
+        :raises NotFoundError: If the board does not hold the job, or the job belongs to another account's book.
         :raises JobFinishedError: If the job has already finished, or finished while it was being cancelled.
         """
         await self.get(actor, job_id)
@@ -107,7 +107,7 @@ class JobService:
         return cancelled
 
     async def events(self, actor: Actor, book_id: BookId) -> AbstractAsyncContextManager[AsyncIterator[DomainEvent]]:
-        """Return a subscription to the project's events, for the owner only.
+        """Return a subscription to the book's events, for the owner only.
 
         The ownership check runs here, before the subscription exists, so a caller learns of a refusal before it
         subscribes or starts streaming. The check is a read of its own, which holds no connection once it has returned,
@@ -115,12 +115,12 @@ class JobService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
-        :returns: Context manager that subscribes when entered, yields the iterator of every event of the project
+        :returns: Context manager that subscribes when entered, yields the iterator of every event of the book
                   published since, and unsubscribes when left.
         :rtype: AbstractAsyncContextManager[AsyncIterator[DomainEvent]]
-        :raises NotFoundError: If the project does not exist or belongs to another account.
+        :raises NotFoundError: If the book does not exist or belongs to another account.
         """
         await self._library.open(actor, book_id)
         return self._stream.subscribe(book_id)

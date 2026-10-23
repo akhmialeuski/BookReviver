@@ -13,10 +13,10 @@ from its first statement to its commit without returning to the event loop, whic
 adapter of a database runs it in a thread of its own.
 
 The book is the aggregate. Every change of a book runs in ``change_book``, which waits for any other change of that
-book and reads the project first, so it sees only what the previous change committed, and never for a change of
-another book. A repository write inside a read is a programming error, reported as ``NoChangeOpenError``. The function
-cannot open another transaction, because it holds repositories and not the unit of work, so changes never nest, and a
-use case that needs both stores runs one transaction of each.
+book and reads the record of the book first, so it sees only what the previous change committed, and never for a change
+of another book. A repository write inside a read is a programming error, reported as ``NoChangeOpenError``. The
+function cannot open another transaction, because it holds repositories and not the unit of work, so changes never
+nest, and a use case that needs both stores runs one transaction of each.
 """
 
 from abc import ABC, abstractmethod
@@ -111,7 +111,7 @@ class Repository[EntityT, IdT](ABC):
         :rtype: EntityT
         :raises ConflictError: If an entity with this identifier, or with a value its port declares unique, is
                                already stored.
-        :raises NotFoundError: If an entity it refers to, such as its project, is not stored.
+        :raises NotFoundError: If an entity it refers to, such as its book, is not stored.
         """
 
     @abstractmethod
@@ -224,15 +224,15 @@ class LibraryRepository(Repository[LibraryEntry, BookId]):
 
 
 class BookRecordRepository(Repository[BookRecord, BookId]):
-    """The project of a book, the one row its store has."""
+    """The record of a book, the one row its store has."""
 
     @abstractmethod
     def overview(self, book_record: BookRecord) -> BookOverview:
-        """Return a project read earlier together with the counts of its book.
+        """Return the record of a book read earlier together with the counts of the book.
 
-        :param book_record: Project whose book is counted.
+        :param book_record: Record of the book to count.
         :type book_record: BookRecord
-        :returns: The project with the counts of its included pages, sources and scans.
+        :returns: The record of the book with the counts of its included pages, sources and scans.
         :rtype: BookOverview
         """
 
@@ -241,7 +241,7 @@ class SourceRepository(Repository[Source, SourceId]):
     """Sources of the book; the digest of the main file of an imported source is unique.
 
     A rejected or skipped file is a source row too, and its digest may repeat, since it is no part of the book. Only
-    the imported sources count as the project's sources, and the rejected and skipped ones are listed and deleted
+    the imported sources count as the book's sources, and the rejected and skipped ones are listed and deleted
     apart, when the reader closes the report of an import.
 
     Deleting a source removes its scans, and the pages of the book made from them stay without their scan.
@@ -249,31 +249,31 @@ class SourceRepository(Repository[Source, SourceId]):
 
     @abstractmethod
     def list_all(self) -> Sequence[Source]:
-        """Return the project's imported sources in the order they were imported, ties by identifier.
+        """Return the book's imported sources in the order they were imported, ties by identifier.
 
-        :returns: Every imported source of the project, the earliest import first.
+        :returns: Every imported source of the book, the earliest import first.
         :rtype: Sequence[Source]
         """
 
     @abstractmethod
     def list_unimported(self) -> Sequence[Source]:
-        """Return the project's rejected and skipped files in the order they were recorded, ties by identifier.
+        """Return the book's rejected and skipped files in the order they were recorded, ties by identifier.
 
-        :returns: Every rejected or skipped source of the project, the earliest first.
+        :returns: Every rejected or skipped source of the book, the earliest first.
         :rtype: Sequence[Source]
         """
 
     @abstractmethod
     def delete_unimported(self) -> None:
-        """Delete the project's rejected and skipped sources, which hold no scan, and keep the imported ones."""
+        """Delete the book's rejected and skipped sources, which hold no scan, and keep the imported ones."""
 
     @abstractmethod
     def find_by_sha256(self, sha256: str) -> Source | None:
-        """Return the project's imported source whose main file has this digest, which refuses a second upload.
+        """Return the book's imported source whose main file has this digest, which refuses a second upload.
 
         :param sha256: SHA-256 digest of a main file as lower-case hexadecimal digits.
         :type sha256: str
-        :returns: The imported source with this digest, or None when the project has none.
+        :returns: The imported source with this digest, or None when the book has none.
         :rtype: Source | None
         """
 
@@ -293,11 +293,11 @@ class ScanRepository(Repository[Scan, ScanId]):
 
     @abstractmethod
     def list_window(self, request: SliceRequest) -> Slice[Scan]:
-        """Return the scans of a project, source by source in import order and by number within a source.
+        """Return the scans of a book, source by source in import order and by number within a source.
 
         :param request: Offset and limit of the window to return.
         :type request: SliceRequest
-        :returns: The scans of the window and the number of all the project's scans.
+        :returns: The scans of the window and the number of all the book's scans.
         :rtype: Slice[Scan]
         """
 
@@ -313,7 +313,7 @@ class ScanRepository(Repository[Scan, ScanId]):
 
     @abstractmethod
     def list_unready(self) -> Sequence[Scan]:
-        """Return the scans of a project whose renditions are not ready, which an import cut again.
+        """Return the scans of a book whose renditions are not ready, which an import cut again.
 
         :returns: The scans without ready renditions, source by source in import order and by number within a source.
         :rtype: Sequence[Scan]
@@ -329,7 +329,7 @@ class PageRepository(Repository[Page, PageId]):
 
     @abstractmethod
     def list_window(self, request: SliceRequest, *, included_only: bool = False) -> Slice[Page]:
-        """Return the pages of a project in book order, the byte order of their order keys.
+        """Return the pages of a book in book order, the byte order of their order keys.
 
         The position of a page in the book is the offset of the window plus its index in the window.
 
@@ -338,14 +338,14 @@ class PageRepository(Repository[Page, PageId]):
         :param included_only: Whether to leave out the pages kept out of the book, which then take no part in the
                               offset either.
         :type included_only: bool
-        :returns: The pages of the window and the number of all the project's pages, or of its included pages when
+        :returns: The pages of the window and the number of all the book's pages, or of its included pages when
                   ``included_only`` is set.
         :rtype: Slice[Page]
         """
 
     @abstractmethod
     def list_by_ids(self, page_ids: Collection[PageId]) -> Sequence[Page]:
-        """Return the given pages of a project in book order.
+        """Return the given pages of a book in book order.
 
         :param page_ids: Identifiers of the pages to read, repeats counting once.
         :type page_ids: Collection[PageId]
@@ -395,7 +395,7 @@ class PageRepository(Repository[Page, PageId]):
         :type pages: Sequence[Page]
         :raises NotFoundError: If a page is not stored.
         :raises ConflictError: If the new state of a page takes an order key, or a part of a scan, that another page
-                               of the project has.
+                               of the book has.
         """
 
     @abstractmethod
@@ -410,27 +410,27 @@ class PageRepository(Repository[Page, PageId]):
 
     @abstractmethod
     def count_before(self, page: Page) -> int:
-        """Return how many pages of the page's project come before it in book order, which is its position.
+        """Return how many pages of the page's book come before it in book order, which is its position.
 
-        Every page counts, whether it is included in the book or not, as in the windows ``list_for_project`` returns.
+        Every page counts, whether it is included in the book or not, as in the windows ``list_window`` returns.
 
-        :param page: Stored page of the project.
+        :param page: Stored page of the book.
         :type page: Page
-        :returns: The number of the project's pages whose order key is smaller than the page's, from zero.
+        :returns: The number of the book's pages whose order key is smaller than the page's, from zero.
         :rtype: int
         """
 
     @abstractmethod
     def last_order_key(self) -> str | None:
-        """Return the order key of the last page of a project, after which new pages are appended.
+        """Return the order key of the last page of a book, after which new pages are appended.
 
-        :returns: The greatest order key of the project's pages, or None for a book without pages.
+        :returns: The greatest order key of the book's pages, or None for a book without pages.
         :rtype: str | None
         """
 
     @abstractmethod
     def kind_tally(self) -> Mapping[RecipeKind, int]:
-        """Count the pages with an image of each kind of a project, in one grouped query.
+        """Count the pages with an image of each kind of a book, in one grouped query.
 
         The kind of a page is ``Page.recipe_kind``. A placeholder has no image and is never counted.
 
@@ -442,17 +442,17 @@ class PageRepository(Repository[Page, PageId]):
 class PaginationSectionRepository(Repository[PaginationSection, PaginationSectionId]):
     """The pagination sections of the books, which a page of the book is numbered from.
 
-    A section names the page it starts at. Deleting that page, or the project, removes the section with it, so a use
+    A section names the page it starts at. Deleting that page, or the book, removes the section with it, so a use
     case that deletes pages hands the section to the next page first.
     """
 
     @abstractmethod
     def list_all(self) -> Sequence[PaginationSection]:
-        """Return the sections of a project in the order they were made, ties by identifier.
+        """Return the sections of a book in the order they were made, ties by identifier.
 
         The sections are not in book order, since the order of the book is the order of the pages they start at.
 
-        :returns: Every section of the project.
+        :returns: Every section of the book.
         :rtype: Sequence[PaginationSection]
         """
 
@@ -472,9 +472,9 @@ class PageVersionRepository(Repository[PageVersion, PageVersionId]):
 
     @abstractmethod
     def list_to_prepare(self, processor_keys: Collection[str]) -> Sequence[PageVersion]:
-        """Return the versions of a project whose files still have to be written: the pending and the failed ones.
+        """Return the versions of a book whose files still have to be written: the pending and the failed ones.
 
-        A failed version is returned with the pending ones, so the next job of the project tries it again and no route
+        A failed version is returned with the pending ones, so the next job of the book tries it again and no route
         of its own is needed to repeat it.
 
         :param processor_keys: Keys of the processors whose versions are returned, those the job knows how to make.
@@ -639,17 +639,17 @@ class PageStageRepository(KeyedRepository[PageStage, PageStageKey]):
 
     @abstractmethod
     def list_for_stage(self, stage: Stage) -> Sequence[PageStage]:
-        """Return the records of one stage over the pages of a project, by page identifier.
+        """Return the records of one stage over the pages of a book, by page identifier.
 
         :param stage: The stage.
         :type stage: Stage
-        :returns: Every record of the stage in the project.
+        :returns: Every record of the stage in the book.
         :rtype: Sequence[PageStage]
         """
 
     @abstractmethod
     def step_tally(self) -> Sequence[StepTally]:
-        """Count the pages of every stage of a project that a run stopped at each step, in one grouped query.
+        """Count the pages of every stage of a book that a run stopped at each step, in one grouped query.
 
         Only pages with an image are counted, and a record that failed is left out, since its step belongs to a run that
         did not end. A page run through every step that is on has no step and is not counted.
@@ -660,7 +660,7 @@ class PageStageRepository(KeyedRepository[PageStage, PageStageKey]):
 
     @abstractmethod
     def head_ids(self) -> Collection[PageVersionId]:
-        """Return the identifiers of the versions that are the current version of a stage of a page of the project.
+        """Return the identifiers of the versions that are the current version of a stage of a page of the book.
 
         :returns: The distinct head versions.
         :rtype: Collection[PageVersionId]
@@ -668,7 +668,7 @@ class PageStageRepository(KeyedRepository[PageStage, PageStageKey]):
 
     @abstractmethod
     def tally(self) -> Sequence[StageTally]:
-        """Count the records of every stage of the project by state, in one grouped query.
+        """Count the records of every stage of the book by state, in one grouped query.
 
         Only pages with an image are counted, so a placeholder never is. A page counts as marked for review when the
         current version of its record carries a review mark and the record is not failed. A page counts toward check
@@ -715,17 +715,17 @@ class PageStepStateRepository(KeyedRepository[PageStepState, PageStepKey]):
 
 
 class StepValuesRepository(KeyedRepository[StepValues, StepValuesKey]):
-    """The values of the steps for the odd pages, the even pages and the groups, addressed by project, step and part.
+    """The values of the steps for the odd pages, the even pages and the groups, addressed by book, step and part.
 
-    Deleting a project removes them. Storing values raises ``NotFoundError`` when the project is not stored, and
+    Deleting a book removes them. Storing values raises ``NotFoundError`` when the book is not stored, and
     ``find`` returns None when the part of the pages changes no field of the step.
     """
 
     @abstractmethod
     def list_for_step(self, step_id: StepId) -> Sequence[StepValues]:
-        """Return the values every part of the pages of a project has for one step, by scope and group.
+        """Return the values every part of the pages of a book has for one step, by scope and group.
 
-        Books built from one profile share the identifiers of the steps, so the values are those of one project.
+        Books built from one profile share the identifiers of the steps, so the values are those of one book.
 
         :param step_id: The step of a recipe.
         :type step_id: StepId
@@ -735,9 +735,9 @@ class StepValuesRepository(KeyedRepository[StepValues, StepValuesKey]):
 
     @abstractmethod
     def list_all(self) -> Sequence[StepValues]:
-        """Return the values of every step of a project, by step, scope and group, which is one read for all stages.
+        """Return the values of every step of a book, by step, scope and group, which is one read for all stages.
 
-        :returns: The values of the project, each naming its stage.
+        :returns: The values of the book, each naming its stage.
         :rtype: Sequence[StepValues]
         """
 
@@ -833,7 +833,7 @@ class RecipeRepository(Repository[Recipe, RecipeId]):
 
     @abstractmethod
     def list_for_stage(self, stage: Stage) -> Sequence[Recipe]:
-        """Return the recipes of one stage of a project, by creation, ties by identifier.
+        """Return the recipes of one stage of a book, by creation, ties by identifier.
 
         :param stage: The stage.
         :type stage: Stage
@@ -843,7 +843,7 @@ class RecipeRepository(Repository[Recipe, RecipeId]):
 
     @abstractmethod
     def list_all(self) -> Sequence[Recipe]:
-        """Return the recipes of every stage of a project, in the order of the stages and then as ``list_for_stage``.
+        """Return the recipes of every stage of a book, in the order of the stages and then as ``list_for_stage``.
 
         :returns: The recipes of the stages that have been used.
         :rtype: Sequence[Recipe]
@@ -924,7 +924,7 @@ class CatalogueRepositories(ABC):
 class BookRepositories(ABC):
     """Every repository of one transaction of a book, which the work of ``read_book`` and ``change_book`` receives.
 
-    :ivar book_record: Repository of the project of the book, of this transaction.
+    :ivar book_record: Repository of the record of the book, of this transaction.
     :ivar sources: Source repository of this transaction.
     :ivar scans: Scan repository of this transaction.
     :ivar pages: Page repository of this transaction.
@@ -1003,7 +1003,7 @@ class UnitOfWork(ABC):
         Every read of the work sees the same committed state of the book. A write is refused with
         ``NoChangeOpenError``.
 
-        :param book_id: Project whose book is read.
+        :param book_id: Identifier of the book to read.
         :type book_id: BookId
         :param work: Function over the repositories of the transaction.
         :type work: Callable[[BookRepositories], T]
@@ -1015,14 +1015,14 @@ class UnitOfWork(ABC):
 
     @abstractmethod
     async def change_book[T](self, book_id: BookId, work: Callable[[BookRepositories, BookRecord], T]) -> T:
-        """Run ``work`` on a transaction of the book that writes, alone among its changes, with the project as it is.
+        """Run ``work`` on a transaction of the book that writes, alone among its changes, with its record as it is.
 
-        The change waits for any other change of the same book to end, then reads the project, so it sees what the
-        previous change committed. It never waits for a change of another book or of the catalogue.
+        The change waits for any other change of the same book to end, then reads the record of the book, so it sees
+        what the previous change committed. It never waits for a change of another book or of the catalogue.
 
-        :param book_id: Project whose book is changed.
+        :param book_id: Identifier of the book to change.
         :type book_id: BookId
-        :param work: Function over the repositories of the transaction and the project read at its start.
+        :param work: Function over the repositories of the transaction and the record of the book read at its start.
         :type work: Callable[[BookRepositories, BookRecord], T]
         :returns: What the work returns.
         :rtype: T
@@ -1032,11 +1032,11 @@ class UnitOfWork(ABC):
 
     @abstractmethod
     async def create_book(self, book_record: BookRecord) -> BookRecord:
-        """Make the store of a new book, holding its project and nothing else yet.
+        """Make the store of a new book, holding its record and nothing else yet.
 
-        :param book_record: The project of the new book.
+        :param book_record: The record of the new book.
         :type book_record: BookRecord
-        :returns: The project as stored.
+        :returns: The record of the book as stored.
         :rtype: BookRecord
         :raises ConflictError: If a book with this identifier is stored.
         """
@@ -1047,7 +1047,7 @@ class UnitOfWork(ABC):
 
         A book that is not stored is left as it is, so a deletion broken off half way can run again.
 
-        :param book_id: Project whose book is removed.
+        :param book_id: Identifier of the book to remove.
         :type book_id: BookId
         """
 
@@ -1069,7 +1069,7 @@ class UnitOfWork(ABC):
 
         The copy is the store in the form it keeps on disk, which :meth:`adopt_book` takes back in another instance.
 
-        :param book_id: Project whose book is copied.
+        :param book_id: Identifier of the book to copy.
         :type book_id: BookId
         :returns: The copy of the store.
         :rtype: bytes
@@ -1079,17 +1079,17 @@ class UnitOfWork(ABC):
 
     @abstractmethod
     async def adopt_book(self, book_id: BookId) -> BookRecord:
-        """Take as a new book the store an archive placed for it, and give its project the identifier of the new book.
+        """Take as a new book the store an archive placed for it, and give its record the identifier of the new book.
 
         The store is brought to the release of this code first, as any book is when it is opened.
 
         :param book_id: Identifier of the new book, whose store the archive placed.
         :type book_id: BookId
-        :returns: The project of the new book.
+        :returns: The record of the new book.
         :rtype: BookRecord
         :raises NotFoundError: If no store was placed for the book.
         :raises BookTooNewError: If the store is at a revision this code does not ship.
-        :raises InvalidArchiveError: If the store does not hold exactly one project.
+        :raises InvalidArchiveError: If the store does not hold exactly one record of a book.
         """
 
     @abstractmethod

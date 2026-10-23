@@ -56,9 +56,9 @@ async def _commit_book(uow: UnitOfWork, owner: Actor) -> tuple[BookRecord, list[
 
     :param uow: Unit of work to commit through, over a database that stores the account of the owner.
     :type uow: UnitOfWork
-    :param owner: Account owning the project.
+    :param owner: Account owning the book.
     :type owner: Actor
-    :returns: The project and its pages in book order.
+    :returns: The book and its pages in book order.
     :rtype: tuple[BookRecord, list[Page]]
     """
     book_record = make_record()
@@ -81,7 +81,7 @@ async def _stored(uow: UnitOfWork, book_id: BookId) -> dict[PageId, Page]:
 
     :param uow: Unit of work to read through.
     :type uow: UnitOfWork
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :returns: The pages of the book as committed, in book order, by identifier.
     :rtype: dict[PageId, Page]
@@ -96,7 +96,7 @@ async def _update_kind(service: PageService, actor: Actor, book_id: BookId, page
     :type service: PageService
     :param actor: Account the service acts for.
     :type actor: Actor
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page_ids: Identifiers of the pages of the book in book order.
     :type page_ids: list[PageId]
@@ -111,7 +111,7 @@ async def _delete_page(service: PageService, actor: Actor, book_id: BookId, page
     :type service: PageService
     :param actor: Account the service acts for.
     :type actor: Actor
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page_ids: Identifiers of the pages of the book in book order.
     :type page_ids: list[PageId]
@@ -224,7 +224,7 @@ class TestUpdate:
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
     ) -> None:
-        """Verify a page that does not exist, one of another project, and a project of another account are all 404.
+        """Verify a page that does not exist, one of another book, and a book of another account are all 404.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -280,7 +280,7 @@ class TestConcurrentWrites:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             """
             seen_by_job.extend(page.id for page in book_pages(repos.pages))
@@ -317,7 +317,7 @@ class TestConcurrentWrites:
         The move asks first and the other use case second. Each is blocked at the book, so neither has written when
         the book is held, and after it is freed the move has written and the other use case ran on the book it left.
 
-        :param write: The use case that starts second, given the service, the actor, the project and the page ids.
+        :param write: The use case that starts second, given the service, the actor, the book and the page ids.
         :type write: Callable[[PageService, Actor, BookId, list[PageId]], Coroutine[Any, Any, None]]
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory

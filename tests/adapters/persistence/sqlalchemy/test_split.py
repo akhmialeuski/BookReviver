@@ -2,7 +2,7 @@
 
 The revisions of the shared database are gone from the code, so the tests build a shared database the way its last
 revision left it: every table of the catalogue but the library and every table of a book, in one file, with the owner
-of a project and the account of a place that the new tables no longer keep, and the version table at the last
+of a book and the account of a place that the new tables no longer keep, and the version table at the last
 revision. The tables come from the baselines of the catalogue and of a book, which have the tables of that revision
 without the accounts of the books, and the rows are stored through the repositories of the adapter at the head and
 carried down to the baselines by the downgrades, so they have the shape the application wrote.

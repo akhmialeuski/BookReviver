@@ -34,7 +34,7 @@ MULTIPART_FORM: str = 'multipart/form-data'
 class EditPath:
     """The identifiers in the address of the edits of one stage of one page.
 
-    :ivar book_id: Identifier of the project.
+    :ivar book_id: Identifier of the book.
     :ivar page_id: Identifier of the page.
     :ivar stage: The stage.
     """
@@ -70,7 +70,7 @@ async def list_edits(
     """List the manual edits of one stage of a page, by processor.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page and the stage.
+    :param address: Identifiers of the book, the page and the stage.
     :type address: EditPath
     :param params: Page number and size from the query.
     :type params: Params
@@ -114,7 +114,7 @@ async def put_edit(
     answer is 422 for an edit the processor of the step does not read, and nothing is processed by this request.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page, the stage and the step.
+    :param address: Identifiers of the book, the page, the stage and the step.
     :type address: StepEditPath
     :param form: The editor, the shape and the mask.
     :type form: EditForm
@@ -138,7 +138,7 @@ async def delete_edit(
     """Delete the edit a step of a recipe reads, and mark the stage of the page stale.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the page, the stage and the step.
+    :param address: Identifiers of the book, the page, the stage and the step.
     :type address: StepEditPath
     :param actor: The signed-in account.
     :type actor: Actor
@@ -165,7 +165,7 @@ async def carry_over_edit(
     belongs to one page, and for a carry-over to the selected pages that names none.
 
     \N{FORM FEED}
-    :param address: Identifiers of the project, the source page, the stage and the step.
+    :param address: Identifiers of the book, the source page, the stage and the step.
     :type address: StepEditPath
     :param form: The pages to carry the shape to, and whether to write over a shape of their own.
     :type form: CarryForm

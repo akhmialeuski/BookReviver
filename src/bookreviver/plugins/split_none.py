@@ -1,7 +1,7 @@
 """The page split that is skipped: the page is the whole scan, and its base version is a copy of it.
 
 ``split.none`` reads the ``full`` image of the scan and returns it as it is, so the service stores it as the page's own
-copy in the format the project's image policy asks for, and a JPEG scan that is stored as a JPEG is copied byte for
+copy in the format the book's image policy asks for, and a JPEG scan that is stored as a JPEG is copied byte for
 byte.
 It needs no OpenCV. The facts of the scan arrive as the input data of the step, since the scan is the input of a base
 version, and the size of the image goes into the data of the version, which gives a blank leaf its median size.

@@ -31,7 +31,7 @@ class ScanQuery(Params):
 
     :ivar page: Number of the page of the list, from one.
     :ivar size: Number of scans in one page.
-    :ivar source_id: Source whose scans to list, or omitted for the scans of every source of the project.
+    :ivar source_id: Source whose scans to list, or omitted for the scans of every source of the book.
     """
 
     source_id: SourceId | None = Query(None, description='List only the scans of this source')
@@ -88,7 +88,7 @@ class SourceSchema(ResponseModel):
     :ivar status: Whether the file was imported, rejected by the import, or skipped by a cancelled one.
     :ivar rejection: Why a rejected file was refused, or None for a file that was not.
     :ivar detail: Text that says more than the reason, such as the name of the source a duplicate repeats, or empty.
-    :ivar imported_at: When the file was recorded, which for an imported source is when it became part of the project.
+    :ivar imported_at: When the file was recorded, which for an imported source is when it became part of the book.
     """
 
     id: SourceId
@@ -162,7 +162,7 @@ class ScanSchema(ResponseModel):
         :type scan: Scan
         :param request: The request, whose application knows the route that serves the images.
         :type request: Request
-        :param book_id: Identifier of the project of the scan, whose files hold its images.
+        :param book_id: Identifier of the book of the scan, whose files hold its images.
         :type book_id: BookId
         :returns: The scan resource, with images once its renditions are ready.
         :rtype: Self

@@ -4,7 +4,7 @@ A profile belongs to the account and lives in the catalogue, while a recipe made
 nothing of accounts. The recipe remembers the profile (``Recipe.profile_id``), so the book can tell how its steps differ
 from the profile, but it is a recipe like any other: deleting the profile only clears the link in the recipes of the
 account's books and changes no step. The number of books that use a profile is counted from the recipes of the books
-of the account. Another account's profile is reported exactly like a missing one, as another account's project is, so
+of the account. Another account's profile is reported exactly like a missing one, as another account's book is, so
 the identifiers of profiles cannot be probed.
 
 Applying a profile to a book puts its steps into the recipe of one kind of page of the stage and links the recipe to the
@@ -86,7 +86,7 @@ class RecipeProfiles:
         :type uow: UnitOfWork
         :param library: Library that opens the books of the acting account.
         :type library: Library
-        :param recipes: The recipes of the project, which check the steps of a profile.
+        :param recipes: The recipes of the book, which check the steps of a profile.
         :type recipes: RecipeBook
         :param processing: The use cases that put the steps of a profile into a recipe of a book.
         :type processing: ProcessingService
@@ -300,7 +300,7 @@ class RecipeProfiles:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param key: The stage and the identifier of the recipe, which must belong to that stage.
         :type key: RecipeKey
@@ -308,7 +308,7 @@ class RecipeProfiles:
         :type profile_id: RecipeProfileId | None
         :returns: The recipe as stored.
         :rtype: Recipe
-        :raises NotFoundError: If the actor has no such project, the project has no such recipe of the stage, or the
+        :raises NotFoundError: If the actor has no such book, the book has no such recipe of the stage, or the
                                account has no such profile.
         :raises InvalidParametersError: If the profile is for another stage than the recipe.
         """
@@ -322,11 +322,11 @@ class RecipeProfiles:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             :returns: The recipe as stored.
             :rtype: Recipe
-            :raises NotFoundError: If the project has no such recipe of the stage.
+            :raises NotFoundError: If the book has no such recipe of the stage.
             :raises InvalidParametersError: If the profile is for another stage than the recipe.
             """
             recipe = self._recipes.get(repos, key.recipe_id, stage=key.stage)
@@ -421,7 +421,7 @@ class RecipeProfiles:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             """
             for recipe in repos.recipes.list_all():
@@ -443,7 +443,7 @@ class RecipeProfiles:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param profile_id: Identifier of the profile.
         :type profile_id: RecipeProfileId
@@ -451,7 +451,7 @@ class RecipeProfiles:
         :type kind: RecipeKind
         :returns: The recipe, which is linked to the profile, and the processors whose steps were left out.
         :rtype: AppliedProfile
-        :raises NotFoundError: If the account has no such profile or project, or the stage has no recipe.
+        :raises NotFoundError: If the account has no such profile or book, or the stage has no recipe.
         :raises InvalidParametersError: If no step of the profile can run here, or a step no longer fits its processor.
         """
         await self._library.open(actor, book_id)
@@ -477,13 +477,13 @@ class RecipeProfiles:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param key: The stage the request names and the identifier of the recipe, which must belong to that stage.
         :type key: RecipeKey
         :returns: The recipe as stored.
         :rtype: Recipe
-        :raises NotFoundError: If the actor has no such project, the project has no such recipe of the stage, or the
+        :raises NotFoundError: If the actor has no such book, the book has no such recipe of the stage, or the
                                stage has no steps by default.
         """
         await self._library.open(actor, book_id)
@@ -500,7 +500,7 @@ class RecipeProfiles:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param key: The stage and the identifier of the recipe.
         :type key: RecipeKey
@@ -508,7 +508,7 @@ class RecipeProfiles:
         :type draft: RecipeDraft
         :returns: The recipe as stored.
         :rtype: Recipe
-        :raises NotFoundError: If the actor has no such project, the project has no such recipe of the stage, or the
+        :raises NotFoundError: If the actor has no such book, the book has no such recipe of the stage, or the
                                account has no such profile.
         :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
                                         usual order.

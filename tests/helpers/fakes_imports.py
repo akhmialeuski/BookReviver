@@ -100,11 +100,11 @@ class StoredBook(NamedTuple):
 
 
 async def stored_book(uow: UnitOfWork, book_id: BookId) -> StoredBook:
-    """Read the sources, scans, pages and pagination sections of a project as committed.
+    """Read the sources, scans, pages and pagination sections of a book as committed.
 
     :param uow: Unit of work to read through.
     :type uow: UnitOfWork
-    :param book_id: Project owning the rows.
+    :param book_id: Book owning the rows.
     :type book_id: BookId
     :returns: The rows, read in one transaction.
     :rtype: StoredBook
@@ -385,7 +385,7 @@ class CrashingSourceStore(LocalSourceStore):
     async def promote(self, book_id: BookId, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
         """Promote the files, unless the test made this promotion crash.
 
-        :param book_id: Project owning the upload and the source.
+        :param book_id: Book owning the upload and the source.
         :type book_id: BookId
         :param job_id: Import job whose upload holds the files.
         :type job_id: JobId

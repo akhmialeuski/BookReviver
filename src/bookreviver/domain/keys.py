@@ -1,6 +1,6 @@
-"""Layout of storage keys, the one place that builds the key of any stored file of a project.
+"""Layout of storage keys, the one place that builds the key of any stored file of a book.
 
-Every file of a project lives under ``projects/<project_id>/``, divided between the two storage ports:
+Every file of a book lives under ``projects/<book_id>/``, divided between the two storage ports:
 
 - ``incoming/<job_id>/`` holds the upload of one import job while it is received and checked.
 - ``sources/<source_id>/`` holds the files of one source exactly as uploaded.
@@ -10,9 +10,9 @@ Every file of a project lives under ``projects/<project_id>/``, divided between 
 - ``assets/book/`` holds the results of whole-book steps, such as typesetting and export.
 
 The ``SourceStore`` owns ``incoming/`` and ``sources/`` and the ``AssetStore`` owns ``assets/``, so each port removes
-everything of a project it holds with one prefix. Keys name sources, scans and pages by identifier and never by
+everything of a book it holds with one prefix. Keys name sources, scans and pages by identifier and never by
 position, so moving a page keeps its keys. A key never holds an empty, ``.`` or ``..`` segment, so no key built here or
-accepted by ``ProjectKeys.owning`` climbs out of its project.
+accepted by ``BookKeys.owning`` climbs out of its book.
 """
 
 from typing import TYPE_CHECKING, ClassVar, Self
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 class KeySegment(LabeledStrEnum):
     """A fixed directory name of the storage layout."""
 
-    BOOKS = 'projects', 'Root of every project'
+    BOOKS = 'projects', 'Root of every book'
     INCOMING = 'incoming', 'Uploads being received, owned by the source store'
     SOURCES = 'sources', 'Files of the sources as uploaded, owned by the source store'
     ASSETS = 'assets', 'Derived files, owned by the asset store'
@@ -45,9 +45,9 @@ class KeySegment(LabeledStrEnum):
 
 @frozen
 class BookKeys:
-    """The part of the storage key space that belongs to one project.
+    """The part of the storage key space that belongs to one book.
 
-    :ivar book_id: Project whose keys are built.
+    :ivar book_id: Book whose keys are built.
     """
 
     book_id: BookId
@@ -55,7 +55,7 @@ class BookKeys:
     SEPARATOR: ClassVar[str] = '/'
     # Prefix of the directory of one version of a scan's renditions, as in ``v1``
     VERSION_PREFIX: ClassVar[str] = 'v'
-    # A key of a derived file: the root, the project, ``assets`` and at least one name inside it
+    # A key of a derived file: the root, the book, ``assets`` and at least one name inside it
     MIN_SEGMENTS: ClassVar[int] = 4
     # Segments that would address the parent of a key or climb out of it
     UNSAFE_SEGMENTS: ClassVar[frozenset[str]] = frozenset({'', '.', '..'})
@@ -64,22 +64,22 @@ class BookKeys:
 
     @property
     def prefix(self) -> StorageKey:
-        """The prefix shared by every key of the project, ending with the separator."""
+        """The prefix shared by every key of the book, ending with the separator."""
         return StorageKey(f'{self._key()}{self.SEPARATOR}')
 
     @property
     def incoming_area(self) -> StorageKey:
-        """The directory of every upload of the project being received."""
+        """The directory of every upload of the book being received."""
         return self._key(KeySegment.INCOMING)
 
     @property
     def sources_area(self) -> StorageKey:
-        """The directory of every source of the project."""
+        """The directory of every source of the book."""
         return self._key(KeySegment.SOURCES)
 
     @property
     def assets_area(self) -> StorageKey:
-        """The directory of every derived file of the project."""
+        """The directory of every derived file of the book."""
         return self._key(KeySegment.ASSETS)
 
     @property
@@ -125,7 +125,7 @@ class BookKeys:
     def scan_directory(self, scan: Scan) -> StorageKey:
         """Return the directory of every rendition of a scan in the scan's current version of renditions.
 
-        :param scan: Scan of the project, whose source, number and renditions version place the directory.
+        :param scan: Scan of the book, whose source, number and renditions version place the directory.
         :type scan: Scan
         :returns: Key of ``assets/scans/<source_id>/<number>/v<version>``.
         :rtype: StorageKey
@@ -141,7 +141,7 @@ class BookKeys:
     def scan_rendition(self, scan: Scan, rendition: Rendition) -> StorageKey:
         """Return the key of one rendition of a scan in the scan's current version of renditions.
 
-        :param scan: Scan of the project, whose source, number and renditions version place the file.
+        :param scan: Scan of the book, whose source, number and renditions version place the file.
         :type scan: Scan
         :param rendition: Derived file of the scan.
         :type rendition: Rendition
@@ -179,7 +179,7 @@ class BookKeys:
         )
 
     def version_rendition(self, version: PageVersion, rendition: Rendition) -> StorageKey:
-        """Return the key of one rendition of a page version, the version being a page of this project.
+        """Return the key of one rendition of a page version, the version being a page of this book.
 
         :param version: Page version, whose page, stage, processor and identifier place the file.
         :type version: PageVersion
@@ -230,7 +230,7 @@ class BookKeys:
 
         :param key: Key to attribute, such as one a client sent.
         :type key: StorageKey
-        :returns: The keys of the project holding ``key``, or None for a key outside every project, naming a project
+        :returns: The keys of the book holding ``key``, or None for a key outside every book, naming a book
                   or its ``assets`` directory itself, lying outside ``assets``, or holding an empty, ``.`` or ``..``
                   segment.
         :rtype: Self | None
@@ -254,7 +254,7 @@ class BookKeys:
 
         :param name: Path of the file in the archive, with ``/`` between its segments, such as ``assets/pages/...``.
         :type name: str
-        :returns: The key of the file in this project, or None for a name outside what an archive carries: not the
+        :returns: The key of the file in this book, or None for a name outside what an archive carries: not the
                   database and not under ``sources/`` or ``assets/``, a directory of them alone, or a name holding an
                   empty, ``.`` or ``..`` segment.
         :rtype: StorageKey | None
@@ -267,21 +267,21 @@ class BookKeys:
         return self._key(*segments)
 
     def relative(self, key: StorageKey) -> str:
-        """Return a key of this project relative to the directory of the project, as an archive of the book names it.
+        """Return a key of this book relative to its directory, as an archive of the book names it.
 
-        :param key: Key of a file of the project.
+        :param key: Key of a file of the book.
         :type key: StorageKey
-        :returns: The key without the prefix of the project.
+        :returns: The key without the prefix of the book.
         :rtype: str
         """
         return key.removeprefix(self.prefix)
 
     def _key(self, *segments: str) -> StorageKey:
-        """Join ``segments`` under the project's directory into a key.
+        """Join ``segments`` under the book's directory into a key.
 
-        :param segments: Names below ``projects/<project_id>``, outermost first.
+        :param segments: Names below ``projects/<book_id>``, outermost first.
         :type segments: str
-        :returns: The key of ``projects/<project_id>/<segments>``.
+        :returns: The key of ``projects/<book_id>/<segments>``.
         :rtype: StorageKey
         :raises ValueError: If a segment is empty, ``.`` or ``..``, or holds the separator.
         """

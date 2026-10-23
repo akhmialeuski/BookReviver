@@ -29,13 +29,13 @@ COMMENT: str = 'Too tight on the left.\nTry the other method.'
 async def _store_version(
     uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory
 ) -> tuple[BookId, PageId, PageVersionId]:
-    """Store a project with one page and one version of it, each in the change that owns it.
+    """Store a book with one page and one version of it, each in the change that owns it.
 
     :param uow_factory: Function opening a new unit of work over the database of the test.
     :type uow_factory: UnitOfWorkFactory
     :param new_owner: Function creating an account the database accepts as an owner.
     :type new_owner: OwnerFactory
-    :returns: The identifiers of the project, its page and the version of the page.
+    :returns: The identifiers of the book, its page and the version of the page.
     :rtype: tuple[BookId, PageId, PageVersionId]
     """
     book_record = make_record()

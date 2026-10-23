@@ -121,7 +121,7 @@ export function useCloseImportReport() {
 /**
  * Read one page of the scans of a file, which the server lists in the order of the file.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param sourceId The file, or undefined for none, which reads nothing.
  * @param page The page of the list, from 1.
  */

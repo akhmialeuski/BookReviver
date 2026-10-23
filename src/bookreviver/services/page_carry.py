@@ -66,13 +66,13 @@ class CarryOverService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param book_id: Identifier of the project.
+        :param book_id: Identifier of the book.
         :type book_id: BookId
         :param request: The source page, the stage and the step, and the pages the shape goes to.
         :type request: CarryRequest
         :returns: The batch, the changes written and the pages skipped for a shape of their own.
         :rtype: CarryOver
-        :raises NotFoundError: If the actor has no such project, the project has no such page, no recipe of the stage
+        :raises NotFoundError: If the actor has no such book, the book has no such page, no recipe of the stage
                                has the step, or the source page has no shape set by hand.
         :raises InvalidParametersError: If the scope is the selected pages and none is named, or the edit is a mask.
         """
@@ -84,11 +84,11 @@ class CarryOverService:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             :returns: The batch, the changes written and the pages skipped.
             :rtype: CarryOver
-            :raises NotFoundError: If the project has no such page, no recipe of the
+            :raises NotFoundError: If the book has no such page, no recipe of the
                                    stage has the step, or the source page has no shape set by hand.
             :raises InvalidParametersError: If the scope is the selected pages and none is named, or the edit is a mask.
             """
@@ -141,7 +141,7 @@ class CarryOverService:
         :returns: The pages in book order for the following pages and the pages of the kind, and as read for the
                   selected ones.
         :rtype: Sequence[Page]
-        :raises NotFoundError: If a selected page is not one of the project.
+        :raises NotFoundError: If a selected page is not one of the book.
         :raises InvalidParametersError: If the scope is the selected pages and none is named.
         """
         key = request.key

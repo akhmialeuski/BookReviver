@@ -123,7 +123,7 @@ export function shownRecipe(
  *
  * The recipe shown is picked by `shownRecipe`: the recipe of the open page's kind, unless the reader chose another.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param stage The stage.
  * @param stepId The step the address names, or undefined when it names none.
  * @param pageKind The kind of the open page, or undefined while it is not known.

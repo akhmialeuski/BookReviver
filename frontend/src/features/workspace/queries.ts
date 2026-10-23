@@ -17,7 +17,7 @@ import {
 /**
  * The queries behind the workspace: the summary of the stages, the rows of one stage, and the jobs of the book.
  *
- * Their keys are the generated ones, so the invalidations of `features/projects/queries.ts` that the event stream
+ * Their keys are the generated ones, so the invalidations of `features/books/queries.ts` that the event stream
  * calls reach them. The rows are read like the manifest, whole and as one list, since the strip is virtual and the
  * book of a thousand pages fits in one request.
  */
@@ -31,7 +31,7 @@ export const JOBS_LISTED = 20;
 /**
  * Query options of the whole manifest of rows of one stage.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param stage The stage.
  * @param step A step of the recipe to place every page at, or undefined for the rows of the stage alone.
  */
@@ -100,7 +100,7 @@ export function useStageSummaries(
 /**
  * Query options of the jobs of the book.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param active Whether to list only the jobs that are queued or running, as the chip does, or the latest of any state.
  */
 export function jobsOptions(bookId: string, active: boolean) {
@@ -136,7 +136,7 @@ export function useRecentJobs(bookId: string, enabled: boolean): UseQueryResult<
  * Query options of one row of a stage at one step: the page at a place in the book, which a request of a single row
  * reads, so the step bar can tell the state of every step on the open page without reading the whole book for each.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param stage The stage.
  * @param step The step of the recipe to place the page at.
  * @param position Place of the page in the book from zero.

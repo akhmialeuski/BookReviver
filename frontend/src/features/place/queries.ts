@@ -33,7 +33,7 @@ export async function placeWritesSettled(bookId: string): Promise<void> {
 /**
  * Write the place of a book.
  *
- * @param projectId The book.
+ * @param bookId The book.
  * @param body Where the reader is.
  * @param keepalive Whether the browser may finish the request after the page is gone, for the write on closing a tab.
  */

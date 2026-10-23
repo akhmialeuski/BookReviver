@@ -61,7 +61,7 @@ class SourceStoreFailingOnce(LocalSourceStore):
     async def delete_source(self, book_id: BookId, source_id: SourceId) -> None:
         """Fail on the first call, as a storage outage would, and remove the source's files on the later ones.
 
-        :param book_id: Project owning the source.
+        :param book_id: Book owning the source.
         :type book_id: BookId
         :param source_id: Source whose files are removed.
         :type source_id: SourceId
@@ -149,11 +149,11 @@ def fx_flaky_service(
 
 
 async def _record_unimported(uow: UnitOfWork, book_id: BookId) -> tuple[Source, Source]:
-    """Record a rejected and a skipped file of a project, after the sources of a book made by ``commit_book``.
+    """Record a rejected and a skipped file of a book, after the sources made by ``commit_book``.
 
     :param uow: Unit of work to commit through.
     :type uow: UnitOfWork
-    :param book_id: Project the files were uploaded to.
+    :param book_id: Book the files were uploaded to.
     :type book_id: BookId
     :returns: The rejected file and the skipped file, in the order they were recorded.
     :rtype: tuple[Source, Source]
@@ -174,11 +174,11 @@ async def _record_unimported(uow: UnitOfWork, book_id: BookId) -> tuple[Source, 
     )
 
     def record(repos: BookRepositories, _book_record: BookRecord) -> None:
-        """Add the two files to the project.
+        """Add the two files to the book.
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: The project as the change finds it, which the work does not need.
+        :param _book_record: The record of the book as the change finds it, which the work does not need.
         :type _book_record: BookRecord
         """
         repos.sources.add(rejected)
@@ -190,7 +190,7 @@ async def _record_unimported(uow: UnitOfWork, book_id: BookId) -> tuple[Source, 
 
 @pytest.fixture
 async def fx_unimported(fx_uow: UnitOfWorkFactory, fx_book: Book) -> tuple[Source, Source]:
-    """Record a rejected and a skipped file in the project of the book of the acting account.
+    """Record a rejected and a skipped file in the book of the acting account.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
@@ -286,7 +286,7 @@ class TestList:
         :type fx_service: Callable[[], SourceService]
         :param fx_book: Book of the acting account.
         :type fx_book: Book
-        :param fx_unimported: The rejected file and the skipped file recorded in the project of the book.
+        :param fx_unimported: The rejected file and the skipped file recorded in the book.
         :type fx_unimported: tuple[Source, Source]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
@@ -309,7 +309,7 @@ class TestList:
     async def test_another_accounts_book_is_not_found(
         self, fx_service: Callable[[], SourceService], fx_strangers_book: Book, fx_actor: Actor
     ) -> None:
-        """Verify the sources of another account's project cannot be listed.
+        """Verify the sources of another account's book cannot be listed.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
@@ -328,7 +328,7 @@ class TestGet:
     async def test_returns_the_source_of_the_book(
         self, fx_service: Callable[[], SourceService], fx_book: Book, fx_actor: Actor
     ) -> None:
-        """Verify a source is read by its identifier through its project.
+        """Verify a source is read by its identifier through its book.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
@@ -342,7 +342,7 @@ class TestGet:
     async def test_source_of_another_book_of_the_actor_is_not_found(
         self, fx_service: Callable[[], SourceService], fx_uow: UnitOfWorkFactory, fx_book: Book, fx_actor: Actor
     ) -> None:
-        """Verify a source is found only through the project holding it, even for an owner of both projects.
+        """Verify a source is found only through the book holding it, even for an owner of both books.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
@@ -362,7 +362,7 @@ class TestGet:
     async def test_missing_source_and_a_strangers_source_are_not_found(
         self, fx_service: Callable[[], SourceService], fx_book: Book, fx_strangers_book: Book, fx_actor: Actor
     ) -> None:
-        """Verify an identifier no source has and a source of another account's project answer alike.
+        """Verify an identifier no source has and a source of another account's book answer alike.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
@@ -427,7 +427,7 @@ class TestScans:
     async def test_source_of_another_book_is_not_found(
         self, fx_service: Callable[[], SourceService], fx_uow: UnitOfWorkFactory, fx_book: Book, fx_actor: Actor
     ) -> None:
-        """Verify the scans of a source are listed only through the project holding it.
+        """Verify the scans of a source are listed only through the book holding it.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
@@ -447,7 +447,7 @@ class TestScans:
     async def test_another_accounts_book_is_not_found(
         self, fx_service: Callable[[], SourceService], fx_strangers_book: Book, fx_actor: Actor
     ) -> None:
-        """Verify the scans of another account's project cannot be listed.
+        """Verify the scans of another account's book cannot be listed.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
@@ -511,7 +511,7 @@ class TestDelete:
         fx_storage_root: Path,
         fx_actor: Actor,
     ) -> None:
-        """Verify a source cannot be deleted while the project imports, whose job may be writing its scans.
+        """Verify a source cannot be deleted while the book imports, whose job may be writing its scans.
 
         A queued job is active, as a running one is.
 
@@ -538,7 +538,7 @@ class TestDelete:
     async def test_finished_import_does_not_block_the_deletion(
         self, fx_service: Callable[[], SourceService], fx_import_board: FakeJobBoard, fx_book: Book, fx_actor: Actor
     ) -> None:
-        """Verify an import that has ended leaves the project free to delete the source, by hand.
+        """Verify an import that has ended leaves the book free to delete the source, by hand.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
@@ -611,7 +611,7 @@ class TestDeleteUnimported:
     ) -> None:
         """Verify the report of an import is closed, and the sources of the book, their scans and files stay.
 
-        The rejected and the skipped file are recorded in the project by the ``fx_unimported`` fixture.
+        The rejected and the skipped file are recorded in the book by the ``fx_unimported`` fixture.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
@@ -641,7 +641,7 @@ class TestDeleteUnimported:
         fx_unimported: tuple[Source, Source],
         fx_actor: Actor,
     ) -> None:
-        """Verify the report is not closed while the project imports, since the import is writing it.
+        """Verify the report is not closed while the book imports, since the import is writing it.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]
@@ -649,7 +649,7 @@ class TestDeleteUnimported:
         :type fx_import_board: FakeJobBoard
         :param fx_book: Book of the acting account.
         :type fx_book: Book
-        :param fx_unimported: The rejected file and the skipped file recorded in the project of the book.
+        :param fx_unimported: The rejected file and the skipped file recorded in the book.
         :type fx_unimported: tuple[Source, Source]
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
@@ -671,7 +671,7 @@ class TestDeleteUnimported:
         fx_strangers_book: Book,
         fx_actor: Actor,
     ) -> None:
-        """Verify the actor cannot close the report of another account's project, whose files stay.
+        """Verify the actor cannot close the report of another account's book, whose files stay.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], SourceService]

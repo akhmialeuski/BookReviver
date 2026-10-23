@@ -39,7 +39,7 @@ SECOND_SOURCE_PAGES: int = 2
 class Book(NamedTuple):
     """A book of two sources whose five pages stand one after the other in the order of their upload.
 
-    :ivar book_record: The project of the book, owned by the signed-in account.
+    :ivar book_record: The record of the book, owned by the signed-in account.
     :ivar first: The source of the first three pages.
     :ivar second: The source of the last two pages.
     :ivar pages: The pages in book order.
@@ -52,7 +52,7 @@ class Book(NamedTuple):
 
     @property
     def path(self) -> str:
-        """The path of the project's resources."""
+        """The path of the book's resources."""
         return f'{BOOKS_PATH}/{self.book_record.id}'
 
     def ids(self, *indexes: int) -> list[str]:
@@ -123,7 +123,7 @@ def _order(manifest: Page[PageSchema], book: Book) -> list[int]:
 
 
 class TestMovePage:
-    """Tests for POST /projects/{project_id}/pages/{page_id}/move."""
+    """Tests for POST /books/{book_id}/pages/{page_id}/move."""
 
     @pytest.mark.parametrize(
         ('anchor_field', 'expected'),
@@ -222,7 +222,7 @@ class TestMovePage:
     async def test_missing_anchor_and_page_of_another_account_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
     ) -> None:
-        """Verify an unknown anchor, and a project of another account, answer 404.
+        """Verify an unknown anchor, and a book of another account, answer 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -250,7 +250,7 @@ class TestMovePage:
 
 
 class TestMovePages:
-    """Tests for POST /projects/{project_id}/pages/move."""
+    """Tests for POST /books/{book_id}/pages/move."""
 
     async def test_puts_the_group_in_a_run_in_book_order_and_answers_without_a_body(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -321,7 +321,7 @@ class TestMovePages:
     async def test_page_of_another_book_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_uow: UnitOfWorkFactory, fx_actor: Actor
     ) -> None:
-        """Verify a group that names a page of another project is answered 404.
+        """Verify a group that names a page of another book is answered 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
@@ -345,7 +345,7 @@ class TestMovePages:
 
 
 class TestMoveSourcePages:
-    """Tests for POST /projects/{project_id}/sources/{source_id}/pages/move."""
+    """Tests for POST /books/{book_id}/sources/{source_id}/pages/move."""
 
     async def test_puts_every_page_of_the_source_after_the_page_in_one_request(
         self, fx_client: httpx.AsyncClient, fx_book: Book
@@ -402,7 +402,7 @@ class TestMoveSourcePages:
 
 
 class TestListIncludedPages:
-    """Tests for the ``included`` filter of GET /projects/{project_id}/pages."""
+    """Tests for the ``included`` filter of GET /books/{book_id}/pages."""
 
     async def test_lists_only_the_pages_of_the_book_numbered_among_themselves(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_uow: UnitOfWorkFactory

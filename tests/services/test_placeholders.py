@@ -77,9 +77,9 @@ SIZES: list[tuple[int, int, float | None]] = [(100, 500, 100.0), (300, 100, 300.
 
 
 class BookOfScans(NamedTuple):
-    """A project whose pages are cut from scans that are cut and stored, each page with its ready base version.
+    """A book whose pages are cut from scans that are cut and stored, each page with its ready base version.
 
-    :ivar book_record: The project.
+    :ivar book_record: The record of the book.
     :ivar source: The source of every scan.
     :ivar scans: The scans, whose full images are stored.
     :ivar pages: The pages in book order, one per scan.
@@ -138,13 +138,13 @@ async def _commit_book(
     owner: Actor,
     sizes: Sequence[tuple[int, int, float | None]] = (FIRST_SCAN_SIZE,),
 ) -> BookOfScans:
-    """Commit a project with a scan of each size, a page of each scan and its ready base version, and store the images.
+    """Commit a book with a scan of each size, a page of each scan and its ready base version, and store the images.
 
     :param uow: Unit of work to commit through, over a database that stores the account of the owner.
     :type uow: UnitOfWork
     :param assets: Asset store receiving the full image of each scan.
     :type assets: LocalAssetStore
-    :param owner: Account owning the project.
+    :param owner: Account owning the book.
     :type owner: Actor
     :param sizes: Width, height and resolution of each scan.
     :type sizes: Sequence[tuple[int, int, float | None]]
@@ -178,7 +178,7 @@ async def _placeholder_book(uow: UnitOfWork, assets: LocalAssetStore, owner: Act
     :type uow: UnitOfWork
     :param assets: Asset store receiving the full image of the scan.
     :type assets: LocalAssetStore
-    :param owner: Account owning the project.
+    :param owner: Account owning the book.
     :type owner: Actor
     :returns: The book and its placeholder.
     :rtype: tuple[BookOfScans, Page]
@@ -197,7 +197,7 @@ async def _spare_scan(uow: UnitOfWork, assets: LocalAssetStore, book: BookOfScan
     :type uow: UnitOfWork
     :param assets: Asset store receiving the full image.
     :type assets: LocalAssetStore
-    :param book: The book whose project gets the source.
+    :param book: The book that gets the source.
     :type book: BookOfScans
     :returns: The scan, with its label ``xii``.
     :rtype: Scan
@@ -210,7 +210,7 @@ async def _spare_scan(uow: UnitOfWork, assets: LocalAssetStore, book: BookOfScan
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _book_record: The project as the change finds it, which the work does not need.
+        :param _book_record: The record of the book as the change finds it, which the work does not need.
         :type _book_record: BookRecord
         """
         repos.sources.add(source)
@@ -227,7 +227,7 @@ async def _stored_versions(uow: UnitOfWork, book_id: BookId, page: Page) -> list
 
     :param uow: Unit of work to read through.
     :type uow: UnitOfWork
-    :param book_id: Identifier of the project.
+    :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
@@ -238,20 +238,20 @@ async def _stored_versions(uow: UnitOfWork, book_id: BookId, page: Page) -> list
 
 
 async def _stored_pages(uow: UnitOfWork, *books: BookRecord) -> list[Page]:
-    """Read the committed pages of projects.
+    """Read the committed pages of books.
 
     :param uow: Unit of work to read through.
     :type uow: UnitOfWork
-    :param books: Projects whose pages are read.
+    :param books: Books whose pages are read.
     :type books: BookRecord
-    :returns: The pages of each project in book order, one project after the other.
+    :returns: The pages of each book in book order, one book after the other.
     :rtype: list[Page]
     """
 
     async def pages_of(book_record: BookRecord) -> list[Page]:
-        """Read the pages of one project in book order.
+        """Read the pages of one book in book order.
 
-        :param book_record: The project.
+        :param book_record: The record of the book.
         :type book_record: BookRecord
         :returns: Its pages.
         :rtype: list[Page]
@@ -411,7 +411,7 @@ class TestAddPlaceholder:
         fx_actor: Actor,
         fx_stranger: Actor,
     ) -> None:
-        """Verify an unknown anchor and the project of another account both answer not found, and add nothing.
+        """Verify an unknown anchor and the book of another account both answer not found, and add nothing.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -651,7 +651,7 @@ class TestAttachScan:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _book_record: The project as the change finds it, which the work does not need.
+            :param _book_record: The record of the book as the change finds it, which the work does not need.
             :type _book_record: BookRecord
             """
             repos.pages.update(evolve(repos.pages.get(placeholder.id), manual_label=RIVAL_LABEL))
@@ -709,7 +709,7 @@ class TestAttachScan:
         fx_asset_store: LocalAssetStore,
         fx_actor: Actor,
     ) -> None:
-        """Verify a scan is bound only through the project that holds it, and the placeholder stays as it was.
+        """Verify a scan is bound only through the book that holds it, and the placeholder stays as it was.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -974,7 +974,7 @@ class TestDelete:
         fx_actor: Actor,
         fx_stranger: Actor,
     ) -> None:
-        """Verify a page is deleted only through the project that holds it, and only by the owner.
+        """Verify a page is deleted only through the book that holds it, and only by the owner.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
@@ -1282,9 +1282,9 @@ class TestPrepareImages:
 
 
 class TwoLeaves(NamedTuple):
-    """A project with two blank leaves that wait for their images.
+    """A book with two blank leaves that wait for their images.
 
-    :ivar book_record: The project.
+    :ivar book_record: The record of the book.
     :ivar pages: The pages of the leaves, in book order.
     :ivar root: Storage root of the test, under which the files of the pages lie.
     """
@@ -1301,9 +1301,9 @@ async def _add_leaves(
 
     :param service: Function building the service for one request.
     :type service: Callable[[], PageService]
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: Project to add the leaves to.
+    :param book_record: Record of the book to add the leaves to.
     :type book_record: BookRecord
     :param count: Number of leaves.
     :type count: int
@@ -1326,19 +1326,19 @@ class TestPrepareImagesWhileTheBookChanges:
         fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         fx_storage_root: Path,
     ) -> TwoLeaves:
-        """Commit a project with two blank leaves, each queued for its image.
+        """Commit a book with two blank leaves, each queued for its image.
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Local asset store of the test.
         :type fx_asset_store: LocalAssetStore
-        :param fx_actor: Account owning the project.
+        :param fx_actor: Account owning the book.
         :type fx_actor: Actor
         :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
         :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         :param fx_storage_root: Storage root of the test.
         :type fx_storage_root: Path
-        :returns: The project, its two pages and the storage root.
+        :returns: The book, its two pages and the storage root.
         :rtype: TwoLeaves
         """
         book_record = make_record()
@@ -1372,7 +1372,7 @@ class TestPrepareImagesWhileTheBookChanges:
         :type fx_asset_store: LocalAssetStore
         :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
         :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
-        :param fx_leaves: The project and its two leaves.
+        :param fx_leaves: The book and its two leaves.
         :type fx_leaves: TwoLeaves
         :param victim: Whether the page deleted is the one being written or the other one.
         :type victim: str
@@ -1426,7 +1426,7 @@ class TestPrepareImagesWhileTheBookChanges:
         fx_events: RecordingEventBus,
         fx_clock: FixedClock,
     ) -> None:
-        """Verify an error nobody expected stores the version as failed with its reason, ends the job failed, and frees the project.
+        """Verify an unexpected error stores the version as failed with its reason, ends the job failed, frees the book.
 
         The job does not catch an error of its own, so the one of a version is caught where the version is made. A job
         left active would stop every later page from queueing an image job.
@@ -1636,11 +1636,11 @@ class CountingOrderKeys(FractionalOrderKeys):
 
 
 async def _labels_in_book_order(uow: UnitOfWork, book_record: BookRecord) -> list[str]:
-    """Read the labels the committed pages of a project show, in the order of the book.
+    """Read the labels the committed pages of a book show, in the order of the book.
 
     :param uow: Unit of work to read through.
     :type uow: UnitOfWork
-    :param book_record: Project whose pages are read.
+    :param book_record: Record of the book whose pages are read.
     :type book_record: BookRecord
     :returns: The label of each page, in order key order.
     :rtype: list[str]
@@ -1841,7 +1841,7 @@ class TestAddMany:
         fx_actor: Actor,
         fx_stranger: Actor,
     ) -> None:
-        """Verify a list over ``MAX_PAGES_PER_BATCH`` is a conflict and a stranger's project is not found.
+        """Verify a list over ``MAX_PAGES_PER_BATCH`` is a conflict and a stranger's book is not found.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]

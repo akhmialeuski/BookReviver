@@ -87,7 +87,7 @@ async def fresh_book(
     :param freshness: Freshness of the reads of the books of the request.
     :type freshness: BookFreshness
     :raises NotModifiedError: If the client holds the read as it still is.
-    :raises NotFoundError: If the actor has no such project.
+    :raises NotFoundError: If the actor has no such book.
     """
     if request.method != HTTPMethod.GET:
         return

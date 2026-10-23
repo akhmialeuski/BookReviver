@@ -35,7 +35,7 @@ async def _store_book(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory) -
     :type uow_factory: UnitOfWorkFactory
     :param new_owner: Function creating an account the catalogue accepts as an owner.
     :type new_owner: OwnerFactory
-    :returns: The identifier of the project of the book.
+    :returns: The identifier of the book.
     :rtype: BookId
     """
     book_record = make_record()

@@ -24,13 +24,13 @@ SPLIT_SPREAD: str = 'split.spread'
 
 
 async def seed_spreads(kit: ProcessingKit, *, count: int = 1) -> tuple[Actor, BookRecord, list[Page]]:
-    """Seed a project with scans of spreads, each shown whole by one page.
+    """Seed a book with scans of spreads, each shown whole by one page.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
     :param count: How many scans, and so pages, to seed.
     :type count: int
-    :returns: The actor, the project and the pages in book order.
+    :returns: The actor, the book and the pages in book order.
     :rtype: tuple[Actor, BookRecord, list[Page]]
     """
     actor, book_record = await kit.seed_record()
@@ -52,9 +52,9 @@ async def use_recipe(
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: Project the recipe belongs to.
+    :param book_record: Record of the book the recipe belongs to.
     :type book_record: BookRecord
     :param stage: The stage.
     :type stage: Stage
@@ -70,9 +70,9 @@ async def run_stage(kit: ProcessingKit, actor: Actor, book_record: BookRecord, r
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param actor: Account owning the project.
+    :param actor: Account owning the book.
     :type actor: Actor
-    :param book_record: Project to run in.
+    :param book_record: Record of the book to run in.
     :type book_record: BookRecord
     :param run: The stage, and the recipe and pages to run it on.
     :type run: StageRun
@@ -82,11 +82,11 @@ async def run_stage(kit: ProcessingKit, actor: Actor, book_record: BookRecord, r
 
 
 async def book_of(kit: ProcessingKit, book_record: BookRecord) -> list[Page]:
-    """Read the pages of a project in book order, as committed.
+    """Read the pages of a book in book order, as committed.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_record: The project.
+    :param book_record: The record of the book.
     :type book_record: BookRecord
     :returns: Its pages.
     :rtype: list[Page]
@@ -100,7 +100,7 @@ async def stage_of(kit: ProcessingKit, book_id: BookId, page: Page, stage: Stage
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project of the page.
+    :param book_id: Identifier of the book of the page.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
@@ -117,7 +117,7 @@ async def head_of(kit: ProcessingKit, book_id: BookId, page: Page, stage: Stage)
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param book_id: Identifier of the project of the page.
+    :param book_id: Identifier of the book of the page.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
