@@ -26,7 +26,7 @@ export interface PageChain {
  * @param item The open page with its row in the stage.
  */
 export function usePageChain(processing: Processing, item: StripItem | undefined): PageChain {
-  const versions = useVersions(processing.projectId, item?.page.id, processing.stage);
+  const versions = useVersions(processing.bookId, item?.page.id, processing.stage);
   const head = item?.row?.version ?? null;
   const chain = useMemo(() => stepChain(versions.data ?? [], head), [versions.data, head]);
   // A page keeps the steps of the recipe it was processed by, which is not always the one shown in the panel

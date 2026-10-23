@@ -4,8 +4,8 @@ import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   stepIdsOf,
   uploadFolder,
@@ -62,7 +62,7 @@ test('a reader corrects the sheet, the angle and the frame of a page, and the co
   // An edit starts a run of the stage on the page, and the next change waits until that run is over
   const settled = async (): Promise<void> => {
     await expect(page.getByTestId('editor-busy')).toHaveCount(0);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
   };
   const saves: string[] = [];
   page.on('request', (request) => {
@@ -77,7 +77,7 @@ test('a reader corrects the sheet, the angle and the frame of a page, and the co
     await openLibrary(page);
     await createBook(page, 'A book of sheets');
     await uploadFolder(page, folder, PAGES);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     await markPagesAsText(page);
     const bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     await page.goto(`${bookPath}/stages/geometry`);

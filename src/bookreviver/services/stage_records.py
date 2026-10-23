@@ -22,7 +22,7 @@ from bookreviver.domain.entities import PageStage
 from bookreviver.domain.enums import Stage, StageState, ValueScope
 from bookreviver.domain.step_values import SIDE_SCOPES, pages_changing_side
 from bookreviver.domain.values import PageStageKey
-from bookreviver.services.projects import book_pages
+from bookreviver.services.books import book_pages
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable

@@ -11,14 +11,14 @@ from delayed_assert import expect
 
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.events import JobChanged
-from bookreviver.domain.ids import ProjectId
+from bookreviver.domain.ids import BookId
 from tests.helpers.builders import make_job
 from tests.helpers.job_boards import BoardAdapter, open_board_under_test
 from tests.helpers.scripted_runner import TASKS_PER_JOB, Phase
 
 pytestmark = pytest.mark.anyio
 
-BOOK: ProjectId = ProjectId(UUID(int=1))
+BOOK: BookId = BookId(UUID(int=1))
 
 
 class TestInMemoryJobBoard:
@@ -26,7 +26,7 @@ class TestInMemoryJobBoard:
 
     async def test_it_announces_a_job_as_it_is_queued_runs_goes_on_and_ends(self) -> None:
         """Verify the browser is told of the job when it is queued, when it runs, as it goes, and when it ends."""
-        job = make_job(project_id=BOOK)
+        job = make_job(book_id=BOOK)
         async with open_board_under_test(BoardAdapter.IN_MEMORY) as under_test:
             under_test.board.put(job)
             await anyio.wait_all_tasks_blocked()
@@ -41,7 +41,7 @@ class TestInMemoryJobBoard:
 
     async def test_it_announces_a_cancelled_job(self) -> None:
         """Verify the browser is told of a job the moment it is cancelled, while the running task has not returned."""
-        job = make_job(project_id=BOOK)
+        job = make_job(book_id=BOOK)
         async with open_board_under_test(BoardAdapter.IN_MEMORY) as under_test:
             under_test.runner.hold(job)
             under_test.board.put(job)
@@ -54,7 +54,7 @@ class TestInMemoryJobBoard:
 
     async def test_a_book_that_went_idle_runs_the_job_put_later(self) -> None:
         """Verify a job put on a book whose queue has run dry is run, which takes a new task for the book."""
-        first, later = make_job(project_id=BOOK, minutes=0), make_job(project_id=BOOK, minutes=1)
+        first, later = make_job(book_id=BOOK, minutes=0), make_job(book_id=BOOK, minutes=1)
         async with open_board_under_test(BoardAdapter.IN_MEMORY) as under_test:
             under_test.board.put(first)
             await anyio.wait_all_tasks_blocked()
@@ -66,7 +66,7 @@ class TestInMemoryJobBoard:
 
     async def test_leaving_the_board_cuts_off_a_running_job(self) -> None:
         """Verify the tasks of the board are cancelled when it is left, so a running job does not outlive the process."""
-        job = make_job(project_id=BOOK)
+        job = make_job(book_id=BOOK)
         async with open_board_under_test(BoardAdapter.IN_MEMORY) as under_test:
             under_test.runner.hold(job)
             under_test.board.put(job)

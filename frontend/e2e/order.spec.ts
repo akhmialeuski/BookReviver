@@ -31,7 +31,7 @@ function tile(page: Page, id: string) {
   return page.locator(`[data-testid="order-tile"][data-page-id="${id}"]`);
 }
 
-function projectIdOf(page: Page): string {
+function bookIdOf(page: Page): string {
   const id = new URL(page.url()).pathname.match(/\/projects\/([^/]+)/)?.[1];
   if (id === undefined) {
     throw new Error(`The address ${page.url()} names no book`);
@@ -210,7 +210,7 @@ test('a reader selects, shows and drags the pages of a book', async ({ page }) =
 
   await test.step('a refused move puts the grid back and says why', async () => {
     const before = await tileIds(page);
-    await page.route('**/api/v1/projects/*/pages/move', (route) =>
+    await page.route('**/api/v1/books/*/pages/move', (route) =>
       route.fulfill({
         status: 409,
         contentType: 'application/problem+json',
@@ -231,7 +231,7 @@ test('a reader selects, shows and drags the pages of a book', async ({ page }) =
     await expect(failure).toContainText('Nothing was changed');
     await expect(failure).toContainText('Another move took that place first.');
     await expect.poll(() => tileIds(page)).toEqual(before);
-    await page.unroute('**/api/v1/projects/*/pages/move');
+    await page.unroute('**/api/v1/books/*/pages/move');
     await page.getByRole('button', { name: 'Dismiss' }).click();
     await expect(failure).toHaveCount(0);
   });
@@ -394,13 +394,13 @@ test('a reader adds and deletes pages, and follows a link from a file', async ({
   });
 
   await test.step('a link from a file opens the stage with the pages of that file selected', async () => {
-    const projectId = projectIdOf(page);
-    const response = await page.request.get(`/api/v1/projects/${projectId}/pages?size=100`);
+    const bookId = bookIdOf(page);
+    const response = await page.request.get(`/api/v1/books/${bookId}/pages?size=100`);
     const items: { id: string; source_id: string | null }[] = (await response.json()).items;
     const wanted = items.find((item) => item.source_id !== null);
     expect(wanted).toBeDefined();
 
-    await page.goto(`/projects/${projectId}/stages/page-order?source=${wanted?.source_id}`);
+    await page.goto(`/books/${bookId}/stages/page-order?source=${wanted?.source_id}`);
     await expect(page.getByTestId('panel-page')).toContainText('1 page selected');
     await expect(tile(page, wanted?.id ?? '')).toHaveAttribute('aria-pressed', 'true');
   });

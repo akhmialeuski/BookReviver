@@ -17,16 +17,16 @@ from PIL import Image
 from bookreviver.api.schemas.jobs import JobSchema
 from bookreviver.api.schemas.pages import PageSchema
 from bookreviver.domain.enums import BlankFill, JobKind, JobState, PageKind, Rendition, Stage, VersionState
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import Renditions
 from bookreviver.services.base_versions import BaseVersions
-from tests.helpers.builders import EPOCH, make_page, make_page_stage, make_project, make_scan, make_source
-from tests.helpers.seeding import store_project
+from tests.helpers.builders import EPOCH, make_page, make_page_stage, make_record, make_scan, make_source
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     import httpx
 
-    from bookreviver.domain.entities import Actor, Project
+    from bookreviver.domain.entities import Actor, BookRecord
     from bookreviver.domain.entities import Page as BookPage
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.storage import AssetStore
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
-PROJECTS_PATH: str = '/api/v1/projects'
+BOOKS_PATH: str = '/api/v1/books'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 CONTENT_TYPE_HEADER: str = 'content-type'
 DETAIL_FIELD: str = 'detail'
@@ -56,17 +56,17 @@ SCAN: BlankFill = BlankFill.SCAN
 class Book(NamedTuple):
     """A book of the signed-in account: a page of text and two blank pages, each cut from a scan.
 
-    :ivar project: The project of the book.
+    :ivar book_record: The project of the book.
     :ivar pages: The three pages in book order.
     """
 
-    project: Project
+    book_record: BookRecord
     pages: list[BookPage]
 
     @property
     def pages_path(self) -> str:
         """The path of the project's pages."""
-        return f'{PROJECTS_PATH}/{self.project.id}/pages'
+        return f'{BOOKS_PATH}/{self.book_record.id}/pages'
 
     @property
     def fill_path(self) -> str:
@@ -108,7 +108,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project()
+    book_record = make_record()
     source = make_source()
     kinds = [PageKind.TEXT, PageKind.BLANK, PageKind.BLANK]
     scans = [
@@ -129,23 +129,23 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
         BaseVersions.split_none(page=page, scan=scan, state=VersionState.READY, moment=EPOCH)
         for page, scan in zip(pages, scans, strict=True)
     ]
-    await store_project(
-        fx_uow(), project, *pages, owner=fx_actor.account_id, sources=[source], scans=scans, versions=versions
+    await store_book(
+        fx_uow(), book_record, *pages, owner=fx_actor.account_id, sources=[source], scans=scans, versions=versions
     )
 
-    def save_heads(repos: BookRepositories, _project: Project) -> None:
+    def save_heads(repos: BookRepositories, _book_record: BookRecord) -> None:
         """Make the base version of each page the current version of the page split, as the import does.
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _project: The project as the change finds it, which the work does not need.
-        :type _project: Project
+        :param _book_record: The project as the change finds it, which the work does not need.
+        :type _book_record: BookRecord
         """
         for page, version in zip(pages, versions, strict=True):
             repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=version.id))
 
-    await fx_uow().change_book(project.id, save_heads)
-    keys = ProjectKeys(project.id)
+    await fx_uow().change_book(book_record.id, save_heads)
+    keys = BookKeys(book_record.id)
     for scan in scans:
         async with fx_asset_store.writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
             path.write_bytes(_jpeg())
@@ -153,7 +153,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
             async with fx_asset_store.writable(keys.version_rendition(version, rendition)) as path:
                 path.write_bytes(_jpeg())
-    return Book(project=project, pages=pages)
+    return Book(book_record=book_record, pages=pages)
 
 
 async def _page(client: httpx.AsyncClient, book: Book, index: int) -> PageSchema:
@@ -189,7 +189,7 @@ class TestFillBlankPages:
         before = await _page(fx_client, fx_book, 1)
 
         response = await fx_client.post(fx_book.fill_path, json={PAGE_IDS_FIELD: fx_book.ids(1), FILL_FIELD: WHITE})
-        await fx_idle(fx_book.project.id)
+        await fx_idle(fx_book.book_record.id)
 
         leaf = await _page(fx_client, fx_book, 1)
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
@@ -201,7 +201,7 @@ class TestFillBlankPages:
         expect((await fx_client.get(leaf.images.full)).status_code == status.HTTP_200_OK)
 
         back = await fx_client.post(fx_book.fill_path, json={PAGE_IDS_FIELD: fx_book.ids(1), FILL_FIELD: SCAN})
-        await fx_idle(fx_book.project.id)
+        await fx_idle(fx_book.book_record.id)
 
         shown = await _page(fx_client, fx_book, 1)
         expect(back.status_code == status.HTTP_204_NO_CONTENT)
@@ -222,9 +222,9 @@ class TestFillBlankPages:
         :type fx_book: Book
         """
         await fx_client.post(fx_book.fill_path, json={PAGE_IDS_FIELD: fx_book.ids(1), FILL_FIELD: WHITE})
-        await fx_idle(fx_book.project.id)
+        await fx_idle(fx_book.book_record.id)
 
-        listed = await fx_client.get(f'{PROJECTS_PATH}/{fx_book.project.id}/jobs?size=50')
+        listed = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/jobs?size=50')
         jobs = Page[JobSchema].model_validate_json(listed.content).items
         expect((JobKind.PREPARE_PAGES, JobState.SUCCEEDED) in {(job.kind, job.state) for job in jobs})
         expect((JobKind.DETECT_CONTENT, JobState.SUCCEEDED) in {(job.kind, job.state) for job in jobs})
@@ -243,7 +243,7 @@ class TestFillBlankPages:
         :type fx_book: Book
         """
         response = await fx_client.post(fx_book.fill_path, json={PAGE_IDS_FIELD: fx_book.ids(1, 2), FILL_FIELD: PAPER})
-        await fx_idle(fx_book.project.id)
+        await fx_idle(fx_book.book_record.id)
 
         pages = [await _page(fx_client, fx_book, index) for index in range(3)]
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
@@ -300,7 +300,7 @@ class TestFillBlankPages:
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
-    async def test_a_page_of_another_project_is_not_found(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+    async def test_a_page_of_another_book_is_not_found(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
         """Verify an identifier that is no page of the project is answered 404, whatever it is.
 
         :param fx_client: Client of the running application.
@@ -327,7 +327,7 @@ class TestFillBlankPages:
         :type fx_book: Book
         """
         await fx_client.post(fx_book.fill_path, json={PAGE_IDS_FIELD: fx_book.ids(1), FILL_FIELD: WHITE})
-        await fx_idle(fx_book.project.id)
+        await fx_idle(fx_book.book_record.id)
 
         response = await fx_client.patch(f'{fx_book.pages_path}/{fx_book.pages[1].id}', json={'kind': 'text'})
 

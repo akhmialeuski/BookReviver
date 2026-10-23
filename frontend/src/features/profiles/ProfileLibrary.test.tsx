@@ -33,12 +33,12 @@ vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
   listProfilesApiV1RecipeProfilesGet: sdk.list,
   listProcessorsApiV1ProcessorsGet: sdk.processors,
-  applyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPost: sdk.apply,
+  applyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPost: sdk.apply,
   duplicateProfileApiV1RecipeProfilesProfileIdDuplicatePost: sdk.duplicate,
   exportProfileApiV1RecipeProfilesProfileIdExportGet: sdk.exporter,
   importProfileApiV1RecipeProfilesImportPost: sdk.importer,
-  listProjectJobsApiV1ProjectsProjectIdJobsGet: sdk.jobs,
-  listRecipesApiV1ProjectsProjectIdStagesStageRecipesGet: sdk.recipes,
+  listBookJobsApiV1BooksBookIdJobsGet: sdk.jobs,
+  listRecipesApiV1BooksBookIdStagesStageRecipesGet: sdk.recipes,
 }));
 
 // The browser is asked to save the file, which a test only needs to see being asked
@@ -254,7 +254,7 @@ describe('ProfileLibrary', () => {
 
       expect(sdk.apply).toHaveBeenCalledWith(
         expect.objectContaining({
-          path: { project_id: 'project', profile_id: 'p1' },
+          path: { book_id: 'book', profile_id: 'p1' },
           body: { kind: 'text' },
         }),
       );
@@ -283,7 +283,7 @@ describe('ProfileLibrary', () => {
 
       expect(sdk.apply).toHaveBeenCalledWith(
         expect.objectContaining({
-          path: { project_id: 'project', profile_id: 'p1' },
+          path: { book_id: 'book', profile_id: 'p1' },
           body: { kind: 'blank' },
         }),
       );

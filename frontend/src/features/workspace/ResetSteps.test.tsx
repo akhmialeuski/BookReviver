@@ -16,7 +16,7 @@ const sdk = vi.hoisted(() => ({ reset: vi.fn() }));
 
 vi.mock('@/api/sdk.gen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
-  resetRecipeApiV1ProjectsProjectIdStagesStageRecipesRecipeIdResetPost: sdk.reset,
+  resetRecipeApiV1BooksBookIdStagesStageRecipesRecipeIdResetPost: sdk.reset,
 }));
 
 describe('ResetSteps', () => {
@@ -101,7 +101,7 @@ describe('ResetSteps', () => {
 
     expect(sdk.reset).toHaveBeenCalledTimes(1);
     expect(sdk.reset.mock.calls[0]?.[0]).toMatchObject({
-      path: { project_id: 'project', stage: 'geometry', recipe_id: 'r1' },
+      path: { book_id: 'book', stage: 'geometry', recipe_id: 'r1' },
     });
     expect(discard).toHaveBeenCalledOnce();
     expect(byId('steps-reset-dialog')).toBeNull();

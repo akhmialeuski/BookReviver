@@ -3,8 +3,8 @@ import path from 'node:path';
 import { expect } from '@playwright/test';
 import {
   createBook,
+  openBookId,
   openLibrary,
-  openProjectId,
   uploadFolder,
   waitForIdleJobs,
   writePagesFolder,
@@ -66,7 +66,7 @@ test('a reader turns a page by hand with the handle, the field and the wheel, ta
     });
     // A run on all pages takes the book through Margins twice, once to size the pages by the book, so the summary can
     // read up to date while the job still places the pages
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     // The sheet, the angle, the curves, the frame and the block on the page
     await expect(page.getByTestId('bar-step')).toHaveCount(5);
     await expect(page.getByTestId('canvas-auto')).toHaveCount(0);

@@ -4,8 +4,8 @@ import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openBookId,
   openLibrary,
-  openProjectId,
   setKind,
   snap,
   stepIdsOf,
@@ -75,7 +75,7 @@ async function currentPageId(page: Page): Promise<string> {
 /** Read the full versions of the open page that a step of a stage made. */
 async function versionsOf(page: Page, pageId: string, processor: string): Promise<ListedVersion[]> {
   const listed = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/versions?stage=cleanup&size=100`,
+    `/api/v1/books/${openBookId(page)}/pages/${pageId}/versions?stage=cleanup&size=100`,
   );
   const items = ((await listed.json()) as { items: ListedVersion[] }).items;
   return items.filter(
@@ -96,7 +96,7 @@ test('the Cleanup stage binarizes, despeckles and erases, with a recipe for plat
   const barSteps = page.getByTestId('bar-step');
   const settled = async (): Promise<void> => {
     await expect(page.getByTestId('editor-busy')).toHaveCount(0);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
   };
   const runAll = async (): Promise<void> => {
     await runPages(page);
@@ -116,7 +116,7 @@ test('the Cleanup stage binarizes, despeckles and erases, with a recipe for plat
     await openLibrary(page);
     await createBook(page, 'A book to clean');
     await uploadFolder(page, folder, PAGES);
-    await waitForIdleJobs(page, openProjectId(page));
+    await waitForIdleJobs(page, openBookId(page));
     bookPath = new URL(page.url()).pathname.replace(/\/stages\/import$/, '');
     // The sheets are pages of text but the plate, which the reader says is one
     await markPagesAsText(page, [PLATE_POSITION]);
@@ -264,7 +264,7 @@ test('the Cleanup stage binarizes, despeckles and erases, with a recipe for plat
     expect(saves.at(-1)).toBe(eraser);
     // The server kept the strokes beside the mask the browser painted from them
     const listed = await page.request.get(
-      `/api/v1/projects/${openProjectId(page)}/pages/${await currentPageId(page)}/edits/cleanup`,
+      `/api/v1/books/${openBookId(page)}/pages/${await currentPageId(page)}/edits/cleanup`,
     );
     const edits = ((await listed.json()) as { items: StoredEdit[] }).items;
     const stored = edits.find((edit) => edit.step_id === eraser);

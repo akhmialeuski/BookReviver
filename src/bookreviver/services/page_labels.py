@@ -20,7 +20,7 @@ from attrs import evolve
 
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.pagination import Pagination
-from bookreviver.services.projects import book_pages
+from bookreviver.services.books import book_pages
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence

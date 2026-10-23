@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from bookreviver.domain.entities import Page, RecipeProfile
-    from bookreviver.domain.ids import PageId, ProjectId
+    from bookreviver.domain.ids import BookId, PageId
     from bookreviver.domain.values import MetadataMap, PageStepKey
     from bookreviver.ports.persistence import BookRepositories, RecipeRepository, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
@@ -216,7 +216,7 @@ class RecipeBook:
         self._order = order
 
     async def recipes(
-        self, project_id: ProjectId, stage: Stage, *, checking: Callable[[BookRepositories], object] | None = None
+        self, book_id: BookId, stage: Stage, *, checking: Callable[[BookRepositories], object] | None = None
     ) -> list[Recipe]:
         """Return the recipes of a stage, one for each kind of page, creating them when the stage is first asked for.
 
@@ -231,8 +231,8 @@ class RecipeBook:
         database. When the stage has no recipes yet, the default profile of the owner of the book is read first, in the
         catalogue, and the defaults are made from it.
 
-        :param project_id: Project owning the recipes.
-        :type project_id: ProjectId
+        :param book_id: Project owning the recipes.
+        :type book_id: BookId
         :param stage: The stage.
         :type stage: Stage
         :param checking: Function over the repositories of the reading transaction, run before the recipes are read,
@@ -256,16 +256,16 @@ class RecipeBook:
                 checking(repos)
             return self._stored(repos, stage)
 
-        if found := await self._uow.read_book(project_id, read):
+        if found := await self._uow.read_book(book_id, read):
             return found
-        profile = await self.default_profile(project_id, stage)
-        return await self._uow.change_book(project_id, lambda repos, _project: self.recipes_in(repos, stage, profile))
+        profile = await self.default_profile(book_id, stage)
+        return await self._uow.change_book(book_id, lambda repos, _book_record: self.recipes_in(repos, stage, profile))
 
-    async def default_profile(self, project_id: ProjectId, stage: Stage) -> RecipeProfile | None:
+    async def default_profile(self, book_id: BookId, stage: Stage) -> RecipeProfile | None:
         """Read the default profile of the owner of a book for a stage, in a read of the catalogue.
 
-        :param project_id: Project whose owner's default profile is read.
-        :type project_id: ProjectId
+        :param book_id: Project whose owner's default profile is read.
+        :type book_id: BookId
         :param stage: The stage.
         :type stage: Stage
         :returns: The profile the owner chose as the default of the stage, or None when they have not chosen one.
@@ -273,7 +273,7 @@ class RecipeBook:
         :raises NotFoundError: If the library has no such book.
         """
         return await self._uow.read(
-            lambda repos: repos.recipe_profiles.find_default(repos.library.get(project_id).owner_id, stage)
+            lambda repos: repos.recipe_profiles.find_default(repos.library.get(book_id).owner_id, stage)
         )
 
     def recipes_in(self, repos: BookRepositories, stage: Stage, default: RecipeProfile | None) -> list[Recipe]:
@@ -346,11 +346,11 @@ class RecipeBook:
                 steps.append(step)
         return evolve(recipe, steps=tuple(steps))
 
-    async def of_kind(self, project_id: ProjectId, stage: Stage, kind: RecipeKind) -> Recipe:
+    async def of_kind(self, book_id: BookId, stage: Stage, kind: RecipeKind) -> Recipe:
         """Return the recipe of a stage for one kind of page, called outside any work as ``recipes`` is.
 
-        :param project_id: Project owning the recipe.
-        :type project_id: ProjectId
+        :param book_id: Project owning the recipe.
+        :type book_id: BookId
         :param stage: The stage.
         :type stage: Stage
         :param kind: The kind of page.
@@ -359,15 +359,15 @@ class RecipeBook:
         :rtype: Recipe
         :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
         """
-        return next(recipe for recipe in await self.recipes(project_id, stage) if recipe.kind is kind)
+        return next(recipe for recipe in await self.recipes(book_id, stage) if recipe.kind is kind)
 
-    async def for_pages(self, project_id: ProjectId, stage: Stage, pages: Sequence[Page]) -> dict[PageId, Recipe]:
+    async def for_pages(self, book_id: BookId, stage: Stage, pages: Sequence[Page]) -> dict[PageId, Recipe]:
         """Choose the recipe of each page of a stage, which is the recipe of the kind of the page.
 
         Called outside any work, as ``recipes`` is.
 
-        :param project_id: Project owning the pages.
-        :type project_id: ProjectId
+        :param book_id: Project owning the pages.
+        :type book_id: BookId
         :param stage: The stage.
         :type stage: Stage
         :param pages: The pages.
@@ -376,7 +376,7 @@ class RecipeBook:
         :rtype: dict[PageId, Recipe]
         :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
         """
-        by_kind = {recipe.kind: recipe for recipe in await self.recipes(project_id, stage)}
+        by_kind = {recipe.kind: recipe for recipe in await self.recipes(book_id, stage)}
         return {page.id: by_kind[page.recipe_kind] for page in pages}
 
     def default_draft(self, stage: Stage, kind: RecipeKind, default: RecipeProfile | None) -> RecipeDraft:

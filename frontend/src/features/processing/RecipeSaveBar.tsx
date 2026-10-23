@@ -24,8 +24,8 @@ export function RecipeSaveBar({
   processing: Processing;
   rows: readonly StagePageSchema[];
 }): React.JSX.Element | null {
-  const { projectId, stage, recipe, steps } = processing;
-  const save = useSaveRecipe(projectId);
+  const { bookId, stage, recipe, steps } = processing;
+  const save = useSaveRecipe(bookId);
   if (recipe === undefined || !processing.dirty) {
     return null;
   }
@@ -57,7 +57,7 @@ export function RecipeSaveBar({
             data-testid="recipe-save"
             onClick={() =>
               save.mutate({
-                path: { project_id: projectId, stage, recipe_id: recipe.id },
+                path: { book_id: bookId, stage, recipe_id: recipe.id },
                 body: { steps: bodyOf(steps), order: processing.orderMode },
               })
             }

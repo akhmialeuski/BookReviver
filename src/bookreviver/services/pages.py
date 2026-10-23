@@ -77,7 +77,7 @@ from bookreviver.domain.errors import (
 )
 from bookreviver.domain.events import PageVersionReady
 from bookreviver.domain.ids import JobId, PageId
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.pagination import Numbering
 from bookreviver.domain.values import ContentDetection, JobEnd, PageSize, PageStageKey, Slice, SliceRequest
 from bookreviver.services.base_versions import PAGES_BLANK, SPLIT_NONE, BaseVersions
@@ -92,8 +92,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.changes import PageChanges
-    from bookreviver.domain.entities import Actor, PageVersion, Project
-    from bookreviver.domain.ids import PageVersionId, ProjectId, ScanId, SourceId, StorageKey
+    from bookreviver.domain.entities import Actor, BookRecord, PageVersion
+    from bookreviver.domain.ids import BookId, PageVersionId, ScanId, SourceId, StorageKey
     from bookreviver.domain.values import MetadataMap, NewPage, PageAnchor
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
@@ -198,7 +198,7 @@ class PageService:
         self._labels = PageLabels(clock=runtime.clock)
 
     async def manifest(
-        self, actor: Actor, project_id: ProjectId, request: SliceRequest, *, included_only: bool = False
+        self, actor: Actor, book_id: BookId, request: SliceRequest, *, included_only: bool = False
     ) -> Slice[PageOverview]:
         """Return a window of the project's pages in book order, every page with its position and base version.
 
@@ -208,8 +208,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param request: Offset and limit of the window.
         :type request: SliceRequest
         :param included_only: Whether to leave out the pages kept out of the book.
@@ -218,7 +218,7 @@ class PageService:
         :rtype: Slice[PageOverview]
         :raises NotFoundError: If the actor has no such project.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories) -> Slice[PageOverview]:
             """Read the window of pages with the position and the base version of each.
@@ -232,22 +232,22 @@ class PageService:
             window = repos.pages.list_window(request, included_only=included_only)
             return Slice(items=self._overviews(repos, window.items, request.offset), total=window.total)
 
-        return await self._uow.read_book(project_id, work)
+        return await self._uow.read_book(book_id, work)
 
-    async def get(self, actor: Actor, project_id: ProjectId, page_id: PageId) -> PageOverview:
+    async def get(self, actor: Actor, book_id: BookId, page_id: PageId) -> PageOverview:
         """Return one page of the project with its position and base version.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :returns: The page, its position in the book and its base version.
         :rtype: PageOverview
         :raises NotFoundError: If the actor has no such project, or the project has no such page.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
 
         def work(repos: BookRepositories) -> PageOverview:
             """Read the page of the actor's project with its position and base version.
@@ -260,9 +260,9 @@ class PageService:
             """
             return self._overview(repos, repos.pages.get(page_id))
 
-        return await self._uow.read_book(project_id, work)
+        return await self._uow.read_book(book_id, work)
 
-    async def update(self, actor: Actor, project_id: ProjectId, page_id: PageId, changes: PageChanges) -> PageOverview:
+    async def update(self, actor: Actor, book_id: BookId, page_id: PageId, changes: PageChanges) -> PageOverview:
         """Change the printed number, the kind, the inclusion or the notes of a page, which writes its one row.
 
         A page that stops being blank shows its scan again in place of a leaf, so the record of its page order is
@@ -270,8 +270,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :param changes: New values for the fields to change, None keeping a field.
@@ -280,15 +280,15 @@ class PageService:
         :rtype: PageOverview
         :raises NotFoundError: If the actor has no such project, or the project has no such page.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
 
-        def work(repos: BookRepositories, _project: Project) -> PageOverview:
+        def work(repos: BookRepositories, _book_record: BookRecord) -> PageOverview:
             """Write the changed page, mark the stages its change makes stale, and renumber the pages.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it.
-            :type _project: Project
+            :param _book_record: The project as the change finds it.
+            :type _book_record: BookRecord
             :returns: The changed page with its position.
             :rtype: PageOverview
             :raises NotFoundError: If the project has no such page.
@@ -310,9 +310,9 @@ class PageService:
                 self._labels.settle(repos)
             return self._overview(repos, changed)
 
-        return await self._uow.change_book(project_id, work)
+        return await self._uow.change_book(book_id, work)
 
-    async def start_detection(self, actor: Actor, project_id: ProjectId, page_ids: Sequence[PageId] | None) -> Job:
+    async def start_detection(self, actor: Actor, book_id: BookId, page_ids: Sequence[PageId] | None) -> Job:
         """Record a job that detects what some pages show, and queue it.
 
         The job writes the content type it finds into the pages it goes over, which gives a page the user set by hand
@@ -320,8 +320,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param page_ids: Pages to detect, or None for the pages that have no content type yet.
         :type page_ids: Sequence[PageId] | None
         :returns: The queued job.
@@ -329,7 +329,7 @@ class PageService:
         :raises NotFoundError: If the actor has no such project, or the project has no such page.
         :raises ConflictError: If the content of the pages of the project is being detected already.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
 
         def check(repos: BookRepositories) -> None:
             """Require the project to be the actor's and the pages to be its own.
@@ -341,23 +341,23 @@ class PageService:
             if page_ids is not None:
                 repos.pages.list_by_ids(page_ids)
 
-        await self._uow.read_book(project_id, check)
+        await self._uow.read_book(book_id, check)
         detection = ContentDetection(page_ids=None if page_ids is None else tuple(page_ids))
-        if (job := self._enqueue(project_id, JobKind.DETECT_CONTENT, detection.to_map())) is None:
+        if (job := self._enqueue(book_id, JobKind.DETECT_CONTENT, detection.to_map())) is None:
             raise ConflictError(DETECTION_RUNNING)
         return job
 
-    def detect_new_pages(self, project_id: ProjectId) -> None:
+    def detect_new_pages(self, book_id: BookId) -> None:
         """Queue the detection of the content of the pages that have none, which a job asks for when images are made.
 
         Nothing is queued while a detection of the project is queued or running, which goes over the pages it finds.
 
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         """
-        self._enqueue(project_id, JobKind.DETECT_CONTENT, ContentDetection().to_map())
+        self._enqueue(book_id, JobKind.DETECT_CONTENT, ContentDetection().to_map())
 
-    async def add(self, actor: Actor, project_id: ProjectId, new_page: NewPage) -> PageOverview:
+    async def add(self, actor: Actor, book_id: BookId, new_page: NewPage) -> PageOverview:
         """Add a placeholder or a blank leaf at a place of the book, or at its end.
 
         The pages after it move down, and those that turn over to the other side of the book, odd or even, are marked
@@ -369,8 +369,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param new_page: The page to add, with its place and for a blank leaf perhaps its size.
         :type new_page: NewPage
         :returns: The new page with its position.
@@ -378,16 +378,16 @@ class PageService:
         :raises NotFoundError: If the actor has no such project, or the project has no such anchor.
         :raises ConflictError: If a blank leaf has no size given and no page of the book has one to take the median of.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
         blank = new_page.origin is NewPageOrigin.BLANK
 
-        def work(repos: BookRepositories, project: Project) -> PageOverview:
+        def work(repos: BookRepositories, book_record: BookRecord) -> PageOverview:
             """Store the page and, for a blank leaf, its pending base version, and renumber the pages.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param project: The project as the change finds it.
-            :type project: Project
+            :param book_record: The project as the change finds it.
+            :type book_record: BookRecord
             :returns: The new page with its position.
             :rtype: PageOverview
             :raises NotFoundError: If the project has no such anchor.
@@ -400,17 +400,17 @@ class PageService:
             with self._records.watching_sides(repos):
                 repos.pages.add(page)
             if size is not None:
-                full = project.image_policy.full_format(ColorMode.BILEVEL)
+                full = book_record.image_policy.full_format(ColorMode.BILEVEL)
                 repos.page_versions.add(BaseVersions.blank(page=page, size=size, full=full, moment=moment))
             self._labels.settle(repos)
             return self._overview(repos, page)
 
-        overview = await self._uow.change_book(project_id, work)
+        overview = await self._uow.change_book(book_id, work)
         if blank:
-            self._enqueue(project_id, JobKind.PREPARE_PAGES)
+            self._enqueue(book_id, JobKind.PREPARE_PAGES)
         return overview
 
-    async def add_many(self, actor: Actor, project_id: ProjectId, new_pages: Sequence[NewPage]) -> list[PageOverview]:
+    async def add_many(self, actor: Actor, book_id: BookId, new_pages: Sequence[NewPage]) -> list[PageOverview]:
         """Add placeholders and blank leaves in one transaction, or add none of them.
 
         A page with an anchor goes to that place, and a page without one goes after the page before it in the list, or
@@ -421,8 +421,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param new_pages: The pages to add, in the order they are to stand in where they share a place.
         :type new_pages: Sequence[NewPage]
         :returns: The new pages with their positions, in the order listed.
@@ -432,17 +432,17 @@ class PageService:
                                page of the project, or if a blank leaf has no size and no page of the book has one to
                                take the median of. The message of the last two names the index of the page.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
         if len(new_pages) > self.MAX_PAGES_PER_BATCH:
             raise ConflictError(BATCH_TOO_LONG.format(limit=self.MAX_PAGES_PER_BATCH))
 
-        def work(repos: BookRepositories, project: Project) -> list[PageOverview]:
+        def work(repos: BookRepositories, book_record: BookRecord) -> list[PageOverview]:
             """Store the pages and the pending base versions of the blank leaves, and renumber the pages.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param project: The project as the change finds it.
-            :type project: Project
+            :param book_record: The project as the change finds it.
+            :type book_record: BookRecord
             :returns: The new pages with their positions in the order listed, none when no page was given.
             :rtype: list[PageOverview]
             :raises NotFoundError: If the actor has no such project.
@@ -483,7 +483,7 @@ class PageService:
             with self._records.watching_sides(repos):
                 repos.pages.add_many(added)
 
-            full = project.image_policy.full_format(ColorMode.BILEVEL)
+            full = book_record.image_policy.full_format(ColorMode.BILEVEL)
             leaves = []
             for page, new_page in zip(added, new_pages, strict=True):
                 # The median was read above for every blank leaf without a size, so a leaf always has one
@@ -498,13 +498,13 @@ class PageService:
                 overviews.update((o.page.id, o) for o in self._overviews(repos, run, repos.pages.count_before(run[0])))
             return [overviews[page.id] for page in added]
 
-        overviews = await self._uow.change_book(project_id, work)
+        overviews = await self._uow.change_book(book_id, work)
         if any(new_page.origin is NewPageOrigin.BLANK for new_page in new_pages):
-            self._enqueue(project_id, JobKind.PREPARE_PAGES)
+            self._enqueue(book_id, JobKind.PREPARE_PAGES)
         return overviews
 
     async def set_blank_fill(
-        self, actor: Actor, project_id: ProjectId, page_ids: Collection[PageId], fill: BlankFill
+        self, actor: Actor, book_id: BookId, page_ids: Collection[PageId], fill: BlankFill
     ) -> None:
         """Choose what the image of blank pages cut from a scan is: the scan, a white leaf or the paper of the book.
 
@@ -518,8 +518,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param page_ids: Pages to change, each at most once.
         :type page_ids: Collection[PageId]
         :param fill: What the image of the pages becomes.
@@ -528,15 +528,15 @@ class PageService:
         :raises ConflictError: If a page is not cut from a scan, or a leaf is chosen for a page that is not blank, or no
                                page of the book has a recorded size to give the leaf.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
 
-        def work(repos: BookRepositories, project: Project) -> bool:
+        def work(repos: BookRepositories, book_record: BookRecord) -> bool:
             """Write the choice of every page that changes it, and give effect to it.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param project: The project as the change finds it.
-            :type project: Project
+            :param book_record: The project as the change finds it.
+            :type book_record: BookRecord
             :returns: Whether a leaf waits for the ``prepare-pages`` job, which none does when every page has the
                       choice already.
             :rtype: bool
@@ -559,11 +559,11 @@ class PageService:
             moment = self._clock.now()
             changed = [evolve(page, blank_fill=fill, updated_at=moment) for page in changing]
             repos.pages.update_many(changed)
-            return self._stand_leaves(repos, project, changed)
+            return self._stand_leaves(repos, book_record, changed)
 
         # The job is queued in a ``change`` of its own, so after the transaction that wrote the leaves
-        if await self._uow.change_book(project_id, work):
-            self._enqueue(project_id, JobKind.PREPARE_PAGES)
+        if await self._uow.change_book(book_id, work):
+            self._enqueue(book_id, JobKind.PREPARE_PAGES)
 
     async def remake_outdated_leaves(self) -> None:
         """Make again the leaves whose version of ``pages.blank`` was replaced, by the path that made them.
@@ -590,27 +590,27 @@ class PageService:
             """
             return [record.page_id for record in repos.page_stages.list_replaced(Stage.PAGE_ORDER, PAGES_BLANK)]
 
-        def work(page_ids: Sequence[PageId], repos: BookRepositories, project: Project) -> None:
+        def work(page_ids: Sequence[PageId], repos: BookRepositories, book_record: BookRecord) -> None:
             """Give the pages of one book that no longer show their scan the leaf their choice says.
 
             :param page_ids: Identifiers of the pages whose page order was a replaced leaf.
             :type page_ids: Sequence[PageId]
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param project: The project as the change finds it.
-            :type project: Project
+            :param book_record: The project as the change finds it.
+            :type book_record: BookRecord
             :raises ConflictError: If no page of the book has a recorded size to give a leaf.
             """
             pages = [page for page in repos.pages.list_by_ids(page_ids) if page.blank_fill is not BlankFill.SCAN]
-            self._stand_leaves(repos, project, pages)
+            self._stand_leaves(repos, book_record, pages)
 
-        for project_id in await self._uow.stored_books():
-            page_ids = await self._uow.read_book(project_id, read_pages)
+        for book_id in await self._uow.stored_books():
+            page_ids = await self._uow.read_book(book_id, read_pages)
             if not page_ids:
                 continue
-            await self._uow.change_book(project_id, partial(work, page_ids))
+            await self._uow.change_book(book_id, partial(work, page_ids))
 
-    def _stand_leaves(self, repos: BookRepositories, project: Project, pages: Sequence[Page]) -> bool:
+    def _stand_leaves(self, repos: BookRepositories, book_record: BookRecord, pages: Sequence[Page]) -> bool:
         """Give pages the image their choice says, and tell whether a job must write leaves that are not made yet.
 
         A page that shows the scan loses the record of its page order, so its scan is current again. A page that shows
@@ -620,8 +620,8 @@ class PageService:
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
-        :param project: The project owning the pages.
-        :type project: Project
+        :param book_record: The project owning the pages.
+        :type book_record: BookRecord
         :param pages: The pages, each with the choice to give effect to as its ``blank_fill``.
         :type pages: Sequence[Page]
         :returns: Whether a leaf waits for the ``prepare-pages`` job.
@@ -631,7 +631,7 @@ class PageService:
         moment = self._clock.now()
         leaves = any(page.blank_fill is not BlankFill.SCAN for page in pages)
         size = self._leaf_size(repos) if leaves else None
-        full = project.image_policy.full_format(ColorMode.BILEVEL)
+        full = book_record.image_policy.full_format(ColorMode.BILEVEL)
         pending = False
         for page in pages:
             key = PageStageKey(page.id, Stage.PAGE_ORDER)
@@ -650,7 +650,7 @@ class PageService:
             pending = True
         return pending
 
-    async def delete(self, actor: Actor, project_id: ProjectId, page_id: PageId) -> None:
+    async def delete(self, actor: Actor, book_id: BookId, page_id: PageId) -> None:
         """Delete a page with its versions, and then its files, leaving its scan and the scan's source.
 
         The pages after it move up, and those that turn over to the other side of the book, odd or even, are marked
@@ -658,21 +658,21 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :raises NotFoundError: If the actor has no such project, or the project has no such page.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
 
-        def work(repos: BookRepositories, _project: Project) -> Page:
+        def work(repos: BookRepositories, _book_record: BookRecord) -> Page:
             """Renumber the pages without the page, and delete it.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it.
-            :type _project: Project
+            :param _book_record: The project as the change finds it.
+            :type _book_record: BookRecord
             :returns: The deleted page.
             :rtype: Page
             :raises NotFoundError: If the project has no such page.
@@ -683,11 +683,11 @@ class PageService:
                 repos.pages.delete(page.id)
             return page
 
-        page = await self._uow.change_book(project_id, work)
-        await self._discard_files(project_id, [page])
+        page = await self._uow.change_book(book_id, work)
+        await self._discard_files(book_id, [page])
 
     async def attach_scan(
-        self, actor: Actor, project_id: ProjectId, page_id: PageId, scan_id: ScanId, *, take_over: bool = False
+        self, actor: Actor, book_id: BookId, page_id: PageId, scan_id: ScanId, *, take_over: bool = False
     ) -> PageOverview:
         """Bind a scan to a placeholder, which becomes a page of that scan with the pending base version ``split.none``.
 
@@ -698,8 +698,8 @@ class PageService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param page_id: Identifier of the placeholder.
         :type page_id: PageId
         :param scan_id: Identifier of the scan to bind.
@@ -714,15 +714,15 @@ class PageService:
                                         those pages by their printed number or position.
         :raises ConflictError: If the scan is not cut yet.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
 
-        def work(repos: BookRepositories, _project: Project) -> tuple[PageOverview, Sequence[Page]]:
+        def work(repos: BookRepositories, _book_record: BookRecord) -> tuple[PageOverview, Sequence[Page]]:
             """Delete the pages that show the scan when asked to, and bind the scan to the placeholder.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it.
-            :type _project: Project
+            :param _book_record: The project as the change finds it.
+            :type _book_record: BookRecord
             :returns: The page that shows the scan now, and the pages that were deleted for it.
             :rtype: tuple[PageOverview, Sequence[Page]]
             :raises NotFoundError: If the project has no such page or scan.
@@ -767,9 +767,9 @@ class PageService:
             )
             return self._overview(repos, page), taken
 
-        overview, taken = await self._uow.change_book(project_id, work)
-        await self._discard_files(project_id, taken)
-        self._enqueue(project_id, JobKind.PREPARE_PAGES)
+        overview, taken = await self._uow.change_book(book_id, work)
+        await self._discard_files(book_id, taken)
+        self._enqueue(book_id, JobKind.PREPARE_PAGES)
         return overview
 
     async def prepare_images(self, job: Job, control: JobControl) -> JobEnd:
@@ -794,29 +794,29 @@ class PageService:
         :raises JobCancelledError: If the job was cancelled, which stops it between two versions.
         """
         versions = await self._uow.read_book(
-            job.project_id, lambda repos: repos.page_versions.list_to_prepare(PREPARED_PROCESSORS)
+            job.book_id, lambda repos: repos.page_versions.list_to_prepare(PREPARED_PROCESSORS)
         )
         control.plan(len(versions))
         failed = 0
         for version in versions:
-            failed += not await self._prepare(job.project_id, version)
+            failed += not await self._prepare(job.book_id, version)
             await control.task_done()
         await self._follow_up(job)
         if versions:
-            self.detect_new_pages(job.project_id)
+            self.detect_new_pages(job.book_id)
         if failed:
             return JobEnd(state=JobState.FAILED, error=PAGES_FAILED.format(count=failed))
         return JobEnd(state=JobState.SUCCEEDED)
 
-    async def move(self, actor: Actor, project_id: ProjectId, page_id: PageId, anchor: PageAnchor) -> PageOverview:
+    async def move(self, actor: Actor, book_id: BookId, page_id: PageId, anchor: PageAnchor) -> PageOverview:
         """Put one page before or after another, and renumber the pages whose number the sections now give differently.
 
         The pages that turn over to the other side of the book, odd or even, are marked stale where a side has values.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param page_id: Identifier of the page to move.
         :type page_id: PageId
         :param anchor: Page the moved page is put next to, and the side of it.
@@ -826,15 +826,15 @@ class PageService:
         :raises NotFoundError: If the actor has no such project, or the project has no such page or anchor.
         :raises ConflictError: If the anchor is the page itself.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
 
-        def work(repos: BookRepositories, _project: Project) -> PageOverview:
+        def work(repos: BookRepositories, _book_record: BookRecord) -> PageOverview:
             """Give the page its new place, and renumber the pages.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it.
-            :type _project: Project
+            :param _book_record: The project as the change finds it.
+            :type _book_record: BookRecord
             :returns: The page at its new place.
             :rtype: PageOverview
             :raises NotFoundError: If the project has no such page or anchor.
@@ -846,19 +846,17 @@ class PageService:
             self._labels.settle(repos)
             return self._overview(repos, moved)
 
-        return await self._uow.change_book(project_id, work)
+        return await self._uow.change_book(book_id, work)
 
-    async def move_group(
-        self, actor: Actor, project_id: ProjectId, page_ids: Collection[PageId], anchor: PageAnchor
-    ) -> None:
+    async def move_group(self, actor: Actor, book_id: BookId, page_ids: Collection[PageId], anchor: PageAnchor) -> None:
         """Put several pages in a run before or after another page, keeping the order they have in the book.
 
         The pages that turn over to the other side of the book, odd or even, are marked stale where a side has values.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param page_ids: Identifiers of the pages to move.
         :type page_ids: Collection[PageId]
         :param anchor: Page the run is put next to, and the side of it.
@@ -866,31 +864,31 @@ class PageService:
         :raises NotFoundError: If the actor has no such project, or the project lacks a page or the anchor.
         :raises ConflictError: If the anchor is one of the pages.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
 
-        def work(repos: BookRepositories, _project: Project) -> None:
+        def work(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Put the pages in a run next to the anchor.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it.
-            :type _project: Project
+            :param _book_record: The project as the change finds it.
+            :type _book_record: BookRecord
             :raises NotFoundError: If the project lacks a page or the anchor.
             :raises ConflictError: If the anchor is one of the pages.
             """
             self._move_run(repos, repos.pages.list_by_ids(page_ids), anchor)
 
-        await self._uow.change_book(project_id, work)
+        await self._uow.change_book(book_id, work)
 
-    async def move_source(self, actor: Actor, project_id: ProjectId, source_id: SourceId, anchor: PageAnchor) -> None:
+    async def move_source(self, actor: Actor, book_id: BookId, source_id: SourceId, anchor: PageAnchor) -> None:
         """Put every page whose scan belongs to a source in a run before or after another page.
 
         A source that has no page left in the book is not an error and moves nothing.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param source_id: Identifier of the source whose pages are moved.
         :type source_id: SourceId
         :param anchor: Page the run is put next to, and the side of it.
@@ -898,22 +896,22 @@ class PageService:
         :raises NotFoundError: If the actor has no such project, or the project has no such source or anchor.
         :raises ConflictError: If the anchor is a page of the source.
         """
-        await self._library.open(actor, project_id)
+        await self._library.open(actor, book_id)
 
-        def work(repos: BookRepositories, _project: Project) -> None:
+        def work(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Put the pages of the source in a run next to the anchor.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it.
-            :type _project: Project
+            :param _book_record: The project as the change finds it.
+            :type _book_record: BookRecord
             :raises NotFoundError: If the project has no such source or anchor.
             :raises ConflictError: If the anchor is a page of the source.
             """
             repos.sources.get(source_id)
             self._move_run(repos, repos.pages.list_for_source(source_id), anchor)
 
-        await self._uow.change_book(project_id, work)
+        await self._uow.change_book(book_id, work)
 
     @asynccontextmanager
     async def open_asset(self, actor: Actor, key: StorageKey) -> AsyncIterator[Path]:
@@ -932,9 +930,9 @@ class PageService:
         :raises NotFoundError: If the key is not under the ``assets/`` of one of the actor's projects, or nothing is
                                stored at it.
         """
-        if (keys := ProjectKeys.owning(key)) is None:
+        if (keys := BookKeys.owning(key)) is None:
             raise NotFoundError(key)
-        await self._library.open(actor, keys.project_id)
+        await self._library.open(actor, keys.book_id)
         async with self._assets.readable(key) as path:
             yield path
 
@@ -1116,20 +1114,20 @@ class PageService:
             repos.pages.update_many(moved)
         self._labels.settle(repos)
 
-    async def _discard_files(self, project_id: ProjectId, pages: Sequence[Page]) -> None:
+    async def _discard_files(self, book_id: BookId, pages: Sequence[Page]) -> None:
         """Remove every file of pages that were deleted, after the transaction that deleted them has ended.
 
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param pages: The deleted pages, whose directories under ``assets/pages`` are removed.
         :type pages: Sequence[Page]
         """
-        keys = ProjectKeys(project_id)
+        keys = BookKeys(book_id)
         for page in pages:
             await self._assets.delete_prefix(keys.page(page.id))
 
     def _enqueue(
-        self, project_id: ProjectId, kind: JobKind, params: MetadataMap | None = None, *, after: JobId | None = None
+        self, book_id: BookId, kind: JobKind, params: MetadataMap | None = None, *, after: JobId | None = None
     ) -> Job | None:
         """Put a ``prepare-pages`` or ``detect-content`` job on the board, unless one of its kind is active.
 
@@ -1139,8 +1137,8 @@ class PageService:
         running when a version is stored may have read its versions before it, which is why the job looks again when it
         ends, in ``_follow_up``.
 
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param kind: What the job does, ``prepare-pages`` or ``detect-content``.
         :type kind: JobKind
         :param params: What the job was asked to do, in the form its value class writes, or None for a job without.
@@ -1150,12 +1148,10 @@ class PageService:
         :returns: The job as the board holds it, queued, or None when a job of the kind is queued or running already.
         :rtype: Job | None
         """
-        active = self._board.jobs(project_id, active=True)
+        active = self._board.jobs(book_id, active=True)
         if any(active_job.kind is kind and active_job.id != after for active_job in active):
             return None
-        job = Job(
-            id=JobId(uuid4()), project_id=project_id, kind=kind, params=params or {}, created_at=self._clock.now()
-        )
+        job = Job(id=JobId(uuid4()), book_id=book_id, kind=kind, params=params or {}, created_at=self._clock.now())
         return self._board.put(job)
 
     async def _follow_up(self, job: Job) -> None:
@@ -1170,10 +1166,10 @@ class PageService:
         :type job: Job
         """
         waiting = await self._uow.read_book(
-            job.project_id, lambda repos: repos.page_versions.list_to_prepare(PREPARED_PROCESSORS)
+            job.book_id, lambda repos: repos.page_versions.list_to_prepare(PREPARED_PROCESSORS)
         )
         if any(version.state is VersionState.PENDING for version in waiting):
-            self._enqueue(job.project_id, JobKind.PREPARE_PAGES, after=job.id)
+            self._enqueue(job.book_id, JobKind.PREPARE_PAGES, after=job.id)
 
     def _median_size(self, repos: BookRepositories) -> PageSize:
         """Return the size of a blank leaf that stands level with the pages of the book.
@@ -1258,7 +1254,7 @@ class PageService:
         )
         return [overview.image_version.id for overview in near[: self.PAPER_PAGES] if overview.image_version]
 
-    async def _prepare(self, project_id: ProjectId, version: PageVersion) -> bool:
+    async def _prepare(self, book_id: BookId, version: PageVersion) -> bool:
         """Write the files of one pending or failed version, and store its new state.
 
         A version that cannot be made is stored as failed with the reason in its data, and the job goes on with the
@@ -1267,47 +1263,47 @@ class PageService:
         removed and the job goes on. The files are written outside any transaction, and the result is stored by
         ``_store`` in a ``change_book`` of its own.
 
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param version: A pending or failed base version.
         :type version: PageVersion
         :returns: False when the version failed, and True when it is ready, nothing was left to make, or its page is
                   gone.
         :rtype: bool
         """
-        if (page := await self._uow.read_book(project_id, lambda repos: self._found(repos, version.page_id))) is None:
+        if (page := await self._uow.read_book(book_id, lambda repos: self._found(repos, version.page_id))) is None:
             return True
         # A leaf that is not the choice of its page any longer is nothing to make, and left pending it would be taken
         # by every job. The page is read again in the work, since a request may have chosen the leaf again meanwhile
         if self._outdated_leaf(version, page):
 
-            def drop(repos: BookRepositories, _project: Project) -> None:
+            def drop(repos: BookRepositories, _book_record: BookRecord) -> None:
                 """Delete the version when its page still does not choose the leaf.
 
                 :param repos: Repositories of the transaction.
                 :type repos: BookRepositories
-                :param _project: The project as the change finds it, which the work does not need.
-                :type _project: Project
+                :param _book_record: The project as the change finds it, which the work does not need.
+                :type _book_record: BookRecord
                 """
                 if (current := self._found(repos, page.id)) is not None and self._outdated_leaf(version, current):
                     repos.page_versions.delete_many([version.id])
 
-            await self._uow.change_book(project_id, drop)
+            await self._uow.change_book(book_id, drop)
             return True
         try:
-            made = await self._write_files(project_id, version, page)
+            made = await self._write_files(book_id, version, page)
         except DomainError as error:
             reason = str(error)
         except Exception:
             logger.exception('The files of page version %s could not be made', version.id)
             reason = UNEXPECTED_FAILURE
         else:
-            await self._store(project_id, page, made, current=True)
+            await self._store(book_id, page, made, current=True)
             return True
         failed = evolve(version, data={**version.data, VersionData.ERROR: reason}, state=VersionState.FAILED)
-        return not await self._store(project_id, page, failed, current=False)
+        return not await self._store(book_id, page, failed, current=False)
 
-    async def _store(self, project_id: ProjectId, page: Page, version: PageVersion, *, current: bool) -> bool:
+    async def _store(self, book_id: BookId, page: Page, version: PageVersion, *, current: bool) -> bool:
         """Store the new state of a version of a page in one change, and make it the current version when it is ready.
 
         The work reads the page again. A page deleted while its files were written took its versions with it, so
@@ -1316,8 +1312,8 @@ class PageService:
         as ``_prepare`` deletes such a leaf, since a leaf left pending would be taken by every job, and its files are
         removed after the transaction.
 
-        :param project_id: Identifier of the project of the page.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project of the page.
+        :type book_id: BookId
         :param page: The page the version belongs to, as read before its files were written.
         :type page: Page
         :param version: The version with its new state.
@@ -1328,13 +1324,13 @@ class PageService:
         :rtype: bool
         """
 
-        def work(repos: BookRepositories, _project: Project) -> tuple[bool, bool]:
+        def work(repos: BookRepositories, _book_record: BookRecord) -> tuple[bool, bool]:
             """Store the version unless its page is gone or no longer chooses the leaf.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it, which the work does not need.
-            :type _project: Project
+            :param _book_record: The project as the change finds it, which the work does not need.
+            :type _book_record: BookRecord
             :returns: Whether the page is gone, and whether the leaf is outdated and was deleted.
             :rtype: tuple[bool, bool]
             """
@@ -1350,13 +1346,13 @@ class PageService:
                 )
             return False, False
 
-        gone, outdated = await self._uow.change_book(project_id, work)
+        gone, outdated = await self._uow.change_book(book_id, work)
         if gone:
-            await self._discard_files(project_id, [page])
+            await self._discard_files(book_id, [page])
         elif outdated:
-            await self._assets.delete_prefix(ProjectKeys(project_id).version_directory(version))
+            await self._assets.delete_prefix(BookKeys(book_id).version_directory(version))
         elif current:
-            await self._publisher.publish(PageVersionReady(project_id=project_id, version=version))
+            await self._publisher.publish(PageVersionReady(book_id=book_id, version=version))
         return not (gone or outdated)
 
     @staticmethod
@@ -1394,11 +1390,11 @@ class PageService:
             and page.blank_fill.value != version.params.get(BlankParam.FILL, PaperFill.WHITE.value)
         )
 
-    async def _write_files(self, project_id: ProjectId, version: PageVersion, page: Page) -> PageVersion:
+    async def _write_files(self, book_id: BookId, version: PageVersion, page: Page) -> PageVersion:
         """Run the processor of a base version and write its files: a copy of its scan, or a generated white leaf.
 
-        :param project_id: Identifier of the project of the page.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project of the page.
+        :type book_id: BookId
         :param version: A pending or failed base version.
         :type version: PageVersion
         :param page: The page the version belongs to.
@@ -1409,18 +1405,18 @@ class PageService:
         :raises ValueError: If the version is neither ``split.none`` nor ``pages.blank``, or has no size to make.
         """
 
-        def read(repos: BookRepositories) -> tuple[Project, ProjectKeys, StepRun]:
+        def read(repos: BookRepositories) -> tuple[BookRecord, BookKeys, StepRun]:
             """Read the project and what the processor of the version reads, in one snapshot.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
             :returns: The project, its keys, and the run of the processor.
-            :rtype: tuple[Project, ProjectKeys, StepRun]
+            :rtype: tuple[BookRecord, BookKeys, StepRun]
             :raises ConflictError: If the scan to copy is deleted or not cut yet.
             :raises ValueError: If the version is neither ``split.none`` nor ``pages.blank``, or has no size to make.
             """
-            project = repos.projects.get(project_id)
-            keys = ProjectKeys(project.id)
+            book_record = repos.book_record.get(book_id)
+            keys = BookKeys(book_record.id)
             if version.processor == SPLIT_NONE:
                 if page.scan_id is None:
                     raise ConflictError(SCAN_DELETED)
@@ -1448,8 +1444,10 @@ class PageService:
             else:
                 err_msg = f'Page version {version.id} made by {version.processor.key} has no files to write.'
                 raise ValueError(err_msg)
-            return project, keys, run
+            return book_record, keys, run
 
-        project, keys, run = await self._uow.read_book(project_id, read)
+        book_record, keys, run = await self._uow.read_book(book_id, read)
         async with self._runner.execute(run) as result:
-            return await self._runner.store(keys, version, result.outputs[0], policy=project.image_policy, tiles=True)
+            return await self._runner.store(
+                keys, version, result.outputs[0], policy=book_record.image_policy, tiles=True
+            )

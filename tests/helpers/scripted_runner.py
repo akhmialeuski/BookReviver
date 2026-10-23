@@ -15,7 +15,7 @@ from bookreviver.domain.values import JobEnd
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Job
-    from bookreviver.domain.ids import JobId, ProjectId
+    from bookreviver.domain.ids import BookId, JobId
     from bookreviver.ports.runtime import JobControl
 
 # How many tasks a job of the scripted runner has
@@ -39,8 +39,8 @@ class ScriptedRunner:
     def __init__(self) -> None:
         """Start with nothing run and nothing held."""
         self.log: list[tuple[Phase, JobId]] = []
-        self.peak: dict[ProjectId, int] = {}
-        self._inside: dict[ProjectId, int] = {}
+        self.peak: dict[BookId, int] = {}
+        self._inside: dict[BookId, int] = {}
         self._held: dict[JobId, anyio.Event] = {}
         self._failing: set[JobId] = set()
 
@@ -84,9 +84,9 @@ class ScriptedRunner:
         :raises RuntimeError: If the test made the job fail.
         """
         self.log.append((Phase.BEGUN, job.id))
-        inside = self._inside.get(job.project_id, 0) + 1
-        self._inside[job.project_id] = inside
-        self.peak[job.project_id] = max(self.peak.get(job.project_id, 0), inside)
+        inside = self._inside.get(job.book_id, 0) + 1
+        self._inside[job.book_id] = inside
+        self.peak[job.book_id] = max(self.peak.get(job.book_id, 0), inside)
         try:
             control.plan(TASKS_PER_JOB)
             for _ in range(TASKS_PER_JOB):
@@ -97,6 +97,6 @@ class ScriptedRunner:
                     raise RuntimeError(message)
                 await control.task_done()
         finally:
-            self._inside[job.project_id] -= 1
+            self._inside[job.book_id] -= 1
             self.log.append((Phase.RETURNED, job.id))
         return JobEnd(state=JobState.SUCCEEDED)

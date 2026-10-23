@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Actor, Job
     from bookreviver.domain.events import DomainEvent
-    from bookreviver.domain.ids import JobId, ProjectId
+    from bookreviver.domain.ids import BookId, JobId
     from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.runtime import EventStream, JobBoard
     from bookreviver.ports.storage import SourceStore
@@ -63,18 +63,16 @@ class JobService:
         :raises NotFoundError: If the board does not hold the job, or the job belongs to another account's project.
         """
         job = self._board.get(job_id)
-        await self._library.open(actor, job.project_id)
+        await self._library.open(actor, job.book_id)
         return job
 
-    async def list_for_project(
-        self, actor: Actor, project_id: ProjectId, request: SliceRequest, *, active: bool
-    ) -> Slice[Job]:
+    async def list_for_book(self, actor: Actor, book_id: BookId, request: SliceRequest, *, active: bool) -> Slice[Job]:
         """Return a window of the jobs of one of the actor's projects, the newest first.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :param request: Offset and limit of the window.
         :type request: SliceRequest
         :param active: Whether to list only the jobs that are queued or running.
@@ -83,8 +81,8 @@ class JobService:
         :rtype: Slice[Job]
         :raises NotFoundError: If the project does not exist or belongs to another account.
         """
-        await self._library.open(actor, project_id)
-        jobs = self._board.jobs(project_id, active=active)
+        await self._library.open(actor, book_id)
+        jobs = self._board.jobs(book_id, active=active)
         return Slice(items=jobs[request.offset : request.offset + request.limit], total=len(jobs))
 
     async def cancel(self, actor: Actor, job_id: JobId) -> Job:
@@ -105,12 +103,10 @@ class JobService:
         await self.get(actor, job_id)
         cancelled = await self._board.cancel(job_id)
         if cancelled.kind is JobKind.IMPORT_SOURCE and cancelled.started_at is None:
-            await self._sources.discard(cancelled.project_id, cancelled.id)
+            await self._sources.discard(cancelled.book_id, cancelled.id)
         return cancelled
 
-    async def events(
-        self, actor: Actor, project_id: ProjectId
-    ) -> AbstractAsyncContextManager[AsyncIterator[DomainEvent]]:
+    async def events(self, actor: Actor, book_id: BookId) -> AbstractAsyncContextManager[AsyncIterator[DomainEvent]]:
         """Return a subscription to the project's events, for the owner only.
 
         The ownership check runs here, before the subscription exists, so a caller learns of a refusal before it
@@ -119,12 +115,12 @@ class JobService:
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: Identifier of the project.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project.
+        :type book_id: BookId
         :returns: Context manager that subscribes when entered, yields the iterator of every event of the project
                   published since, and unsubscribes when left.
         :rtype: AbstractAsyncContextManager[AsyncIterator[DomainEvent]]
         :raises NotFoundError: If the project does not exist or belongs to another account.
         """
-        await self._library.open(actor, project_id)
-        return self._stream.subscribe(project_id)
+        await self._library.open(actor, book_id)
+        return self._stream.subscribe(book_id)

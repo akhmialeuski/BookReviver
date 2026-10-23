@@ -6,10 +6,10 @@ from uuid import uuid4
 import pytest
 
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.ids import ProjectId
+from bookreviver.domain.ids import BookId
 from bookreviver.services.library import Library
-from tests.helpers.builders import make_project, new_account_id
-from tests.helpers.seeding import commit_project, store_project
+from tests.helpers.builders import make_record, new_account_id
+from tests.helpers.seeding import commit_record, store_book
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
@@ -30,15 +30,15 @@ class TestOpen:
         :param fx_actor: Account the library opens books for.
         :type fx_actor: Actor
         """
-        project = make_project(minutes=3)
-        await store_project(fx_uow(), project, owner=fx_actor.account_id)
+        book_record = make_record(minutes=3)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
 
-        entry = await Library(uow=fx_uow()).open(fx_actor, project.id)
+        entry = await Library(uow=fx_uow()).open(fx_actor, book_record.id)
 
-        assert (entry.project_id, entry.owner_id, entry.added_at) == (
-            project.id,
+        assert (entry.book_id, entry.owner_id, entry.added_at) == (
+            book_record.id,
             fx_actor.account_id,
-            project.created_at,
+            book_record.created_at,
         )
 
     async def test_a_book_of_another_account_is_not_found(
@@ -53,16 +53,16 @@ class TestOpen:
         :param fx_actor: Account the library opens books for.
         :type fx_actor: Actor
         """
-        project = make_project()
-        await commit_project(fx_database, fx_uow(), project, owner=new_account_id())
+        book_record = make_record()
+        await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id())
 
         with pytest.raises(NotFoundError) as refused:
-            await Library(uow=fx_uow()).open(fx_actor, project.id)
+            await Library(uow=fx_uow()).open(fx_actor, book_record.id)
 
-        missing_id = ProjectId(uuid4())
+        missing_id = BookId(uuid4())
         with pytest.raises(NotFoundError) as missing:
             await Library(uow=fx_uow()).open(fx_actor, missing_id)
-        assert str(refused.value).replace(str(project.id), '') == str(missing.value).replace(str(missing_id), '')
+        assert str(refused.value).replace(str(book_record.id), '') == str(missing.value).replace(str(missing_id), '')
 
     async def test_a_book_that_is_not_listed_is_not_found(self, fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> None:
         """Verify a book that has a store and no entry, which is a creation broken off half way, cannot be opened.
@@ -72,8 +72,8 @@ class TestOpen:
         :param fx_actor: Account the library opens books for.
         :type fx_actor: Actor
         """
-        project = make_project()
-        await fx_uow().create_book(project)
+        book_record = make_record()
+        await fx_uow().create_book(book_record)
 
         with pytest.raises(NotFoundError):
-            await Library(uow=fx_uow()).open(fx_actor, project.id)
+            await Library(uow=fx_uow()).open(fx_actor, book_record.id)

@@ -20,14 +20,14 @@ if TYPE_CHECKING:
 
     import httpx
 
-    from bookreviver.domain.entities import Project
+    from bookreviver.domain.entities import BookRecord
     from tests.api.imports.watch import ImportWatch
     from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
-SOURCES_PATH: str = '/api/v1/projects/{project_id}/sources'
-JOBS_PATH: str = '/api/v1/projects/{project_id}/jobs'
+SOURCES_PATH: str = '/api/v1/books/{book_id}/sources'
+JOBS_PATH: str = '/api/v1/books/{book_id}/jobs'
 FILES_FIELD: str = 'files'
 OCTET_STREAM: str = 'application/octet-stream'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
@@ -110,7 +110,7 @@ class TestUploadDirectories:
         fx_client: httpx.AsyncClient,
         fx_import: ImportWatch,
         fx_uow: UnitOfWorkFactory,
-        fx_project: Project,
+        fx_book: BookRecord,
         tmp_path: Path,
     ) -> None:
         """Verify the parts of a directory keep their order, which differs from the natural order of their names.
@@ -124,8 +124,8 @@ class TestUploadDirectories:
         :type fx_import: ImportWatch
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_project: Project of the signed-in account.
-        :type fx_project: Project
+        :param fx_book: Project of the signed-in account.
+        :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
@@ -138,13 +138,13 @@ class TestUploadDirectories:
         ]
         parts.insert(1, _part(FOLDER_SYSTEM_FILE, b'thumbnails'))
 
-        response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
+        response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book.id), files=parts)
         finished = await fx_import.finished(response.json()[ID_FIELD])
 
-        book = await stored_book(fx_uow(), fx_project.id)
+        book = await stored_book(fx_uow(), fx_book.id)
         sources, pages = book.sources, book.pages
         scans = {scan.id: scan for scan in book.scans}
-        report = await fx_import.report(fx_project.id)
+        report = await fx_import.report(fx_book.id)
         expect(response.status_code == HTTPStatus.ACCEPTED)
         expect(finished[STATE_FIELD] == JobState.SUCCEEDED)
         expect([source.file_name for source in sources] == ['kniga/part10.pdf', 'kniga/part2.pdf', 'kniga/part1.pdf'])
@@ -165,7 +165,7 @@ class TestUploadDirectories:
         fx_client: httpx.AsyncClient,
         fx_import: ImportWatch,
         fx_uow: UnitOfWorkFactory,
-        fx_project: Project,
+        fx_book: BookRecord,
     ) -> None:
         """Verify more files than Starlette's default limit are accepted, each a source in the order of the list.
 
@@ -180,8 +180,8 @@ class TestUploadDirectories:
         :type fx_import: ImportWatch
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_project: Project of the signed-in account.
-        :type fx_project: Project
+        :param fx_book: Project of the signed-in account.
+        :type fx_book: BookRecord
         """
         suffixes = cycle(SCAN_FORMATS)
         names = []
@@ -195,13 +195,13 @@ class TestUploadDirectories:
             if page == 0:
                 parts.append(_part(f'{folder}/Thumbs.db', b'thumbnails'))
 
-        response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
+        response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book.id), files=parts)
         finished = await fx_import.finished(response.json()[ID_FIELD])
 
-        book = await stored_book(fx_uow(), fx_project.id)
+        book = await stored_book(fx_uow(), fx_book.id)
         sources, pages = book.sources, book.pages
         scans = {scan.id: scan for scan in book.scans}
-        report = await fx_import.report(fx_project.id)
+        report = await fx_import.report(fx_book.id)
         expect(response.status_code == HTTPStatus.ACCEPTED)
         expect(finished[STATE_FIELD] == JobState.SUCCEEDED)
         # The progress counts every file dealt with, and a scan to cut for each source
@@ -217,7 +217,7 @@ class TestUploadDirectories:
         fx_client: httpx.AsyncClient,
         fx_import: ImportWatch,
         fx_uow: UnitOfWorkFactory,
-        fx_project: Project,
+        fx_book: BookRecord,
         tmp_path: Path,
     ) -> None:
         """Verify a single file chosen alone, with no folder, becomes one source, as a directory of files does.
@@ -228,21 +228,21 @@ class TestUploadDirectories:
         :type fx_import: ImportWatch
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_project: Project of the signed-in account.
-        :type fx_project: Project
+        :param fx_book: Project of the signed-in account.
+        :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
         cover = image_upload(tmp_path, COVER_NAME).file.read()
 
-        response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=[_part(COVER_NAME, cover)])
+        response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book.id), files=[_part(COVER_NAME, cover)])
         finished = await fx_import.finished(response.json()[ID_FIELD])
 
-        sources = (await stored_book(fx_uow(), fx_project.id)).sources
+        sources = (await stored_book(fx_uow(), fx_book.id)).sources
         expect(response.status_code == HTTPStatus.ACCEPTED)
         expect(finished[STATE_FIELD] == JobState.SUCCEEDED)
         expect([(source.file_name, source.scan_count) for source in sources] == [(COVER_NAME, 1)])
-        expect(await fx_import.report(fx_project.id) == [])
+        expect(await fx_import.report(fx_book.id) == [])
         assert_expectations()
 
     async def test_multi_page_tiff_is_one_source_whose_frames_are_the_scans_and_pages_in_frame_order(
@@ -250,7 +250,7 @@ class TestUploadDirectories:
         fx_client: httpx.AsyncClient,
         fx_import: ImportWatch,
         fx_uow: UnitOfWorkFactory,
-        fx_project: Project,
+        fx_book: BookRecord,
         tmp_path: Path,
     ) -> None:
         """Verify a TIFF of three frames, each of its own width, is one source with three scans numbered from zero.
@@ -261,8 +261,8 @@ class TestUploadDirectories:
         :type fx_import: ImportWatch
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_project: Project of the signed-in account.
-        :type fx_project: Project
+        :param fx_book: Project of the signed-in account.
+        :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
@@ -272,11 +272,11 @@ class TestUploadDirectories:
         )
 
         response = await fx_client.post(
-            SOURCES_PATH.format(project_id=fx_project.id), files=[_part(TIFF_BOOK_NAME, book.read_bytes())]
+            SOURCES_PATH.format(book_id=fx_book.id), files=[_part(TIFF_BOOK_NAME, book.read_bytes())]
         )
         finished = await fx_import.finished(response.json()[ID_FIELD])
 
-        stored = await stored_book(fx_uow(), fx_project.id)
+        stored = await stored_book(fx_uow(), fx_book.id)
         [source], pages = stored.sources, stored.pages
         scans = {scan.id: scan for scan in stored.scans}
         expect(finished[STATE_FIELD] == JobState.SUCCEEDED)
@@ -296,7 +296,7 @@ class TestUploadDirectories:
         fx_client: httpx.AsyncClient,
         fx_import: ImportWatch,
         fx_uow: UnitOfWorkFactory,
-        fx_project: Project,
+        fx_book: BookRecord,
     ) -> None:
         """Verify ``vol1/001.tif`` and ``vol2/001.tif`` are two sources with those names, not a duplicate name.
 
@@ -306,18 +306,18 @@ class TestUploadDirectories:
         :type fx_import: ImportWatch
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_project: Project of the signed-in account.
-        :type fx_project: Project
+        :param fx_book: Project of the signed-in account.
+        :type fx_book: BookRecord
         """
         parts = [
             _part(FIRST_VOLUME_SCAN, _scan(1, image_format=TIFF_FORMAT)),
             _part('vol2\\001.tif', _scan(2, image_format=TIFF_FORMAT)),
         ]
 
-        response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
+        response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book.id), files=parts)
         finished = await fx_import.finished(response.json()[ID_FIELD])
 
-        sources = (await stored_book(fx_uow(), fx_project.id)).sources
+        sources = (await stored_book(fx_uow(), fx_book.id)).sources
         expect(response.status_code == HTTPStatus.ACCEPTED)
         expect(finished[STATE_FIELD] == JobState.SUCCEEDED)
         expect([source.file_name for source in sources] == [FIRST_VOLUME_SCAN, 'vol2/001.tif'])
@@ -337,7 +337,7 @@ class TestUploadDirectories:
         ids=['parent-folder', 'parent-folder-in-the-middle', 'absolute-path', 'drive-relative', 'no-file-name'],
     )
     async def test_path_that_leaves_its_folder_is_a_400_problem_and_imports_nothing(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_project: Project, case: UnsafePathCase
+        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_book: BookRecord, case: UnsafePathCase
     ) -> None:
         """Verify an unsafe path refuses the whole upload with a problem, before a job is put on the board.
 
@@ -345,8 +345,8 @@ class TestUploadDirectories:
         :type fx_client: httpx.AsyncClient
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_project: Project of the signed-in account.
-        :type fx_project: Project
+        :param fx_book: Project of the signed-in account.
+        :type fx_book: BookRecord
         :param case: A file name the upload sends, and the problem it must be refused with.
         :type case: UnsafePathCase
         """
@@ -355,12 +355,12 @@ class TestUploadDirectories:
             _part(case.name, _scan(2, image_format=TIFF_FORMAT)),
         ]
 
-        response = await fx_client.post(SOURCES_PATH.format(project_id=fx_project.id), files=parts)
+        response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book.id), files=parts)
 
-        jobs = (await fx_client.get(JOBS_PATH.format(project_id=fx_project.id))).json()
+        jobs = (await fx_client.get(JOBS_PATH.format(book_id=fx_book.id))).json()
         expect(response.status_code == HTTPStatus.BAD_REQUEST)
         expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
         expect(response.json()['detail'] == case.problem.label)
         expect(jobs['items'] == [])
-        expect((await stored_book(fx_uow(), fx_project.id)).sources == [])
+        expect((await stored_book(fx_uow(), fx_book.id)).sources == [])
         assert_expectations()

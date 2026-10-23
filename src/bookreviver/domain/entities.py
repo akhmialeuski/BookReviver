@@ -62,11 +62,11 @@ if TYPE_CHECKING:
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.ids import (
         AccountId,
+        BookId,
         ChangeBatchId,
         JobId,
         PageId,
         PaginationSectionId,
-        ProjectId,
         RecipeId,
         RecipeProfileId,
         ScanId,
@@ -109,7 +109,7 @@ class Actor:
 
 
 @frozen(kw_only=True)
-class Project:
+class BookRecord:
     """One book being digitised: its description and the settings of the work on it.
 
     The project knows nothing of accounts, so a book moves between instances of the application as it is. The account
@@ -125,7 +125,7 @@ class Project:
 
     DEFAULT_IMAGE_POLICY: ClassVar[ImagePolicy] = ImagePolicy.COMPACT
 
-    id: ProjectId
+    id: BookId
     details: BookDetails
     image_policy: ImagePolicy = DEFAULT_IMAGE_POLICY
     created_at: datetime
@@ -136,19 +136,19 @@ class Project:
 class LibraryEntry:
     """A book in the library of the account that owns it, the only account that may read or change the book.
 
-    :ivar project_id: The book.
+    :ivar book_id: The book.
     :ivar owner_id: Account owning the book.
     :ivar added_at: When the book joined the library, which orders the owner's list of books, the newest first.
     """
 
-    project_id: ProjectId
+    book_id: BookId
     owner_id: AccountId
     added_at: datetime
 
     @property
-    def id(self) -> ProjectId:
+    def id(self) -> BookId:
         """The identifier the entry is stored under, which is its book's: a book is in one library."""
-        return self.project_id
+        return self.book_id
 
     def is_owned_by(self, actor: Actor) -> bool:
         """Return whether the actor owns the book.
@@ -162,10 +162,10 @@ class LibraryEntry:
 
 
 @frozen(kw_only=True)
-class ProjectOverview:
+class BookOverview:
     """A project as shown in a list, with the size of its book, counted when read.
 
-    :ivar project: The listed project.
+    :ivar book_record: The listed project.
     :ivar page_count: Number of pages of the book, without the pages kept out of it.
     :ivar source_count: Number of sources the book was assembled from.
     :ivar scan_count: Number of scans in all the sources.
@@ -176,7 +176,7 @@ class ProjectOverview:
                     None before it has.
     """
 
-    project: Project
+    book_record: BookRecord
     page_count: int = field(default=0, validator=validators.ge(0))
     source_count: int = field(default=0, validator=validators.ge(0))
     scan_count: int = field(default=0, validator=validators.ge(0))
@@ -572,7 +572,7 @@ class Job:
     import the whole import, which reports its files and scans inside the task.
 
     :ivar id: Identifier of the job.
-    :ivar project_id: Project the job works on.
+    :ivar book_id: Project the job works on.
     :ivar kind: What the job does.
     :ivar state: Where the job is in its life cycle.
     :ivar progress: How many of its tasks are done.
@@ -586,7 +586,7 @@ class Job:
     """
 
     id: JobId
-    project_id: ProjectId
+    book_id: BookId
     kind: JobKind
     state: JobState = JobState.QUEUED
     progress: Progress = field(factory=Progress)

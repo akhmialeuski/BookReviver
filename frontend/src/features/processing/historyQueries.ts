@@ -7,12 +7,12 @@ import {
 } from '@tanstack/react-query';
 import type { PageHistoryEntrySchema, PagePageHistoryEntrySchema, Stage } from '@/api';
 import {
-  clearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteMutation,
-  listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetInfiniteOptions,
-  undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostMutation,
+  clearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteMutation,
+  listHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGetInfiniteOptions,
+  undoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPostMutation,
 } from '@/api/@tanstack/react-query.gen';
 import type * as sdk from '@/api/sdk.gen';
-import { invalidateVersions } from '@/features/projects/queries';
+import { invalidateVersions } from '@/features/books/queries';
 
 /**
  * The history of a step on a page, the undo that takes its changes back and the clear that deletes it.
@@ -28,10 +28,9 @@ const HISTORY_PAGE_SIZE = 100;
 
 // The generated client names each query by the function that makes it, so these are checked against the client
 const HISTORY_QUERY: keyof typeof sdk =
-  'listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGet';
-const SETTINGS_QUERY: keyof typeof sdk =
-  'listSettingsApiV1ProjectsProjectIdPagesPageIdSettingsStageGet';
-const EDITS_QUERY: keyof typeof sdk = 'listEditsApiV1ProjectsProjectIdPagesPageIdEditsStageGet';
+  'listHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGet';
+const SETTINGS_QUERY: keyof typeof sdk = 'listSettingsApiV1BooksBookIdPagesPageIdSettingsStageGet';
+const EDITS_QUERY: keyof typeof sdk = 'listEditsApiV1BooksBookIdPagesPageIdEditsStageGet';
 
 // What an undo and a carry-over change: the histories, the settings and the edits of the pages
 const UNDONE_QUERIES: ReadonlySet<unknown> = new Set([HISTORY_QUERY, SETTINGS_QUERY, EDITS_QUERY]);
@@ -77,14 +76,14 @@ function loadedOf(data: InfiniteData<PagePageHistoryEntrySchema>): LoadedHistory
  * reads every page that was loaded again, so the rows on screen stay the newest ones.
  */
 export function usePageHistory(
-  projectId: string,
+  bookId: string,
   pageId: string | undefined,
   stage: Stage,
   stepId: string | null,
 ) {
   return useInfiniteQuery({
-    ...listHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdGetInfiniteOptions({
-      path: { project_id: projectId, page_id: pageId ?? '', stage, step_id: stepId ?? '' },
+    ...listHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdGetInfiniteOptions({
+      path: { book_id: bookId, page_id: pageId ?? '', stage, step_id: stepId ?? '' },
       query: { size: HISTORY_PAGE_SIZE },
     }),
     initialPageParam: 1,
@@ -102,11 +101,11 @@ export function usePageHistory(
  * on every page it reached. It marks the stage out of date on the server, and the rows and the summary of the stage
  * follow the `book-changed` event.
  */
-export function useUndo(projectId: string) {
+export function useUndo(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...undoChangeApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdUndoPostMutation(),
-    scope: { id: `page-edits:${projectId}` },
+    ...undoChangeApiV1BooksBookIdPagesPageIdHistoryStageStepIdUndoPostMutation(),
+    scope: { id: `page-edits:${bookId}` },
     onSettled: () => invalidatePageLayers(queryClient),
   });
 }
@@ -117,15 +116,15 @@ export function useUndo(projectId: string) {
  * The clear joins the mutation scope of the edits of the book like an undo, and reads again what an undo does, and
  * the results of the page too, since the server deleted the results of the step and the ones that read them.
  */
-export function useClearHistory(projectId: string) {
+export function useClearHistory(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...clearHistoryApiV1ProjectsProjectIdPagesPageIdHistoryStageStepIdDeleteMutation(),
-    scope: { id: `page-edits:${projectId}` },
+    ...clearHistoryApiV1BooksBookIdPagesPageIdHistoryStageStepIdDeleteMutation(),
+    scope: { id: `page-edits:${bookId}` },
     onSettled: (_cleared, _error, { path }) =>
       Promise.all([
         invalidatePageLayers(queryClient),
-        invalidateVersions(queryClient, projectId, path.page_id),
+        invalidateVersions(queryClient, bookId, path.page_id),
       ]),
   });
 }

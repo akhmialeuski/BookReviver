@@ -19,26 +19,24 @@ from bookreviver.api.pagination import Pager
 from bookreviver.api.schemas.page_history import ClearedSchema, PageHistoryEntrySchema, UndoForm, UndoneSchema
 from bookreviver.domain.entities import PageHistoryEntry
 from bookreviver.domain.enums import Stage
-from bookreviver.domain.ids import PageId, ProjectId, StepId
+from bookreviver.domain.ids import BookId, PageId, StepId
 from bookreviver.domain.values import PageStepKey, Slice
 from bookreviver.services.page_history import PageHistoryService
 
-router = APIRouter(
-    prefix='/projects', tags=['page-history'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)]
-)
+router = APIRouter(prefix='/books', tags=['page-history'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 
 @dataclass(frozen=True)
 class StepPath:
     """The identifiers in the address of the history of one step on one page.
 
-    :ivar project_id: Identifier of the project.
+    :ivar book_id: Identifier of the project.
     :ivar page_id: Identifier of the page.
     :ivar stage: Stage of the step.
     :ivar step_id: Identifier of the step of a recipe.
     """
 
-    project_id: Annotated[ProjectId, Path(description='Identifier of the project')]
+    book_id: Annotated[BookId, Path(description='Identifier of the book')]
     page_id: Annotated[PageId, Path(description='Identifier of the page')]
     stage: Annotated[Stage, Path(description='Stage of the step')]
     step_id: Annotated[StepId, Path(description='Identifier of the step of a recipe')]
@@ -49,7 +47,7 @@ class StepPath:
         return PageStepKey(self.page_id, self.stage, self.step_id)
 
 
-@router.get('/{project_id}/pages/{page_id}/history/{stage}/{step_id}')
+@router.get('/{book_id}/pages/{page_id}/history/{stage}/{step_id}')
 async def list_history(
     address: Annotated[StepPath, Depends()],
     params: Annotated[Params, Depends()],
@@ -70,7 +68,7 @@ async def list_history(
     :returns: One page of the changes.
     :rtype: Page[PageHistoryEntrySchema]
     """
-    found = await history.list(actor, address.project_id, address.key)
+    found = await history.list(actor, address.book_id, address.key)
     undone = found.undone
 
     def to_schema(change: PageHistoryEntry) -> PageHistoryEntrySchema:
@@ -89,7 +87,7 @@ async def list_history(
     return pager.page(Slice(items=window, total=len(newest_first)))
 
 
-@router.post('/{project_id}/pages/{page_id}/history/{stage}/{step_id}/undo')
+@router.post('/{book_id}/pages/{page_id}/history/{stage}/{step_id}/undo')
 async def undo_change(
     address: Annotated[StepPath, Depends()],
     form: UndoForm,
@@ -114,11 +112,11 @@ async def undo_change(
     :returns: The undos that were written.
     :rtype: UndoneSchema
     """
-    written = await history.undo(actor, address.project_id, address.key, form.change_id)
+    written = await history.undo(actor, address.book_id, address.key, form.change_id)
     return UndoneSchema(changes=[PageHistoryEntrySchema.model_validate(change) for change in written])
 
 
-@router.delete('/{project_id}/pages/{page_id}/history/{stage}/{step_id}')
+@router.delete('/{book_id}/pages/{page_id}/history/{stage}/{step_id}')
 async def clear_history(
     address: Annotated[StepPath, Depends()],
     actor: ActorDep,
@@ -147,5 +145,5 @@ async def clear_history(
     :raises ConflictError: If a run, a measure of the book, a tile cutting or a collection of the project is queued or
                            running.
     """
-    cleared = await history.clear(actor, address.project_id, address.key)
+    cleared = await history.clear(actor, address.book_id, address.key)
     return ClearedSchema(changes=cleared.changes, versions=len(cleared.versions))

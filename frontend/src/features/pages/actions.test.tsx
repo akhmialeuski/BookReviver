@@ -3,9 +3,9 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PageCreate, PageSchema } from '@/api';
+import { applyBookEvent, BURST_DELAY_MS, EventName } from '@/features/books/events';
 import { useCreatePages, useUpdatePages } from '@/features/pages/actions';
 import { manifestOptions } from '@/features/pages/manifest';
-import { applyProjectEvent, BURST_DELAY_MS, EventName } from '@/features/projects/events';
 import { page } from '@/features/workspace/fixtures';
 
 /**
@@ -24,13 +24,13 @@ const addPages = vi.hoisted(() => vi.fn());
 
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
-  updatePageApiV1ProjectsProjectIdPagesPageIdPatch: vi.fn(
+  updatePageApiV1BooksBookIdPagesPageIdPatch: vi.fn(
     () => new Promise((resolve) => answers.push(() => resolve({ data: {} }))),
   ),
-  createPagesApiV1ProjectsProjectIdPagesBatchPost: addPages,
+  createPagesApiV1BooksBookIdPagesBatchPost: addPages,
 }));
 
-const PROJECT = 'book';
+const BOOK = 'book';
 
 describe('a change of pages while the manifest is being read', () => {
   let container: HTMLDivElement;
@@ -39,7 +39,7 @@ describe('a change of pages while the manifest is being read', () => {
   let change: (() => void) | undefined;
 
   function Probe(): null {
-    const update = useUpdatePages(PROJECT);
+    const update = useUpdatePages(BOOK);
     change = () => update.mutate({ pageIds: ['a'], changes: { kind: 'plate' } });
     return null;
   }
@@ -51,7 +51,7 @@ describe('a change of pages while the manifest is being read', () => {
     document.body.append(container);
     root = createRoot(container);
     client = new QueryClient();
-    client.setQueryData(manifestOptions(PROJECT).queryKey, [page('a'), page('b')]);
+    client.setQueryData(manifestOptions(BOOK).queryKey, [page('a'), page('b')]);
   });
 
   afterEach(() => {
@@ -62,7 +62,7 @@ describe('a change of pages while the manifest is being read', () => {
   });
 
   it('keeps the query a success with the change made when it cancels a read in flight', async () => {
-    const { queryKey } = manifestOptions(PROJECT);
+    const { queryKey } = manifestOptions(BOOK);
     // A read that never ends stands for the one the last change started
     void client
       .fetchQuery({
@@ -125,7 +125,7 @@ describe('a change of pages while the manifest is being read', () => {
           typeof head === 'object' &&
           head !== null &&
           '_id' in head &&
-          head._id === 'listPagesApiV1ProjectsProjectIdPagesGet'
+          head._id === 'listPagesApiV1BooksBookIdPagesGet'
         );
       }).length;
     act(() =>
@@ -140,15 +140,15 @@ describe('a change of pages while the manifest is being read', () => {
     expect(answers).toHaveLength(1);
     // A job cutting the scans of the book changes it while the change is on its way to the server
     const sync = { version: 1 };
-    applyProjectEvent(
+    applyBookEvent(
       client,
-      PROJECT,
+      BOOK,
       { event: EventName.BookChanged, data: { version: 2, resources: ['scans'] } },
       sync,
     );
-    applyProjectEvent(
+    applyBookEvent(
       client,
-      PROJECT,
+      BOOK,
       { event: EventName.BookChanged, data: { version: 3, resources: ['versions'] } },
       sync,
     );
@@ -157,7 +157,7 @@ describe('a change of pages while the manifest is being read', () => {
 
     answers[0]?.();
     await vi.waitFor(() => expect(pageReads()).toBe(1));
-    expect(client.getQueryData<PageSchema[]>(manifestOptions(PROJECT).queryKey)?.[0]?.kind).toBe(
+    expect(client.getQueryData<PageSchema[]>(manifestOptions(BOOK).queryKey)?.[0]?.kind).toBe(
       'plate',
     );
   });
@@ -171,8 +171,8 @@ describe('the adding of several pages', () => {
   let change: (() => void) | undefined;
 
   function Probe(): null {
-    const create = useCreatePages(PROJECT);
-    const update = useUpdatePages(PROJECT);
+    const create = useCreatePages(BOOK);
+    const update = useUpdatePages(BOOK);
     add = (bodies) => create.mutate(bodies);
     change = () => update.mutate({ pageIds: ['a'], changes: { kind: 'plate' } });
     return null;
@@ -214,7 +214,7 @@ describe('the adding of several pages', () => {
 
     await vi.waitFor(() => expect(addPages).toHaveBeenCalledTimes(1));
     expect(addPages).toHaveBeenCalledWith({
-      path: { project_id: PROJECT },
+      path: { book_id: BOOK },
       body: bodies,
       throwOnError: true,
     });

@@ -8,7 +8,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.persistence.sqlalchemy.mappers import ProjectMapper
+from bookreviver.adapters.persistence.sqlalchemy.mappers import BookRecordMapper
 from bookreviver.domain.enums import (
     ColorMode,
     ContributorRole,
@@ -40,11 +40,11 @@ from tests.helpers.builders import (
     FULL_DETAILS,
     make_page,
     make_page_version,
-    make_project,
+    make_record,
     make_scan,
     make_source,
 )
-from tests.helpers.seeding import store_project
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from bookreviver.domain.ids import AccountId
@@ -105,7 +105,7 @@ FULL_SUGGESTION: MetadataSuggestion = MetadataSuggestion(
 SOURCE_DETAIL: str = 'The file type is not accepted as a source.'
 
 
-class TestProjectMapper:
+class TestBookRecordMapper:
     """Tests for ProjectMapper."""
 
     async def test_every_field_survives_the_database(self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId) -> None:
@@ -116,16 +116,16 @@ class TestProjectMapper:
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        project = make_project()
-        described = evolve(project, details=FULL_DETAILS, image_policy=ImagePolicy.LOSSLESS)
+        book_record = make_record()
+        described = evolve(book_record, details=FULL_DETAILS, image_policy=ImagePolicy.LOSSLESS)
         uow = fx_uow()
-        await store_project(uow, project, owner=fx_owner_id)
-        await uow.change_book(project.id, lambda repos, _project: repos.projects.update(described))
-        assert await uow.read_book(project.id, lambda repos: repos.projects.get(project.id)) == described
+        await store_book(uow, book_record, owner=fx_owner_id)
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.book_record.update(described))
+        assert await uow.read_book(book_record.id, lambda repos: repos.book_record.get(book_record.id)) == described
 
     async def test_lists_are_stored_as_json_of_plain_values(self) -> None:
         """Verify contributors and identifiers become lists of objects holding role and scheme values, not members."""
-        row = ProjectMapper().to_row(evolve(make_project(), details=FULL_DETAILS))
+        row = BookRecordMapper().to_row(evolve(make_record(), details=FULL_DETAILS))
         expect(
             row.contributors[:2]
             == [{NAME_KEY: 'Я. Карскі', ROLE_KEY: 'aut'}, {NAME_KEY: 'И. И. Ивановъ', ROLE_KEY: 'edt'}]
@@ -149,7 +149,7 @@ class TestPageMapper:
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        project = make_project()
+        book_record = make_record()
         source = make_source()
         scan = make_scan(source=source, number=11)
         page = evolve(
@@ -162,8 +162,8 @@ class TestPageMapper:
             updated_at=EPOCH + timedelta(minutes=5),
         )
         uow = fx_uow()
-        await store_project(uow, project, page, sources=[source], scans=[scan], owner=fx_owner_id)
-        assert await uow.read_book(project.id, lambda repos: repos.pages.get(page.id)) == page
+        await store_book(uow, book_record, page, sources=[source], scans=[scan], owner=fx_owner_id)
+        assert await uow.read_book(book_record.id, lambda repos: repos.pages.get(page.id)) == page
 
 
 class TestPageVersionMapper:
@@ -186,7 +186,7 @@ class TestPageVersionMapper:
         :param renditions: Renditions state of the version, None for a step without an image.
         :type renditions: Renditions | None
         """
-        project = make_project()
+        book_record = make_record()
         page = make_page()
         base = make_page_version(page_id=page.id)
         version = evolve(
@@ -201,8 +201,8 @@ class TestPageVersionMapper:
             state=VersionState.READY,
         )
         uow = fx_uow()
-        await store_project(uow, project, page, versions=[base, version], owner=fx_owner_id)
-        assert await uow.read_book(project.id, lambda repos: repos.page_versions.get(version.id)) == version
+        await store_book(uow, book_record, page, versions=[base, version], owner=fx_owner_id)
+        assert await uow.read_book(book_record.id, lambda repos: repos.page_versions.get(version.id)) == version
 
     @pytest.mark.parametrize(
         'transform',
@@ -226,13 +226,13 @@ class TestPageVersionMapper:
         :param transform: Transform of the version.
         :type transform: Transform
         """
-        project = make_project()
+        book_record = make_record()
         page = make_page()
         version = evolve(make_page_version(page_id=page.id), transform=transform)
         uow = fx_uow()
-        await store_project(uow, project, page, versions=[version], owner=fx_owner_id)
+        await store_book(uow, book_record, page, versions=[version], owner=fx_owner_id)
         assert (
-            await uow.read_book(project.id, lambda repos: repos.page_versions.get(version.id))
+            await uow.read_book(book_record.id, lambda repos: repos.page_versions.get(version.id))
         ).transform == transform
 
 
@@ -247,7 +247,7 @@ class TestSourceMapper:
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        project = make_project()
+        book_record = make_record()
         source = evolve(
             make_source(),
             kind=SourceKind.DJVU,
@@ -263,8 +263,8 @@ class TestSourceMapper:
         # The count is read from the scans of the source, so the source is stored with as many
         scans = [make_scan(source=source, number=number) for number in range(source.scan_count)]
         uow = fx_uow()
-        await store_project(uow, project, sources=[source], scans=scans, owner=fx_owner_id)
-        assert await uow.read_book(project.id, lambda repos: repos.sources.get(source.id)) == source
+        await store_book(uow, book_record, sources=[source], scans=scans, owner=fx_owner_id)
+        assert await uow.read_book(book_record.id, lambda repos: repos.sources.get(source.id)) == source
 
     @pytest.mark.parametrize(
         ('status', 'rejection'),
@@ -288,7 +288,7 @@ class TestSourceMapper:
         :param rejection: The reason of a rejected file, and None for a skipped one.
         :type rejection: RejectionReason | None
         """
-        project = make_project()
+        book_record = make_record()
         source = evolve(
             make_source(),
             kind=None,
@@ -299,8 +299,8 @@ class TestSourceMapper:
             detail=SOURCE_DETAIL,
         )
         uow = fx_uow()
-        await store_project(uow, project, sources=[source], owner=fx_owner_id)
-        assert await uow.read_book(project.id, lambda repos: repos.sources.get(source.id)) == source
+        await store_book(uow, book_record, sources=[source], owner=fx_owner_id)
+        assert await uow.read_book(book_record.id, lambda repos: repos.sources.get(source.id)) == source
 
 
 class TestScanMapper:
@@ -314,7 +314,7 @@ class TestScanMapper:
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        project = make_project()
+        book_record = make_record()
         source = make_source()
         scan = evolve(
             make_scan(source=source, number=11),
@@ -323,5 +323,5 @@ class TestScanMapper:
             renditions=Renditions(ready=True, version=3, full=Rendition.FULL_PNG),
         )
         uow = fx_uow()
-        await store_project(uow, project, sources=[source], scans=[scan], owner=fx_owner_id)
-        assert await uow.read_book(project.id, lambda repos: repos.scans.get(scan.id)) == scan
+        await store_book(uow, book_record, sources=[source], scans=[scan], owner=fx_owner_id)
+        assert await uow.read_book(book_record.id, lambda repos: repos.scans.get(scan.id)) == scan

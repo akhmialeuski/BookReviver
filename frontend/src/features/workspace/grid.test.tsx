@@ -92,13 +92,13 @@ describe('useGrid and useGridKey', () => {
   let root: Root;
 
   function Harness({
-    projectId,
+    bookId,
     keyed = true,
   }: {
-    projectId: string;
+    bookId: string;
     keyed?: boolean;
   }): React.JSX.Element {
-    const [on, toggle] = useGrid(projectId);
+    const [on, toggle] = useGrid(bookId);
     useGridKey(toggle, keyed);
     return (
       <button type="button" data-testid="grid" data-on={on} onClick={toggle}>
@@ -126,49 +126,49 @@ describe('useGrid and useGridKey', () => {
   });
 
   it('is off until the reader chooses, and writes nothing to the storage', () => {
-    act(() => root.render(<Harness projectId="book-a" />));
+    act(() => root.render(<Harness bookId="book-a" />));
     expect(state()).toBe('false');
     expect(localStorage.getItem(gridStorageKey('book-a'))).toBeNull();
   });
 
   it('remembers the choice for the book, on or off, through a render', () => {
-    act(() => root.render(<Harness projectId="book-a" />));
+    act(() => root.render(<Harness bookId="book-a" />));
     act(() => container.querySelector('button')?.click());
     expect(state()).toBe('true');
     expect(localStorage.getItem(gridStorageKey('book-a'))).toBe('on');
-    act(() => root.render(<Harness projectId="book-a" />));
+    act(() => root.render(<Harness bookId="book-a" />));
     expect(state()).toBe('true');
 
     // An off choice is a choice too, and stays off
     act(() => container.querySelector('button')?.click());
     expect(state()).toBe('false');
     expect(localStorage.getItem(gridStorageKey('book-a'))).toBe('off');
-    act(() => root.render(<Harness projectId="book-a" />));
+    act(() => root.render(<Harness bookId="book-a" />));
     expect(state()).toBe('false');
   });
 
   it('survives a new mount, which reads what the book kept', () => {
-    act(() => root.render(<Harness projectId="book-a" />));
+    act(() => root.render(<Harness bookId="book-a" />));
     act(() => container.querySelector('button')?.click());
     act(() => root.unmount());
 
     root = createRoot(container);
-    act(() => root.render(<Harness projectId="book-a" />));
+    act(() => root.render(<Harness bookId="book-a" />));
     expect(state()).toBe('true');
   });
 
   it('starts from what the book kept, and does not carry a choice over to another book', () => {
     localStorage.setItem(gridStorageKey('book-a'), 'on');
 
-    act(() => root.render(<Harness projectId="book-a" />));
+    act(() => root.render(<Harness bookId="book-a" />));
     expect(state()).toBe('true');
 
-    act(() => root.render(<Harness projectId="book-b" />));
+    act(() => root.render(<Harness bookId="book-b" />));
     expect(state()).toBe('false');
   });
 
   it('switches with the key G, and not while a field is being typed in or the screen has no grid', () => {
-    act(() => root.render(<Harness projectId="book-a" />));
+    act(() => root.render(<Harness bookId="book-a" />));
 
     const event = press('g');
     expect(event.defaultPrevented).toBe(true);
@@ -181,13 +181,13 @@ describe('useGrid and useGridKey', () => {
     press('g', {}, field);
     expect(state()).toBe('false');
 
-    act(() => root.render(<Harness projectId="book-a" keyed={false} />));
+    act(() => root.render(<Harness bookId="book-a" keyed={false} />));
     press('g');
     expect(state()).toBe('false');
   });
 
   it('leaves the key G to a dialog and to a modifier, and takes it again once they are gone', () => {
-    act(() => root.render(<Harness projectId="book-a" />));
+    act(() => root.render(<Harness bookId="book-a" />));
 
     const dialog = document.createElement('div');
     dialog.setAttribute('role', 'dialog');
@@ -204,11 +204,11 @@ describe('useGrid and useGridKey', () => {
   });
 
   it('takes the key again when the screen gets its grid back', () => {
-    act(() => root.render(<Harness projectId="book-a" keyed={false} />));
+    act(() => root.render(<Harness bookId="book-a" keyed={false} />));
     press('g');
     expect(state()).toBe('false');
 
-    act(() => root.render(<Harness projectId="book-a" keyed />));
+    act(() => root.render(<Harness bookId="book-a" keyed />));
     press('g');
     expect(state()).toBe('true');
   });

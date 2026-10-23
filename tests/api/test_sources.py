@@ -20,15 +20,15 @@ from bookreviver.domain.enums import (
     SourceKind,
     SourceStatus,
 )
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import Renditions
 from tests.helpers.books import IMAGE, SCANS_PER_SOURCE, commit_book, on_disk
-from tests.helpers.builders import EPOCH, make_job, make_project, make_scan, make_source
+from tests.helpers.builders import EPOCH, make_job, make_record, make_scan, make_source
 from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fakes_jobs import FakeBoardProvider, RecordingEventBus
 from tests.helpers.scripted_runner import ScriptedRunner
-from tests.helpers.seeding import store_project
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 STATUS_PARAM: str = 'status'
-PROJECTS_PATH: str = '/api/v1/projects'
+BOOKS_PATH: str = '/api/v1/books'
 IIIF_PATH: str = '/api/v1/iiif'
 PAGE_SIZE_PARAM: str = 'size'
 PAGE_NUMBER_PARAM: str = 'page'
@@ -108,7 +108,7 @@ def _sources_path(book: Book) -> str:
     :returns: The path below the API prefix.
     :rtype: str
     """
-    return f'{PROJECTS_PATH}/{book.project.id}/sources'
+    return f'{BOOKS_PATH}/{book.book_record.id}/sources'
 
 
 @pytest.fixture
@@ -159,7 +159,7 @@ async def _add_unimported(uow: UnitOfWork, book: Book, status_of: SourceStatus, 
         rejection=RejectionReason.UNSUPPORTED_TYPE if rejected else None,
         detail=RejectionReason.UNSUPPORTED_TYPE.label if rejected else '',
     )
-    await uow.change_book(book.project.id, lambda repos, _project: repos.sources.add(source))
+    await uow.change_book(book.book_record.id, lambda repos, _book_record: repos.sources.add(source))
     return source
 
 
@@ -244,7 +244,7 @@ class TestListSources:
         expect((sources.total, sources.pages) == (2, 2))
         assert_expectations()
 
-    async def test_another_accounts_project_is_not_found(
+    async def test_another_accounts_book_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_strangers_book: Book
     ) -> None:
         """Verify the sources of another account's project cannot be listed.
@@ -317,13 +317,13 @@ class TestDeleteSource:
         response = await fx_client.delete(f'{_sources_path(fx_book)}/{fx_book.first.id}')
 
         page = PageSchema.model_validate_json(
-            (await fx_client.get(f'{PROJECTS_PATH}/{fx_book.project.id}/pages/{fx_book.page.id}')).content
+            (await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/pages/{fx_book.page.id}')).content
         )
         assert page.images is not None
         image = await fx_client.get(page.images.full)
         sources = Page[SourceSchema].model_validate_json((await fx_client.get(_sources_path(fx_book))).content)
         scans = Page[ScanSchema].model_validate_json(
-            (await fx_client.get(f'{PROJECTS_PATH}/{fx_book.project.id}/scans')).content
+            (await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/scans')).content
         )
         expect(response.status_code == status.HTTP_204_NO_CONTENT)
         expect(on_disk(fx_storage_root, fx_book, fx_book.first) == (False, False))
@@ -363,7 +363,7 @@ class TestDeleteSource:
         :param fx_storage_root: Storage root of the application.
         :type fx_storage_root: Path
         """
-        fx_board.put(make_job(project_id=fx_book.project.id, kind=JobKind.IMPORT_SOURCE))
+        fx_board.put(make_job(book_id=fx_book.book_record.id, kind=JobKind.IMPORT_SOURCE))
 
         response = await fx_client.delete(f'{_sources_path(fx_book)}/{fx_book.first.id}')
 
@@ -436,7 +436,7 @@ class TestDeleteUnimportedSources:
         :type fx_book: Book
         """
         kept = await _add_unimported(fx_uow(), fx_book, SourceStatus.REJECTED, 'notes.txt', minutes=5)
-        fx_board.put(make_job(project_id=fx_book.project.id, kind=JobKind.IMPORT_SOURCE))
+        fx_board.put(make_job(book_id=fx_book.book_record.id, kind=JobKind.IMPORT_SOURCE))
 
         response = await fx_client.delete(f'{_sources_path(fx_book)}/unimported')
 
@@ -447,7 +447,7 @@ class TestDeleteUnimportedSources:
         expect([item.id for item in report.items] == [kept.id])
         assert_expectations()
 
-    async def test_another_accounts_project_is_not_found(
+    async def test_another_accounts_book_is_not_found(
         self, fx_client: httpx.AsyncClient, fx_strangers_book: Book
     ) -> None:
         """Verify the report of another account's project cannot be closed.
@@ -465,7 +465,7 @@ class TestDeleteUnimportedSources:
 class TestListScans:
     """Tests for GET /projects/{project_id}/scans."""
 
-    async def test_lists_the_scans_of_the_project_with_paths_of_their_images(
+    async def test_lists_the_scans_of_the_book_with_paths_of_their_images(
         self, fx_client: httpx.AsyncClient, fx_book: Book
     ) -> None:
         """Verify the scans come source by source with image paths that have no scheme or host.
@@ -475,10 +475,10 @@ class TestListScans:
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
         """
-        response = await fx_client.get(f'{PROJECTS_PATH}/{fx_book.project.id}/scans')
+        response = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/scans')
 
         scans = Page[ScanSchema].model_validate_json(response.content)
-        keys = ProjectKeys(fx_book.project.id)
+        keys = BookKeys(fx_book.book_record.id)
         expect(response.status_code == status.HTTP_200_OK)
         expect([item.id for item in scans.items] == [scan.id for scan in fx_book.scans])
         expect(scans.total == len(fx_book.scans))
@@ -504,16 +504,16 @@ class TestListScans:
         :type full: Rendition
         """
         policy = ImagePolicy.LOSSLESS if full is Rendition.FULL_JPEG else ImagePolicy.COMPACT
-        project = evolve(make_project(), image_policy=policy)
+        book_record = evolve(make_record(), image_policy=policy)
         source = make_source()
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True, full=full))
-        await store_project(fx_uow(), project, owner=fx_actor.account_id, sources=[source], scans=[scan])
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, sources=[source], scans=[scan])
 
-        response = await fx_client.get(f'{PROJECTS_PATH}/{project.id}/scans')
+        response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/scans')
 
         images = Page[ScanSchema].model_validate_json(response.content).items[0].images
         assert images is not None
-        assert images.full == f'{IIIF_PATH}/{ProjectKeys(project.id).scan_rendition(scan, full)}'
+        assert images.full == f'{IIIF_PATH}/{BookKeys(book_record.id).scan_rendition(scan, full)}'
 
     async def test_scan_without_ready_renditions_has_no_images(
         self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor
@@ -527,13 +527,17 @@ class TestListScans:
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         """
-        project = make_project()
+        book_record = make_record()
         source = make_source()
-        await store_project(
-            fx_uow(), project, owner=fx_actor.account_id, sources=[source], scans=[make_scan(source=source, number=0)]
+        await store_book(
+            fx_uow(),
+            book_record,
+            owner=fx_actor.account_id,
+            sources=[source],
+            scans=[make_scan(source=source, number=0)],
         )
 
-        response = await fx_client.get(f'{PROJECTS_PATH}/{project.id}/scans')
+        response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/scans')
 
         assert Page[ScanSchema].model_validate_json(response.content).items[0].images is None
 
@@ -546,7 +550,7 @@ class TestListScans:
         :type fx_book: Book
         """
         response = await fx_client.get(
-            f'{PROJECTS_PATH}/{fx_book.project.id}/scans',
+            f'{BOOKS_PATH}/{fx_book.book_record.id}/scans',
             params={SOURCE_ID_PARAM: str(fx_book.second.id), PAGE_SIZE_PARAM: 2, PAGE_NUMBER_PARAM: 2},
         )
 
@@ -555,7 +559,7 @@ class TestListScans:
         expect((scans.total, scans.pages) == (SCANS_PER_SOURCE, 2))
         assert_expectations()
 
-    async def test_unknown_source_and_another_accounts_project_are_not_found(
+    async def test_unknown_source_and_another_accounts_book_are_not_found(
         self, fx_client: httpx.AsyncClient, fx_book: Book, fx_strangers_book: Book
     ) -> None:
         """Verify a source filter that names no source of the project, and a stranger's project, both answer 404.
@@ -568,9 +572,9 @@ class TestListScans:
         :type fx_strangers_book: Book
         """
         unknown = await fx_client.get(
-            f'{PROJECTS_PATH}/{fx_book.project.id}/scans', params={SOURCE_ID_PARAM: str(uuid4())}
+            f'{BOOKS_PATH}/{fx_book.book_record.id}/scans', params={SOURCE_ID_PARAM: str(uuid4())}
         )
-        foreign = await fx_client.get(f'{PROJECTS_PATH}/{fx_strangers_book.project.id}/scans')
+        foreign = await fx_client.get(f'{BOOKS_PATH}/{fx_strangers_book.book_record.id}/scans')
 
         assert [unknown.status_code, foreign.status_code] == [status.HTTP_404_NOT_FOUND] * 2
 
@@ -583,7 +587,7 @@ class TestListScans:
         :type fx_book: Book
         """
         response = await fx_client.get(
-            f'{PROJECTS_PATH}/{fx_book.project.id}/scans', params={SOURCE_ID_PARAM: 'not-an-identifier'}
+            f'{BOOKS_PATH}/{fx_book.book_record.id}/scans', params={SOURCE_ID_PARAM: 'not-an-identifier'}
         )
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT

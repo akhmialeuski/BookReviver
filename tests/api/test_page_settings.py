@@ -11,9 +11,9 @@ from fastapi import status
 from bookreviver.api.schemas.processing import RecipeSchema
 from bookreviver.domain.enums import RecipeKind
 from bookreviver.domain.values import Renditions
-from tests.helpers.builders import make_page, make_project, make_scan, make_source
+from tests.helpers.builders import make_page, make_record, make_scan, make_source
 from tests.helpers.processing import ProcessingFakesProvider
-from tests.helpers.seeding import store_project
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -21,12 +21,12 @@ if TYPE_CHECKING:
     import httpx
     from dishka import Provider
 
-    from bookreviver.domain.entities import Actor, Page, Project
+    from bookreviver.domain.entities import Actor, BookRecord, Page
     from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
-PROJECTS_PATH: str = '/api/v1/projects'
+BOOKS_PATH: str = '/api/v1/books'
 ORDER_KEYS: tuple[str, ...] = ('a0', 'a1', 'a2')
 ITEMS: str = 'items'
 CHANGES: str = 'changes'
@@ -46,19 +46,19 @@ PARAMS: str = 'params'
 class Book(NamedTuple):
     """A book of the signed-in account with three pages and the step of its geometry recipe.
 
-    :ivar project: The project of the book.
+    :ivar book_record: The project of the book.
     :ivar pages: The pages in book order.
     :ivar step_id: Identifier of the only step of the geometry recipe of text pages.
     """
 
-    project: Project
+    book_record: BookRecord
     pages: Sequence[Page]
     step_id: str
 
     @property
     def values(self) -> str:
         """The path of the values of the strength of the step."""
-        return f'{PROJECTS_PATH}/{self.project.id}/stages/geometry/steps/{self.step_id}/values/{STRENGTH}'
+        return f'{BOOKS_PATH}/{self.book_record.id}/stages/geometry/steps/{self.step_id}/values/{STRENGTH}'
 
     def settings(self, index: int) -> str:
         """Give the path of the settings of a page of the book in the geometry stage.
@@ -68,7 +68,7 @@ class Book(NamedTuple):
         :returns: The path.
         :rtype: str
         """
-        return f'{PROJECTS_PATH}/{self.project.id}/pages/{self.pages[index].id}/settings/geometry'
+        return f'{BOOKS_PATH}/{self.book_record.id}/pages/{self.pages[index].id}/settings/geometry'
 
     def undo(self, index: int) -> str:
         """Give the path that takes back the newest change of the step on a page of the book.
@@ -78,7 +78,7 @@ class Book(NamedTuple):
         :returns: The path.
         :rtype: str
         """
-        return f'{PROJECTS_PATH}/{self.project.id}/pages/{self.pages[index].id}/history/geometry/{self.step_id}/undo'
+        return f'{BOOKS_PATH}/{self.book_record.id}/pages/{self.pages[index].id}/history/geometry/{self.step_id}/undo'
 
 
 @pytest.fixture
@@ -104,18 +104,18 @@ async def fx_book(fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_ac
     :returns: The stored book.
     :rtype: Book
     """
-    project = make_project()
+    book_record = make_record()
     sources = [make_source(name=f'{order_key}.pdf') for order_key in ORDER_KEYS]
     scans = [evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True)) for source in sources]
     pages = [make_page(order_key=order_key, scan=scan) for order_key, scan in zip(ORDER_KEYS, scans, strict=True)]
-    await store_project(fx_uow(), project, *pages, owner=fx_actor.account_id, sources=sources, scans=scans)
-    listed = await fx_client.get(f'{PROJECTS_PATH}/{project.id}/stages/geometry/recipes')
+    await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id, sources=sources, scans=scans)
+    listed = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/stages/geometry/recipes')
     recipe = next(
         recipe
         for recipe in (RecipeSchema.model_validate(item) for item in listed.json()[ITEMS])
         if recipe.kind is RecipeKind.TEXT
     )
-    return Book(project=project, pages=pages, step_id=str(recipe.steps[0].step_id))
+    return Book(book_record=book_record, pages=pages, step_id=str(recipe.steps[0].step_id))
 
 
 async def strengths(client: httpx.AsyncClient, book: Book) -> list[int]:
@@ -278,7 +278,7 @@ class TestRefusals:
         response = await fx_client.put(path, json={SCOPE: 'even', VALUE: STRONGER})
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    async def test_a_page_of_another_project_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
+    async def test_a_page_of_another_book_is_a_404(self, fx_client: httpx.AsyncClient, fx_book: Book) -> None:
         """Verify a page that is not one of the project is refused like a missing page.
 
         :param fx_client: Client of the running application.

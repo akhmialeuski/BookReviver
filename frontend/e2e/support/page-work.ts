@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from '../../src/shared/http/csrf';
-import { openProjectId, waitForIdleJobs } from './account';
+import { openBookId, waitForIdleJobs } from './account';
 
 /**
  * What a scenario sets up and reads back through the API for the work of the pages of the Geometry stage: the settings a
@@ -33,7 +33,7 @@ export async function changeHeaders(page: Page): Promise<Record<string, string>>
 
 /** Read the identifiers of the pages of the open book in the order of the book. */
 export async function pageIds(page: Page): Promise<string[]> {
-  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/pages?size=100`);
+  const listed = await page.request.get(`/api/v1/books/${openBookId(page)}/pages?size=100`);
   const items = ((await listed.json()) as { items: { id: string; position: number }[] }).items;
   return items.sort((a, b) => a.position - b.position).map((item) => item.id);
 }
@@ -50,7 +50,7 @@ async function putValue(
   field: string,
 ): Promise<void> {
   const response = await page.request.put(
-    `/api/v1/projects/${openProjectId(page)}/stages/geometry/steps/${stepId}/values/${field}`,
+    `/api/v1/books/${openBookId(page)}/stages/geometry/steps/${stepId}/values/${field}`,
     { headers: await changeHeaders(page), data: { ...target, value } },
   );
   expect(response.ok()).toBe(true);
@@ -87,7 +87,7 @@ export async function putSideValue(
 /** Save the rotation edit of a step as the editor does. */
 export async function saveRotation(page: Page, pageId: string, stepId: string): Promise<void> {
   const response = await page.request.put(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/edits/geometry/${stepId}`,
+    `/api/v1/books/${openBookId(page)}/pages/${pageId}/edits/geometry/${stepId}`,
     {
       headers: await changeHeaders(page),
       multipart: { kind: 'rotation', geometry: JSON.stringify({ degrees: ANGLE_OF_THE_EDIT }) },
@@ -99,7 +99,7 @@ export async function saveRotation(page: Page, pageId: string, stepId: string): 
 /** Read the fields a page changes for itself in the steps of the stage, by name, one entry for each step that has any. */
 export async function readSettings(page: Page, pageId: string): Promise<Record<string, number>[]> {
   const response = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/settings/geometry`,
+    `/api/v1/books/${openBookId(page)}/pages/${pageId}/settings/geometry`,
   );
   const body = (await response.json()) as { items: { params: Record<string, number> }[] };
   return body.items.map((item) => item.params);
@@ -117,7 +117,7 @@ export async function readEffective(
   { stepId, field = FIELD }: { stepId?: string; field?: string } = {},
 ): Promise<number | undefined> {
   const response = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/settings/geometry`,
+    `/api/v1/books/${openBookId(page)}/pages/${pageId}/settings/geometry`,
   );
   const body = (await response.json()) as {
     items: { step_id: string; effective: Record<string, number> }[];
@@ -130,7 +130,7 @@ export async function readEffective(
 /** Count the manual edits a page has in the stage. */
 export async function countEdits(page: Page, pageId: string): Promise<number> {
   const response = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/edits/geometry`,
+    `/api/v1/books/${openBookId(page)}/pages/${pageId}/edits/geometry`,
   );
   return ((await response.json()) as { total: number }).total;
 }
@@ -142,7 +142,7 @@ export async function readHistory(
   stepId: string,
 ): Promise<HistoryItem[]> {
   const response = await page.request.get(
-    `/api/v1/projects/${openProjectId(page)}/pages/${pageId}/history/geometry/${stepId}?size=100`,
+    `/api/v1/books/${openBookId(page)}/pages/${pageId}/history/geometry/${stepId}?size=100`,
   );
   return ((await response.json()) as { items: HistoryItem[] }).items;
 }
@@ -170,7 +170,7 @@ export async function openTimeline(page: Page): Promise<Locator> {
 
 /** Read the jobs of the open book that are runs of a stage, whatever their state, newest first. */
 async function runJobs(page: Page): Promise<{ id: string; state: string }[]> {
-  const listed = await page.request.get(`/api/v1/projects/${openProjectId(page)}/jobs?size=100`);
+  const listed = await page.request.get(`/api/v1/books/${openBookId(page)}/jobs?size=100`);
   const items = ((await listed.json()) as { items: { id: string; kind: string; state: string }[] })
     .items;
   return items.filter((job) => job.kind === 'run-stage');
@@ -222,7 +222,7 @@ export async function runPages(
   } = {},
 ): Promise<void> {
   // A run an edit started is over first, so it is not counted as the one asked for here
-  await waitForIdleJobs(page, openProjectId(page));
+  await waitForIdleJobs(page, openBookId(page));
   const known = await endedRunIds(page);
   await page.getByTestId('run-menu').click();
   await page.getByTestId(`run-pages-${pages}`).click();
@@ -245,7 +245,7 @@ export async function runPages(
       timeout: RUN_TIMEOUT_MS,
     })
     .toBe(true);
-  await waitForIdleJobs(page, openProjectId(page));
+  await waitForIdleJobs(page, openBookId(page));
 }
 
 /** Where a page stands in a stage and which of its versions is the result, as the rows of the stage give them. */
@@ -259,10 +259,8 @@ export interface StageRow {
 
 /** Read the rows of a stage in the order of the book, which say what each page is and whether its result is up to date. */
 export async function readStageRows(page: Page, stage = 'geometry'): Promise<StageRow[]> {
-  const projectId = openProjectId(page);
-  const listed = await page.request.get(
-    `/api/v1/projects/${projectId}/stages/${stage}/pages?size=100`,
-  );
+  const bookId = openBookId(page);
+  const listed = await page.request.get(`/api/v1/books/${bookId}/stages/${stage}/pages?size=100`);
   const items = (
     (await listed.json()) as {
       items: { page_id: string; status: string; kind: string; version: { id: string } | null }[];

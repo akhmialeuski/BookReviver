@@ -19,12 +19,12 @@ from bookreviver.api.schemas.edits import CarryForm, CarryOverSchema, EditForm, 
 from bookreviver.api.schemas.page_history import PageHistoryEntrySchema
 from bookreviver.domain.entities import PageEdit
 from bookreviver.domain.enums import Stage
-from bookreviver.domain.ids import PageId, ProjectId, StepId
+from bookreviver.domain.ids import BookId, PageId, StepId
 from bookreviver.domain.values import PageStepKey, Slice
 from bookreviver.services.edits import EditService
 from bookreviver.services.page_carry import CarryOverService
 
-router = APIRouter(prefix='/projects', tags=['edits'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
+router = APIRouter(prefix='/books', tags=['edits'], route_class=DishkaRoute, dependencies=[Depends(fresh_book)])
 
 # The form may hold a file, so the schema says it is a multipart form, and the generated client sends it as one
 MULTIPART_FORM: str = 'multipart/form-data'
@@ -34,12 +34,12 @@ MULTIPART_FORM: str = 'multipart/form-data'
 class EditPath:
     """The identifiers in the address of the edits of one stage of one page.
 
-    :ivar project_id: Identifier of the project.
+    :ivar book_id: Identifier of the project.
     :ivar page_id: Identifier of the page.
     :ivar stage: The stage.
     """
 
-    project_id: Annotated[ProjectId, Path(description='Identifier of the project')]
+    book_id: Annotated[BookId, Path(description='Identifier of the book')]
     page_id: Annotated[PageId, Path(description='Identifier of the page')]
     stage: Annotated[Stage, Path(description='Stage of the step that reads the edit')]
 
@@ -59,7 +59,7 @@ class StepEditPath(EditPath):
         return PageStepKey(self.page_id, self.stage, self.step_id)
 
 
-@router.get('/{project_id}/pages/{page_id}/edits/{stage}')
+@router.get('/{book_id}/pages/{page_id}/edits/{stage}')
 async def list_edits(
     address: Annotated[EditPath, Depends()],
     params: Annotated[Params, Depends()],
@@ -95,12 +95,12 @@ async def list_edits(
         return PageEditSchema.of(edit, request)
 
     pager = Pager[PageEdit, PageEditSchema](params, to_schema)
-    found = await edits.list(actor, address.project_id, address.page_id, address.stage)
+    found = await edits.list(actor, address.book_id, address.page_id, address.stage)
     window = found[pager.request.offset : pager.request.offset + pager.request.limit]
     return pager.page(Slice(items=window, total=len(found)))
 
 
-@router.put('/{project_id}/pages/{page_id}/edits/{stage}/{step_id}')
+@router.put('/{book_id}/pages/{page_id}/edits/{stage}/{step_id}')
 async def put_edit(
     address: Annotated[StepEditPath, Depends()],
     form: Annotated[EditForm, Form(media_type=MULTIPART_FORM)],
@@ -127,11 +127,11 @@ async def put_edit(
     :returns: The edit as stored, with its hash.
     :rtype: PageEditSchema
     """
-    stored = await edits.save(actor, address.project_id, address.key, form.to_edit(), form.mask)
+    stored = await edits.save(actor, address.book_id, address.key, form.to_edit(), form.mask)
     return PageEditSchema.of(stored, request)
 
 
-@router.delete('/{project_id}/pages/{page_id}/edits/{stage}/{step_id}', status_code=status.HTTP_204_NO_CONTENT)
+@router.delete('/{book_id}/pages/{page_id}/edits/{stage}/{step_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def delete_edit(
     address: Annotated[StepEditPath, Depends()], actor: ActorDep, edits: FromDishka[EditService]
 ) -> None:
@@ -145,10 +145,10 @@ async def delete_edit(
     :param edits: Edit service of the request.
     :type edits: EditService
     """
-    await edits.delete(actor, address.project_id, address.key)
+    await edits.delete(actor, address.book_id, address.key)
 
 
-@router.post('/{project_id}/pages/{page_id}/edits/{stage}/{step_id}/carry-over')
+@router.post('/{book_id}/pages/{page_id}/edits/{stage}/{step_id}/carry-over')
 async def carry_over_edit(
     address: Annotated[StepEditPath, Depends()],
     form: CarryForm,
@@ -176,7 +176,7 @@ async def carry_over_edit(
     :returns: The batch, the changes written and the pages skipped.
     :rtype: CarryOverSchema
     """
-    carried = await carry.carry(actor, address.project_id, form.to_request(address.key))
+    carried = await carry.carry(actor, address.book_id, form.to_request(address.key))
     return CarryOverSchema(
         batch_id=carried.batch_id,
         changes=[PageHistoryEntrySchema.model_validate(change) for change in carried.changes],

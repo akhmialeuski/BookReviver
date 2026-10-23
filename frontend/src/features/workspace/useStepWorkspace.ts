@@ -60,21 +60,21 @@ export function useStepWorkspace(
   stepId: string | undefined,
   current: StripItem | undefined,
 ): StepWorkspace {
-  const { projectId, stage, recipe, catalogue } = processing;
+  const { bookId, stage, recipe, catalogue } = processing;
   // A stage that has no bar reads no row of any step
   const steps = useMemo(
     () => (hasStepBar(stage) ? barStepsOf(recipe, catalogue) : []),
     [stage, recipe, catalogue],
   );
   const open = openStepOf(steps, stepId);
-  const rows = useStepRows(projectId, stage, open?.stepId);
+  const rows = useStepRows(bookId, stage, open?.stepId);
   const pageId = current?.page.id;
   const position = current?.page.position;
 
   const [carriedResults, setCarriedResults] = useState<ReadonlyMap<string, CarryOverSchema>>(
     new Map(),
   );
-  const carryKey = open === null ? null : `${projectId}|${stage}|${open.stepId}`;
+  const carryKey = open === null ? null : `${bookId}|${stage}|${open.stepId}`;
   const setCarried = useCallback(
     (result: CarryOverSchema | null) => {
       if (carryKey === null) {
@@ -96,7 +96,7 @@ export function useStepWorkspace(
   // Every step but the open one is read for the open page alone: one row of the stage at the place of the page
   const others = useQueries({
     queries: steps.map((step) => ({
-      ...stepRowOptions(projectId, stage, step.stepId, position ?? 0),
+      ...stepRowOptions(bookId, stage, step.stepId, position ?? 0),
       enabled: position !== undefined && step.stepId !== open?.stepId,
     })),
   });

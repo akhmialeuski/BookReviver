@@ -25,7 +25,7 @@ from bookreviver.services.step_rows import StepRows
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
-    from bookreviver.domain.entities import PageVersion, ProjectOverview, Recipe
+    from bookreviver.domain.entities import BookOverview, PageVersion, Recipe
     from bookreviver.domain.enums import RecipeKind
     from bookreviver.domain.ids import PageVersionId, StepId
     from bookreviver.domain.stage_summaries import StageTally, StepTally
@@ -50,13 +50,13 @@ class StageSummaries:
         self._catalogue = catalogue
         self._board = board
 
-    def of_book(self, repos: BookRepositories, overview: ProjectOverview) -> list[StageSummary]:
+    def of_book(self, repos: BookRepositories, overview: BookOverview) -> list[StageSummary]:
         """Sum every stage of a book, in the order of the pipeline.
 
         :param repos: Repositories of the transaction the caller runs in, which are only read.
         :type repos: BookRepositories
         :param overview: The book with the number of its pages that have an image.
-        :type overview: ProjectOverview
+        :type overview: BookOverview
         :returns: One summary for each stage, with the recipe of each kind of page when the stage has them.
         :rtype: list[StageSummary]
         """
@@ -173,7 +173,7 @@ class StageSummaries:
             walking = ahead
         return markers
 
-    def with_progress(self, repos: BookRepositories, overview: ProjectOverview) -> ProjectOverview:
+    def with_progress(self, repos: BookRepositories, overview: BookOverview) -> BookOverview:
         """Add the progress of a book to its overview.
 
         A stage is running while a job that runs it is queued or running.
@@ -181,18 +181,18 @@ class StageSummaries:
         :param repos: Repositories of the transaction of the book the caller runs in, which are only read.
         :type repos: BookRepositories
         :param overview: The book with the number of its pages that have an image.
-        :type overview: ProjectOverview
+        :type overview: BookOverview
         :returns: The overview with its progress.
-        :rtype: ProjectOverview
+        :rtype: BookOverview
         """
         tallies = {tally.stage: tally for tally in repos.page_stages.tally()}
-        jobs = self._board.jobs_of({overview.project.id}, active=True)
+        jobs = self._board.jobs_of({overview.book_record.id}, active=True)
         running = {job.stage for job in jobs if job.stage is not None}
         return evolve(overview, progress=BookProgress.of(self._summarize(overview, tallies, {}, {}, {}), running))
 
     def _summarize(
         self,
-        overview: ProjectOverview,
+        overview: BookOverview,
         tallies: Mapping[Stage, StageTally],
         recipes: Mapping[Stage, Sequence[Recipe]],
         kinds: Mapping[RecipeKind, int],
@@ -201,7 +201,7 @@ class StageSummaries:
         """Sum every stage of a book from the counts already read.
 
         :param overview: The book with the number of its pages that have an image.
-        :type overview: ProjectOverview
+        :type overview: BookOverview
         :param tallies: The counts of the records of each stage that has any.
         :type tallies: Mapping[Stage, StageTally]
         :param recipes: The recipes of each stage that has any, or none for a list of books, which does not show them.

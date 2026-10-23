@@ -12,12 +12,12 @@ from bookreviver.domain.enums import ResultMark
 from tests.helpers.builders import (
     make_page,
     make_page_version,
-    make_project,
+    make_record,
 )
-from tests.helpers.seeding import store_project
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
-    from bookreviver.domain.ids import PageId, PageVersionId, ProjectId
+    from bookreviver.domain.ids import BookId, PageId, PageVersionId
     from tests.contracts.conftest import OwnerFactory
     from tests.helpers.database import UnitOfWorkFactory
 
@@ -28,7 +28,7 @@ COMMENT: str = 'Too tight on the left.\nTry the other method.'
 
 async def _store_version(
     uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory
-) -> tuple[ProjectId, PageId, PageVersionId]:
+) -> tuple[BookId, PageId, PageVersionId]:
     """Store a project with one page and one version of it, each in the change that owns it.
 
     :param uow_factory: Function opening a new unit of work over the database of the test.
@@ -36,13 +36,13 @@ async def _store_version(
     :param new_owner: Function creating an account the database accepts as an owner.
     :type new_owner: OwnerFactory
     :returns: The identifiers of the project, its page and the version of the page.
-    :rtype: tuple[ProjectId, PageId, PageVersionId]
+    :rtype: tuple[BookId, PageId, PageVersionId]
     """
-    project = make_project()
+    book_record = make_record()
     page = make_page()
     version = make_page_version(page_id=page.id)
-    await store_project(uow_factory(), project, page, owner=await new_owner(), versions=[version])
-    return project.id, page.id, version.id
+    await store_book(uow_factory(), book_record, page, owner=await new_owner(), versions=[version])
+    return book_record.id, page.id, version.id
 
 
 class TestResultMarkColumns:
@@ -58,8 +58,8 @@ class TestResultMarkColumns:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project_id, _, version_id = await _store_version(fx_uow, fx_new_owner)
-        version = await fx_uow().read_book(project_id, lambda repos: repos.page_versions.get(version_id))
+        book_id, _, version_id = await _store_version(fx_uow, fx_new_owner)
+        version = await fx_uow().read_book(book_id, lambda repos: repos.page_versions.get(version_id))
         assert (version.mark, version.comment) == (None, '')
 
     async def test_mark_and_comment_survive_an_update_and_can_be_taken_off(
@@ -72,19 +72,21 @@ class TestResultMarkColumns:
         :param fx_new_owner: Function creating an account the database accepts as an owner.
         :type fx_new_owner: OwnerFactory
         """
-        project_id, _, version_id = await _store_version(fx_uow, fx_new_owner)
+        book_id, _, version_id = await _store_version(fx_uow, fx_new_owner)
         uow = fx_uow()
-        version = await uow.read_book(project_id, lambda repos: repos.page_versions.get(version_id))
+        version = await uow.read_book(book_id, lambda repos: repos.page_versions.get(version_id))
         await uow.change_book(
-            project_id,
-            lambda repos, _project: repos.page_versions.update(evolve(version, mark=ResultMark.BAD, comment=COMMENT)),
+            book_id,
+            lambda repos, _book_record: repos.page_versions.update(
+                evolve(version, mark=ResultMark.BAD, comment=COMMENT)
+            ),
         )
-        marked = await fx_uow().read_book(project_id, lambda repos: repos.page_versions.get(version_id))
+        marked = await fx_uow().read_book(book_id, lambda repos: repos.page_versions.get(version_id))
         await fx_uow().change_book(
-            project_id,
-            lambda repos, _project: repos.page_versions.update(evolve(marked, mark=None, comment='')),
+            book_id,
+            lambda repos, _book_record: repos.page_versions.update(evolve(marked, mark=None, comment='')),
         )
-        cleared = await fx_uow().read_book(project_id, lambda repos: repos.page_versions.get(version_id))
+        cleared = await fx_uow().read_book(book_id, lambda repos: repos.page_versions.get(version_id))
         assert ((marked.mark, marked.comment), (cleared.mark, cleared.comment)) == (
             (ResultMark.BAD, COMMENT),
             (None, ''),

@@ -3,8 +3,8 @@ import path from 'node:path';
 import { expect, type Locator } from '@playwright/test';
 import {
   createBook,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   stepIdsOf,
   uploadFolder,
@@ -75,7 +75,7 @@ test('the compare of Margins draws the block of text inside the page at the plac
     const [stepId = ''] = await stepIdsOf(page, 'geometry', NORMALIZE, 'color-picture');
     const stepRow = async () => {
       const listed = await page.request.get(
-        `/api/v1/projects/${openProjectId(page)}/stages/geometry/pages?step=${stepId}&size=10`,
+        `/api/v1/books/${openBookId(page)}/stages/geometry/pages?step=${stepId}&size=10`,
       );
       const [item] = (
         (await listed.json()) as {

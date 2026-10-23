@@ -24,8 +24,8 @@ from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import SliceRequest
 from bookreviver.ports.persistence import NoChangeOpenError
 from tests.helpers.book_hold import HOLD_LIMIT_SECONDS
-from tests.helpers.builders import make_book_place, make_page, make_page_version, make_project
-from tests.helpers.seeding import store_project
+from tests.helpers.builders import make_book_place, make_page, make_page_version, make_record
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import PageVersion, Project
+    from bookreviver.domain.entities import BookRecord, PageVersion
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.database import UnitOfWorkFactory
@@ -49,22 +49,22 @@ MISSING_VERSION: PageVersion = make_page_version(page_id=PageId(uuid4()))
 WRITE_ARG: str = 'write'
 # A write of each form the repositories use, which a read refuses, by the name of the test case; each takes the
 # repositories and the stored project of the test
-WRITES: dict[str, Callable[[BookRepositories, Project], object]] = {
-    'insert-through-the-session': lambda repos, project: repos.pages.add(make_page()),
-    'update-through-the-session': lambda repos, project: repos.projects.update(
-        evolve(project, details=evolve(project.details, title=NEW_TITLE))
+WRITES: dict[str, Callable[[BookRepositories, BookRecord], object]] = {
+    'insert-through-the-session': lambda repos, book_record: repos.pages.add(make_page()),
+    'update-through-the-session': lambda repos, book_record: repos.book_record.update(
+        evolve(book_record, details=evolve(book_record.details, title=NEW_TITLE))
     ),
-    'bulk-delete': lambda repos, _project: repos.page_versions.delete_many([MISSING_VERSION.id]),
+    'bulk-delete': lambda repos, _book_record: repos.page_versions.delete_many([MISSING_VERSION.id]),
 }
 
 
-def count_pages(repos: BookRepositories, _project: Project) -> int:
+def count_pages(repos: BookRepositories, _book_record: BookRecord) -> int:
     """Count the pages of the book.
 
     :param repos: Repositories of the transaction.
     :type repos: BookRepositories
-    :param _project: The project of the book.
-    :type _project: Project
+    :param _book_record: The project of the book.
+    :type _book_record: BookRecord
     :returns: How many pages the transaction sees.
     :rtype: int
     """
@@ -75,11 +75,11 @@ class TestRead:
     """Tests for the transaction of ``read_book``, which runs on a connection of the readers of the book."""
 
     @pytest.mark.parametrize(WRITE_ARG, list(WRITES.values()), ids=list(WRITES))
-    async def test_every_form_of_write_is_refused_and_leaves_the_project_as_it_was(
+    async def test_every_form_of_write_is_refused_and_leaves_the_book_as_it_was(
         self,
         fx_uow: UnitOfWorkFactory,
         fx_owner_id: AccountId,
-        write: Callable[[BookRepositories, Project], object],
+        write: Callable[[BookRepositories, BookRecord], object],
     ) -> None:
         """Verify a read refuses a write through the session and a bulk statement alike, and stores nothing.
 
@@ -88,19 +88,19 @@ class TestRead:
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         :param write: A write the work of the read attempts.
-        :type write: Callable[[BookRepositories, Project], object]
+        :type write: Callable[[BookRepositories, BookRecord], object]
         """
-        project = make_project()
+        book_record = make_record()
         uow = fx_uow()
-        await store_project(uow, project, owner=fx_owner_id)
+        await store_book(uow, book_record, owner=fx_owner_id)
 
         with pytest.raises(NoChangeOpenError):
-            await uow.read_book(project.id, lambda repos: write(repos, project))
+            await uow.read_book(book_record.id, lambda repos: write(repos, book_record))
 
         stored, pages = await uow.read_book(
-            project.id, lambda repos: (repos.projects.get(project.id), count_pages(repos, project))
+            book_record.id, lambda repos: (repos.book_record.get(book_record.id), count_pages(repos, book_record))
         )
-        expect(stored == project)
+        expect(stored == book_record)
         expect(pages == 0)
         assert_expectations()
 
@@ -118,9 +118,9 @@ class TestRead:
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        project = make_project()
+        book_record = make_record()
         uow = fx_uow()
-        await store_project(uow, project, make_page(order_key='a0'), owner=fx_owner_id)
+        await store_book(uow, book_record, make_page(order_key='a0'), owner=fx_owner_id)
         written = make_page(order_key='a1')
         snapshot_taken, change_committed = threading.Event(), threading.Event()
         seen: list[tuple[int, int]] = []
@@ -133,22 +133,22 @@ class TestRead:
             :returns: The number of pages before the commit and after it, as this transaction saw them.
             :rtype: tuple[int, int]
             """
-            before = count_pages(repos, project)
+            before = count_pages(repos, book_record)
             snapshot_taken.set()
             assert change_committed.wait(HOLD_LIMIT_SECONDS)
-            return before, count_pages(repos, project)
+            return before, count_pages(repos, book_record)
 
         async def read_twice() -> None:
             """Run the work of the two reads in a read of the unit of work, and keep what it saw."""
-            seen.append(await uow.read_book(project.id, count_twice))
+            seen.append(await uow.read_book(book_record.id, count_twice))
 
         async with anyio.create_task_group() as group:
             group.start_soon(read_twice)
             assert await to_thread.run_sync(snapshot_taken.wait, HOLD_LIMIT_SECONDS)
-            await uow.change_book(project.id, lambda repos, _project: repos.pages.add(written))
+            await uow.change_book(book_record.id, lambda repos, _book_record: repos.pages.add(written))
             change_committed.set()
 
-        after = await uow.read_book(project.id, lambda repos: count_pages(repos, project))
+        after = await uow.read_book(book_record.id, lambda repos: count_pages(repos, book_record))
         expect(seen == [(1, 1)], f'{seen} seen by the read')
         expect(after == 2, f'{after} seen by a later read')
         assert_expectations()
@@ -181,19 +181,19 @@ class TestBookVersion:
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
-        project = make_project()
+        book_record = make_record()
         uow = fx_uow()
-        await store_project(uow, project, owner=fx_owner_id)
-        before = await uow.book_version(project.id)
+        await store_book(uow, book_record, owner=fx_owner_id)
+        before = await uow.book_version(book_record.id)
         fx_book_changes.published.clear()
 
-        await uow.change_book(project.id, lambda repos, _project: repos.pages.add(make_page()))
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.pages.add(make_page()))
 
-        after = await uow.book_version(project.id)
+        after = await uow.book_version(book_record.id)
         expect(after == before + 1)
         expect(
             fx_book_changes.published
-            == [BookChanged(project_id=project.id, version=after, resources=frozenset({BookResource.PAGES}))]
+            == [BookChanged(book_id=book_record.id, version=after, resources=frozenset({BookResource.PAGES}))]
         )
         assert_expectations()
 
@@ -209,16 +209,16 @@ class TestBookVersion:
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
-        project = make_project()
+        book_record = make_record()
         uow = fx_uow()
-        await store_project(uow, project, owner=fx_owner_id)
-        before = await uow.book_version(project.id)
+        await store_book(uow, book_record, owner=fx_owner_id)
+        before = await uow.book_version(book_record.id)
         fx_book_changes.published.clear()
 
-        await uow.change_book(project.id, count_pages)
-        await uow.change_book(project.id, lambda repos, _project: repos.book_places.save(make_book_place()))
+        await uow.change_book(book_record.id, count_pages)
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.book_places.save(make_book_place()))
 
-        expect(await uow.book_version(project.id) == before)
+        expect(await uow.book_version(book_record.id) == before)
         expect(fx_book_changes.published == [])
         assert_expectations()
 
@@ -234,15 +234,17 @@ class TestBookVersion:
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
         :type fx_book_changes: RecordingEventBus
         """
-        project, page = make_project(), make_page()
+        book_record, page = make_record(), make_page()
         version = make_page_version(page_id=page.id)
         uow = fx_uow()
-        await store_project(uow, project, page, owner=fx_owner_id)
-        await uow.change_book(project.id, lambda repos, _project: repos.page_versions.add(version))
+        await store_book(uow, book_record, page, owner=fx_owner_id)
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(version))
         fx_book_changes.published.clear()
 
-        await uow.change_book(project.id, lambda repos, _project: repos.page_versions.delete_many([MISSING_VERSION.id]))
-        await uow.change_book(project.id, lambda repos, _project: repos.page_versions.delete_many([version.id]))
+        await uow.change_book(
+            book_record.id, lambda repos, _book_record: repos.page_versions.delete_many([MISSING_VERSION.id])
+        )
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.page_versions.delete_many([version.id]))
 
         assert [event.resources for event in fx_book_changes.published if isinstance(event, BookChanged)] == [
             frozenset({BookResource.VERSIONS})
@@ -262,17 +264,17 @@ class TestGroups:
         :param fx_owner_id: Committed account owning the project.
         :type fx_owner_id: AccountId
         """
-        project, page = make_project(), make_page()
+        book_record, page = make_record(), make_page()
         uow = fx_uow()
-        await store_project(uow, project, owner=fx_owner_id)
-        await uow.change_book(project.id, lambda repos, _project: repos.pages.add(page))
+        await store_book(uow, book_record, owner=fx_owner_id)
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.pages.add(page))
 
         grouped = await uow.change_book(
-            project.id, lambda repos, _project: repos.pages.update(evolve(page, group_label=GROUP))
+            book_record.id, lambda repos, _book_record: repos.pages.update(evolve(page, group_label=GROUP))
         )
-        made = await uow.read_book(project.id, group_key)
-        await uow.change_book(project.id, lambda repos, _project: repos.pages.update(page))
-        left = await uow.read_book(project.id, group_key)
+        made = await uow.read_book(book_record.id, group_key)
+        await uow.change_book(book_record.id, lambda repos, _book_record: repos.pages.update(page))
+        left = await uow.read_book(book_record.id, group_key)
 
         expect(grouped.group_label == GROUP)
         expect(made is not None)

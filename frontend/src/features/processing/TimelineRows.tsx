@@ -96,7 +96,7 @@ export function ChangeRow({
  * whether it is the current one or may be made so, and the notes of the reader on it.
  */
 export function ResultRow({
-  projectId,
+  bookId,
   entry,
   processor,
   canUse,
@@ -104,7 +104,7 @@ export function ResultRow({
   using,
   onUse,
 }: {
-  projectId: string;
+  bookId: string;
   entry: HistoryEntry;
   /** The processor that made the result, which gives the settings their titles. */
   processor: ProcessorSchema | undefined;
@@ -163,7 +163,7 @@ export function ResultRow({
           </Button>
         ) : null}
       </div>
-      <ResultNote projectId={projectId} version={version} />
+      <ResultNote bookId={bookId} version={version} />
     </li>
   );
 }

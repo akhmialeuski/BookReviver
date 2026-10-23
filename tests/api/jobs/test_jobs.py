@@ -18,11 +18,11 @@ from tests.helpers.builders import (
     make_book_change,
     make_job,
     make_page_version,
-    make_project,
+    make_record,
     new_account_id,
 )
 from tests.helpers.scripted_runner import TASKS_PER_JOB
-from tests.helpers.seeding import commit_project, store_project
+from tests.helpers.seeding import commit_record, store_book
 from tests.helpers.sse import EVENT_STREAM_TYPE, STREAM_TIMEOUT_SECONDS, EventStreamReader, StreamedEvent
 
 if TYPE_CHECKING:
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.anyio
 
 JOB_PATH: str = '/api/v1/jobs/{job_id}'
-PROJECT_PATH: str = '/api/v1/projects/{project_id}'
+BOOK_PATH: str = '/api/v1/books/{book_id}'
 NOTES_FIELD: str = 'notes'
 CHANGED_NOTES: str = 'Read again'
 RESOURCES_FIELD: str = 'resources'
@@ -45,14 +45,14 @@ VERSION_FIELD: str = 'version'
 LAST_EVENT_ID_HEADER: bytes = b'last-event-id'
 # An id no version of a book ever has
 NO_VERSION: bytes = b'-1'
-JOBS_PATH: str = '/api/v1/projects/{project_id}/jobs'
+JOBS_PATH: str = '/api/v1/books/{book_id}/jobs'
 ACTIVE_PARAMETER: str = 'active'
 CONTENT_TYPE_HEADER: str = 'content-type'
 PROBLEM_MEDIA_TYPE: str = 'application/problem+json'
 # Fields of the job, the page of jobs and project-changed schemas in a JSON body
 JOB_ID_FIELD: str = 'id'
 JOB_STATE_FIELD: str = 'state'
-PROJECT_ID_FIELD: str = 'project_id'
+BOOK_ID_FIELD: str = 'book_id'
 PAGE_ID_FIELD: str = 'page_id'
 KIND_FIELD: str = 'kind'
 STAGE_FIELD: str = 'stage'
@@ -77,9 +77,9 @@ async def fx_queued_job(fx_fakes: JobFakes, fx_uow: UnitOfWorkFactory, fx_actor:
     :returns: The queued job.
     :rtype: Job
     """
-    project = make_project()
-    await store_project(fx_uow(), project, owner=fx_actor.account_id)
-    return fx_fakes.board.put(make_job(project_id=project.id))
+    book_record = make_record()
+    await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+    return fx_fakes.board.put(make_job(book_id=book_record.id))
 
 
 @pytest.fixture
@@ -95,9 +95,9 @@ async def fx_strangers_job(fx_fakes: JobFakes, fx_database: SqlDatabase, fx_uow:
     :returns: The queued job of the other account.
     :rtype: Job
     """
-    project = make_project()
-    await commit_project(fx_database, fx_uow(), project, owner=new_account_id())
-    return fx_fakes.board.put(make_job(project_id=project.id))
+    book_record = make_record()
+    await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id())
+    return fx_fakes.board.put(make_job(book_id=book_record.id))
 
 
 class TestReadJob:
@@ -139,10 +139,10 @@ class TestReadJob:
         :param fx_queued_job: Queued import job of the signed-in account.
         :type fx_queued_job: Job
         """
-        project = make_project()
-        await store_project(fx_uow(), project, owner=fx_actor.account_id)
+        book_record = make_record()
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
         run = fx_fakes.board.put(
-            make_job(project_id=project.id, kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.GEOMETRY).to_map())
+            make_job(book_id=book_record.id, kind=JobKind.RUN_STAGE, params=StageRun(stage=Stage.GEOMETRY).to_map())
         )
         run_body = (await fx_client.get(JOB_PATH.format(job_id=run.id))).json()
         import_body = (await fx_client.get(JOB_PATH.format(job_id=fx_queued_job.id))).json()
@@ -178,7 +178,7 @@ class TestReadJob:
 class TestListJobs:
     """Tests for GET /projects/{project_id}/jobs."""
 
-    async def test_lists_the_jobs_of_the_project_newest_first_and_the_active_ones_alone(
+    async def test_lists_the_jobs_of_the_book_newest_first_and_the_active_ones_alone(
         self, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_queued_job: Job
     ) -> None:
         """Verify the list answers the jobs of the project the board holds, newest first, and ``active`` drops the ended.
@@ -191,8 +191,8 @@ class TestListJobs:
         :type fx_queued_job: Job
         """
         await fx_fakes.board.run_queued()
-        later = fx_fakes.board.put(make_job(project_id=fx_queued_job.project_id, minutes=1))
-        path = JOBS_PATH.format(project_id=fx_queued_job.project_id)
+        later = fx_fakes.board.put(make_job(book_id=fx_queued_job.book_id, minutes=1))
+        path = JOBS_PATH.format(book_id=fx_queued_job.book_id)
         everything = (await fx_client.get(path)).json()
         active = (await fx_client.get(path, params={ACTIVE_PARAMETER: 'true'})).json()
         expect([job[JOB_ID_FIELD] for job in everything[ITEMS_FIELD]] == [str(later.id), str(fx_queued_job.id)])
@@ -248,7 +248,7 @@ class TestCancelJob:
         assert_expectations()
 
 
-class TestStreamProjectEvents:
+class TestStreamBookEvents:
     """Tests for GET /projects/{project_id}/events."""
 
     async def test_stream_delivers_job_and_book_changes(
@@ -267,20 +267,20 @@ class TestStreamProjectEvents:
         :param fx_queued_job: Queued job of the signed-in account.
         :type fx_queued_job: Job
         """
-        project_id = fx_queued_job.project_id
+        book_id = fx_queued_job.book_id
         reader = EventStreamReader(count=2)
         async with anyio.create_task_group() as group:
-            group.start_soon(reader.read, fx_app, fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=project_id))
+            group.start_soon(reader.read, fx_app, fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=book_id))
             # Change things only once the stream has subscribed, which happens before the endpoint runs
             await fx_fakes.events.subscribed.wait()
             await fx_client.delete(JOB_PATH.format(job_id=fx_queued_job.id))
-            await fx_fakes.events.publish(make_book_change(project_id=project_id))
+            await fx_fakes.events.publish(make_book_change(book_id=book_id))
 
         expect((reader.status, reader.content_type.split(';')[0]) == (HTTPStatus.OK, EVENT_STREAM_TYPE))
         expect([event.name for event in reader.events] == [EventName.JOB_CHANGED, EventName.BOOK_CHANGED])
         expect(reader.events[0].data[JOB_ID_FIELD] == str(fx_queued_job.id))
         expect(reader.events[0].data[JOB_STATE_FIELD] == JobState.CANCELLED)
-        expect(reader.events[1].data[PROJECT_ID_FIELD] == str(project_id))
+        expect(reader.events[1].data[BOOK_ID_FIELD] == str(book_id))
         expect(fx_fakes.events.open_subscriptions == 0)
         assert_expectations()
 
@@ -298,16 +298,16 @@ class TestStreamProjectEvents:
         :param fx_queued_job: Queued job of the signed-in account, whose project is changed.
         :type fx_queued_job: Job
         """
-        project_id = fx_queued_job.project_id
+        book_id = fx_queued_job.book_id
         reader = EventStreamReader(count=1)
         async with anyio.create_task_group() as group:
-            group.start_soon(reader.read, fx_app, fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=project_id))
+            group.start_soon(reader.read, fx_app, fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=book_id))
             await fx_fakes.events.subscribed.wait()
-            await fx_client.patch(PROJECT_PATH.format(project_id=project_id), json={NOTES_FIELD: CHANGED_NOTES})
+            await fx_client.patch(BOOK_PATH.format(book_id=book_id), json={NOTES_FIELD: CHANGED_NOTES})
 
         [changed] = reader.events
         expect(changed.name == EventName.BOOK_CHANGED)
-        expect(changed.data[RESOURCES_FIELD] == [BookResource.PROJECT])
+        expect(changed.data[RESOURCES_FIELD] == [BookResource.RECORD])
         expect(changed.id == str(changed.data[VERSION_FIELD]))
         assert_expectations()
 
@@ -320,7 +320,7 @@ class TestStreamProjectEvents:
         :type fx_queued_job: Job
         """
         reader = EventStreamReader(count=0)
-        path = fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=fx_queued_job.project_id)
+        path = fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=fx_queued_job.book_id)
 
         await reader.read(fx_app, path)
 
@@ -339,9 +339,9 @@ class TestStreamProjectEvents:
         :param fx_queued_job: Queued job of the signed-in account, whose project is listened to.
         :type fx_queued_job: Job
         """
-        project_id = fx_queued_job.project_id
+        book_id = fx_queued_job.book_id
         reader = EventStreamReader(count=1)
-        path = fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=project_id)
+        path = fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=book_id)
 
         await reader.read(fx_app, path, headers=[(LAST_EVENT_ID_HEADER, NO_VERSION)])
 
@@ -366,7 +366,7 @@ class TestStreamProjectEvents:
         reader = EventStreamReader(count=2)
         async with anyio.create_task_group() as group:
             group.start_soon(
-                reader.read, fx_app, fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=fx_queued_job.project_id)
+                reader.read, fx_app, fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=fx_queued_job.book_id)
             )
             await fx_fakes.events.subscribed.wait()
             group.start_soon(fx_fakes.board.run_queued)
@@ -395,7 +395,7 @@ class TestStreamProjectEvents:
         reader = EventStreamReader(count=TASKS_PER_JOB + 2)
         async with anyio.create_task_group() as group:
             group.start_soon(
-                reader.read, fx_app, fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=fx_queued_job.project_id)
+                reader.read, fx_app, fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=fx_queued_job.book_id)
             )
             await fx_fakes.events.subscribed.wait()
             await fx_fakes.board.run_queued()
@@ -421,7 +421,7 @@ class TestStreamProjectEvents:
         reader = EventStreamReader(count=2)
         async with anyio.create_task_group() as group:
             group.start_soon(
-                reader.read, fx_app, fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=fx_queued_job.project_id)
+                reader.read, fx_app, fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=fx_queued_job.book_id)
             )
             await fx_fakes.events.subscribed.wait()
             await fx_fakes.board.run_queued()
@@ -442,22 +442,22 @@ class TestStreamProjectEvents:
         :param fx_queued_job: Queued job of the signed-in account, whose project the event belongs to.
         :type fx_queued_job: Job
         """
-        project_id = fx_queued_job.project_id
+        book_id = fx_queued_job.book_id
         version = make_page_version(page_id=PageId(uuid4()))
         reader = EventStreamReader(count=1)
         async with anyio.create_task_group() as group:
-            group.start_soon(reader.read, fx_app, fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=project_id))
+            group.start_soon(reader.read, fx_app, fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=book_id))
             await fx_fakes.events.subscribed.wait()
-            await fx_fakes.events.publish(PageVersionReady(project_id=project_id, version=version))
+            await fx_fakes.events.publish(PageVersionReady(book_id=book_id, version=version))
 
         assert reader.events == [
             StreamedEvent(
                 EventName.PAGE_VERSION_READY,
-                {PROJECT_ID_FIELD: str(project_id), PAGE_ID_FIELD: str(version.page_id), 'version_id': version.id},
+                {BOOK_ID_FIELD: str(book_id), PAGE_ID_FIELD: str(version.page_id), 'version_id': version.id},
             )
         ]
 
-    async def test_project_of_another_account_is_not_found(
+    async def test_book_of_another_account_is_not_found(
         self, fx_app: FastAPI, fx_client: httpx.AsyncClient, fx_fakes: JobFakes, fx_strangers_job: Job
     ) -> None:
         """Verify listening to another account's project answers 404 before any stream starts.
@@ -471,7 +471,7 @@ class TestStreamProjectEvents:
         :param fx_strangers_job: Job of another account, whose project is listened to.
         :type fx_strangers_job: Job
         """
-        path = fx_app.url_path_for(RouteName.PROJECT_EVENTS, project_id=fx_strangers_job.project_id)
+        path = fx_app.url_path_for(RouteName.BOOK_EVENTS, book_id=fx_strangers_job.book_id)
         # A stream that started by mistake would never end, so the request is bounded
         with anyio.fail_after(STREAM_TIMEOUT_SECONDS):
             response = await fx_client.get(path)

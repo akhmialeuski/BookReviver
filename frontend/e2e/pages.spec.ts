@@ -134,7 +134,7 @@ test('a reader arranges the pages of a book', async ({ page }) => {
   });
 
   await test.step('read the refusal of the server when a move conflicts', async () => {
-    await page.route('**/api/v1/projects/*/pages/move', (route) =>
+    await page.route('**/api/v1/books/*/pages/move', (route) =>
       route.fulfill({
         status: 409,
         contentType: 'application/problem+json',
@@ -151,7 +151,7 @@ test('a reader arranges the pages of a book', async ({ page }) => {
     await page.getByRole('button', { name: /^Move after/ }).click();
     await expect(page.getByRole('dialog')).toContainText('Nothing was changed');
     await expect(page.getByRole('dialog')).toContainText('Another move took that place first.');
-    await page.unroute('**/api/v1/projects/*/pages/move');
+    await page.unroute('**/api/v1/books/*/pages/move');
     await page.getByRole('button', { name: 'Cancel' }).click();
     await page.getByRole('button', { name: 'Clear the selection' }).click();
     // The order is the one the server has, which the refused move did not change

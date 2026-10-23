@@ -17,13 +17,13 @@ from typing import TYPE_CHECKING
 from attrs import evolve
 
 from bookreviver.domain.enums import VersionData, VersionState
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
-    from bookreviver.domain.entities import PageVersion, Project
-    from bookreviver.domain.ids import PageVersionId, ProjectId
+    from bookreviver.domain.entities import BookRecord, PageVersion
+    from bookreviver.domain.ids import BookId, PageVersionId
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.storage import AssetStore
 
@@ -35,20 +35,20 @@ logger = logging.getLogger(__name__)
 class VersionClearing:
     """Deletes batches of the versions of one project, and remembers the versions that must stay."""
 
-    def __init__(self, *, uow: UnitOfWork, assets: AssetStore, project_id: ProjectId) -> None:
+    def __init__(self, *, uow: UnitOfWork, assets: AssetStore, book_id: BookId) -> None:
         """Work over the ports of one collection of one project.
 
         :param uow: Unit of work of the job, whose blocks write each batch.
         :type uow: UnitOfWork
         :param assets: Store of the derived files, from which the directories of the versions are removed.
         :type assets: AssetStore
-        :param project_id: Project owning the versions.
-        :type project_id: ProjectId
+        :param book_id: Project owning the versions.
+        :type book_id: BookId
         """
         self._uow = uow
         self._assets = assets
-        self._project_id = project_id
-        self._keys = ProjectKeys(project_id)
+        self._book_id = book_id
+        self._keys = BookKeys(book_id)
         self._held: set[PageVersionId] = set()
 
     async def clear(self, batch: Sequence[PageVersion]) -> int:
@@ -66,7 +66,7 @@ class VersionClearing:
         going = [version for version in batch if version.id not in self._held]
         self._hold(version for version in batch if version.id in self._held)
 
-        def mark(repos: BookRepositories, _project: Project) -> None:
+        def mark(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Mark the versions that are ready as failed, so none of them is taken for a result while its files go.
 
             The versions are read again, so a version deleted meanwhile is left out and a mark or a comment a user put
@@ -74,8 +74,8 @@ class VersionClearing:
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it, which the marking does not read.
-            :type _project: Project
+            :param _book_record: The project as the change finds it, which the marking does not read.
+            :type _book_record: BookRecord
             """
             for version in repos.page_versions.list_by_ids([version.id for version in going]):
                 if version.state is VersionState.READY:
@@ -84,7 +84,7 @@ class VersionClearing:
                     )
                     repos.page_versions.update(marked)
 
-        await self._uow.change_book(self._project_id, mark)
+        await self._uow.change_book(self._book_id, mark)
         gone: list[PageVersionId] = []
         for version in going:
             try:
@@ -94,7 +94,7 @@ class VersionClearing:
                 self._hold([version])
             else:
                 gone.append(version.id)
-        await self._uow.change_book(self._project_id, lambda repos, _project: repos.page_versions.delete_many(gone))
+        await self._uow.change_book(self._book_id, lambda repos, _book_record: repos.page_versions.delete_many(gone))
         return len(gone)
 
     def _hold(self, staying: Iterable[PageVersion]) -> None:

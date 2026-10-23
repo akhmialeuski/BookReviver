@@ -1,7 +1,7 @@
 import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Stage } from '@/api';
 import {
-  applyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostMutation,
+  applyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostMutation,
   createProfileApiV1RecipeProfilesPostMutation,
   deleteDefaultProfileApiV1RecipeProfilesProfileIdDefaultDeleteMutation,
   deleteProfileApiV1RecipeProfilesProfileIdDeleteMutation,
@@ -12,10 +12,10 @@ import {
   listProfilesApiV1RecipeProfilesGetQueryKey,
   putDefaultProfileApiV1RecipeProfilesProfileIdDefaultPutMutation,
   putProfileApiV1RecipeProfilesProfileIdPutMutation,
-  putRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutMutation,
+  putRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutMutation,
   renameProfileApiV1RecipeProfilesProfileIdPatchMutation,
 } from '@/api/@tanstack/react-query.gen';
-import { invalidateAllRecipes } from '@/features/projects/queries';
+import { invalidateAllRecipes } from '@/features/books/queries';
 
 /**
  * The queries and changes behind the recipe profiles of the account: the list of them, by stage or all, and the saving,
@@ -73,11 +73,11 @@ export function useReplaceProfile() {
  * Record which profile a recipe of a book was made from. The steps of the recipe do not change, so no page goes stale,
  * but the recipes are read again, since they carry the link.
  */
-export function useLinkProfile(projectId: string) {
+export function useLinkProfile(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...putRecipeProfileApiV1ProjectsProjectIdStagesStageRecipesRecipeIdProfilePutMutation(),
-    onSettled: () => invalidateAllRecipes(queryClient, projectId),
+    ...putRecipeProfileApiV1BooksBookIdStagesStageRecipesRecipeIdProfilePutMutation(),
+    onSettled: () => invalidateAllRecipes(queryClient, bookId),
   });
 }
 
@@ -121,12 +121,12 @@ export function useUnsetDefaultProfile() {
  * Put the steps of a profile into the recipe of one kind of page of a book. The pages that recipe made go out of date, and
  * the profile is linked to the recipe.
  */
-export function useApplyProfile(projectId: string) {
+export function useApplyProfile(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    ...applyProfileApiV1ProjectsProjectIdRecipeProfilesProfileIdApplyPostMutation(),
+    ...applyProfileApiV1BooksBookIdRecipeProfilesProfileIdApplyPostMutation(),
     onSettled: () =>
-      Promise.all([invalidateAllRecipes(queryClient, projectId), refreshProfiles(queryClient)]),
+      Promise.all([invalidateAllRecipes(queryClient, bookId), refreshProfiles(queryClient)]),
   });
 }
 

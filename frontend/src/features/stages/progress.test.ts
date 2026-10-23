@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ProjectSchema, StageStatus } from '@/api';
+import type { BookSchema, StageStatus } from '@/api';
 import { nextStageOf, progressSegments } from './progress';
 import { STAGES } from './stages';
 
@@ -7,7 +7,7 @@ import { STAGES } from './stages';
  * The ten segments of a book and its next stage, as the library card reads them.
  */
 
-function progressOf(statuses: Partial<Record<string, StageStatus>>): ProjectSchema['progress'] {
+function progressOf(statuses: Partial<Record<string, StageStatus>>): BookSchema['progress'] {
   return STAGES.map(({ stage }) => ({ stage, status: statuses[stage] ?? 'waiting' }));
 }
 

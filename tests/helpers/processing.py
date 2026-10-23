@@ -24,7 +24,7 @@ from bookreviver.domain.enums import (
     StageState,
     VersionState,
 )
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import PageStageKey, PageStepKey, RecipeKey, Renditions, SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.processing import ProcessorCatalog, StepExecutor
@@ -45,7 +45,7 @@ from tests.helpers.builders import (
     SPLIT_NONE,
     make_page,
     make_page_version,
-    make_project,
+    make_record,
     make_scan,
     make_source,
 )
@@ -61,14 +61,14 @@ from tests.helpers.in_process_executor import InProcessStepExecutor
 from tests.helpers.page_services import FakeTiler, make_page_service
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 from tests.helpers.recording_tracer import RecordingTracer
-from tests.helpers.seeding import commit_account, store_project
+from tests.helpers.seeding import commit_account, store_book
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.domain.entities import Job, Page, PageVersion, Project, Recipe, Scan
-    from bookreviver.domain.ids import JobId, PageVersionId, ProjectId
+    from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, Recipe, Scan
+    from bookreviver.domain.ids import BookId, JobId, PageVersionId
     from bookreviver.domain.values import JobEnd, MetadataMap, RecipeDraft, Slice
     from bookreviver.ports.persistence import BookRepositories, PageVersionRepository, UnitOfWork
     from bookreviver.ports.processing import Processor
@@ -210,14 +210,14 @@ class ProcessingKit:
         )
 
     async def recipe_of(
-        self, actor: Actor, project: Project, stage: Stage, kind: RecipeKind = RecipeKind.TEXT
+        self, actor: Actor, book_record: BookRecord, stage: Stage, kind: RecipeKind = RecipeKind.TEXT
     ) -> Recipe:
         """Read the recipe of one kind of a stage of a project, which the first read creates with the others.
 
         :param actor: Account owning the project.
         :type actor: Actor
-        :param project: Project whose recipe is read.
-        :type project: Project
+        :param book_record: Project whose recipe is read.
+        :type book_record: BookRecord
         :param stage: The stage.
         :type stage: Stage
         :param kind: The kind of page, text unless given.
@@ -225,18 +225,23 @@ class ProcessingKit:
         :returns: The recipe.
         :rtype: Recipe
         """
-        listed = await self.service().recipes(actor, project.id, stage, SliceRequest(limit=len(RecipeKind)))
+        listed = await self.service().recipes(actor, book_record.id, stage, SliceRequest(limit=len(RecipeKind)))
         return next(recipe for recipe in listed.items if recipe.kind is kind)
 
     async def edit_recipe(
-        self, actor: Actor, project: Project, stage: Stage, draft: RecipeDraft, kind: RecipeKind = RecipeKind.TEXT
+        self,
+        actor: Actor,
+        book_record: BookRecord,
+        stage: Stage,
+        draft: RecipeDraft,
+        kind: RecipeKind = RecipeKind.TEXT,
     ) -> Recipe:
         """Replace the steps of the recipe of one kind of a stage, which the first read of the stage creates.
 
         :param actor: Account owning the project.
         :type actor: Actor
-        :param project: Project whose recipe is changed.
-        :type project: Project
+        :param book_record: Project whose recipe is changed.
+        :type book_record: BookRecord
         :param stage: The stage.
         :type stage: Stage
         :param draft: The new steps.
@@ -246,8 +251,8 @@ class ProcessingKit:
         :returns: The recipe as stored.
         :rtype: Recipe
         """
-        recipe = await self.recipe_of(actor, project, stage, kind)
-        return await self.service().save_recipe(actor, project.id, RecipeKey(stage, recipe.id), draft)
+        recipe = await self.recipe_of(actor, book_record, stage, kind)
+        return await self.service().save_recipe(actor, book_record.id, RecipeKey(stage, recipe.id), draft)
 
     def stages(self) -> StageSummaries:
         """Build the sums of the stages of books, which read through the repositories their caller hands them.
@@ -343,12 +348,12 @@ class ProcessingKit:
             uow=uow, records=parts.records, starter=parts.starter, assets=self.assets, clock=self.clock
         )
 
-    async def edit_key(self, project_id: ProjectId, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
+    async def edit_key(self, book_id: BookId, page: Page, stage: Stage, processor_key: str) -> PageStepKey:
         """Give the key of the edit of a step of the recipe of the kind of a page in a stage, found by its processor.
 
-        :param project_id: Identifier of the project of the page.
+        :param book_id: Identifier of the project of the page.
 
-        :type project_id: ProjectId
+        :type book_id: BookId
 
         :param page: Page the edit belongs to.
         :type page: Page
@@ -359,7 +364,7 @@ class ProcessingKit:
         :returns: The key of the edit of that step.
         :rtype: PageStepKey
         """
-        recipe = await self.parts(self.uow()).recipes.of_kind(project_id, stage, page.recipe_kind)
+        recipe = await self.parts(self.uow()).recipes.of_kind(book_id, stage, page.recipe_kind)
         step = next(step for step in recipe.steps if step.processor_key == processor_key)
         return PageStepKey(page.id, stage, step.step_id)
 
@@ -371,26 +376,31 @@ class ProcessingKit:
         """
         return self._new_uow()
 
-    async def seed_project(self, *, image_policy: ImagePolicy = ImagePolicy.COMPACT) -> tuple[Actor, Project]:
+    async def seed_record(self, *, image_policy: ImagePolicy = ImagePolicy.COMPACT) -> tuple[Actor, BookRecord]:
         """Commit a new account and a project of it.
 
         :param image_policy: Image policy of the project.
         :type image_policy: ImagePolicy
         :returns: The actor owning the project, and the project.
-        :rtype: tuple[Actor, Project]
+        :rtype: tuple[Actor, BookRecord]
         """
         owner = await commit_account(self.database)
-        project = evolve(make_project(), image_policy=image_policy)
-        await store_project(self.uow(), project, owner=owner)
-        return Actor(account_id=owner), project
+        book_record = evolve(make_record(), image_policy=image_policy)
+        await store_book(self.uow(), book_record, owner=owner)
+        return Actor(account_id=owner), book_record
 
     async def seed_scan_page(
-        self, project: Project, *, order_key: str = 'a0', image: bytes = IMAGE_CONTENT, kind: PageKind = PageKind.TEXT
+        self,
+        book_record: BookRecord,
+        *,
+        order_key: str = 'a0',
+        image: bytes = IMAGE_CONTENT,
+        kind: PageKind = PageKind.TEXT,
     ) -> tuple[Page, Scan]:
         """Commit a scan whose images are stored and a page that shows it whole.
 
-        :param project: Project owning the page.
-        :type project: Project
+        :param book_record: Project owning the page.
+        :type book_record: BookRecord
         :param order_key: Order key of the page.
         :type order_key: str
         :param image: Content of the ``full`` and the preview image of the scan.
@@ -404,33 +414,31 @@ class ProcessingKit:
         scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
         page = make_page(order_key=order_key, scan=scan, kind=kind)
 
-        def add_scan_page(repos: BookRepositories, _project: Project) -> None:
+        def add_scan_page(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Add the source, its scan and the page that shows the scan.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: Project of the book, which the work does not need.
-            :type _project: Project
+            :param _book_record: Project of the book, which the work does not need.
+            :type _book_record: BookRecord
             """
             repos.sources.add(source)
             repos.scans.add(scan)
             repos.pages.add(page)
 
-        await self.uow().change_book(project.id, add_scan_page)
-        keys = ProjectKeys(project.id)
+        await self.uow().change_book(book_record.id, add_scan_page)
+        keys = BookKeys(book_record.id)
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
             async with self.assets.writable(keys.scan_rendition(scan, rendition)) as target:
                 target.write_bytes(image)
         return page, scan
 
-    async def seed_base_version(
-        self, project_id: ProjectId, page: Page, *, image: bytes = IMAGE_CONTENT
-    ) -> PageVersion:
+    async def seed_base_version(self, book_id: BookId, page: Page, *, image: bytes = IMAGE_CONTENT) -> PageVersion:
         """Commit the ready base version of a page, with its files and its stage record.
 
-        :param project_id: Identifier of the project of the page.
+        :param book_id: Identifier of the project of the page.
 
-        :type project_id: ProjectId
+        :type book_id: BookId
 
         :param page: Page that has a scan.
         :type page: Page
@@ -447,18 +455,18 @@ class ProcessingKit:
             tiles_ready=True,
             data={'width_px': IMAGE_SIZE_PX, 'height_px': IMAGE_SIZE_PX},
         )
-        keys = ProjectKeys(project_id)
+        keys = BookKeys(book_id)
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
             async with self.assets.writable(keys.version_rendition(version, rendition)) as target:
                 target.write_bytes(image)
 
-        def add_base_version(repos: BookRepositories, _project: Project) -> None:
+        def add_base_version(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Add the version and the record of the page split stage that names it as current.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: Project of the book, which the work does not need.
-            :type _project: Project
+            :param _book_record: Project of the book, which the work does not need.
+            :type _book_record: BookRecord
             """
             repos.page_versions.add(version)
             repos.page_stages.save(
@@ -471,34 +479,34 @@ class ProcessingKit:
                 )
             )
 
-        await self.uow().change_book(project_id, add_base_version)
+        await self.uow().change_book(book_id, add_base_version)
         return version
 
-    async def store_files(self, version: PageVersion, project_id: ProjectId) -> None:
+    async def store_files(self, version: PageVersion, book_id: BookId) -> None:
         """Write the three files of a version of a project's page, as a run would.
 
         :param version: Version whose files are written.
         :type version: PageVersion
-        :param project_id: Project owning the page.
-        :type project_id: ProjectId
+        :param book_id: Project owning the page.
+        :type book_id: BookId
         """
-        keys = ProjectKeys(project_id)
+        keys = BookKeys(book_id)
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
             async with self.assets.writable(keys.version_rendition(version, rendition)) as target:
                 target.write_bytes(IMAGE_CONTENT)
 
-    async def stored_version(self, project_id: ProjectId, version_id: PageVersionId) -> PageVersion:
+    async def stored_version(self, book_id: BookId, version_id: PageVersionId) -> PageVersion:
         """Read a version back as committed.
 
-        :param project_id: Project whose book holds the version.
-        :type project_id: ProjectId
+        :param book_id: Project whose book holds the version.
+        :type book_id: BookId
         :param version_id: Identifier of the version.
         :type version_id: PageVersionId
         :returns: The version as its book holds it now.
         :rtype: PageVersion
         :raises NotFoundError: If the book holds no such version.
         """
-        return await self.uow().read_book(project_id, lambda repos: repos.page_versions.get(version_id))
+        return await self.uow().read_book(book_id, lambda repos: repos.page_versions.get(version_id))
 
     @staticmethod
     def params(**values: object) -> MetadataMap:
@@ -525,43 +533,41 @@ def stored_job(kit: ProcessingKit, job_id: JobId) -> Job:
     return kit.board.get(job_id)
 
 
-async def change_versions(
-    kit: ProcessingKit, project_id: ProjectId, work: Callable[[PageVersionRepository], object]
-) -> None:
+async def change_versions(kit: ProcessingKit, book_id: BookId, work: Callable[[PageVersionRepository], object]) -> None:
     """Change the versions of a book in a change of its own, as another request would.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param project_id: Project whose book is changed.
-    :type project_id: ProjectId
+    :param book_id: Project whose book is changed.
+    :type book_id: BookId
     :param work: What is done to the version repository of the change.
     :type work: Callable[[PageVersionRepository], object]
     """
-    await kit.uow().change_book(project_id, lambda repos, _project: work(repos.page_versions))
+    await kit.uow().change_book(book_id, lambda repos, _book_record: work(repos.page_versions))
 
 
-async def found_version(kit: ProcessingKit, project_id: ProjectId, version_id: PageVersionId) -> PageVersion | None:
+async def found_version(kit: ProcessingKit, book_id: BookId, version_id: PageVersionId) -> PageVersion | None:
     """Read a version as committed, which is None for a version that the book does not hold.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param project_id: Project whose book is read.
-    :type project_id: ProjectId
+    :param book_id: Project whose book is read.
+    :type book_id: BookId
     :param version_id: Identifier of the version.
     :type version_id: PageVersionId
     :returns: The version, or None.
     :rtype: PageVersion | None
     """
-    return await kit.uow().read_book(project_id, lambda repos: repos.page_versions.find(version_id))
+    return await kit.uow().read_book(book_id, lambda repos: repos.page_versions.find(version_id))
 
 
-async def found_stage(kit: ProcessingKit, project_id: ProjectId, page: Page, stage: Stage) -> PageStage | None:
+async def found_stage(kit: ProcessingKit, book_id: BookId, page: Page, stage: Stage) -> PageStage | None:
     """Read the record of a stage of a page as committed, which is None for a stage that has not run on the page.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param project_id: Identifier of the project of the page.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project of the page.
+    :type book_id: BookId
     :param page: The page.
     :type page: Page
     :param stage: The stage.
@@ -569,18 +575,16 @@ async def found_stage(kit: ProcessingKit, project_id: ProjectId, page: Page, sta
     :returns: The record, or None.
     :rtype: PageStage | None
     """
-    return await kit.uow().read_book(project_id, lambda repos: repos.page_stages.find(PageStageKey(page.id, stage)))
+    return await kit.uow().read_book(book_id, lambda repos: repos.page_stages.find(PageStageKey(page.id, stage)))
 
 
-async def stage_versions(
-    kit: ProcessingKit, project_id: ProjectId, page: Page, stage: Stage | None
-) -> Slice[PageVersion]:
+async def stage_versions(kit: ProcessingKit, book_id: BookId, page: Page, stage: Stage | None) -> Slice[PageVersion]:
     """Read the versions a page has made in a stage or in all, as committed, the earliest first.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
-    :param project_id: Identifier of the project of the page.
-    :type project_id: ProjectId
+    :param book_id: Identifier of the project of the page.
+    :type book_id: BookId
     :param page: The page.
     :type page: Page
     :param stage: The stage, or None for every stage.
@@ -589,7 +593,7 @@ async def stage_versions(
     :rtype: Slice[PageVersion]
     """
     return await kit.uow().read_book(
-        project_id,
+        book_id,
         lambda repos: repos.page_versions.list_for_stage(page.id, stage, None, SliceRequest(limit=VERSIONS_WINDOW)),
     )
 

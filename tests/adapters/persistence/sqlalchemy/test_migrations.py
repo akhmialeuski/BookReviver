@@ -28,10 +28,10 @@ from bookreviver.adapters.persistence.sqlalchemy.accounts import OAuthAccountTab
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyBookRepositories
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
+    BookRecordRow,
     PageHistoryRow,
     PageRow,
     PageVersionRow,
-    ProjectRow,
     ScanRow,
     SourceRow,
 )
@@ -49,7 +49,7 @@ from tests.helpers.builders import (
     make_page,
     make_page_history_entry,
     make_page_version,
-    make_project,
+    make_record,
     make_scan,
     make_source,
     make_step_values,
@@ -63,7 +63,7 @@ if TYPE_CHECKING:
     from dishka import AsyncContainer
 
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
 
 pytestmark = pytest.mark.anyio
 
@@ -123,7 +123,7 @@ RETYPE_A_COLUMN: str = """    with op.batch_alter_table({table!r}) as batch_op:
 # Changes nothing, standing for a revision of a branch that the checked-out code does not ship
 NO_CHANGE: str = ''
 # The tables holding the rows of a book that the test writes
-BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (ProjectRow, SourceRow, ScanRow, PageRow, PageVersionRow)
+BOOK_TABLES: tuple[type[CommonTableAttributes], ...] = (BookRecordRow, SourceRow, ScanRow, PageRow, PageVersionRow)
 
 
 @pytest.fixture
@@ -253,15 +253,15 @@ async def _migrate(database: SqlDatabase, command: Callable[..., None], *args: s
     await to_thread.run_sync(command, *args)
 
 
-async def _commit_book(database: SqlDatabase) -> ProjectId:
+async def _commit_book(database: SqlDatabase) -> BookId:
     """Commit a project with a page cut from a scan, its source and the page's version.
 
     :param database: Migrated database of a book to commit into.
     :type database: SqlDatabase
     :returns: Identifier of the project.
-    :rtype: ProjectId
+    :rtype: BookId
     """
-    project = make_project()
+    book_record = make_record()
     source = make_source()
     scan = make_scan(source=source, number=0)
     page = make_page(scan=scan)
@@ -273,14 +273,14 @@ async def _commit_book(database: SqlDatabase) -> ProjectId:
         :type session: Session
         """
         repos = SqlAlchemyBookRepositories(session)
-        repos.projects.add(project)
+        repos.book_record.add(book_record)
         repos.sources.add(source)
         repos.scans.add(scan)
         repos.pages.add(page)
         repos.page_versions.add(make_page_version(page_id=page.id))
 
-    await database.write(store, kind=BlockKind.BOOK, book=project.id, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS)
-    return project.id
+    await database.write(store, kind=BlockKind.BOOK, book=book_record.id, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS)
+    return book_record.id
 
 
 def _migrations_with_revision(database: SqlDatabase, target: Path, upgrade: str) -> AlembicCommands:
@@ -593,18 +593,18 @@ class TestBookKeyRevision:
         :type fx_empty_book: SqlDatabase
         """
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
-        project_id = await _commit_book(fx_empty_book)
+        book_id = await _commit_book(fx_empty_book)
         await fx_empty_book.write(
             lambda session: SqlAlchemyBookRepositories(session).book_places.save(make_book_place()),
             kind=BlockKind.BOOK,
-            book=project_id,
+            book=book_id,
             wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
         )
         await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_BOOK_KEYS)
         with _session(fx_empty_book) as session:
             for table in BOOK_KEYED:
                 named = session.scalars(text(f'SELECT DISTINCT project_id FROM "{table}"')).all()
-                expect(named == [project_id.bytes], table)
+                expect(named == [book_id.bytes], table)
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
         with _session(fx_empty_book) as session:
             for row_table in BOOK_TABLES:
@@ -619,11 +619,11 @@ class TestBookKeyRevision:
         :type fx_empty_book: SqlDatabase
         """
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
-        project_id = await _commit_book(fx_empty_book)
+        book_id = await _commit_book(fx_empty_book)
         await fx_empty_book.write(
             lambda session: SqlAlchemyBookRepositories(session).book_places.save(make_book_place()),
             kind=BlockKind.BOOK,
-            book=project_id,
+            book=book_id,
             wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
         )
         with _session(fx_empty_book) as session, pytest.raises(IntegrityError, match='CHECK constraint failed'):
@@ -656,14 +656,14 @@ class TestHistoryRevision:
         :type fx_empty_book: SqlDatabase
         """
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
-        project_id = await _commit_book(fx_empty_book)
+        book_id = await _commit_book(fx_empty_book)
         with _session(fx_empty_book) as session:
             page_id = PageId(session.scalars(select(PageRow.id)).one())
         entry = make_page_history_entry(page_id=page_id)
         await fx_empty_book.write(
             lambda session: SqlAlchemyBookRepositories(session).page_history.add(entry),
             kind=BlockKind.BOOK,
-            book=project_id,
+            book=book_id,
             wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS,
         )
         await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_HISTORY)
@@ -688,7 +688,7 @@ class TestGroupsRevision:
         :rtype: PageId
         """
         await _migrate(database, database.migrations.upgrade, HEAD)
-        project_id = await _commit_book(database)
+        book_id = await _commit_book(database)
         with _session(database) as session:
             page_id = PageId(session.scalars(select(PageRow.id)).one())
 
@@ -707,7 +707,7 @@ class TestGroupsRevision:
                 evolve(make_page_history_entry(page_id=page_id), scope=ValueScope.GROUP, group_label=GROUP)
             )
 
-        await database.write(group, kind=BlockKind.BOOK, book=project_id, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS)
+        await database.write(group, kind=BlockKind.BOOK, book=book_id, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS)
         return page_id
 
     async def test_a_group_keeps_its_page_values_and_changes_both_ways(self, fx_empty_book: SqlDatabase) -> None:
@@ -769,7 +769,7 @@ class TestChangesRevision:
         :type fx_empty_book: SqlDatabase
         """
         await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
-        project_id = await _commit_book(fx_empty_book)
+        book_id = await _commit_book(fx_empty_book)
         second = make_page(order_key=SECOND_ORDER_KEY)
         with _session(fx_empty_book) as session:
             pages = sorted([PageId(session.scalars(select(PageRow.id)).one()), second.id])
@@ -789,9 +789,7 @@ class TestChangesRevision:
             repos.pages.add(second)
             repos.page_history.add_many([*change, *undo])
 
-        await fx_empty_book.write(
-            record, kind=BlockKind.BOOK, book=project_id, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS
-        )
+        await fx_empty_book.write(record, kind=BlockKind.BOOK, book=book_id, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS)
         await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_CHANGES)
         with _session(fx_empty_book) as session:
             rows = session.execute(text('SELECT id, page_id, undoes_id FROM page_history')).all()

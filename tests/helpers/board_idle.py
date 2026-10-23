@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import anyio
 
 if TYPE_CHECKING:
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.runtime import EventStream, JobBoard
 
 # Long enough for a slow machine, short enough to fail a test whose job never ends
@@ -26,18 +26,18 @@ class JobsIdle:
         self._board = board
         self._stream = stream
 
-    async def __call__(self, project_id: ProjectId) -> None:
+    async def __call__(self, book_id: BookId) -> None:
         """Return once the book has no job queued or running, which includes the jobs that a finished job queued.
 
         A job queues its follow-up before it ends, so the book is never idle between the two and one wait covers the
         chain. The subscription is entered before the jobs are read, so a job that ends in between still wakes the
         wait.
 
-        :param project_id: Identifier of the book whose jobs are awaited.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the book whose jobs are awaited.
+        :type book_id: BookId
         :raises TimeoutError: When a job is still queued or running after the timeout.
         """
         with anyio.fail_after(IDLE_TIMEOUT_SECONDS):
-            async with self._stream.subscribe(project_id) as events:
-                while self._board.jobs(project_id, active=True):
+            async with self._stream.subscribe(book_id) as events:
+                while self._board.jobs(book_id, active=True):
                     await anext(events)

@@ -10,7 +10,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.enums import ResultMark, Stage, VersionScale
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import PageVersionId
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import RecipeDraft, ResultNote, StageRun, Step
 from bookreviver.services.library import Library
 from bookreviver.services.result_marks import ResultMarksService
@@ -50,11 +50,11 @@ class TestSet:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, page, version = await ran_geometry(fx_kit)
+        actor, book_record, page, version = await ran_geometry(fx_kit)
         answered = await _marks(fx_kit).set(
-            actor, project.id, page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
+            actor, book_record.id, page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
         )
-        stored = await fx_kit.stored_version(project.id, version.id)
+        stored = await fx_kit.stored_version(book_record.id, version.id)
         expect((answered.mark, answered.comment) == (ResultMark.BAD, COMMENT))
         expect((stored.mark, stored.comment) == (ResultMark.BAD, COMMENT))
         expect(stored == evolve(version, mark=ResultMark.BAD, comment=COMMENT))
@@ -66,14 +66,16 @@ class TestSet:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, page, version = await ran_geometry(fx_kit)
-        await _marks(fx_kit).set(actor, project.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=''))
+        actor, book_record, page, version = await ran_geometry(fx_kit)
+        await _marks(fx_kit).set(
+            actor, book_record.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
+        )
         fx_kit.clock.moment = EPOCH + LATER
         await _marks(fx_kit).set(
-            actor, project.id, page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
+            actor, book_record.id, page.id, version.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
         )
-        await _marks(fx_kit).set(actor, project.id, page.id, version.id, ResultNote(mark=None, comment=COMMENT))
-        stored = await fx_kit.stored_version(project.id, version.id)
+        await _marks(fx_kit).set(actor, book_record.id, page.id, version.id, ResultNote(mark=None, comment=COMMENT))
+        stored = await fx_kit.stored_version(book_record.id, version.id)
         assert (stored.mark, stored.comment) == (None, COMMENT)
 
     async def test_setting_what_is_stored_answers_the_stored_version(self, fx_kit: ProcessingKit) -> None:
@@ -82,14 +84,14 @@ class TestSet:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, page, version = await ran_geometry(fx_kit)
+        actor, book_record, page, version = await ran_geometry(fx_kit)
         marked = await _marks(fx_kit).set(
-            actor, project.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
+            actor, book_record.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
         )
         again = await _marks(fx_kit).set(
-            actor, project.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
+            actor, book_record.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment=COMMENT)
         )
-        assert again == marked == await fx_kit.stored_version(project.id, version.id)
+        assert again == marked == await fx_kit.stored_version(book_record.id, version.id)
 
     async def test_a_preview_takes_no_mark(self, fx_kit: ProcessingKit) -> None:
         """Verify a preview, which a collection deletes, is refused with a conflict.
@@ -97,12 +99,12 @@ class TestSet:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, page, version = await ran_geometry(fx_kit)
+        actor, book_record, page, version = await ran_geometry(fx_kit)
         preview = evolve(version, id=PREVIEW_ID, scale=VersionScale.PREVIEW)
-        await fx_kit.uow().change_book(project.id, lambda repos, _project: repos.page_versions.add(preview))
+        await fx_kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(preview))
         with pytest.raises(ConflictError):
             await _marks(fx_kit).set(
-                actor, project.id, page.id, preview.id, ResultNote(mark=ResultMark.GOOD, comment='')
+                actor, book_record.id, page.id, preview.id, ResultNote(mark=ResultMark.GOOD, comment='')
             )
 
     async def test_a_version_of_another_page_is_not_found(self, fx_kit: ProcessingKit) -> None:
@@ -111,25 +113,25 @@ class TestSet:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, page, version = await ran_geometry(fx_kit)
-        other, _ = await fx_kit.seed_scan_page(project, order_key='a1')
+        actor, book_record, page, version = await ran_geometry(fx_kit)
+        other, _ = await fx_kit.seed_scan_page(book_record, order_key='a1')
         assert other.id != page.id
         with pytest.raises(NotFoundError):
             await _marks(fx_kit).set(
-                actor, project.id, other.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
+                actor, book_record.id, other.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
             )
 
-    async def test_a_project_of_another_account_is_not_found(self, fx_kit: ProcessingKit) -> None:
+    async def test_a_book_of_another_account_is_not_found(self, fx_kit: ProcessingKit) -> None:
         """Verify another account cannot mark a result of the book.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        _, project, page, version = await ran_geometry(fx_kit)
-        stranger, _ = await fx_kit.seed_project()
+        _, book_record, page, version = await ran_geometry(fx_kit)
+        stranger, _ = await fx_kit.seed_record()
         with pytest.raises(NotFoundError):
             await _marks(fx_kit).set(
-                stranger, project.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
+                stranger, book_record.id, page.id, version.id, ResultNote(mark=ResultMark.GOOD, comment='')
             )
 
     async def test_a_comment_keeps_the_version_and_its_notes_through_a_collection(self, fx_kit: ProcessingKit) -> None:
@@ -138,12 +140,14 @@ class TestSet:
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
         """
-        actor, project, page, first = await ran_geometry(fx_kit)
-        await _marks(fx_kit).set(actor, project.id, page.id, first.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT))
+        actor, book_record, page, first = await ran_geometry(fx_kit)
+        await _marks(fx_kit).set(
+            actor, book_record.id, page.id, first.id, ResultNote(mark=ResultMark.BAD, comment=COMMENT)
+        )
         stronger = RecipeDraft(steps=[Step(processor_key=fx_kit.fake.spec.key, params={STRENGTH_PARAMETER: 2})])
-        await fx_kit.edit_recipe(actor, project, Stage.GEOMETRY, stronger)
-        await run_stage(fx_kit, actor, project, StageRun(stage=Stage.GEOMETRY))
-        kept = await fx_kit.stored_version(project.id, first.id)
-        async with fx_kit.assets.readable(ProjectKeys(project.id).version_directory(first)):
+        await fx_kit.edit_recipe(actor, book_record, Stage.GEOMETRY, stronger)
+        await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
+        kept = await fx_kit.stored_version(book_record.id, first.id)
+        async with fx_kit.assets.readable(BookKeys(book_record.id).version_directory(first)):
             pass
         assert (kept.mark, kept.comment) == (ResultMark.BAD, COMMENT)

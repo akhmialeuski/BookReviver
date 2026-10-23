@@ -14,7 +14,7 @@ from fastapi_pagination import Params
 
 from bookreviver.api.schemas.base import ResponseModel
 from bookreviver.domain.enums import BookResource, JobKind, JobState, Stage
-from bookreviver.domain.ids import JobId, PageId, PageVersionId, ProjectId
+from bookreviver.domain.ids import BookId, JobId, PageId, PageVersionId
 
 
 class EventName(enum.StrEnum):
@@ -47,7 +47,7 @@ class JobSchema(ResponseModel):
     process started, is answered as not found.
 
     :ivar id: Identifier of the job.
-    :ivar project_id: Project the job works on.
+    :ivar book_id: Project the job works on.
     :ivar kind: What the job does.
     :ivar stage: The stage a ``run-stage`` job runs, or None for any other kind of job.
     :ivar state: Where the job is in its life cycle.
@@ -59,7 +59,7 @@ class JobSchema(ResponseModel):
     """
 
     id: JobId
-    project_id: ProjectId
+    book_id: BookId
     kind: JobKind
     stage: Stage | None
     state: JobState
@@ -84,12 +84,12 @@ class JobQuery(Params):
 class BookChangedSchema(ResponseModel):
     """A committed change of a book; the data of a ``book-changed`` event, whose id is the version.
 
-    :ivar project_id: Identifier of the project whose reads to repeat.
+    :ivar book_id: Identifier of the project whose reads to repeat.
     :ivar version: The version of the book after the change.
     :ivar resources: The parts of the book the change wrote, whose reads are the ones to repeat.
     """
 
-    project_id: ProjectId
+    book_id: BookId
     version: int
     resources: list[BookResource]
 
@@ -101,22 +101,22 @@ class BookVersionSchema(ResponseModel):
     that comes back that the book changed while it was not listening, and since the stream keeps no changes, every read
     of the book is to be repeated.
 
-    :ivar project_id: Identifier of the project.
+    :ivar book_id: Identifier of the project.
     :ivar version: The version of the book now.
     """
 
-    project_id: ProjectId
+    book_id: BookId
     version: int
 
 
 class PageVersionReadySchema(ResponseModel):
     """A page version with its result; the data of a ``page-version-ready`` event.
 
-    :ivar project_id: Identifier of the project owning the page.
+    :ivar book_id: Identifier of the project owning the page.
     :ivar page_id: Identifier of the page.
     :ivar version_id: Identifier of the ready version to read again.
     """
 
-    project_id: ProjectId
+    book_id: BookId
     page_id: PageId
     version_id: PageVersionId

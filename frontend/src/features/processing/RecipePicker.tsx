@@ -25,7 +25,7 @@ export function RecipePicker({
   testId?: string;
 }): React.JSX.Element | null {
   const { recipe, recipes } = processing;
-  const summaries = useStageSummaries(processing.projectId);
+  const summaries = useStageSummaries(processing.bookId);
   if (recipes.length < 2) {
     return null;
   }

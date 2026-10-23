@@ -44,12 +44,12 @@ function summary(section: PaginationSectionSchema): string {
 }
 
 export function PaginationPanel({
-  projectId,
+  bookId,
   pages,
   spans,
   selectedId,
 }: {
-  projectId: string;
+  bookId: string;
   /** The pages of the book in book order. */
   pages: readonly PageSchema[];
   /** The sections of the book with the pages they number, in book order. */
@@ -118,7 +118,7 @@ export function PaginationPanel({
       {form === null ? null : (
         <SectionDialog
           key={'section' in form ? form.section.id : 'new'}
-          projectId={projectId}
+          bookId={bookId}
           pages={pages}
           section={'section' in form ? form.section : undefined}
           initial={'section' in form ? draftOf(form.section) : newSectionDraft(form.firstId)}

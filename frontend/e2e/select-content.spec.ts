@@ -4,8 +4,8 @@ import { expect, type Page } from '@playwright/test';
 import {
   createBook,
   markPagesAsText,
+  openBookId,
   openLibrary,
-  openProjectId,
   snap,
   uploadFolder,
   waitForIdleJobs,
@@ -55,12 +55,8 @@ interface Rect {
 }
 
 /** Read the versions that made the current result of the Geometry stage of the page, the first step first. */
-async function currentChain(
-  page: Page,
-  projectId: string,
-  pageId: string,
-): Promise<StoredVersion[]> {
-  const base = `/api/v1/projects/${projectId}/pages/${pageId}`;
+async function currentChain(page: Page, bookId: string, pageId: string): Promise<StoredVersion[]> {
+  const base = `/api/v1/books/${bookId}/pages/${pageId}`;
   const stages = (await (await page.request.get(`${base}/stages`)).json()) as {
     items: { stage: string; head_version_id: string }[];
   };
@@ -135,7 +131,7 @@ test('a border of the content is dragged on Select content without the picture l
   const folder = await writeSheetsFolder(1);
   const layer = page.getByTestId('editor-layer');
   const canvas = page.getByTestId('viewer-canvas');
-  let projectId = '';
+  let bookId = '';
   let found: number[] = [];
   let set: number[] = [];
   const saves: string[] = [];
@@ -149,7 +145,7 @@ test('a border of the content is dragged on Select content without the picture l
   // active job, and the screen itself shows no editor busy, no run in the summary and no page out of date
   const settled = async (): Promise<void> => {
     await expect(page.getByTestId('editor-busy')).toHaveCount(0, { timeout: RUN_TIMEOUT_MS });
-    await waitForIdleJobs(page, projectId);
+    await waitForIdleJobs(page, bookId);
     await expect(page.getByTestId('run-summary-running')).toHaveCount(0, {
       timeout: RUN_TIMEOUT_MS,
     });
@@ -160,8 +156,8 @@ test('a border of the content is dragged on Select content without the picture l
     await openLibrary(page);
     await createBook(page, 'A book of borders');
     await uploadFolder(page, folder, 1);
-    projectId = openProjectId(page);
-    await waitForIdleJobs(page, projectId);
+    bookId = openBookId(page);
+    await waitForIdleJobs(page, bookId);
     // The detection takes the sheet for a picture, which the recipe for pictures processes, and the step open here
     // belongs to the recipe for text, so the page is said to be text
     await markPagesAsText(page);
@@ -183,7 +179,7 @@ test('a border of the content is dragged on Select content without the picture l
 
   await test.step('the step cut nothing: its page is the page it read, with the frame recorded', async () => {
     const [id = ''] = await pageIds(page);
-    const chain = await currentChain(page, projectId, id);
+    const chain = await currentChain(page, bookId, id);
     const place = chain.findIndex((version) => version.processor.key === 'geometry.crop');
     const crop = chain[place];
     const read = chain[place - 1];
@@ -235,7 +231,7 @@ test('a border of the content is dragged on Select content without the picture l
 
   await test.step('the result of the step records the box of the reader, in the pixels of the page it kept', async () => {
     const [id = ''] = await pageIds(page);
-    const chain = await currentChain(page, projectId, id);
+    const chain = await currentChain(page, bookId, id);
     const crop = chain.find((version) => version.processor.key === 'geometry.crop');
     const [left = 0, top = 0, width = 0, height = 0] = set;
     const recorded = crop?.data.frame;
@@ -254,7 +250,7 @@ test('a border of the content is dragged on Select content without the picture l
       expect(Math.abs(value - (set[index] ?? 0))).toBeLessThanOrEqual(BOX_TOLERANCE_PX);
     }
     const [id = ''] = await pageIds(page);
-    const margins = (await currentChain(page, projectId, id)).find(
+    const margins = (await currentChain(page, bookId, id)).find(
       (version) => version.processor.key === 'geometry.normalize',
     );
     expect(Math.abs((margins?.data.content_box?.width ?? 0) - (set[2] ?? 0))).toBeLessThanOrEqual(

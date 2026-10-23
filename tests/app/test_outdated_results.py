@@ -12,21 +12,21 @@ from tests.helpers.builders import (
     make_page,
     make_page_stage,
     make_page_version,
-    make_project,
+    make_record,
     make_scan,
     make_source,
 )
 from tests.helpers.fakes_jobs import JobFakes, JobFakesProvider
 from tests.helpers.processing import ProcessingFakesProvider
 from tests.helpers.processors import FakeProcessor
-from tests.helpers.seeding import store_project
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from dishka import Provider
 
-    from bookreviver.domain.entities import Actor, Page, PageStage, PageVersion, Project, Scan, Source
+    from bookreviver.domain.entities import Actor, BookRecord, Page, PageStage, PageVersion, Scan, Source
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.database import UnitOfWorkFactory
 
@@ -39,7 +39,7 @@ OUTDATED_GEOMETRY = evolve(FakeProcessor.spec.ref, version='0')
 class Book(NamedTuple):
     """A book of one page whose geometry result was made by an older version of its processor.
 
-    :ivar project: The project of the book.
+    :ivar book_record: The project of the book.
     :ivar source: The source the page was cut from.
     :ivar scan: The scan of the source the page shows.
     :ivar page: Its only page.
@@ -47,7 +47,7 @@ class Book(NamedTuple):
     :ivar records: The fresh records of the page split, with the base version, and of the geometry, with the other.
     """
 
-    project: Project
+    book_record: BookRecord
     source: Source
     scan: Scan
     page: Page
@@ -72,7 +72,7 @@ def fx_book() -> Book:
     :returns: The book, not stored yet.
     :rtype: Book
     """
-    project = make_project()
+    book_record = make_record()
     source = make_source()
     scan = evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True))
     page = make_page(scan=scan)
@@ -85,7 +85,7 @@ def fx_book() -> Book:
         state=VersionState.READY,
     )
     return Book(
-        project=project,
+        book_record=book_record,
         source=source,
         scan=scan,
         page=page,
@@ -114,9 +114,9 @@ async def fx_extra_providers(
     :returns: The providers of the fakes and of the fake processors.
     :rtype: Sequence[Provider]
     """
-    await store_project(
+    await store_book(
         fx_uow(),
-        fx_book.project,
+        fx_book.book_record,
         fx_book.page,
         owner=fx_actor.account_id,
         sources=[fx_book.source],
@@ -124,18 +124,18 @@ async def fx_extra_providers(
         versions=fx_book.versions,
     )
 
-    def save_records(repos: BookRepositories, _project: Project) -> None:
+    def save_records(repos: BookRepositories, _book_record: BookRecord) -> None:
         """Save the fresh records of the book.
 
         :param repos: Repositories of the transaction.
         :type repos: BookRepositories
-        :param _project: Project of the book, which the work does not need.
-        :type _project: Project
+        :param _book_record: Project of the book, which the work does not need.
+        :type _book_record: BookRecord
         """
         for record in fx_book.records:
             repos.page_stages.save(record)
 
-    await fx_uow().change_book(fx_book.project.id, save_records)
+    await fx_uow().change_book(fx_book.book_record.id, save_records)
     return (JobFakesProvider(fx_fakes), ProcessingFakesProvider())
 
 
@@ -159,7 +159,7 @@ class TestStart:
         :type fx_book: Book
         """
         states = await fx_uow().read_book(
-            fx_book.project.id,
+            fx_book.book_record.id,
             lambda repos: [
                 repos.page_stages.get(PageStageKey(fx_book.page.id, stage)).state
                 for stage in (Stage.PAGE_SPLIT, Stage.GEOMETRY)

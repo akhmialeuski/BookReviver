@@ -15,7 +15,7 @@ from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.base import ResponseModel
 from bookreviver.api.schemas.iiif import IIIF_INFO_FILE
 from bookreviver.domain.enums import Rendition
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -63,7 +63,7 @@ class ImagePathsSchema(ResponseModel):
             """
             return str(request.app.url_path_for(RouteName.IIIF_FILE, key=key))
 
-        info = f'{key_of(Rendition.TILES)}{ProjectKeys.SEPARATOR}{IIIF_INFO_FILE}'
+        info = f'{key_of(Rendition.TILES)}{BookKeys.SEPARATOR}{IIIF_INFO_FILE}'
         return cls(
             full=path(key_of(full)),
             preview=path(key_of(Rendition.PREVIEW)),

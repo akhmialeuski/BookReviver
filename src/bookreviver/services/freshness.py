@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor
-    from bookreviver.domain.ids import ProjectId
+    from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import JobBoard
     from bookreviver.services.library import Library
@@ -41,30 +41,30 @@ class BookFreshness:
         self._library = library
         self._board = board
 
-    async def version(self, actor: Actor, project_id: ProjectId) -> int:
+    async def version(self, actor: Actor, book_id: BookId) -> int:
         """Return the version of one of the actor's books.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: The book.
-        :type project_id: ProjectId
+        :param book_id: The book.
+        :type book_id: BookId
         :returns: The version of the book.
         :rtype: int
         :raises NotFoundError: If the actor has no such project.
         """
-        await self._library.open(actor, project_id)
-        return await self._uow.book_version(project_id)
+        await self._library.open(actor, book_id)
+        return await self._uow.book_version(book_id)
 
-    async def mark(self, actor: Actor, project_id: ProjectId) -> str:
+    async def mark(self, actor: Actor, book_id: BookId) -> str:
         """Return the mark of what the reads of one of the actor's books show now.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :param project_id: The book.
-        :type project_id: ProjectId
+        :param book_id: The book.
+        :type book_id: BookId
         :returns: The version of the book and the mark of its jobs.
         :rtype: str
         :raises NotFoundError: If the actor has no such project.
         """
-        version = await self.version(actor, project_id)
-        return f'{version}{MARK_SEPARATOR}{self._board.revision(project_id)}'
+        version = await self.version(actor, book_id)
+        return f'{version}{MARK_SEPARATOR}{self._board.revision(book_id)}'

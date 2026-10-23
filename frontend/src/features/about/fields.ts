@@ -1,4 +1,4 @@
-import type { BookDetailsSchema, ProjectSchema, ProjectUpdate } from '@/api';
+import type { BookDetailsSchema, BookSchema, BookUpdate } from '@/api';
 
 /**
  * The fields of the About tab and what it takes to save them.
@@ -18,7 +18,7 @@ const LANGUAGE_SEPARATORS = /[\s,;]+/;
 
 /** Everything the tab edits: the description of the book and its image policy. */
 export type EditableFields = Omit<BookDetailsSchema, 'primary_author'> &
-  Pick<ProjectSchema, 'image_policy'>;
+  Pick<BookSchema, 'image_policy'>;
 
 /** The name of one editable field. */
 export type FieldKey = keyof EditableFields;
@@ -88,7 +88,7 @@ export type Problems = Partial<Record<FieldKey, Problem>>;
 /** What to send for the changes made so far. */
 export interface SavePlan {
   /** The fields to send, each with the value the person gave it. */
-  readonly patch: ProjectUpdate;
+  readonly patch: BookUpdate;
   /** The fields that were changed but are not sent. */
   readonly problems: Problems;
   /** The patch written as text, which tells one set of changes from another. */
@@ -101,9 +101,9 @@ export interface SavePlan {
  * @param project The book.
  * @returns Its description without the derived `primary_author`, with its image policy.
  */
-export function toFields(project: ProjectSchema): EditableFields {
-  const { primary_author: _derived, ...details } = project.details;
-  return { ...details, image_policy: project.image_policy };
+export function toFields(book: BookSchema): EditableFields {
+  const { primary_author: _derived, ...details } = book.details;
+  return { ...details, image_policy: book.image_policy };
 }
 
 /** Tell whether two values of fields hold the same, looking inside lists and into the members of a row. */
@@ -144,7 +144,7 @@ function problemOf(key: FieldKey, edits: Partial<EditableFields>): Problem | nul
   }
 }
 
-function put<K extends FieldKey>(patch: ProjectUpdate, key: K, value: EditableFields[K]): void {
+function put<K extends FieldKey>(patch: BookUpdate, key: K, value: EditableFields[K]): void {
   patch[key] = value;
 }
 
@@ -156,7 +156,7 @@ function put<K extends FieldKey>(patch: ProjectUpdate, key: K, value: EditableFi
  * @returns The fields that differ from the saved ones and can be saved, and those that differ but cannot.
  */
 export function planSave(saved: EditableFields, edits: Partial<EditableFields>): SavePlan {
-  const patch: ProjectUpdate = {};
+  const patch: BookUpdate = {};
   const problems: Problems = {};
   for (const key of FIELD_KEYS) {
     const value = edits[key];

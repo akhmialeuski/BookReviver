@@ -8,10 +8,10 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.storage import LocalSourceStore
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.ids import JobId, ProjectId, SourceId
-from tests.helpers.builders import make_project
+from bookreviver.domain.ids import BookId, JobId, SourceId
+from tests.helpers.builders import make_record
 from tests.helpers.fakes_jobs import FakeBoardProvider, JobFakes, JobFakesProvider
-from tests.helpers.seeding import store_project
+from tests.helpers.seeding import store_book
 from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from dishka import Provider
 
     from bookreviver.app.settings import Settings
-    from bookreviver.domain.entities import Actor, Project
+    from bookreviver.domain.entities import Actor, BookRecord
     from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
@@ -45,19 +45,19 @@ class Uploads:
         :type store: LocalSourceStore
         """
         self.store = store
-        self.interrupted: list[tuple[ProjectId, JobId]] = []
-        self.kept: tuple[ProjectId, SourceId] | None = None
+        self.interrupted: list[tuple[BookId, JobId]] = []
+        self.kept: tuple[BookId, SourceId] | None = None
 
     async def leave(self) -> None:
         """Stage an upload in each of two projects, and promote the files of a source in a third."""
         for _ in range(2):
-            project_id, job_id = ProjectId(uuid4()), JobId(uuid4())
-            await self.store.stage(project_id, job_id, [upload(UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
-            self.interrupted.append((project_id, job_id))
-        project_id, job_id, source_id = ProjectId(uuid4()), JobId(uuid4()), SourceId(uuid4())
-        await self.store.stage(project_id, job_id, [upload(PROMOTED_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
-        await self.store.promote(project_id, job_id, source_id, names=[PROMOTED_NAME])
-        self.kept = (project_id, source_id)
+            book_id, job_id = BookId(uuid4()), JobId(uuid4())
+            await self.store.stage(book_id, job_id, [upload(UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
+            self.interrupted.append((book_id, job_id))
+        book_id, job_id, source_id = BookId(uuid4()), JobId(uuid4()), SourceId(uuid4())
+        await self.store.stage(book_id, job_id, [upload(PROMOTED_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
+        await self.store.promote(book_id, job_id, source_id, names=[PROMOTED_NAME])
+        self.kept = (book_id, source_id)
 
 
 @pytest.fixture
@@ -91,8 +91,8 @@ class HalfWay(NamedTuple):
     :ivar deleted: A book that has an entry in the library and no store.
     """
 
-    created: Project
-    deleted: Project
+    created: BookRecord
+    deleted: BookRecord
 
 
 @pytest.fixture
@@ -106,9 +106,9 @@ async def fx_half_way(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> HalfWay:
     :returns: The two books.
     :rtype: HalfWay
     """
-    created, deleted = make_project(), make_project()
+    created, deleted = make_record(), make_record()
     await fx_uow().create_book(created)
-    await store_project(fx_uow(), deleted, owner=fx_actor.account_id)
+    await store_book(fx_uow(), deleted, owner=fx_actor.account_id)
     await fx_uow().delete_book(deleted.id)
     return HalfWay(created=created, deleted=deleted)
 
@@ -143,9 +143,9 @@ class TestStart:
         :type fx_uploads: Uploads
         """
         gone: list[bool] = []
-        for project_id, job_id in fx_uploads.interrupted:
+        for book_id, job_id in fx_uploads.interrupted:
             try:
-                async with fx_uploads.store.staged_files(project_id, job_id):
+                async with fx_uploads.store.staged_files(book_id, job_id):
                     gone.append(False)
             except NotFoundError:
                 gone.append(True)
@@ -172,7 +172,7 @@ class TestStart:
         stored = await fx_uow().stored_books()
         entries = await fx_uow().read(lambda repos: repos.library.list_all())
         expect(fx_half_way.created.id not in stored)
-        expect(fx_half_way.deleted.id not in {entry.project_id for entry in entries})
+        expect(fx_half_way.deleted.id not in {entry.book_id for entry in entries})
         assert_expectations()
 
     @pytest.mark.usefixtures('fx_app')

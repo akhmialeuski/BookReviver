@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, ClassVar
 from bookreviver.domain.enums import JobState, Rendition, RunOutcome, SpanAttribute, SpanName, Stage, VersionState
 from bookreviver.domain.errors import DomainError, NotFoundError
 from bookreviver.domain.events import PageVersionReady
-from bookreviver.domain.keys import ProjectKeys
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import JobEnd, StageRun, StepPreview, TileCut, VersionCollection
 from bookreviver.domain.version_chains import readers_first
 from bookreviver.services.book_measure import BookMeasure, leaves_to_the_book
@@ -52,8 +52,8 @@ from bookreviver.services.version_clearing import VersionClearing
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bookreviver.domain.entities import Job, Page, PageVersion, Project, Recipe
-    from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, RecipeId
+    from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, Recipe
+    from bookreviver.domain.ids import BookId, PageId, PageVersionId, RecipeId
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import JobControl
     from bookreviver.ports.storage import AssetStore
@@ -132,9 +132,9 @@ class ProcessingJobs:
         if failed and not done:
             return JobEnd(state=JobState.FAILED, error=NO_PAGE_PROCESSED)
         # The collection is put behind this job, so the project is never free between the two
-        self._starter.queue_collection(job.project_id)
+        self._starter.queue_collection(job.book_id)
         if done and job.stage is Stage.PAGE_SPLIT:
-            self._pages.detect_new_pages(job.project_id)
+            self._pages.detect_new_pages(job.book_id)
         return JobEnd(state=JobState.SUCCEEDED)
 
     async def preview_step(self, job: Job, control: JobControl) -> JobEnd:
@@ -171,7 +171,7 @@ class ProcessingJobs:
             return JobEnd(state=JobState.FAILED, error=str(error))
         control.plan(len(cut.version_ids))
         for version_id in cut.version_ids:
-            await self._cut_version(job.project_id, version_id)
+            await self._cut_version(job.book_id, version_id)
             await control.task_done()
         return JobEnd(state=JobState.SUCCEEDED)
 
@@ -210,7 +210,7 @@ class ProcessingJobs:
         """
         control.plan(1)
         try:
-            await self._measure.run(job.project_id)
+            await self._measure.run(job.book_id)
         except DomainError as error:
             return JobEnd(state=JobState.FAILED, error=str(error))
         await control.task_done()
@@ -248,10 +248,12 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         run = StageRun.from_map(job.params)
-        project = await self._uow.read_book(job.project_id, lambda repos: repos.projects.get(job.project_id))
-        plan = RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, project_id=project.id, run=run)
+        book_record = await self._uow.read_book(job.book_id, lambda repos: repos.book_record.get(job.book_id))
+        plan = RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, book_id=book_record.id, run=run)
         pages = await plan.pages()
-        executor = RecipeRun(project=project, uow=self._uow, runtime=self._runtime, control=control, parts=self._parts)
+        executor = RecipeRun(
+            book_record=book_record, uow=self._uow, runtime=self._runtime, control=control, parts=self._parts
+        )
         recipes = await plan.recipes()
         # The work the mode takes away goes first, as one batch, so one undo gives it back on every page
         await plan.apply_mode()
@@ -264,7 +266,7 @@ class ProcessingJobs:
         measured = [page for page in pages if leaves_to_the_book(recipes[page.id], through_step=run.through_step)]
         if measured:
             await self._measure_book(executor, measured, recipes, run)
-        return [await self._run_page(job.project_id, executor, page, recipes[page.id], run) for page in pages]
+        return [await self._run_page(job.book_id, executor, page, recipes[page.id], run) for page in pages]
 
     async def _measure_book(
         self, executor: RecipeRun, pages: Sequence[Page], recipes: Mapping[PageId, Recipe], run: StageRun
@@ -297,15 +299,15 @@ class ProcessingJobs:
             await executor.settle_book(recipe, boxes.get(recipe.id, {}), through_step=run.through_step)
 
     async def _run_page(
-        self, project_id: ProjectId, executor: RecipeRun, page: Page, recipe: Recipe, run: StageRun
+        self, book_id: BookId, executor: RecipeRun, page: Page, recipe: Recipe, run: StageRun
     ) -> RunOutcome:
         """Run the recipe on one page, so that whatever goes wrong on it fails the page and not the job.
 
         A cancellation is no fault of the page: ``JobCancelledError`` is no ``Exception``, so it passes this handler and
         the page keeps the state it had.
 
-        :param project_id: Identifier of the project of the job.
-        :type project_id: ProjectId
+        :param book_id: Identifier of the project of the job.
+        :type book_id: BookId
         :param executor: Runner of recipes of the project.
         :type executor: RecipeRun
         :param page: Page to process.
@@ -325,13 +327,13 @@ class ProcessingJobs:
             except Exception:
                 logger.exception('The stage %s failed on page %s', recipe.stage, page.id)
 
-                def fail(repos: BookRepositories, _project: Project) -> None:
+                def fail(repos: BookRepositories, _book_record: BookRecord) -> None:
                     """Record that the stage failed on the page, unless the page was deleted meanwhile.
 
                     :param repos: Repositories of the transaction.
                     :type repos: BookRepositories
-                    :param _project: The project as the change finds it, which the record does not read.
-                    :type _project: Project
+                    :param _book_record: The project as the change finds it, which the record does not read.
+                    :type _book_record: BookRecord
                     """
                     try:
                         repos.pages.get(page.id)
@@ -340,7 +342,7 @@ class ProcessingJobs:
                         return
                     self._records.mark_failed(repos, page.id, recipe.stage, recipe_id=recipe.id)
 
-                await self._uow.change_book(project_id, fail)
+                await self._uow.change_book(book_id, fail)
                 outcome = RunOutcome.FAILED
             span.set_attribute(SpanAttribute.RUN_OUTCOME, outcome)
             return outcome
@@ -356,25 +358,25 @@ class ProcessingJobs:
         :raises JobCancelledError: If the job was cancelled, which stops it between two tasks.
         """
         preview = StepPreview.from_map(job.params)
-        project, page = await self._uow.read_book(
-            job.project_id, lambda repos: (repos.projects.get(job.project_id), repos.pages.get(preview.page_id))
+        book_record, page = await self._uow.read_book(
+            job.book_id, lambda repos: (repos.book_record.get(job.book_id), repos.pages.get(preview.page_id))
         )
-        executor = PreviewRun(project=project, uow=self._uow, runtime=self._runtime, control=control)
+        executor = PreviewRun(book_record=book_record, uow=self._uow, runtime=self._runtime, control=control)
         await executor.run(page, preview.stage, preview.steps, preview.step_index)
 
-    async def _cut_version(self, project_id: ProjectId, version_id: PageVersionId) -> None:
+    async def _cut_version(self, book_id: BookId, version_id: PageVersionId) -> None:
         """Cut the pyramid of one version, and mark the version as cut when it is still as it was read.
 
         A pyramid is cut with no change open, and the version is marked in a short ``change_book`` that reads it again.
         A version that is gone or has changed since it was read keeps no mark, and a pyramid left for a version that is
         gone is removed.
 
-        :param project_id: Project owning the version.
-        :type project_id: ProjectId
+        :param book_id: Project owning the version.
+        :type book_id: BookId
         :param version_id: The version, which is passed by when it is gone, not ready, cut already or without an image.
         :type version_id: PageVersionId
         """
-        version = await self._uow.read_book(project_id, lambda repos: repos.page_versions.find(version_id))
+        version = await self._uow.read_book(book_id, lambda repos: repos.page_versions.find(version_id))
         if (
             version is None
             or version.state is not VersionState.READY
@@ -382,16 +384,16 @@ class ProcessingJobs:
             or version.renditions is None
         ):
             return
-        keys = ProjectKeys(project_id)
+        keys = BookKeys(book_id)
         cut_version = await self._runtime.runner.cut_tiles(keys, version)
 
-        def mark(repos: BookRepositories, _project: Project) -> tuple[bool, PageVersion | None]:
+        def mark(repos: BookRepositories, _book_record: BookRecord) -> tuple[bool, PageVersion | None]:
             """Store the version with its pyramid cut, when it is still as it was read.
 
             :param repos: Repositories of the transaction.
             :type repos: BookRepositories
-            :param _project: The project as the change finds it, which the marking does not read.
-            :type _project: Project
+            :param _book_record: The project as the change finds it, which the marking does not read.
+            :type _book_record: BookRecord
             :returns: Whether the version was stored, and the version as the transaction found it, which is None when
                       it is gone.
             :rtype: tuple[bool, PageVersion | None]
@@ -401,9 +403,9 @@ class ProcessingJobs:
                 repos.page_versions.update(cut_version)
             return stored, found
 
-        stored, current = await self._uow.change_book(project_id, mark)
+        stored, current = await self._uow.change_book(book_id, mark)
         if stored:
-            await self._runtime.publisher.publish(PageVersionReady(project_id=project_id, version=cut_version))
+            await self._runtime.publisher.publish(PageVersionReady(book_id=book_id, version=cut_version))
         elif current is None:
             await self._assets.delete_prefix(keys.version_rendition(version, Rendition.TILES))
 
@@ -426,12 +428,12 @@ class ProcessingJobs:
         """
         collection = VersionCollection.from_map(job.params)
         old = await self._uow.read_book(
-            job.project_id,
+            job.book_id,
             lambda repos: repos.page_versions.collectable(collection.previews_older_than),
         )
         groups = [list(batched(group, self.COLLECTION_BATCH_SIZE, strict=False)) for group in readers_first(old)]
         control.plan(sum(len(batches) for batches in groups))
-        clearing = VersionClearing(uow=self._uow, assets=self._assets, project_id=job.project_id)
+        clearing = VersionClearing(uow=self._uow, assets=self._assets, book_id=job.book_id)
         deleted = 0
         for batches in groups:
             for batch in batches:

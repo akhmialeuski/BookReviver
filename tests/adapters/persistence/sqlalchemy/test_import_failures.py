@@ -8,9 +8,9 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.values import JobEnd, SliceRequest
-from tests.helpers.builders import make_project
+from tests.helpers.builders import make_record
 from tests.helpers.fakes_imports import pdf_upload
-from tests.helpers.seeding import store_project
+from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -50,18 +50,18 @@ class TestFailedImportOnSqlAlchemy:
         rig = fx_import_rig()
         samples = tmp_path / 'samples'
         samples.mkdir()
-        project = make_project()
+        book_record = make_record()
         uow = fx_uow()
-        await store_project(uow, project, owner=fx_owner_id)
+        await store_book(uow, book_record, owner=fx_owner_id)
         job = await rig.service(uow=uow).start_import(
-            Actor(account_id=fx_owner_id), project.id, [pdf_upload(samples, 'a.pdf', pages=PAGES)]
+            Actor(account_id=fx_owner_id), book_record.id, [pdf_upload(samples, 'a.pdf', pages=PAGES)]
         )
         rig.sources.fail_on_promote = OSError('disk full')
 
         await rig.fakes.board.run_queued()
 
         sources, unimported, scans, pages = await uow.read_book(
-            project.id,
+            book_record.id,
             lambda repos: (
                 repos.sources.list_all(),
                 repos.sources.list_unimported(),

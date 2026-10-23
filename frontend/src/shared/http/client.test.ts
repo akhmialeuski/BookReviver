@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   authCookieLoginApiV1AuthLoginPost,
-  listProjectsApiV1ProjectsGet,
+  listBooksApiV1BooksGet,
   usersCurrentUserApiV1UsersMeGet,
 } from '@/api';
 import { client } from '@/api/client.gen';
@@ -74,7 +74,7 @@ describe('the configured API client', () => {
       }),
     );
 
-    await listProjectsApiV1ProjectsGet({ throwOnError: true });
+    await listBooksApiV1BooksGet({ throwOnError: true });
 
     expect(sentRequest(fetchMock, 0).headers.has(CSRF_HEADER_NAME)).toBe(false);
   });
