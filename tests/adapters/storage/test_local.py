@@ -1,13 +1,14 @@
 """Tests for what only the local storage adapters promise: the directory layout of the uploads, sources and assets."""
 
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
+from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore, local
 from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId
@@ -30,6 +31,7 @@ JOB_ID: JobId = JobId(uuid4())
 SOURCE_ID: SourceId = SourceId(uuid4())
 PAGE_NAME: str = 'page.png'
 PAGE_CONTENT: bytes = b'page'
+SOURCE_TAKEN: str = 'Another source was published under this identifier first.'
 MAX_BYTES: int = 1024
 FILE_KEY: StorageKey = KEYS.version_rendition(make_page_version(page_id=PageId(uuid4())), Rendition.FULL_JPEG)
 
@@ -82,6 +84,27 @@ class TestLocalSourceStore:
             await store.promote(BOOK_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
         assert [path.name for path in sources_dir.iterdir()] == [str(SOURCE_ID)]
+
+    async def test_promotion_refused_at_publication_moves_the_files_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify a source that appears between the check and the publication leaves the upload staged as it was.
+
+        :param tmp_path: Temporary directory of the test.
+        :type tmp_path: Path
+        :param monkeypatch: Replaces the publication with one that finds the source taken.
+        :type monkeypatch: pytest.MonkeyPatch
+        """
+        monkeypatch.setattr(local, '_publish', AsyncMock(side_effect=ConflictError(SOURCE_TAKEN)))
+        store = LocalSourceStore(root=tmp_path)
+        await store.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+
+        with pytest.raises(ConflictError):
+            await store.promote(BOOK_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+
+        expect((tmp_path / KEYS.incoming(JOB_ID) / PAGE_NAME).read_bytes() == PAGE_CONTENT)
+        expect(list((tmp_path / KEYS.sources_area).iterdir()) == [])
+        assert_expectations()
 
     async def test_discarding_all_staged_removes_the_directory_of_a_book_left_empty(self, tmp_path: Path) -> None:
         """Verify a book with an upload only leaves no directory, and a book with a source keeps its sources.

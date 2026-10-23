@@ -245,6 +245,40 @@ def held_intervals(blocks: list[Span]) -> Holdings:
     )
 
 
+def step_rows(spans: list[Span], blocks: list[Span]) -> list[tuple[str, ...]]:
+    """Give one row of the step table for each type of step: its count, cached share and medians of the steps that ran.
+
+    :param spans: The spans of the run.
+    :type spans: list[Span]
+    :param blocks: The ``write.block`` spans of the run, whose waits are added up for the step that encloses them.
+    :type blocks: list[Span]
+    :returns: The rows in the order of the step type, each in the columns of ``STEP_HEADER``.
+    :rtype: list[tuple[str, ...]]
+    """
+    by_type: defaultdict[str, list[Span]] = defaultdict(list)
+    for span in spans:
+        if span.name == SpanName.STEP and SpanAttribute.STEP_TYPE in span.attributes:
+            by_type[str(span.attributes[SpanAttribute.STEP_TYPE])].append(span)
+    # The wait of the write blocks that the step span of the parent link encloses, summed for each step
+    wait_by_parent: defaultdict[str, float] = defaultdict(float)
+    for span in blocks:
+        if span.parent_id is not None:
+            wait_by_parent[span.parent_id] += float(span.attributes.get(SpanAttribute.WAIT_MS, 0))
+    rows: list[tuple[str, ...]] = []
+    for step_type, steps in sorted(by_type.items()):
+        cached = sum(1 for step in steps if step.attributes.get(SpanAttribute.STEP_OUTCOME) == StepOutcome.CACHED)
+        ran = [step for step in steps if step.attributes.get(SpanAttribute.STEP_OUTCOME) == StepOutcome.RAN]
+        median = f'{statistics.median(step.duration_ms for step in ran):{ONE_DECIMAL}}' if ran else NO_VALUE
+        median_wait = (
+            f'{statistics.median(wait_by_parent.get(step.span_id, 0.0) for step in ran):{ONE_DECIMAL}}'
+            if ran
+            else NO_VALUE
+        )
+        share = f'{cached / len(steps) * PERCENT:{ONE_DECIMAL}}'
+        rows.append((step_type, str(len(steps)), share, median, median_wait))
+    return rows
+
+
 def report(spans: list[Span], title: str) -> str:
     """Build the text of the report of a run.
 
@@ -275,28 +309,7 @@ def report(spans: list[Span], title: str) -> str:
             ranks = FIELD_SEPARATOR.join(f'p{rank} {percentile(values, rank):{TWO_DECIMALS}}' for rank in PERCENTILES)
             lines.append(f'{label}{LABEL_SEPARATOR}{ranks}, max {max(values):{TWO_DECIMALS}}')
 
-    by_type: defaultdict[str, list[Span]] = defaultdict(list)
-    for span in spans:
-        if span.name == SpanName.STEP and SpanAttribute.STEP_TYPE in span.attributes:
-            by_type[str(span.attributes[SpanAttribute.STEP_TYPE])].append(span)
-    # The wait of the write blocks that the step span of the parent link encloses, summed for each step
-    wait_by_parent: defaultdict[str, float] = defaultdict(float)
-    for span in blocks:
-        if span.parent_id is not None:
-            wait_by_parent[span.parent_id] += float(span.attributes.get(SpanAttribute.WAIT_MS, 0))
-    rows: list[tuple[str, ...]] = []
-    for step_type, steps in sorted(by_type.items()):
-        cached = sum(1 for step in steps if step.attributes.get(SpanAttribute.STEP_OUTCOME) == StepOutcome.CACHED)
-        ran = [step for step in steps if step.attributes.get(SpanAttribute.STEP_OUTCOME) == StepOutcome.RAN]
-        median = f'{statistics.median(step.duration_ms for step in ran):{ONE_DECIMAL}}' if ran else NO_VALUE
-        median_wait = (
-            f'{statistics.median(wait_by_parent.get(step.span_id, 0.0) for step in ran):{ONE_DECIMAL}}'
-            if ran
-            else NO_VALUE
-        )
-        share = f'{cached / len(steps) * PERCENT:{ONE_DECIMAL}}'
-        rows.append((step_type, str(len(steps)), share, median, median_wait))
-    if rows:
+    if rows := step_rows(spans, blocks):
         widths = [max(len(row[column]) for row in (STEP_HEADER, *rows)) for column in range(len(STEP_HEADER))]
         lines.append('')
         for row in (STEP_HEADER, *rows):

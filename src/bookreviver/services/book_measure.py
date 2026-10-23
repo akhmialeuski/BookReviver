@@ -467,13 +467,7 @@ class BookMeasure:
                                changed or deleted while the pages were measured.
         :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
         """
-        holders: list[tuple[Recipe, int]] = []
-        for recipe in await self._recipes.recipes(book_id, Stage.GEOMETRY):
-            keys = [step.processor_key for step in recipe.steps]
-            if NORMALIZE_KEY in keys:
-                holders.append((recipe, keys.index(NORMALIZE_KEY)))
-        if not holders:
-            raise ConflictError(NO_NORMALIZE_STEP.format(key=NORMALIZE_KEY))
+        holders = await self._holders(book_id)
         measures = list(
             (await self._uow.read_book(book_id, lambda repos: BookBlocks(repos).read(Stage.GEOMETRY))).values()
         )
@@ -509,6 +503,25 @@ class BookMeasure:
 
         await self._uow.change_book(book_id, work)
         return len(measures)
+
+    async def _holders(self, book_id: BookId) -> list[tuple[Recipe, int]]:
+        """Return each recipe of the Geometry stage that has the normalize step, with the place of the step in it.
+
+        :param book_id: Book whose recipes are read.
+        :type book_id: BookId
+        :returns: The recipes and the positions of their normalize step.
+        :rtype: list[tuple[Recipe, int]]
+        :raises NotFoundError: If the Geometry stage has no recipe.
+        :raises ConflictError: If no recipe has a normalize step.
+        """
+        holders: list[tuple[Recipe, int]] = []
+        for recipe in await self._recipes.recipes(book_id, Stage.GEOMETRY):
+            keys = [step.processor_key for step in recipe.steps]
+            if NORMALIZE_KEY in keys:
+                holders.append((recipe, keys.index(NORMALIZE_KEY)))
+        if not holders:
+            raise ConflictError(NO_NORMALIZE_STEP.format(key=NORMALIZE_KEY))
+        return holders
 
     def _write(self, repos: BookRepositories, recipe: Recipe, position: int, step: Step) -> None:
         """Store the recipe with the measured step, and mark the pages it processed stale, for the caller.

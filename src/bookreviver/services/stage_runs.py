@@ -72,7 +72,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock, EventPublisher, JobControl
-    from bookreviver.ports.tracing import Tracer
+    from bookreviver.ports.tracing import Span, Tracer
     from bookreviver.services.processing_parts import ProcessingParts
     from bookreviver.services.spread_splits import Unsplit
     from bookreviver.services.steps import StepRunner
@@ -222,12 +222,7 @@ class StageWork:
                 continue
             # A page run through some of the steps only is not ready to be read, and is run through the rest first
             if record.state is StageState.STALE or record.through_step is not None:
-                await self._refresh(page, earlier)
-                record, readable = await self._earlier(page.id, earlier)
-                if record is None:
-                    raise NotFoundError(PageStageKey(page.id, earlier))
-                if record.state is StageState.FAILED:
-                    raise ConflictError(EARLIER_STAGE_FAILED.format(stage=earlier.label))
+                record, readable = await self._brought_up_to_date(page, earlier)
             if record.head_version_id is None:
                 continue
             # Stages further back are not brought up to date once a nearer one has a result to read
@@ -237,6 +232,26 @@ class StageWork:
             await self._uow.read_book(self._book_record.id, lambda repos: StageInputs.of(repos, [page.id], stage))
         ).get(page.id)
         return None if read is None else self._version_source(read, scale)
+
+    async def _brought_up_to_date(self, page: Page, stage: Stage) -> tuple[PageStage, bool]:
+        """Run an earlier stage of a page again, and read its record and whether its current version can be read.
+
+        :param page: Page being processed.
+        :type page: Page
+        :param stage: The earlier stage, stale or run through some of its steps only.
+        :type stage: Stage
+        :returns: The record after the run, and whether its current version has an image to read.
+        :rtype: tuple[PageStage, bool]
+        :raises NotFoundError: If the record of the stage is gone after the run.
+        :raises ConflictError: If running the stage again failed.
+        """
+        await self._refresh(page, stage)
+        record, readable = await self._earlier(page.id, stage)
+        if record is None:
+            raise NotFoundError(PageStageKey(page.id, stage))
+        if record.state is StageState.FAILED:
+            raise ConflictError(EARLIER_STAGE_FAILED.format(stage=stage.label))
+        return record, readable
 
     async def _earlier(self, page_id: PageId, stage: Stage) -> tuple[PageStage | None, bool]:
         """Read the record of an earlier stage of a page, and tell whether its current version has an image to read.
@@ -649,32 +664,47 @@ class StageWork:
                 side=inputs.side,
                 skipped=skipped,
             )
-            made = await self._attempt(version, run)
+            return await self._store(layers.page.id, await self._attempt(version, run), span)
 
-            def store(repos: BookRepositories, _book_record: BookRecord) -> None:
-                """Store the result of the step on the version, which keeps the mark and the comment it has now.
+    async def _store(self, page_id: PageId, made: PageVersion, span: Span) -> PageVersion:
+        """Store the result of a step on its version, and announce a version that is ready.
 
-                :param repos: Repositories of the transaction.
-                :type repos: BookRepositories
-                :param _book_record: The record of the book as the change finds it, which the storing does not read.
-                :type _book_record: BookRecord
-                :raises NotFoundError: If the page or the version was deleted.
-                """
-                repos.pages.get(layers.page.id)
-                # A mark or a comment the user put on the version while it ran is kept
-                stored = repos.page_versions.get(version.id)
-                repos.page_versions.update(evolve(made, mark=stored.mark, comment=stored.comment))
+        The version keeps the mark and the comment it has now, which the user may have put on it while it ran. The
+        files of a version whose change fails belong to no stored result, so they are discarded.
 
-            try:
-                await self._uow.change_book(self._book_record.id, store)
-            except Exception:
-                # The files of the version belong to no stored result when its change failed
-                await self._runner.discard(self._keys.version_directory(version))
-                raise
-            if made.state is VersionState.READY:
-                span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.RAN)
-                await self._publisher.publish(PageVersionReady(book_id=self._book_record.id, version=made))
-            return made
+        :param page_id: The page the version belongs to.
+        :type page_id: PageId
+        :param made: The version as the step left it, ready or failed.
+        :type made: PageVersion
+        :param span: The ``step`` span, whose outcome is set to ran for a version that is ready.
+        :type span: Span
+        :returns: The version as stored.
+        :rtype: PageVersion
+        :raises NotFoundError: If the page or the version was deleted.
+        """
+
+        def store(repos: BookRepositories, _book_record: BookRecord) -> None:
+            """Store the result of the step on the version, which keeps the mark and the comment it has now.
+
+            :param repos: Repositories of the transaction.
+            :type repos: BookRepositories
+            :param _book_record: The record of the book as the change finds it, which the storing does not read.
+            :type _book_record: BookRecord
+            :raises NotFoundError: If the page or the version was deleted.
+            """
+            repos.pages.get(page_id)
+            stored = repos.page_versions.get(made.id)
+            repos.page_versions.update(evolve(made, mark=stored.mark, comment=stored.comment))
+
+        try:
+            await self._uow.change_book(self._book_record.id, store)
+        except Exception:
+            await self._runner.discard(self._keys.version_directory(made))
+            raise
+        if made.state is VersionState.READY:
+            span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.RAN)
+            await self._publisher.publish(PageVersionReady(book_id=self._book_record.id, version=made))
+        return made
 
 
 class RecipeRun(StageWork):
@@ -902,17 +932,8 @@ class RecipeRun(StageWork):
             :rtype: tuple[bool, Unsplit | None]
             :raises NotFoundError: If the page or the version was deleted meanwhile.
             """
-            fresh = repos.pages.get(page.id)
-            current = StageInputs.of(repos, [page.id], recipe.stage).get(page.id)
-            undoing = None if basis.undoing is None else self._splits.undoing(repos, fresh, recipe, confirmed=True)
-            if basis.input_id is not None and (current is None or current.id != basis.input_id):
-                return False, None
-            if (
-                repos.recipes.get(recipe.id).updated_at != basis.recipe_updated_at
-                or tuple(repos.page_step_states.list_for_page(page.id, recipe.stage)) != basis.states
-            ):
-                return False, None
-            if basis.undoing is not None and not basis.undoing.deletes_as(undoing):
+            holds, undoing = self._basis_holds(repos, page, recipe, basis)
+            if not holds:
                 return False, None
             stored = repos.page_versions.get(version.id)
             if version.tiles_ready and not stored.tiles_ready:
@@ -934,6 +955,37 @@ class RecipeRun(StageWork):
         if undoing is not None:
             await self._splits.finish_unsplit(undoing)
         return RunOutcome.DONE
+
+    def _basis_holds(
+        self, repos: BookRepositories, page: Page, recipe: Recipe, basis: RunBasis
+    ) -> tuple[bool, Unsplit | None]:
+        """Tell whether what a run went by is still as it read it, and read what undoing its split would delete.
+
+        The input of the stage, the recipe, the settings and the edits of the steps of the page, and the split the run
+        undoes are compared with what the run read before it computed. The comparisons stop at the first that differs.
+
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: BookRepositories
+        :param page: Page that was processed.
+        :type page: Page
+        :param recipe: Recipe the page was run by.
+        :type recipe: Recipe
+        :param basis: What the run read before it computed.
+        :type basis: RunBasis
+        :returns: Whether nothing the run went by changed, and what undoing the split deletes, or None.
+        :rtype: tuple[bool, Unsplit | None]
+        :raises NotFoundError: If the page or the recipe was deleted meanwhile.
+        """
+        fresh = repos.pages.get(page.id)
+        current = StageInputs.of(repos, [page.id], recipe.stage).get(page.id)
+        undoing = None if basis.undoing is None else self._splits.undoing(repos, fresh, recipe, confirmed=True)
+        holds = (
+            (basis.input_id is None or (current is not None and current.id == basis.input_id))
+            and repos.recipes.get(recipe.id).updated_at == basis.recipe_updated_at
+            and tuple(repos.page_step_states.list_for_page(page.id, recipe.stage)) == basis.states
+            and (basis.undoing is None or basis.undoing.deletes_as(undoing))
+        )
+        return holds, undoing
 
     async def measure(self, page: Page, recipe: Recipe, *, through_step: int | None = None) -> BlockMeasure | None:
         """Make the steps of the recipe up to the normalize step, and read the content box the step recorded.

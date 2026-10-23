@@ -36,6 +36,7 @@ dependencies = [
     "import-linter==2.15",
     "pre-commit==4.6.2",
     "pytest==9.1.1",
+    "pytest-cov==7.1.0",
     "pytest-xdist==3.8.0",
     # UV build backend
     "uv_build==0.12.19",
@@ -91,9 +92,18 @@ build-backend = "uv_build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/bookreviver"]
 
+[tool.coverage.run]
+branch = true
+# Every module under src counts, so one that no test imports reports 0% instead of dropping out of the total. The floor
+# and its baseline live in tools/crap_gate.py, so coverage.py sets no fail_under of its own
+source = ["src"]
+
 [tool.pytest.ini_options]
 # Tests run in parallel, one worker per CPU; `-n 0` runs them in one process, as a debugger needs
 addopts = "--strict-markers --strict-config -n auto"
+markers = [
+    "timing: asserts a time limit, which a machine busy with every core holds only by chance, so the crap gate runs it alone",
+]
 testpaths = ["tests"]
 # A deprecation raised from the project's own modules fails the run, since the project can fix it. One raised inside a
 # dependency, such as the `declarative_mixin` call of advanced-alchemy under SQLAlchemy 2.1, is only the dependency's
@@ -152,13 +162,15 @@ ignore_missing_imports = true
 # Understands BaseSettings reading the environment and the coercion of field inputs
 plugins = ["pydantic.mypy"]
 # `mypy .` would otherwise walk the uploaded books in data/ and the frontend dependencies looking for Python files
-exclude = ['^data/', '^frontend/', '^\.e2e-data/']
+exclude = ['^data/', '^frontend/', '^\.e2e-data/', '^tools/crap_gate\.py$']
 # The type information of the libraries that ship none, kept in the repository
 mypy_path = "stubs"
 
 [tool.pyrefly]
 project-excludes = [
     "tests",
+    # The crap-gate script is a copy of the skill's, kept as it is
+    "tools/crap_gate.py",
 ]
 search-path = ["stubs"]
 

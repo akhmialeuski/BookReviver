@@ -422,34 +422,10 @@ class PageService:
             """
             if not new_pages:
                 return []
-
-            median = None
-            sizeless = (
-                i for i, page in enumerate(new_pages) if page.origin is NewPageOrigin.BLANK and page.size is None
-            )
-            if (lacking := next(sizeless, None)) is not None:
-                try:
-                    median = self._leaf_size(repos)
-                except ConflictError as error:
-                    raise ConflictError(PAGE_OF_BATCH.format(index=lacking, reason=error)) from error
-
-            # A page without an anchor stands after the page before it, so it joins that page's place
-            places: dict[PageAnchor | None, list[int]] = {}
-            place = None
-            for index, new_page in enumerate(new_pages):
-                place = new_page.anchor or place
-                places.setdefault(place, []).append(index)
-
+            median = self._batch_leaf_size(repos, new_pages)
+            places = self._batch_places(new_pages)
             moment = self._clock.now()
-            pages: dict[int, Page] = {}
-            for anchor, indexes in places.items():
-                try:
-                    keys = self._keys_at(repos, anchor, count=len(indexes))
-                except NotFoundError as error:
-                    raise ConflictError(PAGE_OF_BATCH.format(index=indexes[0], reason=ANCHOR_NOT_IN_BOOK)) from error
-                pages.update(
-                    (i, self._new_page(new_pages[i], key, moment)) for i, key in zip(indexes, keys, strict=True)
-                )
+            pages = self._placed_pages(repos, new_pages, places, moment)
             added = [pages[index] for index in range(len(new_pages))]
             with self._records.watching_sides(repos):
                 repos.pages.add_many(added)
@@ -473,6 +449,74 @@ class PageService:
         if any(new_page.origin is NewPageOrigin.BLANK for new_page in new_pages):
             self._enqueue(book.id, JobKind.PREPARE_PAGES)
         return overviews
+
+    def _batch_leaf_size(self, repos: BookRepositories, new_pages: Sequence[NewPage]) -> PageSize | None:
+        """Read the median size of the book once, when a blank leaf of the batch has no size of its own.
+
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: BookRepositories
+        :param new_pages: The pages of the batch.
+        :type new_pages: Sequence[NewPage]
+        :returns: The median size, or None when every blank leaf has a size.
+        :rtype: PageSize | None
+        :raises ConflictError: If no page of the book has a size to take the median of, naming the first leaf without
+                               one.
+        """
+        sizeless = (i for i, page in enumerate(new_pages) if page.origin is NewPageOrigin.BLANK and page.size is None)
+        if (lacking := next(sizeless, None)) is None:
+            return None
+        try:
+            return self._leaf_size(repos)
+        except ConflictError as error:
+            raise ConflictError(PAGE_OF_BATCH.format(index=lacking, reason=error)) from error
+
+    def _placed_pages(
+        self,
+        repos: BookRepositories,
+        new_pages: Sequence[NewPage],
+        places: Mapping[PageAnchor | None, list[int]],
+        moment: datetime,
+    ) -> dict[int, Page]:
+        """Build the pages of a batch with their order keys, one call of the key builder for each place.
+
+        :param repos: Repositories of the transaction the caller runs in.
+        :type repos: BookRepositories
+        :param new_pages: The pages of the batch.
+        :type new_pages: Sequence[NewPage]
+        :param places: The indexes of the pages of each place, by its anchor.
+        :type places: Mapping[PageAnchor | None, list[int]]
+        :param moment: When the pages are added.
+        :type moment: datetime
+        :returns: The new pages, by their index in the batch.
+        :rtype: dict[int, Page]
+        :raises ConflictError: If the anchor of a place is not a page of the book, naming the first page of the place.
+        """
+        pages: dict[int, Page] = {}
+        for anchor, indexes in places.items():
+            try:
+                keys = self._keys_at(repos, anchor, count=len(indexes))
+            except NotFoundError as error:
+                raise ConflictError(PAGE_OF_BATCH.format(index=indexes[0], reason=ANCHOR_NOT_IN_BOOK)) from error
+            pages.update((i, self._new_page(new_pages[i], key, moment)) for i, key in zip(indexes, keys, strict=True))
+        return pages
+
+    @staticmethod
+    def _batch_places(new_pages: Sequence[NewPage]) -> dict[PageAnchor | None, list[int]]:
+        """Group the pages of a batch by the place they stand in, keeping the order listed.
+
+        A page without an anchor stands after the page before it, so it joins that page's place.
+
+        :param new_pages: The pages of the batch.
+        :type new_pages: Sequence[NewPage]
+        :returns: The indexes of the pages of each place, by its anchor, None for the end of the book.
+        :rtype: dict[PageAnchor | None, list[int]]
+        """
+        places: dict[PageAnchor | None, list[int]] = {}
+        place = None
+        for index, new_page in enumerate(new_pages):
+            place = new_page.anchor or place
+            places.setdefault(place, []).append(index)
+        return places
 
     async def set_blank_fill(self, book: Book, page_ids: Collection[PageId], fill: BlankFill) -> None:
         """Choose what the image of blank pages cut from a scan is: the scan, a white leaf or the paper of the book.
