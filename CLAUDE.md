@@ -12,9 +12,11 @@ gate describe the structure the code keeps, and the OpenAPI schema in `docs/open
 uv sync                                  # backend environment
 uv sync --extra cv                       # with OpenCV, for the plugins split.spread and geometry.deskew
                                          # the uv-sync hook syncs every extra after a checkout, merge or rebase
-uv run bookreviver-migrate upgrade head  # apply the schema migrations to the database of the settings, by hand only
+uv run bookreviver-migrate upgrade head  # apply the migrations of the catalogue of the settings, by hand only
 uv run fastapi dev                       # API on http://127.0.0.1:8000, data in ./data, needs .env and migrations
-uv run bookreviver-migrate make-migrations --autogenerate -m "Add the recipes table."  # revision from the tables
+uv run bookreviver-migrate make-migrations --autogenerate -m "Add the recipes table."  # catalogue revision
+uv run bookreviver-migrate make-migrations --bind-key book --autogenerate -m "Add a column."  # book revision
+uv run bookreviver-migrate split-shared-database  # once: the shared bookreviver.db into the catalogue and the books
 uv run pytest tests/contracts            # port contracts, run against every adapter of the port
 uv run lint-imports                      # the layer contracts on their own
 uv run bookreviver-openapi               # write docs/openapi.json again after a route or a schema changes
@@ -61,14 +63,16 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   Handlers never check raw input by hand.
 - HTTP status codes come from `fastapi.status` or `http.HTTPStatus`, never as number literals, in code and in tests.
 - Everything on the event loop is async: the API and the ports of files, jobs, events and HTTP. The persistence
-  repositories are synchronous and run only inside the work a service hands to `UnitOfWork.read`, `change` or
-  `change_book`, which the adapter runs in a worker thread as one transaction. Other blocking library calls go through
+  repositories are synchronous and run only inside the work a service hands to `UnitOfWork.read` or `change` of the
+  catalogue, or `read_book` or `change_book` of one book, which the adapter runs in a worker thread as one transaction
+  of that file. The owner of a book is checked once, by `Library.open` in the services, before the book is read. Other blocking library calls go through
   `anyio.to_thread.run_sync` inside adapters, keyword arguments through `functools.partial`. Heavy work (parsing,
   rasterising, tiling, OCR, LLM calls) runs only in background jobs, whose entry points live in `app` and call one
   service method.
 - Every new port gets a fake in `tests/helpers` and a contract test suite that runs against the fake and every adapter.
   `src` holds no code that only tests select. The persistence port has no fake: its tests run on the SQLAlchemy adapter
-  over an SQLite file in the test's directory, copied from a schema template built once per test process.
+  over SQLite files in the test's directory, the catalogue and every book copied from a template of its schema built
+  once per test process.
 
 ## Types and classes
 
@@ -83,12 +87,16 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
 ## Conventions
 
 - Python 3.14 with deferred annotations. SQLAlchemy 2.0 synchronous engines over SQLite in the persistence adapter, its
-  tables private to it.
-- A change of a table ships with an Alembic revision in `adapters/persistence/sqlalchemy/migrations/versions/`,
-  generated with `make-migrations --autogenerate`, read by eye for every key and index, and formatted by the gate.
-  `tests/adapters/persistence/sqlalchemy/test_migrations.py` fails until the revision matches the tables. The
-  application never migrates itself: it refuses to start until `bookreviver-migrate upgrade head` has run.
-  ty's `unsound-assignment` is disabled only for the table module, because `Mapped[...] = mapped_column()` trips it.
+  tables private to it. SQLite is the only database: the catalogue `data/catalogue.db` holds the accounts, the library
+  that says which account owns which book, and the recipe profiles, and every book is `book.db` in its own directory
+  `data/storage/projects/<id>/`, beside its files, with no account in it. Nothing refers across two files by a key.
+- A change of a table ships with an Alembic revision in `adapters/persistence/sqlalchemy/migrations/catalogue/versions/`
+  or `.../book/versions/`, generated with `make-migrations --autogenerate` (`--bind-key book` for a book), read by eye
+  for every key and index, and formatted by the gate. `tests/adapters/persistence/sqlalchemy/test_migrations.py` fails
+  until the revisions match the tables. The application never migrates the catalogue itself: it refuses to start until
+  `bookreviver-migrate upgrade head` has run. A book is brought to the head revision of its schema when it is opened, and
+  a book of a newer release is refused with `BookTooNewError`. ty's `unsound-assignment` is disabled only for the table
+  modules, because `Mapped[...] = mapped_column()` trips it.
 - Async tests use the anyio plugin (`@pytest.mark.anyio`).
 - The frontend client in `frontend/src/api/` is generated from the committed OpenAPI schema and never edited by hand.
   Every text the interface shows is in `frontend/src/shared/messages.ts`, and TypeScript runs without `any` or

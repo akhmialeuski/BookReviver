@@ -32,6 +32,7 @@ from bookreviver.services.imports import (
     ImportStorage,
 )
 from bookreviver.services.jobs import JobService
+from bookreviver.services.library import Library
 from bookreviver.services.processing_parts import ProcessingParts, ProcessingRuntime
 from bookreviver.services.steps import StepRunner
 
@@ -71,11 +72,11 @@ class ImportsProvider(Provider):
             await stack.aclose()
 
     @provide(scope=Scope.REQUEST)
-    def job_service(self, uow: UnitOfWork, board: JobBoard, stream: EventStream, sources: SourceStore) -> JobService:
-        """Build the job service over the unit of work of the request or job.
+    def job_service(self, library: Library, board: JobBoard, stream: EventStream, sources: SourceStore) -> JobService:
+        """Build the job service over the library of the request or job.
 
-        :param uow: Unit of work of the current request or job.
-        :type uow: UnitOfWork
+        :param library: Library of the current request or job.
+        :type library: Library
         :param board: Board holding the jobs of every book.
         :type board: JobBoard
         :param stream: Stream of the application's event bus.
@@ -85,7 +86,7 @@ class ImportsProvider(Provider):
         :returns: The job service.
         :rtype: JobService
         """
-        return JobService(uow=uow, board=board, stream=stream, sources=sources)
+        return JobService(library=library, board=board, stream=stream, sources=sources)
 
     @provide(scope=Scope.APP)
     def import_limits(self, settings: Settings) -> ImportLimits:

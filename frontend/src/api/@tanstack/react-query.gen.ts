@@ -44,7 +44,7 @@ export const listProjectsApiV1ProjectsGetQueryKey = (options?: Options<ListProje
 /**
  * List Projects
  *
- * List the projects of the signed-in account, most recently updated first.
+ * List the projects of the signed-in account, the latest added first.
  */
 export const listProjectsApiV1ProjectsGetOptions = (options?: Options<ListProjectsApiV1ProjectsGetData>) => queryOptions<ListProjectsApiV1ProjectsGetResponse, ListProjectsApiV1ProjectsGetError, ListProjectsApiV1ProjectsGetResponse, ReturnType<typeof listProjectsApiV1ProjectsGetQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
@@ -93,7 +93,7 @@ export const listProjectsApiV1ProjectsGetInfiniteQueryKey = (options?: Options<L
 /**
  * List Projects
  *
- * List the projects of the signed-in account, most recently updated first.
+ * List the projects of the signed-in account, the latest added first.
  */
 export const listProjectsApiV1ProjectsGetInfiniteOptions = (options?: Options<ListProjectsApiV1ProjectsGetData>) => {
     const opts = infiniteQueryOptions<ListProjectsApiV1ProjectsGetResponse, ListProjectsApiV1ProjectsGetError, InfiniteData<ListProjectsApiV1ProjectsGetResponse>, QueryKey<Options<ListProjectsApiV1ProjectsGetData>>, number | Pick<QueryKey<Options<ListProjectsApiV1ProjectsGetData>>[0], 'body' | 'headers' | 'path' | 'query'>>(

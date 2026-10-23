@@ -1,16 +1,22 @@
 """Persistence ports: repositories per aggregate and the unit of work that runs a use case's work on them.
 
-Services never see a database. They hand the ``UnitOfWork`` a function over ``Repositories``, and the unit of work
-runs that function whole on one transaction: ``read`` on a transaction that only reads, ``change`` and ``change_book``
-on one that writes and commits when the function returns. The repositories are synchronous, because the function runs
+The data lives in two kinds of store. The catalogue is one for the application and holds what belongs to the
+accounts: the library, which says which account owns which book, and the recipe profiles. Each book has a store of its
+own that holds everything of the book and nothing of any account, so a book moves between instances as it is. Nothing
+refers across two stores by a key the store checks, and every list of books goes through the library.
+
+Services never see a database. They hand the ``UnitOfWork`` a function over the repositories of one store, and the unit
+of work runs that function whole on one transaction of that store: ``read`` and ``change`` over the
+``CatalogueRepositories``, ``read_book`` and ``change_book`` over the ``BookRepositories`` of one book. A read only
+reads, and a change commits when the function returns. The repositories are synchronous, because the function runs
 from its first statement to its commit without returning to the event loop, which is what keeps a write short: the
 adapter of a database runs it in a thread of its own.
 
 The book is the aggregate. Every change of a book runs in ``change_book``, which waits for any other change of that
-book and reads the project first, so it sees only what the previous change committed. A change outside the content of
-a book runs in ``change``. A repository write inside ``read`` is a programming error, reported as
-``NoChangeOpenError``. The function cannot open another transaction, because it holds repositories and not the unit
-of work, so changes never nest.
+book and reads the project first, so it sees only what the previous change committed, and never for a change of
+another book. A repository write inside a read is a programming error, reported as ``NoChangeOpenError``. The function
+cannot open another transaction, because it holds repositories and not the unit of work, so changes never nest, and a
+use case that needs both stores runs one transaction of each.
 """
 
 from abc import ABC, abstractmethod
@@ -18,6 +24,7 @@ from typing import TYPE_CHECKING, NewType
 
 from bookreviver.domain.entities import (
     BookPlace,
+    LibraryEntry,
     Page,
     PageStage,
     PageStepChange,
@@ -44,7 +51,7 @@ from bookreviver.domain.ids import (
     SourceId,
 )
 from bookreviver.domain.step_values import StepValues, StepValuesKey
-from bookreviver.domain.values import BookPlaceKey, PageStageKey, PageStepKey
+from bookreviver.domain.values import PageStageKey, PageStepKey
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Mapping, Sequence
@@ -184,25 +191,40 @@ class KeyedRepository[EntityT, KeyT](Repository[EntityT, KeyT]):
         """
 
 
-class ProjectRepository(Repository[Project, ProjectId]):
-    """Projects, listed per owning account.
+class LibraryRepository(Repository[LibraryEntry, ProjectId]):
+    """The library of the catalogue: which account owns which book, one entry for each book.
 
-    A project's cover is one of its own pages: ``add`` and ``update`` raise ``NotFoundError`` naming a cover page that
-    is not stored or belongs to another project, and deleting the cover page leaves the project without a cover.
+    ``add`` raises ``NotFoundError`` when the owner is not an account, and an account is not deleted while an entry
+    names it.
     """
 
     @abstractmethod
-    def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:
-        """Return the owner's projects with their counts, most recently updated first, ties by identifier.
+    def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[LibraryEntry]:
+        """Return the owner's books, the latest added first, ties by identifier.
 
-        :param owner_id: Account owning the projects.
+        :param owner_id: Account owning the books.
         :type owner_id: AccountId
         :param request: Offset and limit of the window to return.
         :type request: SliceRequest
-        :returns: The projects of the window with the counts of their included pages, sources and scans, and the
-                  number of all the owner's projects.
-        :rtype: Slice[ProjectOverview]
+        :returns: The entries of the window and the number of all the owner's books.
+        :rtype: Slice[LibraryEntry]
         """
+
+    @abstractmethod
+    def list_all(self) -> Sequence[LibraryEntry]:
+        """Return the entry of every book of every account, for the passes of the start over all books.
+
+        :returns: Every entry, by identifier.
+        :rtype: Sequence[LibraryEntry]
+        """
+
+
+class ProjectRepository(Repository[Project, ProjectId]):
+    """The project of a book, the one row its store has.
+
+    A project's cover is one of its own pages: ``add`` and ``update`` raise ``NotFoundError`` naming a cover page that
+    is not stored, and deleting the cover page leaves the project without a cover.
+    """
 
     @abstractmethod
     def overview(self, project: Project) -> ProjectOverview:
@@ -637,17 +659,16 @@ class PageStageRepository(KeyedRepository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
-    def fresh_by_project(self) -> Mapping[ProjectId, Sequence[PageStage]]:
-        """Return the records of the pages of every book whose current version is up to date, grouped by book.
+    def list_fresh(self) -> Sequence[PageStage]:
+        """Return the records of the pages of the book whose current version is up to date.
 
-        :returns: For each book that has any, its records in the fresh state, by page identifier and then in the order
-                  of the stages.
-        :rtype: Mapping[ProjectId, Sequence[PageStage]]
+        :returns: The records in the fresh state, by page identifier and then in the order of the stages.
+        :rtype: Sequence[PageStage]
         """
 
     @abstractmethod
     def list_replaced(self, stage: Stage, processor: ProcessorRef) -> Sequence[PageStage]:
-        """Return the records of a stage of every book whose current version a replaced version of a processor made.
+        """Return the records of a stage of the book whose current version a replaced version of a processor made.
 
         :param stage: The stage whose records are read.
         :type stage: Stage
@@ -694,17 +715,17 @@ class PageStageRepository(KeyedRepository[PageStage, PageStageKey]):
         """
 
     @abstractmethod
-    def tally(self, project_ids: Collection[ProjectId]) -> Sequence[StageTally]:
-        """Count the records of every stage of the given projects by state, in one grouped query for all of them.
+    def tally(self, project_id: ProjectId) -> Sequence[StageTally]:
+        """Count the records of every stage of the project by state, in one grouped query.
 
         Only pages with an image are counted, so a placeholder never is. A page counts as marked for review when the
         current version of its record carries a review mark and the record is not failed. A page counts toward check
         when its record is stale or failed or the page is marked, once however many of these hold. A stage that no page
         has a record of has no tally.
 
-        :param project_ids: Projects whose stages are counted.
-        :type project_ids: Collection[ProjectId]
-        :returns: One tally for each stage of each project that has a record, in no particular order.
+        :param project_id: Project whose stages are counted.
+        :type project_id: ProjectId
+        :returns: One tally for each stage that has a record, in no particular order.
         :rtype: Sequence[StageTally]
         """
 
@@ -878,8 +899,9 @@ class RecipeRepository(Repository[Recipe, RecipeId]):
 class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
     """The recipe profiles of the accounts; an account has at most one default profile for each stage.
 
-    Deleting an account removes its profiles. A recipe of a book may refer to the profile it was made from, and
-    deleting the profile only empties that reference and leaves the recipe as it is.
+    Deleting an account removes its profiles. A recipe of a book may name the profile it was made from, but a book
+    lives in a store of its own, so no key checks that name, and the service that deletes a profile empties it in the
+    owner's books.
     """
 
     @abstractmethod
@@ -906,25 +928,13 @@ class RecipeProfileRepository(Repository[RecipeProfile, RecipeProfileId]):
         :rtype: RecipeProfile | None
         """
 
-    @abstractmethod
-    def count_books(self, profile_ids: Collection[RecipeProfileId]) -> Mapping[RecipeProfileId, int]:
-        """Count the books that have a recipe made from each of the given profiles, in one read for all of them.
 
-        A book counts once for a profile however many of its recipes were made from it.
-
-        :param profile_ids: Profiles to count the books of.
-        :type profile_ids: Collection[RecipeProfileId]
-        :returns: The number of books by profile, which has no entry for a profile that no book uses.
-        :rtype: Mapping[RecipeProfileId, int]
-        """
-
-
-class BookPlaceRepository(Repository[BookPlace, BookPlaceKey]):
-    """The place each account left each book at; deleting a book or an account removes its places."""
+class BookPlaceRepository(Repository[BookPlace, ProjectId]):
+    """The place the reader left the book at, one for the book; deleting the book removes it."""
 
     @abstractmethod
     def save(self, place: BookPlace) -> BookPlace:
-        """Store the place of an account in a book, replacing the one stored whole, unless that one is newer.
+        """Store the place of the book, replacing the one stored whole, unless that one is newer.
 
         The write is atomic: of two transactions saving at once, the one with the later ``updated_at`` leaves its place
         whole, and no field of the other is kept. A place whose ``updated_at`` is earlier than the stored one changes
@@ -939,24 +949,35 @@ class BookPlaceRepository(Repository[BookPlace, BookPlaceKey]):
         """
 
     @abstractmethod
-    def find(self, key: BookPlaceKey) -> BookPlace | None:
-        """Return the place of an account in a book.
+    def find(self, project_id: ProjectId) -> BookPlace | None:
+        """Return the place of the book.
 
-        :param key: Account and book.
-        :type key: BookPlaceKey
-        :returns: The place, or None when the account has not worked on the book yet.
+        :param project_id: The book.
+        :type project_id: ProjectId
+        :returns: The place, or None when the book has not been worked on yet.
         :rtype: BookPlace | None
         """
 
 
-class Repositories(ABC):
-    """Every repository of one transaction, which the work handed to the unit of work receives.
+class CatalogueRepositories(ABC):
+    """Every repository of one transaction of the catalogue, which the work of ``read`` and ``change`` receives.
 
-    :ivar projects: Project repository of this transaction.
+    :ivar library: Repository of the library, which account owns which book, of this transaction.
+    :ivar recipe_profiles: Repository of the recipe profiles of the accounts, of this transaction.
+    """
+
+    library: LibraryRepository
+    recipe_profiles: RecipeProfileRepository
+
+
+class BookRepositories(ABC):
+    """Every repository of one transaction of a book, which the work of ``read_book`` and ``change_book`` receives.
+
+    :ivar projects: Repository of the project of the book, of this transaction.
     :ivar sources: Source repository of this transaction.
     :ivar scans: Scan repository of this transaction.
     :ivar pages: Page repository of this transaction.
-    :ivar pagination_sections: Repository of the pagination sections of the books, of this transaction.
+    :ivar pagination_sections: Repository of the pagination sections of the book, of this transaction.
     :ivar page_versions: Page version repository of this transaction.
     :ivar page_stages: Page stage repository of this transaction.
     :ivar page_step_states: Repository of the settings and manual edits of the steps of the pages, of this transaction.
@@ -965,8 +986,7 @@ class Repositories(ABC):
                        transaction.
     :ivar result_mark_changes: Repository of the log of the marks and comments of the results, of this transaction.
     :ivar recipes: Recipe repository of this transaction.
-    :ivar recipe_profiles: Repository of the recipe profiles of the accounts, of this transaction.
-    :ivar book_places: Repository of the places accounts left books at, of this transaction.
+    :ivar book_places: Repository of the place the reader left the book at, of this transaction.
     """
 
     projects: ProjectRepository
@@ -981,68 +1001,111 @@ class Repositories(ABC):
     step_values: StepValuesRepository
     result_mark_changes: ResultMarkChangeRepository
     recipes: RecipeRepository
-    recipe_profiles: RecipeProfileRepository
     book_places: BookPlaceRepository
 
 
 class UnitOfWork(ABC):
-    """Runs the work of a use case on the repositories, one transaction for each call.
+    """Runs the work of a use case on the repositories of one store, one transaction for each call.
 
-    The work is a synchronous function over ``Repositories``, and the unit of work runs it whole: the transaction
-    begins before its first statement and ends when it returns or raises, and nothing of it is visible to others
-    before it commits. A change commits when the work returns and rolls back when it raises, and the exception goes on
-    to the caller. Nothing holds a connection between two calls, so a caller may wait as long as it needs between them.
+    The work is a synchronous function over the repositories of the catalogue or of one book, and the unit of work runs
+    it whole: the transaction begins before its first statement and ends when it returns or raises, and nothing of it
+    is visible to others before it commits. A change commits when the work returns and rolls back when it raises, and
+    the exception goes on to the caller. Nothing holds a connection between two calls, so a caller may wait as long as
+    it needs between them.
 
     A unit of work keeps no state between calls, so coroutines may share one and call it at once. Changes of one
-    process that wait for the same write enter in the order they asked for it, so one that came early is never
+    process that wait for the same store enter in the order they asked for it, so one that came early is never
     overtaken by one that came later, and each waits at most the wait limit of the unit of work before it gives up with
-    ``BookBusyError``.
+    ``BookBusyError``. Changes of different stores never wait for each other.
     """
 
     @abstractmethod
-    async def read[T](self, work: Callable[[Repositories], T]) -> T:
-        """Run ``work`` on a transaction that only reads, and return what it returns.
+    async def read[T](self, work: Callable[[CatalogueRepositories], T]) -> T:
+        """Run ``work`` on a transaction of the catalogue that only reads, and return what it returns.
 
-        Every read of the work sees the same committed state of the database. A write is refused with
+        Every read of the work sees the same committed state of the catalogue. A write is refused with
         ``NoChangeOpenError``.
 
         :param work: Function over the repositories of the transaction.
-        :type work: Callable[[Repositories], T]
+        :type work: Callable[[CatalogueRepositories], T]
         :returns: What the work returns.
         :rtype: T
         :raises NoChangeOpenError: If the work writes.
         """
 
     @abstractmethod
-    async def change[T](self, work: Callable[[Repositories], T]) -> T:
-        """Run ``work`` on a transaction that writes, commit it when the work returns, and return what it returns.
+    async def change[T](self, work: Callable[[CatalogueRepositories], T]) -> T:
+        """Run ``work`` on a transaction of the catalogue that writes, commit it when the work returns, and return it.
 
-        The change is for the rows that belong to no book or to many: jobs, the places accounts left books at, a new
-        project, and the recipe profiles of an account. Reads of the work see everything committed before it began
-        plus its own writes. When the work raises, the transaction rolls back and the exception goes on.
+        Reads of the work see everything committed before it began plus its own writes. When the work raises, the
+        transaction rolls back and the exception goes on.
 
         :param work: Function over the repositories of the transaction.
-        :type work: Callable[[Repositories], T]
+        :type work: Callable[[CatalogueRepositories], T]
         :returns: What the work returns.
         :rtype: T
         :raises BookBusyError: If the write did not begin within the wait limit of the unit of work.
         """
 
     @abstractmethod
-    async def change_book[T](self, project_id: ProjectId, work: Callable[[Repositories, Project], T]) -> T:
-        """Run ``work`` as ``change`` does, alone among the changes of the book, with the project as it stands.
+    async def read_book[T](self, project_id: ProjectId, work: Callable[[BookRepositories], T]) -> T:
+        """Run ``work`` on a transaction of the book that only reads, and return what it returns.
+
+        Every read of the work sees the same committed state of the book. A write is refused with
+        ``NoChangeOpenError``.
+
+        :param project_id: Project whose book is read.
+        :type project_id: ProjectId
+        :param work: Function over the repositories of the transaction.
+        :type work: Callable[[BookRepositories], T]
+        :returns: What the work returns.
+        :rtype: T
+        :raises NotFoundError: If the book is not stored.
+        :raises NoChangeOpenError: If the work writes.
+        """
+
+    @abstractmethod
+    async def change_book[T](self, project_id: ProjectId, work: Callable[[BookRepositories, Project], T]) -> T:
+        """Run ``work`` on a transaction of the book that writes, alone among its changes, with the project as it is.
 
         The change waits for any other change of the same book to end, then reads the project, so it sees what the
-        previous change committed. The port promises no ordering between the changes of different books, nor between a
-        ``change_book`` and a ``change``, though a database with one writer, such as SQLite, makes every change wait for
-        any other.
+        previous change committed. It never waits for a change of another book or of the catalogue.
 
         :param project_id: Project whose book is changed.
         :type project_id: ProjectId
         :param work: Function over the repositories of the transaction and the project read at its start.
-        :type work: Callable[[Repositories, Project], T]
+        :type work: Callable[[BookRepositories, Project], T]
         :returns: What the work returns.
         :rtype: T
-        :raises NotFoundError: If the project is not stored.
+        :raises NotFoundError: If the book is not stored.
         :raises BookBusyError: If the write did not begin within the wait limit of the unit of work.
+        """
+
+    @abstractmethod
+    async def create_book(self, project: Project) -> Project:
+        """Make the store of a new book, holding its project and nothing else yet.
+
+        :param project: The project of the new book.
+        :type project: Project
+        :returns: The project as stored.
+        :rtype: Project
+        :raises ConflictError: If a book with this identifier is stored.
+        """
+
+    @abstractmethod
+    async def delete_book(self, project_id: ProjectId) -> None:
+        """Remove the store of a book with everything in it, once its changes in progress have ended.
+
+        A book that is not stored is left as it is, so a deletion broken off half way can run again.
+
+        :param project_id: Project whose book is removed.
+        :type project_id: ProjectId
+        """
+
+    @abstractmethod
+    async def stored_books(self) -> Collection[ProjectId]:
+        """Return the books that have a store, whether the library lists them or not.
+
+        :returns: The identifiers of the stored books.
+        :rtype: Collection[ProjectId]
         """

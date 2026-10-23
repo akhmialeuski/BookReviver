@@ -17,7 +17,7 @@ from bookreviver.domain.enums import ChangeSource, PageOrigin, RunMode, StageSta
 from bookreviver.domain.values import RunImpact
 from bookreviver.services.book_measure import leaves_to_the_book
 from bookreviver.services.page_batches import PageBatch
-from bookreviver.services.projects import book_pages, owned_project
+from bookreviver.services.projects import book_pages
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -26,8 +26,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId, StepId
     from bookreviver.domain.values import StageRun
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
+    from bookreviver.services.library import Library
     from bookreviver.services.recipes import RecipeBook
 
 
@@ -125,11 +126,11 @@ class RunPlan:
             return ()
         picked = await self._picked()
 
-        def work(repos: Repositories, _project: Project) -> Sequence[PageStepChange]:
+        def work(repos: BookRepositories, _project: Project) -> Sequence[PageStepChange]:
             """Remove the settings and the manual edits of the steps of the run, as one batch.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the removal does not read.
             :type _project: Project
             :returns: The changes written, one for each layer removed.
@@ -151,11 +152,11 @@ class RunPlan:
         """
         if self._named_pages is None:
 
-            def work(repos: Repositories) -> list[Page]:
+            def work(repos: BookRepositories) -> list[Page]:
                 """Read the pages the run names from one snapshot of the book.
 
                 :param repos: Repositories of the transaction.
-                :type repos: Repositories
+                :type repos: BookRepositories
                 :returns: The pages in book order.
                 :rtype: list[Page]
                 :raises NotFoundError: If a page the run names is not one of the project.
@@ -164,7 +165,7 @@ class RunPlan:
                     return book_pages(repos.pages, self._project_id)
                 return list(repos.pages.list_by_ids(self._project_id, self._run.page_ids))
 
-            found = await self._uow.read(work)
+            found = await self._uow.read_book(self._project_id, work)
             self._named_pages = [page for page in found if page.origin is not PageOrigin.PLACEHOLDER]
         return self._named_pages
 
@@ -188,11 +189,11 @@ class RunPlan:
         picked = await self._picked()
         stage = self._run.stage
 
-        def read(repos: Repositories) -> tuple[list[PageStage], set[PageVersionId]]:
+        def read(repos: BookRepositories) -> tuple[list[PageStage], set[PageVersionId]]:
             """Read the records of the pages and which head versions of the stage are ready, from one snapshot.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: Every record of the pages, and the identifiers of the ready head versions of the stage.
             :rtype: tuple[list[PageStage], set[PageVersionId]]
             """
@@ -203,7 +204,7 @@ class RunPlan:
             }
             return records, ready
 
-        records, ready = await self._uow.read(read)
+        records, ready = await self._uow.read_book(self._project_id, read)
         by_page: dict[PageId, dict[Stage, PageStage]] = {}
         for record in records:
             by_page.setdefault(record.page_id, {})[record.stage] = record
@@ -281,13 +282,13 @@ class RunPlan:
         :rtype: list[PageStepState]
         """
         picked = await self._picked()
-        return await self._uow.read(lambda repos: self._states_in(repos, picked))
+        return await self._uow.read_book(self._project_id, lambda repos: self._states_in(repos, picked))
 
-    def _states_in(self, repos: Repositories, picked: Mapping[PageId, Recipe]) -> list[PageStepState]:
+    def _states_in(self, repos: BookRepositories, picked: Mapping[PageId, Recipe]) -> list[PageStepState]:
         """Read the states of the steps the run goes over in the transaction of the caller.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param picked: The recipe of every page the run names.
         :type picked: Mapping[PageId, Recipe]
         :returns: The states that are stored, which are none for a step and a page without settings and edit.
@@ -306,17 +307,20 @@ class RunPlan:
 class RunImpactService:
     """Counts the pages a run would take work from, for the user to confirm before the run is sent."""
 
-    def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, clock: Clock) -> None:
+    def __init__(self, *, uow: UnitOfWork, library: Library, recipes: RecipeBook, clock: Clock) -> None:
         """Count over the ports of one request.
 
         :param uow: Unit of work of the request.
         :type uow: UnitOfWork
+        :param library: Library that opens the books of the acting account.
+        :type library: Library
         :param recipes: The recipes of the project.
         :type recipes: RecipeBook
         :param clock: Clock the plan of the run is built with.
         :type clock: Clock
         """
         self._uow = uow
+        self._library = library
         self._recipes = recipes
         self._clock = clock
 
@@ -334,6 +338,6 @@ class RunImpactService:
         :rtype: RunImpact
         :raises NotFoundError: If the actor has no such project or page, or the stage has no recipe.
         """
-        await self._uow.read(lambda repos: owned_project(repos.projects, actor, project_id))
+        await self._library.open(actor, project_id)
         plan = RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, project_id=project_id, run=run)
         return await plan.impact()

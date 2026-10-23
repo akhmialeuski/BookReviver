@@ -16,7 +16,7 @@ from bookreviver.domain.entities import ResultMarkChange
 from bookreviver.domain.enums import VersionScale
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import ResultMarkChangeId
-from bookreviver.services.projects import owned_page
+from bookreviver.services.projects import book_page
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -24,8 +24,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, PageVersion, Project
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId
     from bookreviver.domain.values import ResultNote
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
+    from bookreviver.services.library import Library
 
 PREVIEW_TAKES_NO_MARK: str = 'The version {version_id} is a preview, which takes no mark and no comment.'
 
@@ -33,15 +34,18 @@ PREVIEW_TAKES_NO_MARK: str = 'The version {version_id} is a preview, which takes
 class ResultMarksService:
     """Sets and lists the marks and comments of the results of the acting account's projects."""
 
-    def __init__(self, *, uow: UnitOfWork, clock: Clock) -> None:
+    def __init__(self, *, uow: UnitOfWork, library: Library, clock: Clock) -> None:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request, whose ``change_book`` holds every changing use case.
         :type uow: UnitOfWork
+        :param library: Library that opens the books of the acting account.
+        :type library: Library
         :param clock: Clock stamping the changes.
         :type clock: Clock
         """
         self._uow = uow
+        self._library = library
         self._clock = clock
 
     async def set(
@@ -70,21 +74,21 @@ class ResultMarksService:
                                version.
         :raises ConflictError: If the version is a preview.
         """
+        await self._library.open(actor, project_id)
 
-        def work(repos: Repositories, _project: Project) -> PageVersion:
+        def work(repos: BookRepositories, _project: Project) -> PageVersion:
             """Store the new mark and comment of the version, and the change in its log.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the lookup of the version reads again.
             :type _project: Project
             :returns: The version with its new mark and comment, which is the stored one when nothing changed.
             :rtype: PageVersion
-            :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no
-                                   such version.
+            :raises NotFoundError: If the project has no such page, or the page has no such version.
             :raises ConflictError: If the version is a preview.
             """
-            version = self._version(repos, actor, project_id, page_id, version_id)
+            version = self._version(repos, project_id, page_id, version_id)
             if version.scale is not VersionScale.FULL:
                 raise ConflictError(PREVIEW_TAKES_NO_MARK.format(version_id=version_id))
             if (note.mark, note.comment) == (version.mark, version.comment):
@@ -124,32 +128,30 @@ class ResultMarksService:
         :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no such
                                version.
         """
+        await self._library.open(actor, project_id)
 
-        def work(repos: Repositories) -> Sequence[ResultMarkChange]:
+        def work(repos: BookRepositories) -> Sequence[ResultMarkChange]:
             """Read the log of the version.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: The log of the version.
             :rtype: Sequence[ResultMarkChange]
-            :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no
-                                   such version.
+            :raises NotFoundError: If the project has no such page, or the page has no such version.
             """
-            version = self._version(repos, actor, project_id, page_id, version_id)
+            version = self._version(repos, project_id, page_id, version_id)
             return repos.result_mark_changes.list_for_version(version.id)
 
-        return await self._uow.read(work)
+        return await self._uow.read_book(project_id, work)
 
     @staticmethod
     def _version(
-        repos: Repositories, actor: Actor, project_id: ProjectId, page_id: PageId, version_id: PageVersionId
+        repos: BookRepositories, project_id: ProjectId, page_id: PageId, version_id: PageVersionId
     ) -> PageVersion:
-        """Return a version of a page of the actor's project, in the transaction of the caller.
+        """Return a version of a page of a book, in the transaction of the caller.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
-        :param actor: Account acting in the current request.
-        :type actor: Actor
+        :type repos: BookRepositories
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param page_id: Identifier of the page.
@@ -158,10 +160,9 @@ class ResultMarksService:
         :type version_id: PageVersionId
         :returns: The version.
         :rtype: PageVersion
-        :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no such
-                               version.
+        :raises NotFoundError: If the project has no such page, or the page has no such version.
         """
-        owned_page(repos, actor, project_id, page_id)
+        book_page(repos, project_id, page_id)
         version = repos.page_versions.get(version_id)
         if version.page_id != page_id:
             raise NotFoundError(version_id)

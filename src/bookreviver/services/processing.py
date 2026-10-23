@@ -25,7 +25,7 @@ from bookreviver.domain.keys import ProjectKeys
 from bookreviver.domain.values import CollectionReport, PageStageKey, Slice, StepPreview, TileCut
 from bookreviver.domain.version_chains import stage_depths, step_places, versions_of_step
 from bookreviver.services.processing_parts import PROJECT_BUSY
-from bookreviver.services.projects import owned_page, owned_project, require_owner
+from bookreviver.services.projects import book_page
 from bookreviver.services.run_plans import RunPlan
 
 if TYPE_CHECKING:
@@ -35,9 +35,10 @@ if TYPE_CHECKING:
     from bookreviver.domain.geometry import Point
     from bookreviver.domain.ids import PageId, PageVersionId, ProjectId
     from bookreviver.domain.values import ProcessorSpec, RecipeDraft, RecipeKey, SliceRequest, StageRun, VersionFilter
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.storage import AssetStore
+    from bookreviver.services.library import Library
     from bookreviver.services.processing_parts import ProcessingParts
 
 NOT_CHOOSABLE: str = 'The version {version_id} cannot be made the current one: {reason}.'
@@ -58,12 +59,20 @@ class ProcessingService:
     """Recipes, runs, previews and page versions of the acting account's projects."""
 
     def __init__(
-        self, *, uow: UnitOfWork, assets: AssetStore, catalogue: ProcessorCatalog, parts: ProcessingParts
+        self,
+        *,
+        uow: UnitOfWork,
+        library: Library,
+        assets: AssetStore,
+        catalogue: ProcessorCatalog,
+        parts: ProcessingParts,
     ) -> None:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request, in whose ``change_book`` blocks the changing use cases write.
         :type uow: UnitOfWork
+        :param library: Library that opens the books of the acting account.
+        :type library: Library
         :param assets: Store of the derived files, whose size a report of a collection reads.
         :type assets: AssetStore
         :param catalogue: The processors the application can run.
@@ -72,6 +81,7 @@ class ProcessingService:
         :type parts: ProcessingParts
         """
         self._uow = uow
+        self._library = library
         self._assets = assets
         self._catalogue = catalogue
         self._recipes = parts.recipes
@@ -102,9 +112,8 @@ class ProcessingService:
         :rtype: Slice[Recipe]
         :raises NotFoundError: If the actor has no such project, or the stage has no recipe.
         """
-        recipes = await self._recipes.recipes(
-            project_id, stage, checking=lambda repos: owned_project(repos.projects, actor, project_id)
-        )
+        await self._library.open(actor, project_id)
+        recipes = await self._recipes.recipes(project_id, stage)
         return Slice(items=recipes[request.offset : request.offset + request.limit], total=len(recipes))
 
     async def save_recipe(self, actor: Actor, project_id: ProjectId, key: RecipeKey, draft: RecipeDraft) -> Recipe:
@@ -127,21 +136,21 @@ class ProcessingService:
         :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
                                         usual order.
         """
+        await self._library.open(actor, project_id)
 
-        def work(repos: Repositories, project: Project) -> tuple[Recipe, list[PageStage]]:
+        def work(repos: BookRepositories, _project: Project) -> tuple[Recipe, list[PageStage]]:
             """Store the new steps of the recipe, and mark the pages it processed stale.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :param project: The project as the change finds it.
-            :type project: Project
+            :type repos: BookRepositories
+            :param _project: The project as the change finds it.
+            :type _project: Project
             :returns: The recipe as stored, and the records that became stale.
             :rtype: tuple[Recipe, list[PageStage]]
-            :raises NotFoundError: If the actor has no such project, or the project has no such recipe of the stage.
+            :raises NotFoundError: If the project has no such recipe of the stage.
             :raises InvalidParametersError: If a step does not fit its processor, or stands off a required place in the
                                             usual order.
             """
-            require_owner(project, actor)
             recipe = self._recipes.get(repos, project_id, key.recipe_id, stage=key.stage)
             return self._recipes.rewrite(repos, recipe, draft), self._records.mark_recipe_stale(repos, recipe.id)
 
@@ -167,15 +176,15 @@ class ProcessingService:
                                step that the recipe of a page has no such step for, or whose steps up to it are all
                                switched off, or its mode takes the work of pages away and it is not confirmed.
         """
+        await self._library.open(actor, project_id)
 
-        def check(repos: Repositories) -> None:
-            """Require the project of the actor and, for a run over chosen pages, every one of the pages in it.
+        def check(repos: BookRepositories) -> None:
+            """Require, for a run over chosen pages, every one of the pages in the book.
 
             :param repos: Repositories of the transaction that reads the recipes.
-            :type repos: Repositories
-            :raises NotFoundError: If the actor has no such project, or a page is not in it.
+            :type repos: BookRepositories
+            :raises NotFoundError: If a page is not in the book.
             """
-            owned_project(repos.projects, actor, project_id)
             if (page_ids := run.page_ids) is not None:
                 repos.pages.list_by_ids(project_id, page_ids)
 
@@ -218,9 +227,8 @@ class ProcessingService:
         :raises ConflictError: If a run or a measure of the project is queued or running, which may be writing the
                                versions that are measured or the recipe.
         """
-        await self._recipes.recipes(
-            project_id, Stage.GEOMETRY, checking=lambda repos: owned_project(repos.projects, actor, project_id)
-        )
+        await self._library.open(actor, project_id)
+        await self._recipes.recipes(project_id, Stage.GEOMETRY)
         return await self._starter.enqueue(project_id, JobKind.MEASURE_BOOK, {})
 
     async def start_preview(self, actor: Actor, project_id: ProjectId, preview: StepPreview) -> Job:
@@ -239,7 +247,8 @@ class ProcessingService:
         :raises ConflictError: If a run, a preview, a tile cutting, a collection or a measure of the project is queued
                                or running.
         """
-        await self._uow.read(lambda repos: owned_page(repos, actor, project_id, preview.page_id))
+        await self._library.open(actor, project_id)
+        await self._uow.read_book(project_id, lambda repos: book_page(repos, project_id, preview.page_id))
         checked = StepPreview(
             page_id=preview.page_id,
             stage=preview.stage,
@@ -266,20 +275,21 @@ class ProcessingService:
         :rtype: Slice[PageStage]
         :raises NotFoundError: If the actor has no such project, or the project has no such page.
         """
+        await self._library.open(actor, project_id)
 
-        def work(repos: Repositories) -> Sequence[PageStage]:
+        def work(repos: BookRepositories) -> Sequence[PageStage]:
             """Read the records of the page from one snapshot.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: Every record of the page.
             :rtype: Sequence[PageStage]
-            :raises NotFoundError: If the actor has no such project, or the project has no such page.
+            :raises NotFoundError: If the project has no such page.
             """
-            owned_page(repos, actor, project_id, page_id)
+            book_page(repos, project_id, page_id)
             return repos.page_stages.list_for_page(page_id)
 
-        records = await self._uow.read(work)
+        records = await self._uow.read_book(project_id, work)
         return Slice(items=records[request.offset : request.offset + request.limit], total=len(records))
 
     async def choose_version(
@@ -315,27 +325,28 @@ class ProcessingService:
                                measure of the book, a tile cutting or a collection of the project is queued or
                                running, which may be reading or deleting the versions the choice depends on.
         """
-        await self._uow.read(
-            lambda repos: self._choosable(repos, owned_page(repos, actor, project_id, page_id), stage, version_id)
+        await self._library.open(actor, project_id)
+        await self._uow.read_book(
+            project_id, lambda repos: self._choosable(repos, book_page(repos, project_id, page_id), stage, version_id)
         )
         if await self._starter.free_of_previews(project_id):
             raise ConflictError(PROJECT_BUSY)
         key = PageStageKey(page_id, stage)
 
-        def work(repos: Repositories, _project: Project) -> tuple[PageVersion, Sequence[PageStage]]:
+        def work(repos: BookRepositories, _project: Project) -> tuple[PageVersion, Sequence[PageStage]]:
             """Check the version again, and make it the current one of the stage.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the check of the version reads again.
             :type _project: Project
             :returns: The version, and the records that changed, the stage first.
             :rtype: tuple[PageVersion, Sequence[PageStage]]
-            :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no
+            :raises NotFoundError: If the project has no such page, or the page has no
                                    such version.
             :raises ConflictError: If the version is not ready, is a preview, or belongs to another stage.
             """
-            version = self._choosable(repos, owned_page(repos, actor, project_id, page_id), stage, version_id)
+            version = self._choosable(repos, book_page(repos, project_id, page_id), stage, version_id)
             previous = repos.page_stages.find(key)
             return version, self._records.set_head(
                 repos, key, head_version_id=version_id, recipe_id=None if previous is None else previous.recipe_id
@@ -378,19 +389,20 @@ class ProcessingService:
                                stage has the step.
         :raises InvalidParametersError: If a step is asked for without its stage.
         """
+        await self._library.open(actor, project_id)
 
-        def work(repos: Repositories) -> Slice[PageVersion]:
+        def work(repos: BookRepositories) -> Slice[PageVersion]:
             """Read the versions of the page from one snapshot.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: The versions of the window and the number of all that match.
             :rtype: Slice[PageVersion]
-            :raises NotFoundError: If the actor has no such project, the project has no such page, or no recipe of the
+            :raises NotFoundError: If the project has no such page, or no recipe of the
                                    stage has the step.
             :raises InvalidParametersError: If a step is asked for without its stage.
             """
-            owned_page(repos, actor, project_id, page_id)
+            book_page(repos, project_id, page_id)
             step_id = version_filter.step_id
             if step_id is None:
                 return repos.page_versions.list_for_stage(
@@ -412,7 +424,7 @@ class ProcessingService:
             ]
             return Slice(items=matching[request.offset : request.offset + request.limit], total=len(matching))
 
-        return await self._uow.read(work)
+        return await self._uow.read_book(project_id, work)
 
     async def version(
         self, actor: Actor, project_id: ProjectId, page_id: PageId, version_id: PageVersionId
@@ -432,21 +444,22 @@ class ProcessingService:
         :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no such
                                version.
         """
+        await self._library.open(actor, project_id)
 
-        def work(repos: Repositories) -> PageVersion:
+        def work(repos: BookRepositories) -> PageVersion:
             """Read the version of the page.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: The version.
             :rtype: PageVersion
-            :raises NotFoundError: If the actor has no such project, the project has no such page, or the page has no
+            :raises NotFoundError: If the project has no such page, or the page has no
                                    such version.
             """
-            owned_page(repos, actor, project_id, page_id)
+            book_page(repos, project_id, page_id)
             return self._version_of(repos, page_id, version_id)
 
-        return await self._uow.read(work)
+        return await self._uow.read_book(project_id, work)
 
     async def start_tiles(self, actor: Actor, project_id: ProjectId, page_id: PageId, version_id: PageVersionId) -> Job:
         """Record a job that cuts the tile pyramid of a version, which the viewer asks for when it opens one.
@@ -484,21 +497,21 @@ class ProcessingService:
         :rtype: CollectionReport
         :raises NotFoundError: If the actor has no such project.
         """
+        await self._library.open(actor, project_id)
         collection = self._starter.collection()
 
-        def work(repos: Repositories) -> Sequence[PageVersion]:
+        def work(repos: BookRepositories) -> Sequence[PageVersion]:
             """Read the versions a collection would delete from one snapshot.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: The versions nothing needs.
             :rtype: Sequence[PageVersion]
             :raises NotFoundError: If the actor has no such project.
             """
-            owned_project(repos.projects, actor, project_id)
             return repos.page_versions.collectable(project_id, collection.previews_older_than)
 
-        old = await self._uow.read(work)
+        old = await self._uow.read_book(project_id, work)
         keys = ProjectKeys(project_id)
         sizes = [await self._assets.size_of(keys.version_directory(version)) for version in old]
         return CollectionReport(versions=len(old), size_bytes=sum(sizes))
@@ -515,7 +528,7 @@ class ProcessingService:
         :raises NotFoundError: If the actor has no such project.
         :raises ConflictError: If a run, a measure of the book or a tile cutting of the project is queued or running.
         """
-        await self._uow.read(lambda repos: owned_project(repos.projects, actor, project_id))
+        await self._library.open(actor, project_id)
         if (job := await self._starter.enqueue_collection(project_id)) is None:
             raise ConflictError(PROJECT_BUSY)
         return job
@@ -549,19 +562,20 @@ class ProcessingService:
                                version, or a version of the chain was deleted.
         :raises UnsupportedTransformError: If a version of the chain follows a mesh.
         """
+        await self._library.open(actor, project_id)
 
-        def work(repos: Repositories) -> Sequence[Point]:
+        def work(repos: BookRepositories) -> Sequence[Point]:
             """Follow the chain of the versions from one snapshot, which maps the points through each of them.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: The points in the pixels of the scan.
             :rtype: Sequence[Point]
-            :raises NotFoundError: If the actor has no such project, the project has no such page, the page has no such
+            :raises NotFoundError: If the project has no such page, the page has no such
                                    version, or a version of the chain was deleted.
             :raises UnsupportedTransformError: If a version of the chain follows a mesh.
             """
-            owned_page(repos, actor, project_id, page_id)
+            book_page(repos, project_id, page_id)
             version = self._version_of(repos, page_id, version_id)
             mapped = list(points)
             while True:
@@ -570,16 +584,16 @@ class ProcessingService:
                     return mapped
                 version = self._version_of(repos, page_id, version.input_id)
 
-        return await self._uow.read(work)
+        return await self._uow.read_book(project_id, work)
 
-    def _choosable(self, repos: Repositories, page: Page, stage: Stage, version_id: PageVersionId) -> PageVersion:
+    def _choosable(self, repos: BookRepositories, page: Page, stage: Stage, version_id: PageVersionId) -> PageVersion:
         """Return a version of a page, if it can be made the current one of a stage.
 
         Reads only, so it is called before the transaction that makes the version current, where it refuses a request
         early, and inside that transaction, where it decides.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param page: Page of the actor's project, which the version must belong to.
         :type page: Page
         :param stage: The stage.
@@ -597,11 +611,11 @@ class ProcessingService:
         return version
 
     @staticmethod
-    def _version_of(repos: Repositories, page_id: PageId, version_id: PageVersionId) -> PageVersion:
+    def _version_of(repos: BookRepositories, page_id: PageId, version_id: PageVersionId) -> PageVersion:
         """Return a version of a page, in the transaction of the caller.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param page_id: Identifier of the page.
         :type page_id: PageId
         :param version_id: Identifier of the version.

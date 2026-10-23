@@ -2,14 +2,13 @@
 
 The stage bar of a book needs the state of every stage over all its pages, and the strip of a stage needs the state of
 each page, so asking page by page would take a request for each page. The counts here come from one grouped query of
-the page stage records, which for a window of books is one query for all of them, and the number of pages that have
-an image comes with the project itself. A stage no page has a record of is counted as not run, since the records are
-written when a stage runs.
+the page stage records of the book, and the number of pages that have an image comes with the project itself. A stage
+no page has a record of is counted as not run, since the records are written when a stage runs.
 
 A stage is available when it is done by hand or a processor of it is installed, so a stage turns from soon to
 available the day the first plugin of it is installed, with no change here. The class does not check who owns a
-project: the service of the projects does that and hands over projects that are the actor's. Every method reads,
-synchronously, through the repositories of the transaction its caller runs in, which is the work of ``UnitOfWork.read``.
+project: the service of the projects does that through the library. Every method reads, synchronously, through the
+repositories of the book of the transaction its caller runs in, which is the work of ``UnitOfWork.read_book``.
 """
 
 from collections import defaultdict
@@ -28,10 +27,10 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import PageVersion, Project, ProjectOverview, Recipe
     from bookreviver.domain.enums import RecipeKind
-    from bookreviver.domain.ids import PageVersionId, ProjectId, StepId
+    from bookreviver.domain.ids import PageVersionId, StepId
     from bookreviver.domain.stage_summaries import StageTally, StepTally
     from bookreviver.domain.values import SliceRequest
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import JobBoard
 
@@ -51,18 +50,18 @@ class StageSummaries:
         self._catalogue = catalogue
         self._board = board
 
-    def of_book(self, repos: Repositories, overview: ProjectOverview) -> list[StageSummary]:
+    def of_book(self, repos: BookRepositories, overview: ProjectOverview) -> list[StageSummary]:
         """Sum every stage of a book, in the order of the pipeline.
 
         :param repos: Repositories of the transaction the caller runs in, which are only read.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param overview: The book with the number of its pages that have an image.
         :type overview: ProjectOverview
         :returns: One summary for each stage, with the recipe of each kind of page when the stage has them.
         :rtype: list[StageSummary]
         """
         project_id = overview.project.id
-        tallies = {tally.stage: tally for tally in repos.page_stages.tally({project_id})}
+        tallies = {tally.stage: tally for tally in repos.page_stages.tally(project_id)}
         recipes: defaultdict[Stage, list[Recipe]] = defaultdict(list)
         for recipe in repos.recipes.list_for_project(project_id):
             recipes[recipe.stage].append(recipe)
@@ -73,12 +72,17 @@ class StageSummaries:
         return self._summarize(overview, tallies, recipes, kinds, stopped)
 
     def rows(
-        self, repos: Repositories, project: Project, stage: Stage, request: SliceRequest, step_id: StepId | None = None
+        self,
+        repos: BookRepositories,
+        project: Project,
+        stage: Stage,
+        request: SliceRequest,
+        step_id: StepId | None = None,
     ) -> Slice[StageRow]:
         """Give a window of the pages of a book, in book order, with where each stands in a stage.
 
         :param repos: Repositories of the transaction the caller runs in, which are only read.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param project: The book.
         :type project: Project
         :param stage: The stage.
@@ -138,7 +142,7 @@ class StageSummaries:
         return Slice(items=rows, total=pages.total)
 
     @staticmethod
-    def _markers(repos: Repositories, heads: Collection[PageVersion]) -> dict[PageVersionId, str]:
+    def _markers(repos: BookRepositories, heads: Collection[PageVersion]) -> dict[PageVersionId, str]:
         """Find the processor of the first step of a stage that marked each page that carries a review mark.
 
         A step keeps the mark of the step before it, so the mark of a current version is walked back through the
@@ -146,7 +150,7 @@ class StageSummaries:
         an earlier stage made leads out of the stage and names no step.
 
         :param repos: Repositories of the transaction the caller runs in, which are only read.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param heads: The current versions of the stage over a window of pages.
         :type heads: Collection[PageVersion]
         :returns: The key of the processor of the marking step, by the identifier of the current version. A version
@@ -173,35 +177,22 @@ class StageSummaries:
             walking = ahead
         return markers
 
-    def with_progress(self, repos: Repositories, overviews: Sequence[ProjectOverview]) -> list[ProjectOverview]:
-        """Add the progress of each book to its overview, with the same number of queries for any number of books.
+    def with_progress(self, repos: BookRepositories, overview: ProjectOverview) -> ProjectOverview:
+        """Add the progress of a book to its overview.
 
-        A stage is running while a job that runs it is queued or running, which is read for all the books at once.
+        A stage is running while a job that runs it is queued or running.
 
-        :param repos: Repositories of the transaction the caller runs in, which are only read.
-        :type repos: Repositories
-        :param overviews: The books of a window of a list, or one book.
-        :type overviews: Sequence[ProjectOverview]
-        :returns: The overviews with their progress, in the same order.
-        :rtype: list[ProjectOverview]
+        :param repos: Repositories of the transaction of the book the caller runs in, which are only read.
+        :type repos: BookRepositories
+        :param overview: The book with the number of its pages that have an image.
+        :type overview: ProjectOverview
+        :returns: The overview with its progress.
+        :rtype: ProjectOverview
         """
-        project_ids = {overview.project.id for overview in overviews}
-        tallies: defaultdict[ProjectId, dict[Stage, StageTally]] = defaultdict(dict)
-        for tally in repos.page_stages.tally(project_ids):
-            tallies[tally.project_id][tally.stage] = tally
-        running: defaultdict[ProjectId, set[Stage]] = defaultdict(set)
-        for job in self._board.jobs_of(project_ids, active=True):
-            if job.stage is not None:
-                running[job.project_id].add(job.stage)
-        return [
-            evolve(
-                overview,
-                progress=BookProgress.of(
-                    self._summarize(overview, tallies[overview.project.id], {}, {}, {}), running[overview.project.id]
-                ),
-            )
-            for overview in overviews
-        ]
+        project_id = overview.project.id
+        tallies = {tally.stage: tally for tally in repos.page_stages.tally(project_id)}
+        running = {job.stage for job in self._board.jobs_of({project_id}, active=True) if job.stage is not None}
+        return evolve(overview, progress=BookProgress.of(self._summarize(overview, tallies, {}, {}, {}), running))
 
     def _summarize(
         self,

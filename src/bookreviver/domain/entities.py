@@ -39,7 +39,6 @@ from bookreviver.domain.geometry import Transform, geometry_from_data
 from bookreviver.domain.ids import PageStepChangeId, PageVersionId, StorageKey
 from bookreviver.domain.values import (
     SHA256_PATTERN,
-    BookPlaceKey,
     MetadataSuggestion,
     PageStageKey,
     PageStepKey,
@@ -116,36 +115,54 @@ class Actor:
 
 @frozen(kw_only=True)
 class Project:
-    """One book being digitised, owned by one account.
+    """One book being digitised: its description and the settings of the work on it.
 
-    The project holds the description of the book and the settings of the work on it. The files the book was
-    assembled from are its sources, which the project does not name.
+    The project knows nothing of accounts, so a book moves between instances of the application as it is. The account
+    that owns it is a :class:`LibraryEntry` of the library. The files the book was assembled from are its sources,
+    which the project does not name.
 
     :ivar id: Identifier of the project.
-    :ivar owner_id: Account owning the project, the only one that may read or change it.
     :ivar details: Bibliographic description of the book.
     :ivar image_policy: How the ``full`` images of the project's scans and page versions are stored.
     :ivar cover_page_id: Page whose thumbnail the project list shows, or None for the first page of the book.
     :ivar created_at: When the project was created.
-    :ivar updated_at: When the project was last changed, which orders the owner's project list.
+    :ivar updated_at: When the project was last changed.
     """
 
     DEFAULT_IMAGE_POLICY: ClassVar[ImagePolicy] = ImagePolicy.COMPACT
 
     id: ProjectId
-    owner_id: AccountId
     details: BookDetails
     image_policy: ImagePolicy = DEFAULT_IMAGE_POLICY
     cover_page_id: PageId | None = None
     created_at: datetime
     updated_at: datetime
 
+
+@frozen(kw_only=True)
+class LibraryEntry:
+    """A book in the library of the account that owns it, the only account that may read or change the book.
+
+    :ivar project_id: The book.
+    :ivar owner_id: Account owning the book.
+    :ivar added_at: When the book joined the library, which orders the owner's list of books, the newest first.
+    """
+
+    project_id: ProjectId
+    owner_id: AccountId
+    added_at: datetime
+
+    @property
+    def id(self) -> ProjectId:
+        """The identifier the entry is stored under, which is its book's: a book is in one library."""
+        return self.project_id
+
     def is_owned_by(self, actor: Actor) -> bool:
-        """Return whether the actor owns this project.
+        """Return whether the actor owns the book.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
-        :returns: True when the actor's account is the project's owner.
+        :returns: True when the actor's account is the book's owner.
         :rtype: bool
         """
         return self.owner_id == actor.account_id
@@ -765,13 +782,12 @@ class PageStage:
 
 @frozen(kw_only=True)
 class BookPlace:
-    """Where one account left one book: the stage, the page, the view and the position of the canvas.
+    """Where the reader left the book: the stage, the page, the view and the position of the canvas.
 
-    The place is replaced whole each time the reader moves, and read when the book is opened again, on any device. It
-    holds the fields of ``NewBookPlace`` beside the account, the book and the time of the last write.
+    A book has one owner and so one place, which is replaced whole each time the reader moves, and read when the book is
+    opened again, on any device. It holds the fields of ``NewBookPlace`` beside the book and the time of the last write.
 
-    :ivar account_id: Account the place belongs to.
-    :ivar project_id: Book the place is in.
+    :ivar project_id: Book the place is in, which is the key of the place.
     :ivar mode: Whether the reader was working on a stage or reading.
     :ivar stage: Stage the reader was on, or last was on before reading.
     :ivar page_id: Page that was open, or None for the first page.
@@ -785,7 +801,6 @@ class BookPlace:
     :ivar updated_at: When the place was last written.
     """
 
-    account_id: AccountId
     project_id: ProjectId
     mode: PlaceMode
     stage: Stage
@@ -800,9 +815,9 @@ class BookPlace:
     updated_at: datetime
 
     @property
-    def key(self) -> BookPlaceKey:
-        """The key the place is stored under."""
-        return BookPlaceKey(self.account_id, self.project_id)
+    def key(self) -> ProjectId:
+        """The key the place is stored under, its book."""
+        return self.project_id
 
 
 @frozen(kw_only=True)

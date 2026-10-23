@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import PageVersion
     from bookreviver.domain.ids import PageId, PageVersionId
-    from bookreviver.ports.persistence import Repositories
+    from bookreviver.ports.persistence import BookRepositories
 
 
 class StageInputs:
@@ -39,11 +39,11 @@ class StageInputs:
         return version.renditions is not None and version.renditions.ready
 
     @staticmethod
-    def of(repos: Repositories, page_ids: Collection[PageId], stage: Stage) -> dict[PageId, PageVersion]:
+    def of(repos: BookRepositories, page_ids: Collection[PageId], stage: Stage) -> dict[PageId, PageVersion]:
         """Find the version a stage reads on each of the pages.
 
         :param repos: Repositories of the transaction the caller runs in, which are only read.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param page_ids: The pages, a window of a book or one page.
         :type page_ids: Collection[PageId]
         :param stage: The stage that reads.

@@ -12,8 +12,9 @@ built on an outdated version of an earlier stage is caught as well. A processor 
 taken as outdated, since a plugin that is not installed says nothing about its version, and a record that is stale or
 failed already is left as it is.
 
-The records of every book are checked, once, when the application starts. No event is published, because nothing is
-listening yet: a browser reads the stages of a book when it opens the book, after the application has started.
+The records of every stored book are checked, once, when the application starts. No event is published, because
+nothing is listening yet: a browser reads the stages of a book when it opens the book, after the application has
+started.
 """
 
 import logging
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import PageStage, PageVersion, Project
     from bookreviver.domain.ids import PageVersionId, ProjectId
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
 
@@ -55,28 +56,27 @@ class OutdatedResults:
     async def mark_stale(self) -> list[PageStage]:
         """Mark every fresh record whose result a replaced version of a processor made stale, one book at a time.
 
-        The versions of all the chains are read a level at a time, each distinct version once however many records,
-        pages and stages lead to it, so the number of queries follows the depth of the chains, and the number of rows
-        read the number of distinct versions. A version is judged once, and a chain that meets a version judged already
-        takes its verdict. The reading is one transaction that only reads, so it takes no lock of a book. The records
-        are then written by one ``change_book`` for each book, which reads each record again and marks it only if it
-        is still fresh and still stands on the same version.
+        The versions of all the chains of a book are read a level at a time, each distinct version once however many
+        records, pages and stages lead to it, so the number of queries follows the depth of the chains, and the number
+        of rows read the number of distinct versions. A version is judged once, and a chain that meets a version judged
+        already takes its verdict. The reading of a book is one transaction that only reads, so it takes no lock. The
+        records are then written by one ``change_book`` for the book, which reads each record again and marks it only
+        if it is still fresh and still stands on the same version.
 
         :returns: The records that became stale.
         :rtype: list[PageStage]
         """
         installed = {spec.key: spec.version for spec in self._catalogue.specs()}
 
-        def find(repos: Repositories) -> dict[ProjectId, list[PageStage]]:
-            """Find the fresh records that stand on a replaced version, grouped by the book of their page.
+        def find(repos: BookRepositories) -> list[PageStage]:
+            """Find the fresh records of the book that stand on a replaced version.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :returns: The outdated records of each book that has any.
-            :rtype: dict[ProjectId, list[PageStage]]
+            :type repos: BookRepositories
+            :returns: The outdated records of the book.
+            :rtype: list[PageStage]
             """
-            fresh = repos.page_stages.fresh_by_project()
-            records = [record for of_book in fresh.values() for record in of_book]
+            records = repos.page_stages.list_fresh()
             versions: dict[PageVersionId, PageVersion] = {}
             replaced: set[PageVersionId] = set()
             asked: set[PageVersionId] = set()
@@ -108,20 +108,16 @@ class OutdatedResults:
                         break
                     current = versions[current].input_id
                 verdicts.update(dict.fromkeys(chain, outdated))
-            grouped = {
-                project_id: [
-                    record
-                    for record in of_book
-                    if record.head_version_id is not None and verdicts.get(record.head_version_id)
-                ]
-                for project_id, of_book in fresh.items()
-            }
-            return {project_id: of_book for project_id, of_book in grouped.items() if of_book}
+            return [
+                record
+                for record in records
+                if record.head_version_id is not None and verdicts.get(record.head_version_id)
+            ]
 
-        by_project = await self._uow.read(find)
         stale: list[PageStage] = []
-        for project_id, of_book in by_project.items():
-            stale.extend(await self._mark_book(project_id, of_book))
+        for project_id in await self._uow.stored_books():
+            if outdated := await self._uow.read_book(project_id, find):
+                stale.extend(await self._mark_book(project_id, outdated))
         logger.info('Marked %d stage records stale because a processor of their result has a new version.', len(stale))
         return stale
 
@@ -142,11 +138,11 @@ class OutdatedResults:
         """
         moment = self._clock.now()
 
-        def work(repos: Repositories, _project: Project) -> list[PageStage]:
+        def work(repos: BookRepositories, _project: Project) -> list[PageStage]:
             """Mark the records that are still fresh on the same version.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the marking does not read.
             :type _project: Project
             :returns: The records that became stale.

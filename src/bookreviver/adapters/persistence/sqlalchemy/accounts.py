@@ -1,8 +1,8 @@
 """Account tables on advanced-alchemy's shared registry, and the fastapi-users protocols over them.
 
 The tables ``user``, ``oauth_account`` and ``accesstoken`` are the ones fastapi-users reads, under the attribute names
-it expects, and their identifiers and times have the types of every other table of the adapter. The foreign keys of
-the books refer to ``user.id`` by name.
+it expects, and their identifiers and times have the types of every other table of the adapter. They are tables of
+the catalogue, where the library and the recipe profiles refer to ``user.id``.
 
 The databases of fastapi-users run over the unit of work and nothing else: every read is a ``read_session`` and every
 write a ``change_session`` of :class:`~bookreviver.adapters.persistence.sqlalchemy.unit_of_work.SqlAlchemyUnitOfWork`,
@@ -24,6 +24,8 @@ from fastapi_users.db import BaseUserDatabase
 from sqlalchemy import ForeignKey, String, func, select
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from bookreviver.adapters.persistence.sqlalchemy.columns import CASCADE
+
 if TYPE_CHECKING:
     from fastapi_users.models import OAP
     from sqlalchemy import Select
@@ -32,9 +34,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 
 # The column the keys of the other account tables refer to
-USER_ID: str = 'user.id'
-# The referential action of the keys to ``user``, which the first revision of the schema wrote in lower case
-CASCADE: str = 'cascade'
+USER_TABLE: str = 'user'
+USER_ID: str = f'{USER_TABLE}.id'
 # ORM cascade of a user to its linked provider accounts; the deletion itself is left to the database
 LINKED_ACCOUNT_CASCADE: str = 'all, delete'
 
@@ -68,7 +69,7 @@ class OAuthAccountTable(DefaultBase):
 class AccountTable(DefaultBase):
     """A user who signs in with a password or a social provider."""
 
-    __tablename__ = 'user'
+    __tablename__ = USER_TABLE
 
     # The type checkers read the plain annotations, which are what the ``UserOAuthProtocol`` of fastapi-users asks
     # for, because a ``Mapped`` attribute is a descriptor to them

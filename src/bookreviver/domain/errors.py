@@ -75,6 +75,18 @@ class BookBusyError(DomainError):
         super().__init__('The book is being changed by something else right now. Try again in a moment.')
 
 
+class BookTooNewError(ConflictError):
+    """A book was saved by a newer version of the application, at a revision of its file this version does not know.
+
+    The file is left as it is, so the newer version can still open it. The message is a sentence for the person opening
+    the book, which the API sends as the detail of the problem.
+    """
+
+    def __init__(self) -> None:
+        """Report the conflict with its fixed sentence."""
+        super().__init__('This book was saved by a newer version of BookReviver. Update BookReviver to open it.')
+
+
 class ReversedRangeError(ConflictError):
     """A numbering runs from a page that stands after its last page.
 

@@ -11,7 +11,7 @@
           "projects"
         ],
         "summary": "List Projects",
-        "description": "List the projects of the signed-in account, most recently updated first.",
+        "description": "List the projects of the signed-in account, the latest added first.",
         "operationId": "list_projects_api_v1_projects_get",
         "parameters": [
           {

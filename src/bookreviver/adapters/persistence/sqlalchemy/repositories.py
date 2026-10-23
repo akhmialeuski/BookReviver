@@ -4,16 +4,17 @@ Each port repository works on two levels. A row repository, a subclass of advanc
 :class:`~advanced_alchemy.repository.SQLAlchemySyncRepository`, supplies every generic query of one table: lookup by
 primary key, add, update, delete, filtered and paginated listings, and counts. A mapper from
 :mod:`bookreviver.adapters.persistence.sqlalchemy.mappers` turns its rows into domain entities. The port repository
-adds only the queries specific to BookReviver, such as the counts of the book of every project in a listing. The
-repositories are synchronous, because the unit of work runs the whole work of a use case in one worker thread, and
-:class:`SqlAlchemyRepositories` binds all of them to the session of that transaction.
+adds only the queries specific to BookReviver, such as the counts of the book of a project. The repositories are
+synchronous, because the unit of work runs the whole work of a use case in one worker thread.
+:class:`SqlAlchemyCatalogueRepositories` binds the repositories of the catalogue to the session of a transaction of the
+catalogue, and :class:`SqlAlchemyBookRepositories` those of a book to a session of the file of that book.
 
 The database's own checks are reported as the domain errors the port promises, so services never see an
 advanced-alchemy exception. A missing row is a :class:`~bookreviver.domain.errors.NotFoundError` naming its key. A row
 whose primary key or unique value is already stored is a :class:`~bookreviver.domain.errors.ConflictError` naming
 them, and a row whose parent row is missing is a ``NotFoundError`` naming the parent's key. advanced-alchemy's own
 Litestar handler answers 409 for every integrity error, but here every foreign key points at a row the caller named,
-such as the project of a source or the source of a scan, so a violated one means that row does not exist, which is a
+such as the owner of a book or the source of a scan, so a violated one means that row does not exist, which is a
 404. Any other integrity error means the adapter wrote a row the schema forbids, a defect that propagates unchanged.
 """
 
@@ -32,9 +33,11 @@ from attrs import evolve
 from sqlalchemy import Table, UniqueConstraint, and_, case, delete, exists, func, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow, RecipeProfileRow
 from bookreviver.adapters.persistence.sqlalchemy.database import SQLITE_DIALECT
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     BookPlaceMapper,
+    LibraryEntryMapper,
     PageMapper,
     PageStageMapper,
     PageStepChangeMapper,
@@ -51,6 +54,7 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
 )
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     EMPTY_TEXT,
+    PROJECT_ID_COLUMN,
     BookPlaceRow,
     PageRow,
     PageStageRow,
@@ -59,7 +63,6 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     PageVersionRow,
     PaginationSectionRow,
     ProjectRow,
-    RecipeProfileRow,
     RecipeRow,
     ResultMarkChangeRow,
     ScanRow,
@@ -68,6 +71,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
 )
 from bookreviver.domain.entities import (
     BookPlace,
+    LibraryEntry,
     Page,
     PageStage,
     PageStepChange,
@@ -110,11 +114,14 @@ from bookreviver.domain.ids import (
 )
 from bookreviver.domain.stage_summaries import StageTally, StepTally
 from bookreviver.domain.step_values import StepValues, StepValuesKey
-from bookreviver.domain.values import BookPlaceKey, PageSize, PageStageKey, PageStepKey, Slice
+from bookreviver.domain.values import PageSize, PageStageKey, PageStepKey, Slice
 from bookreviver.domain.version_chains import collectable_versions
 from bookreviver.ports.persistence import (
     BookPlaceRepository,
+    BookRepositories,
+    CatalogueRepositories,
     KeyedRepository,
+    LibraryRepository,
     PageRepository,
     PageStageRepository,
     PageStepChangeRepository,
@@ -124,7 +131,6 @@ from bookreviver.ports.persistence import (
     ProjectRepository,
     RecipeProfileRepository,
     RecipeRepository,
-    Repositories,
     Repository,
     ResultMarkChangeRepository,
     ScanRepository,
@@ -135,13 +141,12 @@ from bookreviver.ports.persistence import (
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterator, Mapping, Sequence
     from datetime import datetime
-    from uuid import UUID
 
     from advanced_alchemy.base import ModelProtocol
     from advanced_alchemy.filters import StatementFilter
     from advanced_alchemy.repository.typing import PrimaryKeyType
     from sqlalchemy import ColumnElement, CursorResult, ScalarSelect
-    from sqlalchemy.orm import InstrumentedAttribute, QueryableAttribute, Session
+    from sqlalchemy.orm import InstrumentedAttribute, Session
 
     from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
     from bookreviver.domain.ids import AccountId, ChangeBatchId, StepId
@@ -358,8 +363,15 @@ class RowRepository[RowT: ModelProtocol](SQLAlchemySyncRepository[RowT]):
             raise NotFoundError(*dict.fromkeys(parent for parent in parents if parent is not None)) from error
 
 
+class LibraryRows(RowRepository[LibraryRow]):
+    """Rows of the ``library`` table of the catalogue, keyed by the book."""
+
+    model_type = LibraryRow
+    id_attribute = PROJECT_ID_COLUMN
+
+
 class ProjectRows(RowRepository[ProjectRow]):
-    """Rows of the ``projects`` table."""
+    """Rows of the ``projects`` table of a book."""
 
     model_type = ProjectRow
 
@@ -447,9 +459,10 @@ class ResultMarkChangeRows(RowRepository[ResultMarkChangeRow]):
 
 
 class BookPlaceRows(RowRepository[BookPlaceRow]):
-    """Rows of the ``book_places`` table, written by one atomic upsert."""
+    """Rows of the ``book_places`` table, keyed by the book and written by one atomic upsert."""
 
     model_type = BookPlaceRow
+    id_attribute = PROJECT_ID_COLUMN
 
     def replace_unless_newer(self, row: BookPlaceRow) -> BookPlaceRow:
         """Store the row whole in one statement, unless the stored row was written later.
@@ -469,7 +482,7 @@ class BookPlaceRows(RowRepository[BookPlaceRow]):
         if stored := self.replace_many([row], unless_newer_by=BookPlaceRow.updated_at):
             return stored[0]
         # The condition refused the write, so the row that was written later stays, reloaded into the session
-        return self.get((row.account_id, row.project_id), execution_options={'populate_existing': True})
+        return self.get(row.project_id, execution_options={'populate_existing': True})
 
 
 class RecipeRows(RowRepository[RecipeRow]):
@@ -592,11 +605,52 @@ class SqlAlchemyKeyedRepository[EntityT, KeyT, RowT: ModelProtocol](
             return None
 
 
-class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, ProjectRow], ProjectRepository):
-    """Projects, listed per owner together with the counts of their books.
+class SqlAlchemyLibraryRepository(SqlAlchemyRepository[LibraryEntry, ProjectId, LibraryRow], LibraryRepository):
+    """The library of the catalogue, one entry for each book, listed per owner."""
 
-    The counts are scalar subqueries, correlated with the project rows of a listing, so one statement returns every
-    project of the listing with its counts.
+    def __init__(self, session: Session) -> None:
+        """Create the repository over the ``library`` table.
+
+        :param session: Session of the unit of work.
+        :type session: Session
+        """
+        super().__init__(rows=LibraryRows(session=session), mapper=LibraryEntryMapper())
+
+    @override
+    def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[LibraryEntry]:
+        """Return a slice of the owner's books, the latest added first, ties by identifier.
+
+        The total is a separate count, which stays correct for a slice past the end where a window-function count
+        would report zero.
+
+        :param owner_id: Account whose books are listed.
+        :type owner_id: AccountId
+        :param request: Offset and limit of the slice.
+        :type request: SliceRequest
+        :returns: Entries of the slice, and the total number of the owner's books.
+        :rtype: Slice[LibraryEntry]
+        """
+        rows = self._rows.get_many(
+            LimitOffset(limit=request.limit, offset=request.offset),
+            order_by=[LibraryRow.added_at.desc(), LibraryRow.project_id.asc()],
+            owner_id=owner_id,
+        )
+        return Slice(items=[self._mapper.to_entity(row) for row in rows], total=self._rows.count(owner_id=owner_id))
+
+    @override
+    def list_all(self) -> Sequence[LibraryEntry]:
+        """Return the entry of every book, by identifier.
+
+        :returns: Every entry of the library.
+        :rtype: Sequence[LibraryEntry]
+        """
+        return [self._mapper.to_entity(row) for row in self._rows.get_many(order_by=LibraryRow.project_id.asc())]
+
+
+class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, ProjectRow], ProjectRepository):
+    """The project of the book of the file, with the counts of its book.
+
+    The counts are scalar subqueries, so one statement returns every count.
     """
 
     def __init__(self, session: Session) -> None:
@@ -615,7 +669,7 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
         :type entity: Project
         :returns: The project as stored.
         :rtype: Project
-        :raises NotFoundError: If the cover page is not a page of the project, or the owner is not stored.
+        :raises NotFoundError: If the cover page is not a page of the project.
         :raises ConflictError: If a project with this identifier is already stored.
         """
         self._require_own_cover(entity)
@@ -651,40 +705,6 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
             raise NotFoundError(cover_id)
 
     @override
-    def list_for_owner(self, owner_id: AccountId, request: SliceRequest) -> Slice[ProjectOverview]:
-        """Return a slice of the owner's projects with their counts, most recently updated first.
-
-        The total is a separate count, which stays correct for a slice past the end where a window-function count
-        would report zero.
-
-        :param owner_id: Account whose projects are listed.
-        :type owner_id: AccountId
-        :param request: Offset and limit of the slice.
-        :type request: SliceRequest
-        :returns: Projects of the slice with their counts, and the total number of the owner's projects.
-        :rtype: Slice[ProjectOverview]
-        """
-        statement = (
-            select(ProjectRow, *self._book_counts(ProjectRow.id))
-            .where(ProjectRow.owner_id == owner_id)
-            .order_by(ProjectRow.updated_at.desc(), ProjectRow.id)
-            .offset(request.offset)
-            .limit(request.limit)
-        )
-        rows = self._rows.session.execute(statement)
-        overviews = [
-            ProjectOverview(
-                project=self._mapper.to_entity(row),
-                page_count=pages,
-                source_count=sources,
-                scan_count=scans,
-                image_page_count=with_image,
-            )
-            for row, pages, sources, scans, with_image in rows
-        ]
-        return Slice(items=overviews, total=self._rows.count(owner_id=owner_id))
-
-    @override
     def overview(self, project: Project) -> ProjectOverview:
         """Count the included pages, the sources and the scans of the project in one statement.
 
@@ -700,18 +720,17 @@ class SqlAlchemyProjectRepository(SqlAlchemyRepository[Project, ProjectId, Proje
 
     @staticmethod
     def _book_counts(
-        project_id: QueryableAttribute[UUID] | ProjectId,
+        project_id: ProjectId,
     ) -> tuple[ScalarSelect[int], ScalarSelect[int], ScalarSelect[int], ScalarSelect[int]]:
         """Return the scalar subqueries counting a project's included pages, imported sources and scans.
 
-        :param project_id: The project's identifier, or the identifier column of the enclosing query's project rows,
-                           which the subqueries then correlate with.
-        :type project_id: QueryableAttribute[UUID] | ProjectId
+        :param project_id: The project's identifier.
+        :type project_id: ProjectId
         :returns: The count of included pages, of sources, of scans and of pages with an image, in this order.
         :rtype: tuple[ScalarSelect[int], ScalarSelect[int], ScalarSelect[int], ScalarSelect[int]]
         """
         pages, sources, scans, with_image = (
-            select(func.count()).where(*conditions).correlate(ProjectRow).scalar_subquery()
+            select(func.count()).where(*conditions).scalar_subquery()
             for conditions in (
                 (PageRow.project_id == project_id, PageRow.included.is_(True)),
                 (SourceRow.project_id == project_id, SourceRow.status == SourceStatus.IMPORTED),
@@ -1363,24 +1382,15 @@ class SqlAlchemyPageStageRepository(
         return [self._mapper.to_entity(row) for row in rows]
 
     @override
-    def fresh_by_project(self) -> Mapping[ProjectId, Sequence[PageStage]]:
-        """Return the records in the fresh state in one query that joins them with their pages, grouped by book.
+    def list_fresh(self) -> Sequence[PageStage]:
+        """Return the records in the fresh state, by page and then in the order of the stages.
 
-        :returns: For each book that has any, its fresh records, by page and then in the order of the stages.
-        :rtype: Mapping[ProjectId, Sequence[PageStage]]
+        :returns: The fresh records of the book.
+        :rtype: Sequence[PageStage]
         """
-        statement = (
-            select(PageStageRow, PageRow.project_id)
-            .join(PageRow, PageStageRow.page_id == PageRow.id)
-            .where(PageStageRow.state == StageState.FRESH)
-        )
         order = list(Stage)
-        by_project: dict[ProjectId, list[PageStage]] = {}
-        for row, project_id in self._rows.session.execute(statement):
-            by_project.setdefault(ProjectId(project_id), []).append(self._mapper.to_entity(row))
-        for records in by_project.values():
-            records.sort(key=lambda record: (str(record.page_id), order.index(record.stage)))
-        return by_project
+        records = [self._mapper.to_entity(row) for row in self._rows.get_many(state=StageState.FRESH)]
+        return sorted(records, key=lambda record: (str(record.page_id), order.index(record.stage)))
 
     @override
     def list_replaced(self, stage: Stage, processor: ProcessorRef) -> Sequence[PageStage]:
@@ -1442,20 +1452,18 @@ class SqlAlchemyPageStageRepository(
         return {PageVersionId(version_id) for version_id in self._rows.session.scalars(statement).all() if version_id}
 
     @override
-    def tally(self, project_ids: Collection[ProjectId]) -> Sequence[StageTally]:
-        """Count the records of every stage of the given projects by state with one grouped statement.
+    def tally(self, project_id: ProjectId) -> Sequence[StageTally]:
+        """Count the records of every stage of the project by state with one grouped statement.
 
         The counts are conditional sums, which every database computes alike, and the head version is joined outside
         so a record without one still counts. The check count is one more sum over the same rows, so a page that is
         both stale and marked is counted once. Placeholders have no image, so their records are not counted.
 
-        :param project_ids: Projects whose stages are counted.
-        :type project_ids: Collection[ProjectId]
-        :returns: One tally for each stage of each project that has a record.
+        :param project_id: Project whose stages are counted.
+        :type project_id: ProjectId
+        :returns: One tally for each stage that has a record.
         :rtype: Sequence[StageTally]
         """
-        if not project_ids:
-            return list[StageTally]()
         marked = and_(PageStageRow.state != StageState.FAILED, PageVersionRow.review.is_not(None))
         fresh_sum, stale_sum, failed_sum, review_sum, check_sum, partial_sum = (
             func.coalesce(func.sum(case((condition, 1), else_=0)), 0)
@@ -1470,7 +1478,6 @@ class SqlAlchemyPageStageRepository(
         )
         statement = (
             select(
-                PageRow.project_id,
                 PageStageRow.stage,
                 fresh_sum,
                 stale_sum,
@@ -1482,12 +1489,12 @@ class SqlAlchemyPageStageRepository(
             .select_from(PageStageRow)
             .join(PageRow, PageStageRow.page_id == PageRow.id)
             .outerjoin(PageVersionRow, PageStageRow.head_version_id == PageVersionRow.id)
-            .where(PageRow.project_id.in_(project_ids), PageRow.origin != PageOrigin.PLACEHOLDER)
-            .group_by(PageRow.project_id, PageStageRow.stage)
+            .where(PageRow.project_id == project_id, PageRow.origin != PageOrigin.PLACEHOLDER)
+            .group_by(PageStageRow.stage)
         )
         return [
             StageTally(
-                project_id=ProjectId(project),
+                project_id=project_id,
                 stage=stage,
                 fresh=fresh,
                 stale=stale,
@@ -1496,7 +1503,7 @@ class SqlAlchemyPageStageRepository(
                 check=check,
                 partial=partial,
             )
-            for project, stage, fresh, stale, failed, review, check, partial in self._rows.session.execute(statement)
+            for stage, fresh, stale, failed, review, check, partial in self._rows.session.execute(statement)
         ]
 
     @override
@@ -1832,8 +1839,8 @@ class SqlAlchemyResultMarkChangeRepository(
         return [self._mapper.to_entity(row) for row in rows]
 
 
-class SqlAlchemyBookPlaceRepository(SqlAlchemyRepository[BookPlace, BookPlaceKey, BookPlaceRow], BookPlaceRepository):
-    """The places accounts left books at, addressed by the account and the book.
+class SqlAlchemyBookPlaceRepository(SqlAlchemyRepository[BookPlace, ProjectId, BookPlaceRow], BookPlaceRepository):
+    """The place the reader left the book at, addressed by the book.
 
     :ivar _places: The rows of the table as their own repository, whose upsert the generic rows do not have.
     """
@@ -1849,31 +1856,8 @@ class SqlAlchemyBookPlaceRepository(SqlAlchemyRepository[BookPlace, BookPlaceKey
         self._places = places
 
     @override
-    def get(self, entity_id: BookPlaceKey) -> BookPlace:
-        """Return the place of an account in a book.
-
-        :param entity_id: Account and book.
-        :type entity_id: BookPlaceKey
-        :returns: The stored place.
-        :rtype: BookPlace
-        :raises NotFoundError: If the account has no place in the book.
-        """
-        row = self._rows.get((entity_id.account_id, entity_id.project_id))
-        return self._mapper.to_entity(row)
-
-    @override
-    def delete(self, entity_id: BookPlaceKey) -> None:
-        """Remove the place of an account in a book.
-
-        :param entity_id: Account and book.
-        :type entity_id: BookPlaceKey
-        :raises NotFoundError: If the account has no place in the book.
-        """
-        self._rows.delete((entity_id.account_id, entity_id.project_id))
-
-    @override
     def save(self, place: BookPlace) -> BookPlace:
-        """Store the place whole, replacing the one of the same account and book unless that one was written later.
+        """Store the place whole, replacing the one of the book unless that one was written later.
 
         :param place: Place to store.
         :type place: BookPlace
@@ -1884,15 +1868,15 @@ class SqlAlchemyBookPlaceRepository(SqlAlchemyRepository[BookPlace, BookPlaceKey
         return self._mapper.to_entity(self._places.replace_unless_newer(self._mapper.to_row(place)))
 
     @override
-    def find(self, key: BookPlaceKey) -> BookPlace | None:
-        """Return the place of an account in a book.
+    def find(self, project_id: ProjectId) -> BookPlace | None:
+        """Return the place of the book.
 
-        :param key: Account and book.
-        :type key: BookPlaceKey
+        :param project_id: The book.
+        :type project_id: ProjectId
         :returns: The place, or None.
         :rtype: BookPlace | None
         """
-        row = self._rows.get_one_or_none(account_id=key.account_id, project_id=key.project_id)
+        row = self._rows.get_one_or_none(project_id=project_id)
         return None if row is None else self._mapper.to_entity(row)
 
 
@@ -1982,29 +1966,29 @@ class SqlAlchemyRecipeProfileRepository(
         row = self._rows.get_one_or_none(account_id=account_id, stage=stage, is_default=True)
         return None if row is None else self._mapper.to_entity(row)
 
-    @override
-    def count_books(self, profile_ids: Collection[RecipeProfileId]) -> Mapping[RecipeProfileId, int]:
-        """Count the books that have a recipe made from each of the given profiles with one grouped statement.
 
-        :param profile_ids: Profiles to count the books of.
-        :type profile_ids: Collection[RecipeProfileId]
-        :returns: The number of books by profile, which has no entry for a profile that no book uses.
-        :rtype: Mapping[RecipeProfileId, int]
+class SqlAlchemyCatalogueRepositories(CatalogueRepositories):
+    """Every repository of the catalogue, bound to the session of one transaction of the catalogue.
+
+    The unit of work builds one for each transaction and hands it to the work, so the repositories share the session,
+    and with it the transaction, and are dropped with it.
+
+    :ivar library: Library repository bound to the session.
+    :ivar recipe_profiles: Recipe profile repository bound to the session.
+    """
+
+    def __init__(self, session: Session) -> None:
+        """Bind every repository of the catalogue to ``session``.
+
+        :param session: Session of the transaction, owned and closed by the database that runs the work.
+        :type session: Session
         """
-        statement = (
-            select(RecipeRow.profile_id, func.count(RecipeRow.project_id.distinct()))
-            .where(RecipeRow.profile_id.in_(profile_ids))
-            .group_by(RecipeRow.profile_id)
-        )
-        counted: dict[RecipeProfileId, int] = {}
-        for profile_id, books in self._rows.session.execute(statement):
-            if profile_id is not None:
-                counted[RecipeProfileId(profile_id)] = int(books)
-        return counted
+        self.library = SqlAlchemyLibraryRepository(session)
+        self.recipe_profiles = SqlAlchemyRecipeProfileRepository(session)
 
 
-class SqlAlchemyRepositories(Repositories):
-    """Every repository of the port, bound to the session of one transaction.
+class SqlAlchemyBookRepositories(BookRepositories):
+    """Every repository of a book, bound to the session of one transaction of the file of the book.
 
     The unit of work builds one for each transaction and hands it to the work, so the repositories share the session,
     and with it the transaction, and are dropped with it.
@@ -2021,12 +2005,11 @@ class SqlAlchemyRepositories(Repositories):
     :ivar step_values: Step values repository bound to the session.
     :ivar result_mark_changes: Result mark change repository bound to the session.
     :ivar recipes: Recipe repository bound to the session.
-    :ivar recipe_profiles: Recipe profile repository bound to the session.
     :ivar book_places: Book place repository bound to the session.
     """
 
     def __init__(self, session: Session) -> None:
-        """Bind every repository to ``session``.
+        """Bind every repository of a book to ``session``.
 
         :param session: Session of the transaction, owned and closed by the database that runs the work.
         :type session: Session
@@ -2043,5 +2026,4 @@ class SqlAlchemyRepositories(Repositories):
         self.step_values = SqlAlchemyStepValuesRepository(session)
         self.result_mark_changes = SqlAlchemyResultMarkChangeRepository(session)
         self.recipes = SqlAlchemyRecipeRepository(session)
-        self.recipe_profiles = SqlAlchemyRecipeProfileRepository(session)
         self.book_places = SqlAlchemyBookPlaceRepository(session)

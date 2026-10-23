@@ -1,92 +1,59 @@
 """Use cases of projects: listing, creating, describing and deleting books.
 
-Every lookup of a project goes through ``owned_project``, which reports a project of another account exactly like a
-missing one. An answer of "forbidden" would confirm that a project with that identifier exists, so the identifiers
-of other accounts' projects could be probed. The lookups ``owned_project``, ``owned_page`` and ``book_pages`` are
-synchronous functions over repositories: the work of ``UnitOfWork.read``, ``change`` or ``change_book`` calls them
-with the repositories it receives, and a caller outside a transaction wraps the call in ``UnitOfWork.read``.
+Every use case of a book with an actor first asks the ``Library`` to open the book, which reports a book of another
+account exactly like a missing one. An answer of "forbidden" would confirm that a book with that identifier exists, so
+the identifiers of other accounts' books could be probed. The lookups ``book_page`` and ``book_pages`` are synchronous
+functions over repositories: the work of ``UnitOfWork.read_book`` or ``change_book`` calls them with the repositories
+it receives, and a caller outside a transaction wraps the call in ``UnitOfWork.read_book``.
 
-A project is deleted files first and row last. Every lookup, a repeated deletion included, needs the row, so a row
-deleted first would leave the files of a failed deletion out of every request's reach for good. Both stores treat a
-project without files as deleted, so a deletion that fails part-way keeps the project, and repeating it removes the
-files that are left and then the row. Until then the project may lack some of its files, which only a deletion the
-owner asked for can cause. The files go outside any transaction, and the row goes in a ``change_book`` of its own.
+A book is deleted files first, then its store, and the library entry last. Every use case of the book needs the entry,
+a repeated deletion included, so an entry deleted first would leave the files of a failed deletion out of every
+request's reach for good. A deletion that fails part-way keeps the entry, and repeating it removes what is left. Until
+then the book may lack some of its files, which only a deletion the owner asked for can cause. The files go outside any
+transaction. A start pass, ``sweep``, finishes a deletion or a creation that was broken off half way and is not
+repeated by anyone: a store without an entry, or an entry without a store.
 """
 
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from attrs import evolve
+from attrs import evolve, frozen
 
-from bookreviver.domain.entities import Project, ProjectOverview
+from bookreviver.domain.entities import LibraryEntry, Project
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import ProjectId
 from bookreviver.domain.values import Slice, SliceRequest
 
 if TYPE_CHECKING:
     from bookreviver.domain.changes import ProjectChanges
-    from bookreviver.domain.entities import Actor, Page
+    from bookreviver.domain.entities import Actor, Page, ProjectOverview
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import PageId, StepId
     from bookreviver.domain.stage_summaries import StageRow, StageSummary
     from bookreviver.domain.values import BookDetails
-    from bookreviver.ports.persistence import PageRepository, ProjectRepository, Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, PageRepository, UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore, SourceStore
+    from bookreviver.services.library import Library
     from bookreviver.services.stage_summaries import StageSummaries
 
 # How many pages are read from the book at a time, when a use case needs all of them
 PAGE_WINDOW: int = 1_000
 
 
-def require_owner(project: Project, actor: Actor) -> Project:
-    """Return a project that is read already, which the work of ``change_book`` receives, when the actor owns it.
+def book_page(repos: BookRepositories, project_id: ProjectId, page_id: PageId) -> Page:
+    """Return a page of a book, which is called from the work of a transaction of the book.
 
-    :param project: Project as read.
-    :type project: Project
-    :param actor: Account acting in the current request.
-    :type actor: Actor
-    :returns: The same project, owned by the actor.
-    :rtype: Project
-    :raises NotFoundError: If the project belongs to another account.
-    """
-    if not project.is_owned_by(actor):
-        raise NotFoundError(project.id)
-    return project
-
-
-def owned_project(projects: ProjectRepository, actor: Actor, project_id: ProjectId) -> Project:
-    """Return the actor's project, which is called from the work of a transaction.
-
-    :param projects: Repository of the transaction to read the project from.
-    :type projects: ProjectRepository
-    :param actor: Account acting in the current request.
-    :type actor: Actor
-    :param project_id: Identifier of the project.
-    :type project_id: ProjectId
-    :returns: The project, owned by the actor.
-    :rtype: Project
-    :raises NotFoundError: If the project does not exist or belongs to another account.
-    """
-    return require_owner(projects.get(project_id), actor)
-
-
-def owned_page(repos: Repositories, actor: Actor, project_id: ProjectId, page_id: PageId) -> Page:
-    """Return a page of the actor's project, which is called from the work of a transaction.
-
-    :param repos: Repositories of the transaction to read the project and the page from.
-    :type repos: Repositories
-    :param actor: Account acting in the current request.
-    :type actor: Actor
+    :param repos: Repositories of the transaction to read the page from.
+    :type repos: BookRepositories
     :param project_id: Identifier of the project.
     :type project_id: ProjectId
     :param page_id: Identifier of the page.
     :type page_id: PageId
     :returns: The page, which is one of the book of the project.
     :rtype: Page
-    :raises NotFoundError: If the actor has no such project, or the project has no such page.
+    :raises NotFoundError: If the book has no such page.
     """
-    owned_project(repos.projects, actor, project_id)
     page = repos.pages.get(page_id)
     if page.project_id != project_id:
         raise NotFoundError(page_id)
@@ -94,7 +61,7 @@ def owned_page(repos: Repositories, actor: Actor, project_id: ProjectId, page_id
 
 
 def book_pages(pages: PageRepository, project_id: ProjectId) -> list[Page]:
-    """Read every page of a project in book order, window by window, which is called from the work of a transaction.
+    """Read every page of a project in book order, window by window, which a transaction of the book calls.
 
     :param pages: Repository of the transaction to read the pages from.
     :type pages: PageRepository
@@ -111,33 +78,51 @@ def book_pages(pages: PageRepository, project_id: ProjectId) -> list[Page]:
             return book
 
 
+@frozen(kw_only=True)
+class ProjectFiles:
+    """The stores of the files of a book, emptied when the book is deleted.
+
+    :ivar sources: Store of the uploaded sources.
+    :ivar assets: Store of the derived files.
+    """
+
+    sources: SourceStore
+    assets: AssetStore
+
+
 class ProjectService:
     """Projects of the acting account, with their description and their files."""
 
     def __init__(
-        self, *, uow: UnitOfWork, clock: Clock, sources: SourceStore, assets: AssetStore, stages: StageSummaries
+        self,
+        *,
+        uow: UnitOfWork,
+        library: Library,
+        clock: Clock,
+        files: ProjectFiles,
+        stages: StageSummaries,
     ) -> None:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request, which runs the work of every use case in one transaction.
         :type uow: UnitOfWork
+        :param library: Library that opens the books of the acting account.
+        :type library: Library
         :param clock: Clock setting the creation and update times.
         :type clock: Clock
-        :param sources: Store of the uploaded sources, emptied when a project is deleted.
-        :type sources: SourceStore
-        :param assets: Store of the derived files, emptied when a project is deleted.
-        :type assets: AssetStore
+        :param files: Stores of the source files and the derived files, emptied when a project is deleted.
+        :type files: ProjectFiles
         :param stages: Sums of the stages of books, which give each project its progress.
         :type stages: StageSummaries
         """
         self._uow = uow
+        self._library = library
         self._clock = clock
-        self._sources = sources
-        self._assets = assets
+        self._files = files
         self._stages = stages
 
     async def list(self, actor: Actor, request: SliceRequest) -> Slice[ProjectOverview]:
-        """Return a window of the actor's projects, most recently updated first.
+        """Return a window of the actor's projects, the latest added first.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -147,22 +132,11 @@ class ProjectService:
                   actor's projects.
         :rtype: Slice[ProjectOverview]
         """
-
-        def work(repos: Repositories) -> Slice[ProjectOverview]:
-            """Read the window of projects and add the progress of each book.
-
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :returns: The projects of the window with their progress, and the number of all the actor's projects.
-            :rtype: Slice[ProjectOverview]
-            """
-            window = repos.projects.list_for_owner(actor.account_id, request)
-            return Slice(items=self._stages.with_progress(repos, window.items), total=window.total)
-
-        return await self._uow.read(work)
+        window = await self._uow.read(lambda repos: repos.library.list_for_owner(actor.account_id, request))
+        return Slice(items=[await self._overview(entry.project_id) for entry in window.items], total=window.total)
 
     async def create(self, actor: Actor, details: BookDetails) -> ProjectOverview:
-        """Create an empty project owned by the actor, in a ``change``, since no book exists to lock yet.
+        """Create an empty project owned by the actor: the store of its book first, then its entry in the library.
 
         :param actor: Account acting in the current request, which becomes the owner.
         :type actor: Actor
@@ -172,11 +146,12 @@ class ProjectService:
         :rtype: ProjectOverview
         """
         moment = self._clock.now()
-        project = Project(
-            id=ProjectId(uuid4()), owner_id=actor.account_id, details=details, created_at=moment, updated_at=moment
+        project = await self._uow.create_book(
+            Project(id=ProjectId(uuid4()), details=details, created_at=moment, updated_at=moment)
         )
-        stored = await self._uow.change(lambda repos: repos.projects.add(project))
-        return await self._uow.read(lambda repos: self._with_progress(repos, ProjectOverview(project=stored)))
+        entry = LibraryEntry(project_id=project.id, owner_id=actor.account_id, added_at=moment)
+        await self._uow.change(lambda repos: repos.library.add(entry))
+        return await self._overview(project.id)
 
     async def get(self, actor: Actor, project_id: ProjectId) -> ProjectOverview:
         """Return one of the actor's projects.
@@ -189,20 +164,8 @@ class ProjectService:
         :rtype: ProjectOverview
         :raises NotFoundError: If the actor has no such project.
         """
-
-        def work(repos: Repositories) -> ProjectOverview:
-            """Read the project of the actor with the counts and the progress of its book.
-
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :returns: The project with the counts and the progress of its book.
-            :rtype: ProjectOverview
-            :raises NotFoundError: If the actor has no such project.
-            """
-            project = owned_project(repos.projects, actor, project_id)
-            return self._with_progress(repos, repos.projects.overview(project))
-
-        return await self._uow.read(work)
+        await self._library.open(actor, project_id)
+        return await self._overview(project_id)
 
     async def stages(self, actor: Actor, project_id: ProjectId, request: SliceRequest) -> Slice[StageSummary]:
         """Return the stages of one of the actor's projects, each summed over the pages of the book.
@@ -217,21 +180,20 @@ class ProjectService:
         :rtype: Slice[StageSummary]
         :raises NotFoundError: If the actor has no such project.
         """
+        await self._library.open(actor, project_id)
 
-        def work(repos: Repositories) -> Slice[StageSummary]:
+        def work(repos: BookRepositories) -> Slice[StageSummary]:
             """Sum every stage of the book and cut the window the request asks for.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: The window of the stages in the order of the pipeline, and the number of all the stages.
             :rtype: Slice[StageSummary]
-            :raises NotFoundError: If the actor has no such project.
             """
-            project = owned_project(repos.projects, actor, project_id)
-            summaries = self._stages.of_book(repos, repos.projects.overview(project))
+            summaries = self._stages.of_book(repos, repos.projects.overview(repos.projects.get(project_id)))
             return Slice(items=summaries[request.offset : request.offset + request.limit], total=len(summaries))
 
-        return await self._uow.read(work)
+        return await self._uow.read_book(project_id, work)
 
     async def stage_pages(
         self, actor: Actor, project_id: ProjectId, stage: Stage, request: SliceRequest, step_id: StepId | None = None
@@ -252,20 +214,11 @@ class ProjectService:
         :rtype: Slice[StageRow]
         :raises NotFoundError: If the actor has no such project, or no recipe of the stage has the step.
         """
-
-        def work(repos: Repositories) -> Slice[StageRow]:
-            """Read the window of rows of the stage over the pages of the actor's book.
-
-            :param repos: Repositories of the transaction.
-            :type repos: Repositories
-            :returns: The rows of the window in book order, and the number of pages of the book.
-            :rtype: Slice[StageRow]
-            :raises NotFoundError: If the actor has no such project, or no recipe of the stage has the step.
-            """
-            project = owned_project(repos.projects, actor, project_id)
-            return self._stages.rows(repos, project, stage, request, step_id)
-
-        return await self._uow.read(work)
+        await self._library.open(actor, project_id)
+        return await self._uow.read_book(
+            project_id,
+            lambda repos: self._stages.rows(repos, repos.projects.get(project_id), stage, request, step_id),
+        )
 
     async def update(self, actor: Actor, project_id: ProjectId, changes: ProjectChanges) -> ProjectOverview:
         """Change some fields of the project, such as its description or its cover, and mark it as updated.
@@ -281,44 +234,62 @@ class ProjectService:
         :raises NotFoundError: If the actor has no such project, or the new cover is not a page of the project.
         :raises ValueError: If the changed description breaks one of its rules, such as an empty title.
         """
+        await self._library.open(actor, project_id)
 
-        def change(repos: Repositories, project: Project) -> Project:
+        def change(repos: BookRepositories, project: Project) -> Project:
             """Store the project with the changed fields.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param project: The project as the change finds it.
             :type project: Project
             :returns: The project as stored.
             :rtype: Project
-            :raises NotFoundError: If the actor has no such project, or the new cover is not a page of the project.
+            :raises NotFoundError: If the new cover is not a page of the project.
             :raises ValueError: If the changed description breaks one of its rules, such as an empty title.
             """
-            changed = evolve(changes.apply_to(require_owner(project, actor)), updated_at=self._clock.now())
-            return repos.projects.update(changed)
+            return repos.projects.update(evolve(changes.apply_to(project), updated_at=self._clock.now()))
 
-        stored = await self._uow.change_book(project_id, change)
-        return await self._uow.read(lambda repos: self._with_progress(repos, repos.projects.overview(stored)))
+        await self._uow.change_book(project_id, change)
+        return await self._overview(project_id)
 
-    def _with_progress(self, repos: Repositories, overview: ProjectOverview) -> ProjectOverview:
-        """Add the progress of the book to the overview of one project.
+    async def _overview(self, project_id: ProjectId) -> ProjectOverview:
+        """Read one project with the counts and the progress of its book.
 
-        :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
-        :param overview: The project with the counts of its book.
-        :type overview: ProjectOverview
-        :returns: The same project with its progress.
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        :returns: The project with the counts and the progress of its book.
         :rtype: ProjectOverview
         """
-        [with_progress] = self._stages.with_progress(repos, [overview])
-        return with_progress
+        return await self._uow.read_book(
+            project_id,
+            lambda repos: self._stages.with_progress(repos, repos.projects.overview(repos.projects.get(project_id))),
+        )
+
+    async def _erase(self, project_id: ProjectId) -> None:
+        """Delete the source files and derived files of a book, then its store, which a repeated call finishes.
+
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        """
+        await self._files.sources.delete_project(project_id)
+        await self._files.assets.delete_project(project_id)
+        await self._uow.delete_book(project_id)
+
+    async def _forget(self, project_id: ProjectId) -> None:
+        """Delete the entry of a book from the library.
+
+        :param project_id: Identifier of the project.
+        :type project_id: ProjectId
+        """
+        await self._uow.change(lambda repos: repos.library.delete(project_id))
 
     async def delete(self, actor: Actor, project_id: ProjectId) -> None:
-        """Delete the project's source files and derived files, then the project with every row of its book.
+        """Delete the project's source files and derived files, then its store, then its entry in the library.
 
         The owner is checked before any file goes, and the files go outside any transaction, so a slow store holds no
-        lock of the book. Only the row goes in a ``change_book``, which this use case opens, so it is called outside a
-        transaction. A failure at any step leaves the project in place, and calling this again finishes the deletion.
+        lock of the book. A failure at any step leaves the entry in place, and calling this again finishes the
+        deletion.
 
         :param actor: Account acting in the current request.
         :type actor: Actor
@@ -326,16 +297,15 @@ class ProjectService:
         :type project_id: ProjectId
         :raises NotFoundError: If the actor has no such project.
         """
-        await self._uow.read(lambda repos: owned_project(repos.projects, actor, project_id))
-        # The row goes last: only an existing row lets a repeated call reach files a failed call left behind
-        await self._sources.delete_project(project_id)
-        await self._assets.delete_project(project_id)
-        await self._uow.change_book(project_id, lambda repos, _project: repos.projects.delete(project_id))
+        await self._library.open(actor, project_id)
+        await self._erase(project_id)
+        # The entry goes last: only an existing entry lets a repeated call reach what a failed call left behind
+        await self._forget(project_id)
 
     async def delete_all(self, actor: Actor) -> None:
         """Delete every project of the actor with all its files, which must happen before its account is deleted.
 
-        Each project is deleted in a transaction of its own, files first, so a failure keeps the projects not yet
+        Each project is deleted in transactions of its own, files first, so a failure keeps the projects not yet
         deleted, and calling this again deletes them. The first window of the actor's projects is read again after
         every window, since the deleted projects leave it.
 
@@ -343,8 +313,23 @@ class ProjectService:
         :type actor: Actor
         """
         while True:
-            window = await self._uow.read(lambda repos: repos.projects.list_for_owner(actor.account_id, SliceRequest()))
+            window = await self._uow.read(lambda repos: repos.library.list_for_owner(actor.account_id, SliceRequest()))
             if not window.items:
                 return
-            for overview in window.items:
-                await self.delete(actor, overview.project.id)
+            for entry in window.items:
+                await self.delete(actor, entry.project_id)
+
+    async def sweep(self) -> None:
+        """Finish the creations and deletions of books that were broken off half way, which is a pass of the start.
+
+        A creation stores the book before its entry, and a deletion removes the entry after the book, so a store
+        without an entry is a creation that stopped and an entry without a store is a deletion that stopped. No one can
+        open the book of either, so its files and what is left of it go.
+        """
+        stored = set(await self._uow.stored_books())
+        entries = {entry.project_id for entry in await self._uow.read(lambda repos: repos.library.list_all())}
+        for project_id in sorted(stored - entries):
+            await self._erase(project_id)
+        for project_id in sorted(entries - stored):
+            await self._erase(project_id)
+            await self._forget(project_id)

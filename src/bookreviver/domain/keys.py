@@ -40,6 +40,7 @@ class KeySegment(LabeledStrEnum):
     PAGES = 'pages', 'Versions and edits of the pages of the book'
     EDITS = 'edits', 'Manual edits of a page'
     BOOK = 'book', 'Results of whole-book steps'
+    DATABASE = 'book.db', 'The database of the book, owned by the persistence adapter'
 
 
 @frozen
@@ -78,6 +79,11 @@ class ProjectKeys:
     def assets_area(self) -> StorageKey:
         """The directory of every derived file of the project."""
         return self._key(KeySegment.ASSETS)
+
+    @property
+    def database(self) -> StorageKey:
+        """The file of the database of the book, beside the directories of its files."""
+        return self._key(KeySegment.DATABASE)
 
     @property
     def book(self) -> StorageKey:

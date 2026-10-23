@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, override
 
 from attrs import asdict
 
+from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow, RecipeProfileRow
 from bookreviver.adapters.persistence.sqlalchemy.tables import (
     BookPlaceRow,
     PageRow,
@@ -28,7 +29,6 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
     PageVersionRow,
     PaginationSectionRow,
     ProjectRow,
-    RecipeProfileRow,
     RecipeRow,
     ResultMarkChangeRow,
     ScanRow,
@@ -37,6 +37,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import (
 )
 from bookreviver.domain.entities import (
     BookPlace,
+    LibraryEntry,
     Page,
     PageEdit,
     PageStage,
@@ -159,6 +160,34 @@ class RowMapper[EntityT, RowT](ABC):
         """
 
 
+class LibraryEntryMapper(RowMapper[LibraryEntry, LibraryRow]):
+    """Translation of an entry of the library, whose columns are its fields."""
+
+    @override
+    def to_entity(self, row: LibraryRow) -> LibraryEntry:
+        """Build the entry stored in ``row``.
+
+        :param row: Library row loaded from the catalogue.
+        :type row: LibraryRow
+        :returns: The entry.
+        :rtype: LibraryEntry
+        """
+        return LibraryEntry(
+            project_id=ProjectId(row.project_id), owner_id=AccountId(row.owner_id), added_at=row.added_at
+        )
+
+    @override
+    def to_row(self, entity: LibraryEntry) -> LibraryRow:
+        """Build the row of ``entity``.
+
+        :param entity: Entry to store.
+        :type entity: LibraryEntry
+        :returns: Transient library row.
+        :rtype: LibraryRow
+        """
+        return LibraryRow(project_id=entity.project_id, owner_id=entity.owner_id, added_at=entity.added_at)
+
+
 class ProjectMapper(RowMapper[Project, ProjectRow]):
     """Translation of a project, whose description is flattened into project columns."""
 
@@ -202,7 +231,6 @@ class ProjectMapper(RowMapper[Project, ProjectRow]):
         )
         return Project(
             id=ProjectId(row.id),
-            owner_id=AccountId(row.owner_id),
             details=details,
             image_policy=row.image_policy,
             cover_page_id=None if row.cover_page_id is None else PageId(row.cover_page_id),
@@ -222,7 +250,6 @@ class ProjectMapper(RowMapper[Project, ProjectRow]):
         details = entity.details
         return ProjectRow(
             id=entity.id,
-            owner_id=entity.owner_id,
             title=details.title,
             subtitle=details.subtitle,
             parallel_titles=list(details.parallel_titles),
@@ -857,7 +884,6 @@ class BookPlaceMapper(RowMapper[BookPlace, BookPlaceRow]):
             else CanvasPosition(zoom=zoom, centre_x=centre_x, centre_y=centre_y)
         )
         return BookPlace(
-            account_id=AccountId(row.account_id),
             project_id=ProjectId(row.project_id),
             mode=row.mode,
             stage=row.stage,
@@ -883,7 +909,6 @@ class BookPlaceMapper(RowMapper[BookPlace, BookPlaceRow]):
         """
         canvas = entity.canvas
         return BookPlaceRow(
-            account_id=entity.account_id,
             project_id=entity.project_id,
             mode=entity.mode,
             stage=entity.stage,

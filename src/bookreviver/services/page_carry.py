@@ -23,7 +23,7 @@ from bookreviver.domain.enums import CarryScope, ChangeSource, PageOrigin, StepL
 from bookreviver.domain.errors import InvalidParametersError, NotFoundError
 from bookreviver.domain.history import CarryOver
 from bookreviver.services.page_batches import PageBatch
-from bookreviver.services.projects import book_pages, owned_page
+from bookreviver.services.projects import book_page, book_pages
 from bookreviver.services.recipes import find_step
 
 if TYPE_CHECKING:
@@ -32,8 +32,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Page, PageStage, Project
     from bookreviver.domain.ids import PageId, ProjectId
     from bookreviver.domain.values import CarryRequest
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import Clock
+    from bookreviver.services.library import Library
     from bookreviver.services.stage_records import StageRecords
 
 SELECTED_NEEDS_PAGES: str = 'A carry-over to the selected pages names at least one page.'
@@ -43,17 +44,20 @@ MASK_NOT_CARRIED: str = 'The edit of this step is a mask painted on one page, wh
 class CarryOverService:
     """Carries the shape a page has set by hand over to the following, the selected or the same kind pages."""
 
-    def __init__(self, *, uow: UnitOfWork, records: StageRecords, clock: Clock) -> None:
+    def __init__(self, *, uow: UnitOfWork, library: Library, records: StageRecords, clock: Clock) -> None:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request, whose ``change_book`` ends the carry-over.
         :type uow: UnitOfWork
+        :param library: Library that opens the books of the acting account.
+        :type library: Library
         :param records: Writer of the stage records, which a changed edit marks stale.
         :type records: StageRecords
         :param clock: Clock stamping the states and the changes.
         :type clock: Clock
         """
         self._uow = uow
+        self._library = library
         self._records = records
         self._clock = clock
 
@@ -72,22 +76,23 @@ class CarryOverService:
                                has the step, or the source page has no shape set by hand.
         :raises InvalidParametersError: If the scope is the selected pages and none is named, or the edit is a mask.
         """
+        await self._library.open(actor, project_id)
         key = request.key
 
-        def work(repos: Repositories, _project: Project) -> tuple[CarryOver, list[PageStage]]:
+        def work(repos: BookRepositories, _project: Project) -> tuple[CarryOver, list[PageStage]]:
             """Write the shape to every target page as one batch, and mark their stages stale.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             :returns: The batch, the changes written and the pages skipped, and the stage records that became stale.
             :rtype: tuple[CarryOver, list[PageStage]]
-            :raises NotFoundError: If the actor has no such project, the project has no such page, no recipe of the
+            :raises NotFoundError: If the project has no such page, no recipe of the
                                    stage has the step, or the source page has no shape set by hand.
             :raises InvalidParametersError: If the scope is the selected pages and none is named, or the edit is a mask.
             """
-            source = owned_page(repos, actor, project_id, key.page_id)
+            source = book_page(repos, project_id, key.page_id)
             find_step(repos.recipes, project_id, key)
             stored_source = repos.page_step_states.find(key)
             if stored_source is None or stored_source.edit is None:
@@ -127,11 +132,11 @@ class CarryOverService:
         return carry_over
 
     @staticmethod
-    def _targets(repos: Repositories, project_id: ProjectId, request: CarryRequest, source: Page) -> Sequence[Page]:
+    def _targets(repos: BookRepositories, project_id: ProjectId, request: CarryRequest, source: Page) -> Sequence[Page]:
         """Choose the pages a carry-over goes to, which are never the source page and never a placeholder.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param project_id: Identifier of the project.
         :type project_id: ProjectId
         :param request: The carry-over, whose source page is left out and whose scope says which pages are chosen.

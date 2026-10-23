@@ -28,7 +28,7 @@ router = APIRouter(prefix='/projects', tags=['projects'], route_class=DishkaRout
 async def list_projects(
     actor: ActorDep, params: Annotated[Params, Depends()], projects: FromDishka[ProjectService]
 ) -> Page[ProjectSchema]:
-    """List the projects of the signed-in account, most recently updated first.
+    """List the projects of the signed-in account, the latest added first.
 
     \N{FORM FEED}
     :param actor: The signed-in account.

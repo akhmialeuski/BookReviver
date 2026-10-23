@@ -63,7 +63,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import PageEdit, PageStage, PageStepState, Project, Recipe
     from bookreviver.domain.values import MetadataMap
-    from bookreviver.ports.persistence import Repositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.processing import Processor, StepOutput
     from bookreviver.services.stage_records import StageRecords
     from bookreviver.services.stage_runs import StageRuntime, StepSource
@@ -210,11 +210,11 @@ class SpreadSplit:
         processor = self._catalogue.get(step.processor_key)
         layers = PageLayers(page)
 
-        def read(repos: Repositories) -> SplitBasis:
+        def read(repos: BookRepositories) -> SplitBasis:
             """Read the settings and the cut line of the step, the halves of the scan, and the versions made before.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :returns: What the split goes by.
             :rtype: SplitBasis
             :raises InvalidParametersError: If the parameters do not fit the processor.
@@ -240,7 +240,7 @@ class SpreadSplit:
                 state=state,
             )
 
-        basis = await self._uow.read(read)
+        basis = await self._uow.read_book(self._project.id, read)
         run = StepRun(
             processor_key=step.processor_key,
             params=basis.params,
@@ -253,7 +253,9 @@ class SpreadSplit:
             if made is None:
                 made = await self._make(basis.templates, run)
             undoing = (
-                await self._uow.read(lambda repos: self.undoing(repos, page, recipe, confirmed=confirmed))
+                await self._uow.read_book(
+                    self._project.id, lambda repos: self.undoing(repos, page, recipe, confirmed=confirmed)
+                )
                 if len(made) == 1
                 else None
             )
@@ -271,7 +273,7 @@ class SpreadSplit:
             await self.finish_unsplit(undoing)
         return RunOutcome.DONE
 
-    def undoing(self, repos: Repositories, page: Page, recipe: Recipe, *, confirmed: bool) -> Unsplit | None:
+    def undoing(self, repos: BookRepositories, page: Page, recipe: Recipe, *, confirmed: bool) -> Unsplit | None:
         """Find what undoing a split deletes, when a recipe that does not split runs on a left half.
 
         Nothing is written. The deletion is made by ``unsplit``, with the version that replaces the split. It reads
@@ -279,7 +281,7 @@ class SpreadSplit:
         ``change_book``.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param page: The page that runs the recipe.
         :type page: Page
         :param recipe: The recipe of the stage.
@@ -297,7 +299,7 @@ class SpreadSplit:
             raise ConflictError(UNSPLIT_NOT_CONFIRMED.format(page_id=rights[0].id))
         return Unsplit(page=page, rights=rights)
 
-    def unsplit(self, repos: Repositories, undoing: Unsplit) -> list[PageStage]:
+    def unsplit(self, repos: BookRepositories, undoing: Unsplit) -> list[PageStage]:
         """Delete the right halves and make the left half the whole scan, in the work of the caller's ``change_book``.
 
         The pages after the deleted halves move up, so those that turn over to the other side of the book are marked
@@ -305,7 +307,7 @@ class SpreadSplit:
         the page the caller read inside its work, so the write keeps whatever changed it since the run began.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param undoing: What the undoing deletes.
         :type undoing: Unsplit
         :returns: The stage records of the pages that turned over and became stale, which the caller announces.
@@ -336,11 +338,11 @@ class SpreadSplit:
             )
         await self._labels.announce(self._project.id)
 
-    def _halves(self, repos: Repositories, page: Page, right_id: PageId | None = None) -> Halves:
+    def _halves(self, repos: BookRepositories, page: Page, right_id: PageId | None = None) -> Halves:
         """Work out the two pages of the spread, without storing any of them.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param page: The page that runs the step.
         :type page: Page
         :param right_id: Identifier a new right half takes, when the versions of the halves were made under it before,
@@ -453,11 +455,11 @@ class SpreadSplit:
         :type reason: str
         """
 
-        def work(repos: Repositories, _project: Project) -> None:
+        def work(repos: BookRepositories, _project: Project) -> None:
             """Store the failed version, unless the page is gone.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             :raises NotFoundError: If the page was deleted.
@@ -511,11 +513,11 @@ class SpreadSplit:
         :rtype: list[PageStage] | None
         """
 
-        def work(repos: Repositories, _project: Project) -> list[PageStage] | None:
+        def work(repos: BookRepositories, _project: Project) -> list[PageStage] | None:
             """Store the split, unless the page is gone or what the split went by changed.
 
             :param repos: Repositories of the transaction.
-            :type repos: Repositories
+            :type repos: BookRepositories
             :param _project: The project as the change finds it, which the work does not need.
             :type _project: Project
             :returns: The stage records that changed, or None when nothing is stored.
@@ -547,7 +549,12 @@ class SpreadSplit:
         return changed
 
     def _write(
-        self, repos: Repositories, halves: Halves, made: Sequence[PageVersion], recipe: Recipe, undoing: Unsplit | None
+        self,
+        repos: BookRepositories,
+        halves: Halves,
+        made: Sequence[PageVersion],
+        recipe: Recipe,
+        undoing: Unsplit | None,
     ) -> list[PageStage]:
         """Write the pages, the versions and the heads of a split, in the work of the ``change_book`` of ``_commit``.
 
@@ -555,7 +562,7 @@ class SpreadSplit:
         a result that is made again stay with it.
 
         :param repos: Repositories of the transaction the caller runs in.
-        :type repos: Repositories
+        :type repos: BookRepositories
         :param halves: The two pages of the spread as the work reads them.
         :type halves: Halves
         :param made: The versions of the left and the right half, ready, or of the whole page alone.
