@@ -135,21 +135,19 @@ async def fx_book(
     await store_book(
         fx_uow(), book_record, page, owner=fx_actor.account_id, sources=[source], scans=[scan], databases=fx_databases()
     )
-    await store_scan_images(fx_file_stores.assets(book_record.id), book_record, scan)
+    await store_scan_images(fx_file_stores.assets(book_record.id), scan)
     return Book(book_record=book_record, page=page)
 
 
-async def store_scan_images(asset_store: AssetStore, book_record: BookRecord, scan: Scan) -> None:
+async def store_scan_images(asset_store: AssetStore, scan: Scan) -> None:
     """Store the full image and the preview of a scan as real JPEGs.
 
-    :param asset_store: Asset store of the book, the application's own.
+    :param asset_store: Asset store of the book owning the scan, the application's own.
     :type asset_store: AssetStore
-    :param book_record: Book owning the scan.
-    :type book_record: BookRecord
     :param scan: The scan, whose renditions are ready.
     :type scan: Scan
     """
-    keys = BookKeys(book_record.id)
+    keys = BookKeys()
     buffer = io.BytesIO()
     Image.new('L', SCAN_SIZE_PX, color=200).save(buffer, format='JPEG')
     for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
@@ -406,7 +404,7 @@ class TestStageSummaries:
         :type fx_databases: BookDatabasesFactory
         """
         _, scan = await add_page(fx_book, 'a1', PageKind.PLATE, databases=fx_databases())
-        await store_scan_images(fx_file_stores.assets(fx_book.book_record.id), fx_book.book_record, scan)
+        await store_scan_images(fx_file_stores.assets(fx_book.book_record.id), scan)
         await run_stage(fx_client, fx_idle, fx_book, 'geometry')
         recipes = await recipes_of(fx_client, fx_book, 'geometry')
         summaries = (await fx_client.get(f'{fx_book.path}/stages')).json()[ITEMS]
@@ -694,7 +692,7 @@ class TestRunAndVersions:
             input_id=head_id,
         )
         async with fx_file_stores.assets(fx_book.book_record.id).writable(
-            BookKeys(fx_book.book_record.id).version_rendition(old, Rendition.FULL_JPEG)
+            BookKeys().version_rendition(old, Rendition.FULL_JPEG)
         ) as path:
             path.write_bytes(OLD_VERSION_CONTENT)
         await (

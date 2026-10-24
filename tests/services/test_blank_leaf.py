@@ -54,6 +54,7 @@ from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.page_services import make_page_service
 from tests.helpers.samples import pixel, ruled_page, same_colour
 from tests.helpers.seeding import store_book
+from tests.helpers.storage import book_directory
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -206,7 +207,7 @@ class LeafDesk:
                 )
 
         await self.databases.open(book_record.id).change(save_heads)
-        keys = BookKeys(book_record.id)
+        keys = BookKeys()
         for version in versions:
             async with self.files.assets(book_record.id).writable(
                 keys.version_rendition(version, Rendition.FULL_PNG)
@@ -352,8 +353,8 @@ class LeafDesk:
         :rtype: Image.Image
         """
         assert version.renditions is not None
-        key = BookKeys(book.book_record.id).version_rendition(version, version.renditions.full)
-        with Image.open(self.storage_root / key) as image:
+        key = BookKeys().version_rendition(version, version.renditions.full)
+        with Image.open(book_directory(self.storage_root, book.book_record.id) / key) as image:
             return image.copy()
 
 
@@ -779,7 +780,7 @@ class TestRemakeOutdatedLeaves:
             repos.page_versions.delete_many([leaf.id])
 
         await desk.databases.open(book.book_record.id).change(replace_leaf)
-        keys = BookKeys(book.book_record.id)
+        keys = BookKeys()
         assert old.renditions is not None
         async with desk.files.assets(book.book_record.id).writable(
             keys.version_rendition(old, old.renditions.full)

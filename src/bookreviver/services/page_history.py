@@ -203,7 +203,7 @@ class PageHistoryService:
         await self._starter.enqueue_tiles(book.id, untiled)
         for version in cleared.versions:
             try:
-                await book.assets.delete_prefix(BookKeys(book.id).version_directory(version))
+                await book.assets.delete_prefix(BookKeys().version_directory(version))
             except OSError:
                 logger.exception('The files of the version %s were not removed after its page was cleared', version.id)
         return cleared

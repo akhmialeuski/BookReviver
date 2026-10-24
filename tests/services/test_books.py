@@ -7,17 +7,28 @@ from typing import TYPE_CHECKING, override
 
 import anyio
 import pytest
+from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.storage import LocalBookArchive, LocalSourceStore
 from bookreviver.api.access import AccountBooks, books_of
-from bookreviver.domain.enums import Orthography
+from bookreviver.domain.enums import Orthography, Rendition
 from bookreviver.domain.errors import DomainError, NotFoundError
-from bookreviver.domain.values import BookDetails, Slice, SliceRequest
+from bookreviver.domain.ids import StorageKey
+from bookreviver.domain.keys import BookKeys
+from bookreviver.domain.values import BookDetails, PageStepKey, Slice, SliceRequest
 from bookreviver.services.book import BookTools
 from bookreviver.services.books import BooksService
 from bookreviver.services.stage_summaries import StageSummaries
-from tests.helpers.builders import EPOCH, make_page, make_record, new_account_id
+from tests.helpers.builders import (
+    DESKEW_STEP_ID,
+    EPOCH,
+    make_page,
+    make_page_edit,
+    make_page_step_state,
+    make_record,
+    new_account_id,
+)
 from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import FakeCatalogue
@@ -44,6 +55,9 @@ NOW = EPOCH + timedelta(days=1)
 PAGE_COUNT: int = 2
 # The name of the database in the archive of a book
 DATABASE_NAME: str = 'book.db'
+# The hash an edit with a mask is stored under, and the content of its mask
+MASK_EDIT_HASH: str = 'masked-edit'
+MASK_CONTENT: bytes = b'mask of the edit'
 
 
 def _service(uow: UnitOfWork, stores: BookFileStores, root: Path, *, databases: BookDatabases) -> BooksService:
@@ -461,6 +475,57 @@ class TestExportAndImport:
         expect(fx_files.kept(page, book_id=copy_id))
         expect([overview.book_record.id for overview in listed.items] == [copy_id, book_record.id])
         assert_expectations()
+
+    async def test_an_imported_book_reads_the_mask_of_its_edit(
+        self,
+        fx_service: Callable[[], BooksService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
+        fx_file_stores: SharedBookFileStores,
+    ) -> None:
+        """Verify the imported book finds the mask of a manual edit under the key its database keeps for the edit.
+
+        The database of a book keeps the key of the mask, so the key has to stay true when the book moves under a new
+        identifier.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], BooksService]
+        :param fx_uow: Function opening a new unit of work over the database of the test.
+        :type fx_uow: UnitOfWorkFactory
+        :param fx_actor: Account the service acts for.
+        :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
+        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+        :type fx_file_stores: SharedBookFileStores
+        """
+        book_record, page = make_record(), make_page()
+        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
+        directory = BookKeys().page_edit(page.id, DESKEW_STEP_ID, MASK_EDIT_HASH)
+        edit = evolve(make_page_edit(page_id=page.id), mask_key=StorageKey(f'{directory}/{Rendition.MASK}'))
+        await (
+            fx_databases()
+            .open(book_record.id)
+            .change(
+                lambda repos, _book_record: repos.page_step_states.save(
+                    make_page_step_state(page_id=page.id, edit=edit)
+                )
+            )
+        )
+        async with fx_file_stores.assets(book_record.id).writable(StorageKey(f'{directory}/{Rendition.MASK}')) as path:
+            path.write_bytes(MASK_CONTENT)
+
+        imported = await fx_service().import_archive(fx_actor, await _archive(fx_service(), book_record.id))
+
+        state = await imported.read(
+            lambda repos: repos.page_step_states.find(PageStepKey(page.id, edit.stage, edit.step_id))
+        )
+        assert state is not None
+        assert state.edit is not None
+        assert state.edit.mask_key is not None
+        async with imported.assets.readable(state.edit.mask_key) as path:
+            assert path.read_bytes() == MASK_CONTENT
 
     async def test_a_file_that_is_no_archive_of_a_book_leaves_no_book_behind(
         self, fx_service: Callable[[], BooksService], fx_uow: UnitOfWorkFactory, fx_actor: Actor

@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any, Self
 from fastapi import UploadFile
 from pydantic import Json, model_validator
 
-from bookreviver.api.route_names import RouteName
 from bookreviver.api.schemas.base import RequestModel, ResponseModel
+from bookreviver.api.schemas.images import iiif_path
 from bookreviver.api.schemas.page_history import PageHistoryEntrySchema
 from bookreviver.api.schemas.types import PageIdList
 from bookreviver.domain.enums import CarryScope, EditorKind, Stage
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from bookreviver.domain.entities import PageEdit
+    from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import PageStepKey
 
 SHAPE_DOES_NOT_FIT: str = 'The shape does not fit the {editor} editor: {reason}.'
@@ -93,17 +94,19 @@ class PageEditSchema(ResponseModel):
     updated_at: datetime
 
     @classmethod
-    def of(cls, edit: PageEdit, request: Request) -> Self:
+    def of(cls, edit: PageEdit, book_id: BookId, request: Request) -> Self:
         """Build the schema of an edit.
 
         :param edit: The edit.
         :type edit: PageEdit
+        :param book_id: The book of the page, whose files hold the mask.
+        :type book_id: BookId
         :param request: The request, whose application knows the route that serves the mask.
         :type request: Request
         :returns: The schema.
         :rtype: Self
         """
-        mask = None if edit.mask_key is None else str(request.app.url_path_for(RouteName.IIIF_FILE, key=edit.mask_key))
+        mask = None if edit.mask_key is None else iiif_path(request, book_id, edit.mask_key)
         return cls(
             page_id=edit.page_id,
             stage=edit.stage,

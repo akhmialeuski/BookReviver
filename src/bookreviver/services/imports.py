@@ -204,7 +204,7 @@ class ImportRun:
         self._order_keys = runtime.order_keys
         self._clock = runtime.clock
         self._limits = runtime.limits
-        self._keys = BookKeys(job.book_id)
+        self._keys = BookKeys()
         self._handled: set[str] = set()
         self._done = 0
         self._total = len(self._files)

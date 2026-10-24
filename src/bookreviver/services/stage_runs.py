@@ -173,7 +173,7 @@ class StageWork:
         self._clock = runtime.clock
         self._preview_long_side_px = runtime.preview_long_side_px
         self._tracer = runtime.tracer
-        self._keys = BookKeys(book_record.id)
+        self._keys = BookKeys()
 
     def task_count(self, steps: Sequence[Step]) -> int:
         """Count the tasks of the steps a run or a preview goes over on one page.

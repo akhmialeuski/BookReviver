@@ -1,8 +1,9 @@
 """The addresses of the images of a scan or a page, as paths of the IIIF route without scheme or host.
 
-An address is built from the storage key of the file with the name of the route that serves it, so no URL is written by
-hand. It has no scheme or host because the browser resolves it against the origin it loaded the page from, and an
-address kept by a client or written into a pyramid then survives a change of domain, port or device address.
+An address is built from the book and the storage key of the file, relative to the directory of the book, with the name
+of the route that serves it, so no URL is written by hand. It has no scheme or host because the browser resolves it
+against the origin it loaded the page from, and an address kept by a client or written into a pyramid then survives a
+change of domain, port or device address.
 
 The ``full`` image is a JPEG or a PNG, and its address names the format recorded with the scan or the page version when
 the image was written, never one worked out from the book's image policy as it is now, since a later change of the
@@ -22,7 +23,22 @@ if TYPE_CHECKING:
 
     from starlette.requests import Request
 
-    from bookreviver.domain.ids import StorageKey
+    from bookreviver.domain.ids import BookId, StorageKey
+
+
+def iiif_path(request: Request, book_id: BookId, key: str) -> str:
+    """Return the path of the IIIF route that serves a file of a book.
+
+    :param request: The request, whose application knows the IIIF route.
+    :type request: Request
+    :param book_id: The book of the file.
+    :type book_id: BookId
+    :param key: Storage key of the file, relative to the directory of the book.
+    :type key: str
+    :returns: The path of the file below the API prefix, without scheme or host.
+    :rtype: str
+    """
+    return str(request.app.url_path_for(RouteName.IIIF_FILE, book_id=str(book_id), key=key))
 
 
 class ImagePathsSchema(ResponseModel):
@@ -40,11 +56,15 @@ class ImagePathsSchema(ResponseModel):
     iiif_info: str
 
     @classmethod
-    def of(cls, request: Request, key_of: Callable[[Rendition], StorageKey], *, full: Rendition) -> Self:
+    def of(
+        cls, request: Request, book_id: BookId, key_of: Callable[[Rendition], StorageKey], *, full: Rendition
+    ) -> Self:
         """Build the paths of the four images of a scan or a page version.
 
         :param request: The request, whose application knows the IIIF route.
         :type request: Request
+        :param book_id: The book of the scan or the page version.
+        :type book_id: BookId
         :param key_of: Function giving the storage key of one rendition of the scan or the page version.
         :type key_of: Callable[[Rendition], StorageKey]
         :param full: Format the full image was written in, as recorded with the scan or the page version.
@@ -52,21 +72,10 @@ class ImagePathsSchema(ResponseModel):
         :returns: The paths of the full image, the preview, the thumbnail and the pyramid's information document.
         :rtype: Self
         """
-
-        def path(key: str) -> str:
-            """Return the path of the IIIF route serving a file.
-
-            :param key: Storage key of the file.
-            :type key: str
-            :returns: The path of the file below the API prefix, without scheme or host.
-            :rtype: str
-            """
-            return str(request.app.url_path_for(RouteName.IIIF_FILE, key=key))
-
         info = f'{key_of(Rendition.TILES)}{BookKeys.SEPARATOR}{IIIF_INFO_FILE}'
         return cls(
-            full=path(key_of(full)),
-            preview=path(key_of(Rendition.PREVIEW)),
-            thumbnail=path(key_of(Rendition.THUMBNAIL)),
-            iiif_info=path(info),
+            full=iiif_path(request, book_id, key_of(full)),
+            preview=iiif_path(request, book_id, key_of(Rendition.PREVIEW)),
+            thumbnail=iiif_path(request, book_id, key_of(Rendition.THUMBNAIL)),
+            iiif_info=iiif_path(request, book_id, info),
         )

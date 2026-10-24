@@ -7495,14 +7495,14 @@
         }
       }
     },
-    "/api/v1/iiif/{key}": {
+    "/api/v1/iiif/{book_id}/{key}": {
       "get": {
         "tags": [
           "iiif"
         ],
         "summary": "Iiif-File",
         "description": "Stream a stored file, and an image information document with its IIIF media type and the address of its pyramid.",
-        "operationId": "iiif_file_api_v1_iiif__key__get",
+        "operationId": "iiif_file_api_v1_iiif__book_id___key__get",
         "parameters": [
           {
             "name": "key",
@@ -7516,6 +7516,18 @@
               "title": "Key"
             },
             "description": "Storage key of the file, as found in the image addresses of a page or a scan"
+          },
+          {
+            "name": "book_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Identifier of the book",
+              "title": "Book Id"
+            },
+            "description": "Identifier of the book"
           }
         ],
         "responses": {

@@ -11,7 +11,7 @@ from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import Renditions
 from tests.helpers.builders import make_page, make_page_version, make_record, make_scan, make_source, new_account_id
 from tests.helpers.seeding import commit_record
-from tests.helpers.storage import upload
+from tests.helpers.storage import book_directory, upload
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -83,7 +83,7 @@ async def commit_book(database: SqlDatabase, stores: BookOpener, owner: Actor | 
         versions=[version],
         databases=stores.databases,
     )
-    keys = BookKeys(book_record.id)
+    keys = BookKeys()
     sources, assets = stores.files.sources(book_record.id), stores.files.assets(book_record.id)
     for source in (first, second):
         job_id = JobId(uuid4())
@@ -108,9 +108,9 @@ def on_disk(root: Path, book: Book, source: Source) -> tuple[bool, bool]:
     :returns: Whether the source file exists, and whether the full image of its first scan exists.
     :rtype: tuple[bool, bool]
     """
-    keys = BookKeys(book.book_record.id)
+    keys = BookKeys()
     scan = next(scan for scan in book.scans if scan.source_id == source.id)
     return (
-        (root / keys.source(source.id) / source.file_name).is_file(),
-        (root / keys.scan_rendition(scan, Rendition.FULL_JPEG)).is_file(),
+        (book_directory(root, book.book_record.id) / keys.source(source.id) / source.file_name).is_file(),
+        (book_directory(root, book.book_record.id) / keys.scan_rendition(scan, Rendition.FULL_JPEG)).is_file(),
     )

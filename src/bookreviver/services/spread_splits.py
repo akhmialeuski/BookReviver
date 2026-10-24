@@ -162,7 +162,7 @@ class SpreadSplit:
         self._order_keys = runtime.order_keys
         self._records = records
         self._labels = PageLabels(clock=runtime.clock)
-        self._keys = BookKeys(book_record.id)
+        self._keys = BookKeys()
 
     def splits(self, recipe: Recipe) -> bool:
         """Tell whether a recipe splits scans: it is a recipe of the page split whose step makes a part for each half.

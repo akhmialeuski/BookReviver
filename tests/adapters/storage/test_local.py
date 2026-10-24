@@ -26,7 +26,9 @@ pytestmark = pytest.mark.anyio
 STORE_TYPES_ARG: str = 'store_types'
 BOOK_ID: BookId = BookId(uuid4())
 OTHER_BOOK_ID: BookId = BookId(uuid4())
-KEYS: BookKeys = BookKeys(BOOK_ID)
+KEYS: BookKeys = BookKeys()
+# The directory of the book under the storage root, as the local stores lay it out
+BOOK_DIRECTORY: str = f'projects/{BOOK_ID}'
 JOB_ID: JobId = JobId(uuid4())
 SOURCE_ID: SourceId = SourceId(uuid4())
 PAGE_NAME: str = 'page.png'
@@ -76,7 +78,7 @@ class TestLocalSourceStore:
         """
         stores = LocalBookFileStores(root=tmp_path)
         await stores.sources(BOOK_ID).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
-        sources_dir = tmp_path / KEYS.sources_area
+        sources_dir = tmp_path / BOOK_DIRECTORY / KEYS.sources_area
         (sources_dir / str(SOURCE_ID)).mkdir(parents=True)
         (sources_dir / str(SOURCE_ID) / PAGE_NAME).write_bytes(PAGE_CONTENT)
 
@@ -102,8 +104,8 @@ class TestLocalSourceStore:
         with pytest.raises(ConflictError):
             await stores.sources(BOOK_ID).promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
-        expect((tmp_path / KEYS.incoming(JOB_ID) / PAGE_NAME).read_bytes() == PAGE_CONTENT)
-        expect(list((tmp_path / KEYS.sources_area).iterdir()) == [])
+        expect((tmp_path / BOOK_DIRECTORY / KEYS.incoming(JOB_ID) / PAGE_NAME).read_bytes() == PAGE_CONTENT)
+        expect(list((tmp_path / BOOK_DIRECTORY / KEYS.sources_area).iterdir()) == [])
         assert_expectations()
 
     async def test_discarding_all_staged_removes_the_directory_of_a_book_left_empty(self, tmp_path: Path) -> None:
@@ -113,7 +115,7 @@ class TestLocalSourceStore:
         :type tmp_path: Path
         """
         stores = LocalBookFileStores(root=tmp_path)
-        other_sources_dir = tmp_path / BookKeys(OTHER_BOOK_ID).sources_area
+        other_sources_dir = tmp_path / 'projects' / str(OTHER_BOOK_ID) / BookKeys().sources_area
         await stores.sources(BOOK_ID).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
         await stores.sources(OTHER_BOOK_ID).stage(
             JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
@@ -125,7 +127,7 @@ class TestLocalSourceStore:
 
         await stores.discard_all_staged()
 
-        expect(not (tmp_path / KEYS.sources_area).parent.exists())
+        expect(not (tmp_path / BOOK_DIRECTORY / KEYS.sources_area).parent.exists())
         expect([path.name for path in other_sources_dir.parent.iterdir()] == [other_sources_dir.name])
         assert_expectations()
 
@@ -144,7 +146,7 @@ class TestLocalAssetStore:
         async with store.writable(FILE_KEY) as path:
             path.write_bytes(PAGE_CONTENT)
 
-        assert (tmp_path / FILE_KEY).read_bytes() == PAGE_CONTENT
+        assert (tmp_path / BOOK_DIRECTORY / FILE_KEY).read_bytes() == PAGE_CONTENT
 
     async def test_failed_write_leaves_no_partial_file(self, tmp_path: Path) -> None:
         """Verify an abandoned write removes the hidden file it was writing.
@@ -157,7 +159,7 @@ class TestLocalAssetStore:
         with pytest.raises(WriterFailedError):
             await abandon_write(store, key=FILE_KEY, content=PAGE_CONTENT)
 
-        assert [path async for path in anyio.Path(tmp_path / FILE_KEY).parent.iterdir()] == []
+        assert [path async for path in anyio.Path(tmp_path / BOOK_DIRECTORY / FILE_KEY).parent.iterdir()] == []
 
     async def test_book_deletion_keeps_uploads_and_sources(self, tmp_path: Path) -> None:
         """Verify ``incoming/`` and ``sources/`` stay, since removing them is the source store's job.

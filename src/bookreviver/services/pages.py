@@ -911,22 +911,24 @@ class PageService:
         await book.change(work)
 
     @asynccontextmanager
-    async def open_asset(self, key: StorageKey) -> AsyncIterator[Path]:
+    async def open_asset(self, book_id: BookId, key: StorageKey) -> AsyncIterator[Path]:
         """Give a local path of the derived file at ``key`` for as long as the context is open.
 
-        The derived files are read by anyone who has their key, with no owner checked. A key under the book's
-        ``incoming/`` or ``sources/`` belongs to no derived file and is reported as not found without a look at the
-        store.
+        The derived files are read by anyone who has the identifier of their book and their key, with no owner checked.
+        A key under the book's ``incoming/`` or ``sources/`` belongs to no derived file and is reported as not found
+        without a look at the store.
 
-        :param key: Storage key of a derived file, such as one taken from the address of an image.
+        :param book_id: The book of the file, such as one taken from the address of an image.
+        :type book_id: BookId
+        :param key: Storage key of a derived file relative to the directory of its book, from the same address.
         :type key: StorageKey
         :returns: Context manager yielding the path of the file, valid while the context is open.
         :rtype: AsyncIterator[Path]
         :raises NotFoundError: If the key is not under the ``assets/`` of a book, or nothing is stored at it.
         """
-        if (keys := BookKeys.owning(key)) is None:
+        if not BookKeys.is_asset(key):
             raise NotFoundError(key)
-        async with self._stores.assets(keys.book_id).readable(key) as path:
+        async with self._stores.assets(book_id).readable(key) as path:
             yield path
 
     def _overviews(
@@ -1115,7 +1117,7 @@ class PageService:
         :param pages: The deleted pages, whose directories under ``assets/pages`` are removed.
         :type pages: Sequence[Page]
         """
-        keys = BookKeys(book.id)
+        keys = BookKeys()
         for page in pages:
             await book.assets.delete_prefix(keys.page(page.id))
 
@@ -1343,7 +1345,7 @@ class PageService:
         if gone:
             await self._discard_files(book, [page])
         elif outdated:
-            await book.assets.delete_prefix(BookKeys(book.id).version_directory(version))
+            await book.assets.delete_prefix(BookKeys().version_directory(version))
         elif current:
             await self._publisher.publish(PageVersionReady(book_id=book.id, version=version))
         return not (gone or outdated)
@@ -1409,7 +1411,7 @@ class PageService:
             :raises ValueError: If the version is neither ``split.none`` nor ``pages.blank``, or has no size to make.
             """
             book_record = repos.book_record.get(book.id)
-            keys = BookKeys(book_record.id)
+            keys = BookKeys()
             if version.processor == SPLIT_NONE:
                 if page.scan_id is None:
                     raise ConflictError(SCAN_DELETED)

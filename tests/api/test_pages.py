@@ -165,7 +165,7 @@ class TestListPages:
         :param fx_file_stores: Opens the source store and the asset store of a book of the test.
         :type fx_file_stores: SharedBookFileStores
         """
-        keys = BookKeys(fx_book.book_record.id)
+        keys = BookKeys()
         version = fx_book.versions[0]
         async with fx_file_stores.assets(fx_book.book_record.id).writable(
             keys.version_rendition(version, Rendition.THUMBNAIL)
@@ -177,8 +177,9 @@ class TestListPages:
         assert images is not None
         addresses = [images.full, images.preview, images.thumbnail, images.iiif_info]
         served = await fx_client.get(images.thumbnail)
-        expect(all(address.startswith(f'{IIIF_PATH}/{keys.prefix}') for address in addresses))
-        expect(images.iiif_info == f'{IIIF_PATH}/{keys.version_rendition(version, Rendition.TILES)}/info.json')
+        expect(all(address.startswith(f'{IIIF_PATH}/{fx_book.book_record.id}/assets/') for address in addresses))
+        tiles = keys.version_rendition(version, Rendition.TILES)
+        expect(images.iiif_info == f'{IIIF_PATH}/{fx_book.book_record.id}/{tiles}/info.json')
         expect(served.content == THUMBNAIL_CONTENT)
         assert_expectations()
 
@@ -218,7 +219,7 @@ class TestListPages:
 
         images = Page[PageSchema].model_validate_json(response.content).items[0].images
         assert images is not None
-        expected = f'{IIIF_PATH}/{BookKeys(book_record.id).version_rendition(version, full)}'
+        expected = f'{IIIF_PATH}/{book_record.id}/{BookKeys().version_rendition(version, full)}'
         assert images.full == expected
 
     async def test_pages_through_the_book_with_positions_of_the_whole_book(

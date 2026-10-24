@@ -88,7 +88,7 @@ from tests.helpers.fakes_imports import (
 from tests.helpers.fakes_jobs import JobFakes
 from tests.helpers.processors import AutoSplitProcessor
 from tests.helpers.seeding import commit_record
-from tests.helpers.storage import upload
+from tests.helpers.storage import book_directory, upload
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping, Sequence
@@ -753,7 +753,7 @@ class TestStartImport:
             )
 
         expect(fx_rig.fakes.board.put_jobs == [queued])
-        expect(not await anyio.Path(fx_storage_root / BookKeys(fx_book.id).incoming_area).exists())
+        expect(not await anyio.Path(book_directory(fx_storage_root, fx_book.id) / BookKeys().incoming_area).exists())
         assert_expectations()
 
     async def test_book_with_an_import_running_raises_conflict_and_leaves_only_the_upload_of_that_import(
@@ -1216,7 +1216,7 @@ class TestRunImport:
         """
         await _import(fx_rig, fx_owner, fx_book.id, fx_book_files)
 
-        keys = BookKeys(fx_book.id)
+        keys = BookKeys()
         scans, pages = (
             await _scans(fx_book.id, databases=fx_rig.databases),
             await _pages(fx_book.id, databases=fx_rig.databases),
@@ -1270,15 +1270,15 @@ class TestRunImport:
         """
         await _import(fx_rig, fx_owner, fx_book.id, [image_upload(fx_samples, COVER_NAME)])
 
-        keys = BookKeys(fx_book.id)
+        keys = BookKeys()
         [scan] = await _scans(fx_book.id, databases=fx_rig.databases)
         [page] = await _pages(fx_book.id, databases=fx_rig.databases)
         [version] = await _versions(fx_book.id, [page.id], databases=fx_rig.databases)
         # The asset store hands out a hidden directory beside the key, which the pyramid is published from
         assert sorted(target.parent for target in fx_rig.tiler.targets) == sorted(
             [
-                (fx_storage_root / keys.scan_rendition(scan, Rendition.TILES)).parent,
-                (fx_storage_root / keys.version_rendition(version, Rendition.TILES)).parent,
+                (book_directory(fx_storage_root, fx_book.id) / keys.scan_rendition(scan, Rendition.TILES)).parent,
+                (book_directory(fx_storage_root, fx_book.id) / keys.version_rendition(version, Rendition.TILES)).parent,
             ]
         )
 
@@ -1399,7 +1399,7 @@ class TestRunImportFullFormat:
 
         await _import(fx_rig, fx_owner, book_record.id, [image_upload(fx_samples, case.name, mode=case.mode)])
 
-        keys = BookKeys(book_record.id)
+        keys = BookKeys()
         [scan] = await _scans(book_record.id, databases=fx_rig.databases)
         [page] = await _pages(book_record.id, databases=fx_rig.databases)
         [version] = await _versions(book_record.id, [page.id], databases=fx_rig.databases)
@@ -1450,7 +1450,7 @@ class TestRunImportFullFormat:
         second = image_upload(fx_samples, 'second.jpg', width_px=SECOND_PART_WIDTH_PX)
         await _import(fx_rig, fx_owner, book_record.id, [second])
 
-        keys = BookKeys(book_record.id)
+        keys = BookKeys()
         scans = await _scans(book_record.id, databases=fx_rig.databases)
         kept = next(scan for scan in scans if scan.id == first.id)
         added = next(scan for scan in scans if scan.id != first.id)
@@ -1487,7 +1487,7 @@ class TestRunImportDjvu:
 
         job = await _import(fx_rig, fx_owner, book_record.id, djvu_uploads([bundle]))
 
-        keys = BookKeys(book_record.id)
+        keys = BookKeys()
         scans = await _scans(book_record.id, databases=fx_rig.databases)
         expect(job.state is JobState.SUCCEEDED)
         expect(sorted(scan.facts.color_mode for scan in scans) == sorted(page.mode for page in DJVU_PAGES))
@@ -2712,7 +2712,7 @@ class TestRunImportApplyStep:
         # The progress counts the file of the upload, and the scan counted one less to cut
         expect((job.state, job.progress.done, job.progress.total) == (JobState.SUCCEEDED, 1, 1))
         expect(not versions)
-        expect(not await _is_stored(fx_rig.files.assets(fx_book.id), BookKeys(fx_book.id).scan_directory(cut[0])))
+        expect(not await _is_stored(fx_rig.files.assets(fx_book.id), BookKeys().scan_directory(cut[0])))
         assert_expectations()
 
 

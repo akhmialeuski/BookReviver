@@ -473,12 +473,12 @@ class TestListScans:
         response = await fx_client.get(f'{BOOKS_PATH}/{fx_book.book_record.id}/scans')
 
         scans = Page[ScanSchema].model_validate_json(response.content)
-        keys = BookKeys(fx_book.book_record.id)
         expect(response.status_code == status.HTTP_200_OK)
         expect([item.id for item in scans.items] == [scan.id for scan in fx_book.scans])
         expect(scans.total == len(fx_book.scans))
         expect(all(item.images is not None for item in scans.items))
-        expect(all(item.images.full.startswith(f'{IIIF_PATH}/{keys.prefix}') for item in scans.items if item.images))
+        prefix = f'{IIIF_PATH}/{fx_book.book_record.id}/assets/'
+        expect(all(item.images.full.startswith(prefix) for item in scans.items if item.images))
         assert_expectations()
 
     @pytest.mark.parametrize('full', [Rendition.FULL_JPEG, Rendition.FULL_PNG])
@@ -517,7 +517,7 @@ class TestListScans:
 
         images = Page[ScanSchema].model_validate_json(response.content).items[0].images
         assert images is not None
-        assert images.full == f'{IIIF_PATH}/{BookKeys(book_record.id).scan_rendition(scan, full)}'
+        assert images.full == f'{IIIF_PATH}/{book_record.id}/{BookKeys().scan_rendition(scan, full)}'
 
     async def test_scan_without_ready_renditions_has_no_images(
         self,

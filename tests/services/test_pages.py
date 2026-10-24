@@ -462,11 +462,11 @@ class TestOpenAsset:
         """
         book_record = make_record()
         await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
-        key = BookKeys(book_record.id).book
+        key = BookKeys().book
         async with fx_file_stores.assets(book_record.id).writable(key) as target:
             target.write_bytes(FILE_CONTENT)
 
-        async with fx_service().open_asset(key) as path:
+        async with fx_service().open_asset(book_record.id, key) as path:
             assert path.read_bytes() == FILE_CONTENT
 
     async def test_gives_a_file_of_another_accounts_book_with_no_owner_checked(
@@ -492,11 +492,11 @@ class TestOpenAsset:
         """
         book_record = make_record()
         await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id(), databases=fx_databases())
-        key = BookKeys(book_record.id).book
+        key = BookKeys().book
         async with fx_file_stores.assets(book_record.id).writable(key) as target:
             target.write_bytes(FILE_CONTENT)
 
-        async with fx_service().open_asset(key) as path:
+        async with fx_service().open_asset(book_record.id, key) as path:
             assert path.read_bytes() == FILE_CONTENT
 
     @pytest.mark.parametrize(
@@ -527,7 +527,7 @@ class TestOpenAsset:
         await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
 
         with pytest.raises(NotFoundError):
-            async with fx_service().open_asset(StorageKey(f'{BookKeys(book_record.id).prefix}{area}/{uuid4()}')):
+            async with fx_service().open_asset(book_record.id, StorageKey(f'{area}/{uuid4()}')):
                 pytest.fail('A key outside the assets was opened.')
 
     async def test_key_without_a_file_is_not_found(
@@ -552,7 +552,7 @@ class TestOpenAsset:
         await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
 
         with pytest.raises(NotFoundError):
-            async with fx_service().open_asset(BookKeys(book_record.id).book):
+            async with fx_service().open_asset(book_record.id, BookKeys().book):
                 pytest.fail('A file that is not stored was opened.')
 
 

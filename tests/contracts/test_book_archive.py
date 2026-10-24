@@ -80,7 +80,7 @@ async def _book(stores: BookFileStores) -> tuple[BookId, SourceId, PageVersion]:
     staged = await sources.stage(job_id, [upload(SOURCE_NAME, content=SOURCE_CONTENT)], max_bytes=UNLIMITED_BYTES)
     await sources.promote(job_id, source_id, names=[file.name for file in staged])
     await sources.stage(JobId(uuid4()), [upload(UPLOAD_NAME)], max_bytes=UNLIMITED_BYTES)
-    key = BookKeys(book_id).version_rendition(version, Rendition.FULL_JPEG)
+    key = BookKeys().version_rendition(version, Rendition.FULL_JPEG)
     async with stores.assets(book_id).writable(key) as path:
         path.write_bytes(IMAGE_CONTENT)
     return book_id, source_id, version
@@ -124,7 +124,7 @@ class TestExportAndUnpack:
         expect(not any(UPLOAD_NAME in name for name in names))
         async with fx_stores.sources(copy_id).source_files(source_id) as paths:
             expect({path.name: path.read_bytes() for path in paths} == {SOURCE_NAME: SOURCE_CONTENT})
-        key = BookKeys(copy_id).version_rendition(version, Rendition.FULL_JPEG)
+        key = BookKeys().version_rendition(version, Rendition.FULL_JPEG)
         async with fx_stores.assets(copy_id).readable(key) as path:
             expect(path.read_bytes() == IMAGE_CONTENT)
         assert_expectations()

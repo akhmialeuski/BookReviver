@@ -451,7 +451,7 @@ class ProcessingService:
             return repos.page_versions.collectable(collection.previews_older_than)
 
         old = await book.read(work)
-        keys = BookKeys(book.id)
+        keys = BookKeys()
         sizes = [await book.assets.size_of(keys.version_directory(version)) for version in old]
         return CollectionReport(versions=len(old), size_bytes=sum(sizes))
 

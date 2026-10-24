@@ -120,7 +120,7 @@ async def fx_book(
         versions=[base],
         databases=fx_databases(),
     )
-    keys = BookKeys(book_record.id)
+    keys = BookKeys()
     for scan in scans:
         async with fx_file_stores.assets(book_record.id).writable(
             keys.scan_rendition(scan, Rendition.FULL_JPEG)

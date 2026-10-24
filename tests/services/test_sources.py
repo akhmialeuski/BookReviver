@@ -19,7 +19,7 @@ from tests.helpers.builders import BookOpener, make_job, make_record, make_sourc
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.scripted_runner import ScriptedRunner
 from tests.helpers.seeding import store_book
-from tests.helpers.storage import SharedBookFileStores
+from tests.helpers.storage import SharedBookFileStores, book_directory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -473,7 +473,7 @@ class TestDelete:
 
         remaining = await fx_service().list(fx_open_book(fx_actor, fx_book.book_record.id), SliceRequest())
         scans = await fx_service().scans(fx_open_book(fx_actor, fx_book.book_record.id), SliceRequest())
-        image = BookKeys(fx_book.book_record.id).version_rendition(fx_book.version, Rendition.FULL_JPEG)
+        image = BookKeys().version_rendition(fx_book.version, Rendition.FULL_JPEG)
         page = await fx_open_book.databases.open(fx_book.book_record.id).read(
             lambda repos: repos.pages.get(fx_book.page.id)
         )
@@ -486,7 +486,7 @@ class TestDelete:
         expect(on_disk(fx_storage_root, fx_book, fx_book.second) == (True, True))
         expect(page == evolve(fx_book.page, scan_id=None))
         expect(versions == [fx_book.version])
-        expect((fx_storage_root / image).is_file())
+        expect((book_directory(fx_storage_root, fx_book.book_record.id) / image).is_file())
         assert_expectations()
 
     async def test_import_in_progress_is_a_conflict_and_removes_nothing(

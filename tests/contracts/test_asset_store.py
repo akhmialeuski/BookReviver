@@ -21,7 +21,9 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.anyio
 
-KEYS: BookKeys = BookKeys(BookId(uuid4()))
+KEYS: BookKeys = BookKeys()
+# The book whose asset store most of the contract writes to
+BOOK_ID: BookId = BookId(uuid4())
 PAGE_ID: PageId = PageId(uuid4())
 PAGE_PREFIX: StorageKey = KEYS.page(PAGE_ID)
 FILE_KEY: StorageKey = KEYS.version_rendition(make_page_version(page_id=PAGE_ID), Rendition.FULL_JPEG)
@@ -42,7 +44,7 @@ OUTSIDE_ASSETS_KEYS: dict[str, str] = {
     'absolute': '/etc/passwd',
     'climbing': '../outside',
     'root': 'projects',
-    'project': str(KEYS.prefix),
+    'book-directory': f'projects/{BOOK_ID}',
     'incoming-area': KEYS.incoming_area,
     'upload': KEYS.incoming(JobId(uuid4())),
     'sources-area': KEYS.sources_area,
@@ -52,9 +54,8 @@ OUTSIDE_ASSETS_KEYS: dict[str, str] = {
     'climbing-out-of-assets': f'{KEYS.assets_area}/../sources',
     'empty-segment': f'{PAGE_PREFIX}//full.jpg',
     'not-a-project': f'projects/book/assets/{Rendition.FULL_JPEG}',
-    'project-in-other-spelling': f'projects/{str(KEYS.book_id).upper()}/assets/book/typesetting',
-    # The store of one book never reaches the files of another
-    'other-book': BookKeys(BookId(uuid4())).page(PAGE_ID),
+    # A key that names the directory of its book, as the keys of a book did before they named it from there
+    'with-the-book-directory': f'projects/{BOOK_ID}/assets/book/typesetting',
 }
 OLD_CONTENT: bytes = b'old image'
 NEW_CONTENT: bytes = b'new image'
@@ -64,14 +65,14 @@ TILE_CONTENT: bytes = b'a tile of the pyramid of the image'
 
 @pytest.fixture
 def fx_asset_store(fx_stores: BookFileStores) -> AssetStore:
-    """Return the asset store of the book of ``KEYS`` in the storage backend under test.
+    """Return the asset store of the book ``BOOK_ID`` in the storage backend under test.
 
     :param fx_stores: Opens the stores of a book of the storage backend under test.
     :type fx_stores: BookFileStores
     :returns: The asset store of the book.
     :rtype: AssetStore
     """
-    return fx_stores.assets(KEYS.book_id)
+    return fx_stores.assets(BOOK_ID)
 
 
 def _fill_file(path: Path, content: bytes) -> None:
@@ -516,14 +517,14 @@ class TestDeleteBook:
         :param fx_stores: Opens the stores of a book of the storage backend under test.
         :type fx_stores: BookFileStores
         """
-        keys, other_keys = BookKeys(BookId(uuid4())), BookKeys(BookId(uuid4()))
-        assets, other_assets = fx_stores.assets(keys.book_id), fx_stores.assets(other_keys.book_id)
+        keys = BookKeys()
+        assets, other_assets = fx_stores.assets(BookId(uuid4())), fx_stores.assets(BookId(uuid4()))
         version = make_page_version(page_id=PageId(uuid4()))
         full, tiles = (
             keys.version_rendition(version, Rendition.FULL_JPEG),
             keys.version_rendition(version, Rendition.TILES),
         )
-        other_full = other_keys.version_rendition(version, Rendition.FULL_JPEG)
+        other_full = keys.version_rendition(version, Rendition.FULL_JPEG)
         await _store_file(assets, key=full, content=NEW_CONTENT)
         await _store_directory(assets, key=tiles, content=NEW_CONTENT)
         await _store_file(other_assets, key=other_full, content=NEW_CONTENT)
@@ -541,8 +542,8 @@ class TestDeleteBook:
         :param fx_stores: Opens the stores of a book of the storage backend under test.
         :type fx_stores: BookFileStores
         """
-        keys = BookKeys(BookId(uuid4()))
-        assets = fx_stores.assets(keys.book_id)
+        keys = BookKeys()
+        assets = fx_stores.assets(BookId(uuid4()))
 
         await assets.delete_all()
 

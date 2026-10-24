@@ -57,7 +57,7 @@ class Book(NamedTuple):
     @property
     def pyramid(self) -> StorageKey:
         """The key of the directory of the tile pyramid of the page."""
-        return BookKeys(self.book_record.id).version_rendition(self.version, Rendition.TILES)
+        return BookKeys().version_rendition(self.version, Rendition.TILES)
 
 
 async def _store_book(uow: UnitOfWork, files: BookFileStores, owner: AccountId, *, databases: BookDatabases) -> Book:
@@ -78,7 +78,7 @@ async def _store_book(uow: UnitOfWork, files: BookFileStores, owner: AccountId, 
     page = make_page()
     version = make_page_version(page_id=page.id)
     await store_book(uow, book_record, page, owner=owner, versions=[version], databases=databases)
-    keys = BookKeys(book_record.id)
+    keys = BookKeys()
     for key, content in (
         (f'{keys.version_rendition(version, Rendition.TILES)}/{IIIF_INFO_FILE}', INFO_CONTENT),
         (f'{keys.version_rendition(version, Rendition.TILES)}/{TILE_PATH}', TILE_CONTENT),
@@ -91,7 +91,7 @@ async def _store_book(uow: UnitOfWork, files: BookFileStores, owner: AccountId, 
 
 
 class TestIiifFile:
-    """Tests for GET /iiif/{key}."""
+    """Tests for GET /iiif/{book_id}/{key}."""
 
     async def test_info_json_names_the_address_it_was_asked_at(
         self,
@@ -116,10 +116,12 @@ class TestIiifFile:
         """
         book = await _store_book(fx_uow(), fx_file_stores, fx_actor.account_id, databases=fx_databases())
 
-        response = await fx_client.get(f'{IIIF_PATH}/{book.pyramid}/{IIIF_INFO_FILE}')
+        response = await fx_client.get(f'{IIIF_PATH}/{book.book_record.id}/{book.pyramid}/{IIIF_INFO_FILE}')
 
         expect(response.status_code == status.HTTP_200_OK)
-        expect(response.json() == {**json.loads(INFO_CONTENT), 'id': f'{IIIF_PATH}/{book.pyramid}'})
+        expect(
+            response.json() == {**json.loads(INFO_CONTENT), 'id': f'{IIIF_PATH}/{book.book_record.id}/{book.pyramid}'}
+        )
         expect(response.headers[CONTENT_TYPE_HEADER] == IIIF_INFO_MEDIA_TYPE)
         expect(response.headers[CACHE_HEADER] == CACHE_VALUE)
         assert_expectations()
@@ -149,10 +151,10 @@ class TestIiifFile:
         book = await _store_book(
             fx_open_book.uow(), fx_file_stores, fx_actor.account_id, databases=fx_open_book.databases
         )
-        key = BookKeys(book.book_record.id).version_rendition(book.version, rendition)
+        key = BookKeys().version_rendition(book.version, rendition)
         address = f'{key}/{TILE_PATH}' if rendition is Rendition.TILES else key
 
-        response = await fx_client.get(f'{IIIF_PATH}/{address}')
+        response = await fx_client.get(f'{IIIF_PATH}/{book.book_record.id}/{address}')
 
         expect(response.status_code == status.HTTP_200_OK)
         expect(response.content == TILE_CONTENT)
@@ -184,9 +186,9 @@ class TestIiifFile:
         book = await _store_book(
             fx_open_book.uow(), fx_file_stores, fx_actor.account_id, databases=fx_open_book.databases
         )
-        directory = BookKeys(book.book_record.id).version_directory(book.version)
+        directory = BookKeys().version_directory(book.version)
 
-        response = await fx_client.get(f'{IIIF_PATH}/{directory}/{name}')
+        response = await fx_client.get(f'{IIIF_PATH}/{book.book_record.id}/{directory}/{name}')
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -213,7 +215,7 @@ class TestIiifFile:
         """
         book = await _store_book(fx_uow(), fx_file_stores, await commit_account(fx_database), databases=fx_databases())
 
-        response = await fx_client.get(f'{IIIF_PATH}/{book.pyramid}/{IIIF_INFO_FILE}')
+        response = await fx_client.get(f'{IIIF_PATH}/{book.book_record.id}/{book.pyramid}/{IIIF_INFO_FILE}')
 
         assert response.status_code == status.HTTP_200_OK
 
@@ -240,7 +242,7 @@ class TestIiifFile:
         """
         book_record = make_record()
         await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
-        keys = BookKeys(book_record.id)
+        keys = BookKeys()
         promoted, staged = JobId(uuid4()), JobId(uuid4())
         source_id = SourceId(uuid4())
         for job_id in (promoted, staged):
@@ -250,8 +252,8 @@ class TestIiifFile:
         await fx_file_stores.sources(book_record.id).promote(promoted, source_id, names=[SOURCE_NAME])
 
         responses = [
-            await fx_client.get(f'{IIIF_PATH}/{keys.source(source_id)}/{SOURCE_NAME}'),
-            await fx_client.get(f'{IIIF_PATH}/{keys.incoming(staged)}/{SOURCE_NAME}'),
+            await fx_client.get(f'{IIIF_PATH}/{book_record.id}/{keys.source(source_id)}/{SOURCE_NAME}'),
+            await fx_client.get(f'{IIIF_PATH}/{book_record.id}/{keys.incoming(staged)}/{SOURCE_NAME}'),
         ]
 
         assert [response.status_code for response in responses] == [status.HTTP_404_NOT_FOUND] * 2
@@ -279,6 +281,6 @@ class TestIiifFile:
         """
         book = await _store_book(fx_uow(), fx_file_stores, fx_actor.account_id, databases=fx_databases())
 
-        response = await fx_client.get(f'{IIIF_PATH}/{book.pyramid}/%2E%2E/{Rendition.THUMBNAIL}')
+        response = await fx_client.get(f'{IIIF_PATH}/{book.book_record.id}/{book.pyramid}/%2E%2E/{Rendition.THUMBNAIL}')
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT

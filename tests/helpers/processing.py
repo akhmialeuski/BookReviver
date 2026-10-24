@@ -426,7 +426,7 @@ class ProcessingKit:
             repos.pages.add(page)
 
         await self.databases.open(book_record.id).change(add_scan_page)
-        keys = BookKeys(book_record.id)
+        keys = BookKeys()
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW):
             async with self.files.assets(book_record.id).writable(keys.scan_rendition(scan, rendition)) as target:
                 target.write_bytes(image)
@@ -454,7 +454,7 @@ class ProcessingKit:
             tiles_ready=True,
             data={'width_px': IMAGE_SIZE_PX, 'height_px': IMAGE_SIZE_PX},
         )
-        keys = BookKeys(book_id)
+        keys = BookKeys()
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
             async with self.files.assets(book_id).writable(keys.version_rendition(version, rendition)) as target:
                 target.write_bytes(image)
@@ -489,7 +489,7 @@ class ProcessingKit:
         :param book_id: Book owning the page.
         :type book_id: BookId
         """
-        keys = BookKeys(book_id)
+        keys = BookKeys()
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
             async with self.files.assets(book_id).writable(keys.version_rendition(version, rendition)) as target:
                 target.write_bytes(IMAGE_CONTENT)

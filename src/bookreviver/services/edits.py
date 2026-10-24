@@ -119,7 +119,7 @@ class EditService:
         # The edit is checked before its mask is written, so a refused request leaves no file, and checked again in the
         # change, since the page or the recipe may have changed while the mask streamed in
         await book.read(check)
-        keys = BookKeys(book.id)
+        keys = BookKeys()
         mask_digest, scratch = (
             (None, None) if mask is None else await self._receive(keys, key, mask, assets=book.assets)
         )

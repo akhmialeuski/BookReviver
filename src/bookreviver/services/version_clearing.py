@@ -43,7 +43,7 @@ class VersionClearing:
         :type book: Book
         """
         self._book = book
-        self._keys = BookKeys(book.id)
+        self._keys = BookKeys()
         self._held: set[PageVersionId] = set()
 
     async def clear(self, batch: Sequence[PageVersion]) -> int:

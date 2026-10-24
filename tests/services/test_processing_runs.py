@@ -108,7 +108,7 @@ class TestRunStage:
         await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
         version = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
         record = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
-        keys = BookKeys(book_record.id)
+        keys = BookKeys()
         async with fx_kit.files.assets(book_record.id).readable(
             keys.version_rendition(version, Rendition.FULL_JPEG)
         ) as full:
@@ -716,7 +716,7 @@ class TestPreviewStep:
         )
         [version] = versions.items
         async with fx_kit.files.assets(book_record.id).readable(
-            BookKeys(book_record.id).version_rendition(version, Rendition.PREVIEW)
+            BookKeys().version_rendition(version, Rendition.PREVIEW)
         ) as file:
             content = file.read_bytes()
         record = await found_stage(book_record.id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
@@ -998,9 +998,7 @@ class TestRunApplyStep:
         )
         change_while_writing(fx_kit, monkeypatch, partial(delete_the_page, fx_kit, seeded))
         await fx_kit.work_queue()
-        left = await fx_kit.files.assets(seeded.book_record.id).size_of(
-            BookKeys(seeded.book_record.id).page(seeded.page.id)
-        )
+        left = await fx_kit.files.assets(seeded.book_record.id).size_of(BookKeys().page(seeded.page.id))
         assert left == 0
 
     async def test_a_mark_and_a_comment_put_on_the_version_while_it_ran_are_kept(

@@ -40,6 +40,7 @@ from tests.helpers.fake_processing import PREVIEW_TOKEN, FakeCatalogue, FakeRend
 from tests.helpers.in_process_executor import InProcessStepExecutor
 from tests.helpers.page_services import INFO_NAME, FakeTiler
 from tests.helpers.processors import FakeProcessor
+from tests.helpers.storage import book_directory
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -85,13 +86,14 @@ class Rig:
         :param files: Opens the source store and the asset store of a book of the test.
         :type files: BookFileStores
         """
-        self.keys = BookKeys(make_record().id)
+        self.keys = BookKeys()
+        book_id = make_record().id
         self.book = Book(
-            self.keys.book_id,
+            book_id,
             new_account_id(),
             database=Mock(spec=BookDatabase),
-            sources=files.sources(self.keys.book_id),
-            assets=files.assets(self.keys.book_id),
+            sources=files.sources(book_id),
+            assets=files.assets(book_id),
             tools=make_book_tools(),
         )
         self.assets = self.book.assets
@@ -172,7 +174,7 @@ class TestStore:
         """
         await fx_rig.store_scan()
         ready = await fx_rig.make()
-        directory = fx_storage_root / fx_rig.keys.version_directory(ready)
+        directory = book_directory(fx_storage_root, fx_rig.book.id) / fx_rig.keys.version_directory(ready)
         expect((directory / Rendition.FULL_JPEG).read_bytes() == IMAGE)
         expect((directory / Rendition.PREVIEW).read_bytes() == PREVIEW_TOKEN)
         expect((directory / Rendition.TILES / INFO_NAME).is_file())
@@ -222,7 +224,9 @@ class TestStore:
         await fx_rig.store_scan()
         await fx_rig.make()
         ready = await fx_rig.make()
-        assert (fx_storage_root / fx_rig.keys.version_directory(ready) / Rendition.FULL_JPEG).read_bytes() == IMAGE
+        assert (
+            book_directory(fx_storage_root, fx_rig.book.id) / fx_rig.keys.version_directory(ready) / Rendition.FULL_JPEG
+        ).read_bytes() == IMAGE
 
     async def test_pyramid_is_left_out_when_not_asked_for(self, fx_rig: Rig, fx_storage_root: Path) -> None:
         """Verify a version that is not current gets no pyramid, and cutting it later marks it.
@@ -234,7 +238,7 @@ class TestStore:
         """
         await fx_rig.store_scan()
         ready = await fx_rig.make(tiles=False)
-        directory = fx_storage_root / fx_rig.keys.version_directory(ready)
+        directory = book_directory(fx_storage_root, fx_rig.book.id) / fx_rig.keys.version_directory(ready)
         cut = await fx_rig.runner.cut_tiles(fx_rig.book, ready)
         expect((ready.tiles_ready, cut.tiles_ready) == (False, True))
         expect((directory / Rendition.TILES / INFO_NAME).is_file())
@@ -251,7 +255,7 @@ class TestStore:
         await fx_rig.store_scan()
         version = evolve(fx_rig.version, scale=VersionScale.PREVIEW, id=type(fx_rig.version.id)('0123456789abcdef'))
         ready = await fx_rig.make(version)
-        directory = fx_storage_root / fx_rig.keys.version_directory(ready)
+        directory = book_directory(fx_storage_root, fx_rig.book.id) / fx_rig.keys.version_directory(ready)
         expect(sorted(entry.name for entry in directory.iterdir()) == [Rendition.PREVIEW])
         expect(
             (ready.state, ready.tiles_ready, ready.renditions) == (VersionState.READY, False, Renditions(ready=True))
@@ -276,7 +280,7 @@ class TestStore:
             async with fx_rig.assets.writable(fx_rig.keys.version_directory(fx_rig.version)):
                 raise StoreFailedError
         await fx_rig.runner.store(fx_rig.book, fx_rig.version, output, policy=ImagePolicy.COMPACT, tiles=False)
-        directory = fx_storage_root / fx_rig.keys.version_directory(fx_rig.version)
+        directory = book_directory(fx_storage_root, fx_rig.book.id) / fx_rig.keys.version_directory(fx_rig.version)
         assert directory.is_dir()
 
     async def test_mesh_of_a_step_is_stored_and_named_by_the_transform_of_the_version(
@@ -304,7 +308,7 @@ class TestStore:
                 policy=ImagePolicy.COMPACT,
                 tiles=False,
             )
-        directory = fx_storage_root / fx_rig.keys.version_directory(ready)
+        directory = book_directory(fx_storage_root, fx_rig.book.id) / fx_rig.keys.version_directory(ready)
         expect((directory / Rendition.MESH).read_bytes() == MESH_BYTES)
         expect(ready.transform.kind is TransformKind.MESH)
         expect(ready.transform.mesh_key == fx_rig.keys.version_rendition(ready, Rendition.MESH))
@@ -322,7 +326,11 @@ class TestStore:
         """
         await fx_rig.store_scan()
         ready = await fx_rig.make()
-        expect(not (fx_storage_root / fx_rig.keys.version_directory(ready) / Rendition.MESH).exists())
+        expect(
+            not (
+                book_directory(fx_storage_root, fx_rig.book.id) / fx_rig.keys.version_directory(ready) / Rendition.MESH
+            ).exists()
+        )
         expect(ready.transform.kind is TransformKind.IDENTITY)
         assert_expectations()
 

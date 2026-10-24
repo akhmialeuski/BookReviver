@@ -81,7 +81,7 @@ class TestTransform:
             {'kind': TransformKind.PERSPECTIVE, 'quad': QUAD, 'matrix': IDENTITY_MATRIX},
             {'kind': TransformKind.ROTATE, 'angle': 0.8, 'matrix': rotation_matrix(0.8)},
             {'kind': TransformKind.SCALE, 'matrix': DOUBLING},
-            {'kind': TransformKind.MESH, 'mesh_key': StorageKey('projects/book/assets/pages/1/mesh.json')},
+            {'kind': TransformKind.MESH, 'mesh_key': StorageKey('assets/pages/1/mesh.json')},
         ],
         ids=['identity', 'crop', 'perspective', 'rotate', 'scale', 'mesh'],
     )
@@ -147,7 +147,7 @@ class TestTransform:
 
     def test_mesh_refuses_to_map_a_point(self) -> None:
         """Reject mapping through a mesh, which no matrix describes."""
-        mesh = Transform(kind=TransformKind.MESH, mesh_key=StorageKey('projects/book/assets/pages/1/mesh.json'))
+        mesh = Transform(kind=TransformKind.MESH, mesh_key=StorageKey('assets/pages/1/mesh.json'))
         with pytest.raises(UnsupportedTransformError, match='mesh'):
             mesh.to_input(Point(x=0, y=0))
 

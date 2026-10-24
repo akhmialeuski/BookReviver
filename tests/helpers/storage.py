@@ -8,8 +8,8 @@ from fastapi import UploadFile
 
 from bookreviver.adapters.storage import LocalBookFileStores, LocalSourceStore
 from bookreviver.domain.enums import Rendition
-from bookreviver.domain.ids import JobId, SourceId, StorageKey
-from bookreviver.domain.keys import BookKeys
+from bookreviver.domain.ids import JobId, SourceId
+from bookreviver.domain.keys import BookKeys, KeySegment
 from tests.helpers.builders import make_page_version
 
 if TYPE_CHECKING:
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Page
-    from bookreviver.domain.ids import BookId, PageId
+    from bookreviver.domain.ids import BookId, PageId, StorageKey
     from bookreviver.ports.storage import AssetStore, BookFileStores
 
 # More than one read chunk of the local store, so staging has to stream
@@ -58,6 +58,19 @@ async def abandon_write(store: AssetStore, *, key: StorageKey, content: bytes) -
     async with store.writable(key) as path:
         path.write_bytes(content)
         raise WriterFailedError
+
+
+def book_directory(root: Path, book_id: BookId) -> Path:
+    """Return the directory of a book under a storage root, as the local stores lay it out, for a test that reads the disk.
+
+    :param root: The storage root.
+    :type root: Path
+    :param book_id: The book.
+    :type book_id: BookId
+    :returns: The path of ``projects/<book_id>``, under which the keys of the book name its files.
+    :rtype: Path
+    """
+    return root / KeySegment.BOOKS / str(book_id)
 
 
 class SharedBookFileStores(LocalBookFileStores):
@@ -136,7 +149,7 @@ class BookFiles:
         :param page: Page whose book and image are stored.
         :type page: Page
         """
-        keys = BookKeys(book_id)
+        keys = BookKeys()
         job_id, source_id = JobId(uuid4()), SourceId(uuid4())
         sources = self._stores.sources(book_id)
         staged = await sources.stage(job_id, [upload(SOURCE_NAME)], max_bytes=MAX_SOURCE_BYTES)
@@ -158,10 +171,9 @@ class BookFiles:
         :rtype: bool
         """
         owner, source, image = self._stored[page.id]
-        if book_id is not None:
-            stored, copy = BookKeys(owner), BookKeys(book_id)
-            source, image = (StorageKey(copy.prefix + stored.relative(key)) for key in (source, image))
-        return (self._root / source / SOURCE_NAME).is_file() and (self._root / image).read_bytes() == PAGE_IMAGE_CONTENT
+        # A key names a file from the directory of its book, so a copy holds the file under the same key
+        directory = book_directory(self._root, owner if book_id is None else book_id)
+        return (directory / source / SOURCE_NAME).is_file() and (directory / image).read_bytes() == PAGE_IMAGE_CONTENT
 
     def gone(self, book_id: BookId) -> bool:
         """Return whether nothing of the book, not even its directory, is left on disk.
@@ -171,4 +183,4 @@ class BookFiles:
         :returns: True when the book's directory does not exist.
         :rtype: bool
         """
-        return not (self._root / BookKeys(book_id).prefix).exists()
+        return not book_directory(self._root, book_id).exists()

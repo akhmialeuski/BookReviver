@@ -383,7 +383,7 @@ class ProcessingJobs:
             or version.renditions is None
         ):
             return
-        keys = BookKeys(book.id)
+        keys = BookKeys()
         cut_version = await self._runtime.runner.cut_tiles(book, version)
 
         def mark(repos: BookRepositories, _book_record: BookRecord) -> tuple[bool, PageVersion | None]:

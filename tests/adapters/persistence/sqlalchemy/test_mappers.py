@@ -233,7 +233,7 @@ class TestPageVersionMapper:
             Transform(kind=TransformKind.ROTATE, angle=-0.8, matrix=(0.99, -0.01, 3.5, 0.01, 0.99, -1.25, 0, 0, 1)),
             Transform(kind=TransformKind.CROP, quad=HALF_QUAD, matrix=(1, 0, -1100.5, 0, 1, 0, 0, 0, 1)),
             Transform(kind=TransformKind.PERSPECTIVE, quad=HALF_QUAD, matrix=(1, 0, 0, 0, 1, 0, 0.001, 0, 1)),
-            Transform(kind=TransformKind.MESH, mesh_key=StorageKey('projects/x/assets/pages/y/edits/mesh')),
+            Transform(kind=TransformKind.MESH, mesh_key=StorageKey('assets/pages/y/edits/mesh')),
         ],
         ids=['rotate', 'crop', 'perspective', 'mesh'],
     )

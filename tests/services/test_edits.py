@@ -220,12 +220,10 @@ class TestSave:
         assert stored.mask_key is not None
         async with fx_kit.files.assets(book_record.id).readable(stored.mask_key) as mask:
             content = mask.read_bytes()
-        directory = BookKeys(book_record.id).page_edit(page.id, key.step_id, stored.edit_hash)
+        directory = BookKeys().page_edit(page.id, key.step_id, stored.edit_hash)
         expect(content == MASK_CONTENT)
         expect(stored.mask_key == f'{directory}/{Rendition.MASK}')
-        async with fx_kit.files.assets(book_record.id).readable(
-            BookKeys(book_record.id).page_edits(page.id, key.step_id)
-        ) as folder:
+        async with fx_kit.files.assets(book_record.id).readable(BookKeys().page_edits(page.id, key.step_id)) as folder:
             expect(sorted(entry.name for entry in folder.iterdir()) == [stored.edit_hash])
         assert_expectations()
 

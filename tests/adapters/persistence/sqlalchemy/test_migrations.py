@@ -98,6 +98,10 @@ GROUP: str = 'Engravings'
 BEFORE_CHANGES: str = '6ca3e79586aa'
 # The order key of the second page of that test, after the page of the stored book
 SECOND_ORDER_KEY: str = 'b0'
+# The revision before the one that names the stored files of a book from its own directory, and the key of a mesh
+BEFORE_RELATIVE_KEYS: str = 'ba87bba973f4'
+MESH_KEY: str = 'assets/pages/page/geometry/geometry.dewarp/version/mesh.json'
+MESH_PATH: str = '$.mesh_key'
 # The fields the change of that test sets
 ANGLE: dict[str, int] = {'angle': 1}
 # A provider account, linked twice by the test of the unique key
@@ -807,6 +811,39 @@ class TestChangesRevision:
             [[(entry.id, entry.undoes) for entry in history] for history in histories]
             == [[(change[0].id, None), (undo_id, change[0].id)]] * 2
         )
+        assert_expectations()
+
+
+class TestStoredKeysRevision:
+    """Tests for the revision that names the stored files of a book from its own directory."""
+
+    async def test_a_stored_key_gets_the_directory_of_its_book_back_and_loses_it_again(
+        self, fx_empty_book: SqlDatabase
+    ) -> None:
+        """Verify the downgrade puts ``projects/<id>/`` in front of the key of a mesh, and the upgrade takes it off.
+
+        :param fx_empty_book: Database of a book with no table.
+        :type fx_empty_book: SqlDatabase
+        """
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        book_id = await _commit_book(fx_empty_book)
+        read_key = text('SELECT json_extract(transform, :path) FROM page_versions')
+        with _session(fx_empty_book) as session:
+            session.execute(
+                text('UPDATE page_versions SET transform = json_set(transform, :path, :key)'),
+                {'path': MESH_PATH, 'key': MESH_KEY},
+            )
+            session.commit()
+
+        await _migrate(fx_empty_book, fx_empty_book.migrations.downgrade, BEFORE_RELATIVE_KEYS)
+        with _session(fx_empty_book) as session:
+            downgraded = session.scalars(read_key, {'path': MESH_PATH}).all()
+        await _migrate(fx_empty_book, fx_empty_book.migrations.upgrade, HEAD)
+        with _session(fx_empty_book) as session:
+            upgraded = session.scalars(read_key, {'path': MESH_PATH}).all()
+
+        expect(downgraded == [f'projects/{book_id}/{MESH_KEY}'])
+        expect(upgraded == [MESH_KEY])
         assert_expectations()
 
 

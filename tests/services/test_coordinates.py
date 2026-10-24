@@ -56,7 +56,7 @@ async def landmark_on(kit: ProcessingKit, book_record: BookRecord, version: Page
     """
     assert version.renditions is not None
     async with kit.files.assets(book_record.id).readable(
-        BookKeys(book_record.id).version_rendition(version, version.renditions.full)
+        BookKeys().version_rendition(version, version.renditions.full)
     ) as full:
         with Image.open(io.BytesIO(full.read_bytes())) as image:
             x, y = find_mark(image)

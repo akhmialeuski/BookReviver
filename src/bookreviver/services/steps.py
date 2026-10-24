@@ -192,7 +192,7 @@ class StepRunner:
         :returns: The version with its transform, data, review mark, renditions and the state ready.
         :rtype: PageVersion
         """
-        keys = BookKeys(book.id)
+        keys = BookKeys()
         directory = keys.version_directory(version)
         await book.assets.delete_prefix(directory)
         renditions: Renditions | None = None
@@ -252,7 +252,7 @@ class StepRunner:
         """
         if version.renditions is None or not version.renditions.ready or version.scale is not VersionScale.FULL:
             raise ConflictError(NOT_READY.format(version_id=version.id))
-        keys = BookKeys(book.id)
+        keys = BookKeys()
         tiles = keys.version_rendition(version, Rendition.TILES)
         await book.assets.delete_prefix(tiles)
         full = keys.version_rendition(version, version.renditions.full)
