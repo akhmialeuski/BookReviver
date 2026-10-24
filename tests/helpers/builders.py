@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from attrs import frozen
 
+from bookreviver.adapters.events.broadcast import InProcessEventBus
 from bookreviver.domain.entities import (
     BookPlace,
     BookRecord,
@@ -66,7 +67,12 @@ from bookreviver.domain.ids import (
     SourceId,
     StepId,
 )
-from bookreviver.services.book import Book
+from bookreviver.services.book import Book, BookTools
+from bookreviver.services.stage_summaries import StageSummaries
+from tests.helpers.clock import FixedClock
+from tests.helpers.fake_board import FakeJobBoard
+from tests.helpers.fake_processing import FakeCatalogue
+from tests.helpers.scripted_runner import ScriptedRunner
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor
@@ -87,6 +93,8 @@ from bookreviver.domain.values import (
 )
 
 EPOCH: datetime = datetime(2026, 1, 1, tzinfo=UTC)
+# Largest number of undelivered events each subscriber of a test's event bus keeps
+EVENT_QUEUE_SIZE: int = 16
 # A description with every field filled in, in the shape of a pre-reform Belarusian edition
 FULL_DETAILS: BookDetails = BookDetails(
     title='Беларускія народныя казкі',
@@ -204,10 +212,23 @@ def open_for(actor: Actor, book_id: BookId, *, databases: BookDatabases) -> Book
     :type book_id: BookId
     :param databases: Opens the database of the book.
     :type databases: BookDatabases
-    :returns: The open book.
+    :returns: The open book, with the tools of ``make_book_tools``.
     :rtype: Book
     """
-    return Book(book_id, actor.account_id, databases.open(book_id))
+    return Book(book_id, actor.account_id, databases.open(book_id), make_book_tools())
+
+
+def make_book_tools() -> BookTools:
+    """Build the tools of an open book for a test that does not look at them: no processor and no running job.
+
+    A test of the progress or the stages of a book builds its own, with the processors and the board it needs.
+
+    :returns: Stage sums over an empty catalogue and an empty board, and a clock stopped at ``EPOCH``.
+    :rtype: BookTools
+    """
+    clock = FixedClock(EPOCH)
+    board = FakeJobBoard(runner=ScriptedRunner(), publisher=InProcessEventBus(queue_size=EVENT_QUEUE_SIZE), clock=clock)
+    return BookTools(stages=StageSummaries(catalogue=FakeCatalogue([]), board=board), clock=clock)
 
 
 def make_book_change(*, book_id: BookId, version: int = 1) -> BookChanged:

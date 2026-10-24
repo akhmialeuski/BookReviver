@@ -13,7 +13,8 @@ from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
 from bookreviver.adapters.storage import LocalAssetStore, LocalBookArchive, LocalSourceStore
-from bookreviver.domain.values import Slice, SliceRequest
+from bookreviver.domain.values import SliceRequest
+from bookreviver.services.book import BookTools
 from bookreviver.services.books import BooksService, BookStores
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import EPOCH, make_job, make_page, make_page_stage, make_record
@@ -100,23 +101,22 @@ async def _statements_of_list(stores: BookOpener, board: JobBoard, owner_id: Acc
     service = BooksService(
         uow=uow,
         databases=stores.databases,
-        clock=FixedClock(EPOCH),
+        tools=BookTools(stages=StageSummaries(catalogue=FakeCatalogue([]), board=board), clock=FixedClock(EPOCH)),
         files=BookStores(
             sources=LocalSourceStore(root=root), assets=LocalAssetStore(root=root), archive=LocalBookArchive(root=root)
         ),
-        stages=StageSummaries(catalogue=FakeCatalogue([]), board=board),
     )
     request = SliceRequest(limit=window)
     entries = await uow.read(lambda repos: repos.library.list_for_owner(owner_id, request))
-    opened = Slice(items=[service.book(entry) for entry in entries.items], total=entries.total)
+    opened = [service.book(entry) for entry in entries.items]
     counter = StatementCounter()
     event.listen(Engine, STATEMENT_EVENT, counter)
     try:
-        books = await service.overviews(opened)
+        books = [await book.overview() for book in opened]
     finally:
         event.remove(Engine, STATEMENT_EVENT, counter)
-    assert len(books.items) == window
-    assert all(book.progress is not None for book in books.items)
+    assert len(books) == window
+    assert all(book.progress is not None for book in books)
     return counter.count
 
 

@@ -7,18 +7,17 @@ from typing import TYPE_CHECKING, override
 
 import anyio
 import pytest
-from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
 from bookreviver.adapters.storage import LocalBookArchive, LocalSourceStore
 from bookreviver.api.access import AccountBooks, books_of
-from bookreviver.domain.changes import BookChanges, BookDetailsChanges
-from bookreviver.domain.enums import ImagePolicy, Orthography
+from bookreviver.domain.enums import Orthography
 from bookreviver.domain.errors import DomainError, NotFoundError
 from bookreviver.domain.values import BookDetails, Slice, SliceRequest
+from bookreviver.services.book import BookTools
 from bookreviver.services.books import BooksService, BookStores
 from bookreviver.services.stage_summaries import StageSummaries
-from tests.helpers.builders import EPOCH, make_page, make_record, make_scan, make_source, new_account_id, open_for
+from tests.helpers.builders import EPOCH, make_page, make_record, new_account_id, open_for
 from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import FakeCatalogue
@@ -43,7 +42,6 @@ pytestmark = pytest.mark.anyio
 
 NOW = EPOCH + timedelta(days=1)
 PAGE_COUNT: int = 2
-NEW_TITLE: str = 'Renamed'
 # The name of the database in the archive of a book
 DATABASE_NAME: str = 'book.db'
 
@@ -72,9 +70,8 @@ def _service(
     return BooksService(
         uow=uow,
         databases=databases,
-        clock=clock,
+        tools=BookTools(stages=stages, clock=clock),
         files=BookStores(sources=sources, assets=assets, archive=LocalBookArchive(root=root)),
-        stages=stages,
     )
 
 
@@ -188,7 +185,7 @@ def fx_files(fx_source_store: LocalSourceStore, fx_asset_store: LocalAssetStore,
 
 
 class TestList:
-    """Tests for the list of books: the books of the access dependencies, then BooksService.overviews()."""
+    """Tests for the list of books: the books of the access dependencies, then the overview of each Book."""
 
     async def test_lists_only_the_actors_books_newest_first(
         self,
@@ -258,115 +255,6 @@ class TestCreate:
         expect(stored.details == details)
         expect((stored.created_at, stored.updated_at) == (NOW, NOW))
         expect(overview.page_count == 0)
-        assert_expectations()
-
-
-class TestGet:
-    """Tests for BooksService.get()."""
-
-    async def test_returns_the_book_with_the_counts_of_its_book(
-        self,
-        fx_service: Callable[[], BooksService],
-        fx_uow: UnitOfWorkFactory,
-        fx_actor: Actor,
-        fx_open_book: BookOpener,
-    ) -> None:
-        """Verify the overview counts the included pages, the sources and the scans of the book.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        book_record = make_record()
-        source = make_source()
-        scans = [make_scan(source=source, number=number) for number in range(PAGE_COUNT)]
-        pages = [make_page(order_key=f'a{scan.number}', scan=scan) for scan in scans]
-        # A duplicate scan kept out of the book is no page of it
-        await store_book(
-            fx_uow(),
-            book_record,
-            *pages[:-1],
-            evolve(pages[-1], included=False),
-            owner=fx_actor.account_id,
-            sources=[source],
-            scans=scans,
-            databases=fx_open_book.databases,
-        )
-
-        overview = await fx_service().get(fx_open_book(fx_actor, book_record.id))
-
-        assert (overview.book_record, overview.page_count, overview.source_count, overview.scan_count) == (
-            book_record,
-            PAGE_COUNT - 1,
-            1,
-            PAGE_COUNT,
-        )
-
-
-class TestUpdate:
-    """Tests for BooksService.update()."""
-
-    async def test_sets_the_image_policy(
-        self,
-        fx_service: Callable[[], BooksService],
-        fx_uow: UnitOfWorkFactory,
-        fx_actor: Actor,
-        fx_open_book: BookOpener,
-    ) -> None:
-        """Verify the image policy of the book changes.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
-
-        changed = await fx_service().update(
-            fx_open_book(fx_actor, book_record.id), BookChanges(image_policy=ImagePolicy.LOSSLESS)
-        )
-
-        assert changed.book_record.image_policy == ImagePolicy.LOSSLESS
-
-    async def test_changes_given_fields_and_touches_the_book(
-        self,
-        fx_service: Callable[[], BooksService],
-        fx_uow: UnitOfWorkFactory,
-        fx_actor: Actor,
-        fx_open_book: BookOpener,
-    ) -> None:
-        """Verify the given fields change, the others stay, and only the update time moves.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], BooksService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
-        """
-        book_record = make_record(title='Old')
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
-
-        overview = await fx_service().update(
-            fx_open_book(fx_actor, book_record.id), BookChanges(details=BookDetailsChanges(title=NEW_TITLE))
-        )
-
-        stored = await _stored(book_record, databases=fx_open_book.databases)
-        expect(stored == overview.book_record)
-        expect(stored.details == BookDetails(title=NEW_TITLE))
-        expect((stored.created_at, stored.updated_at) == (book_record.created_at, NOW))
         assert_expectations()
 
 
@@ -525,7 +413,7 @@ async def _listed(service: BooksService, uow: UnitOfWork, actor: Actor) -> Slice
     :rtype: Slice[BookOverview]
     """
     books = await books_of(uow, service, actor.account_id)
-    return await service.overviews(Slice(items=books, total=len(books)))
+    return Slice(items=[await book.overview() for book in books], total=len(books))
 
 
 async def _archive(service: BooksService, actor: Actor, book_id: BookId, *, databases: BookDatabases) -> io.BytesIO:
