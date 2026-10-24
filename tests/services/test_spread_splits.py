@@ -71,7 +71,7 @@ async def width_of(kit: ProcessingKit, book_record: BookRecord, version: PageVer
     :rtype: int
     """
     assert version.renditions is not None
-    async with kit.assets.readable(
+    async with kit.files.assets(book_record.id).readable(
         BookKeys(book_record.id).version_rendition(version, version.renditions.full)
     ) as full:
         with Image.open(io.BytesIO(full.read_bytes())) as image:
@@ -301,8 +301,8 @@ class TestSplit:
         scan_id = broken.scan_id
         scan = await fx_cv_kit.databases.open(book_record.id).read(lambda repos: repos.scans.get(scan_id))
         full = keys.scan_rendition(scan, scan.renditions.full)
-        await fx_cv_kit.assets.delete_prefix(full)
-        async with fx_cv_kit.assets.writable(full) as target:
+        await fx_cv_kit.files.assets(book_record.id).delete_prefix(full)
+        async with fx_cv_kit.files.assets(book_record.id).writable(full) as target:
             target.write_bytes(png_bytes(spread(PAGE_WIDTH_PX, HEIGHT_PX)))
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT))
         left, right = await book_of(book_record, databases=fx_cv_kit.databases)
@@ -429,7 +429,7 @@ class TestUnsplit:
             is StageState.FRESH
         )
         with pytest.raises(NotFoundError):
-            async with fx_cv_kit.assets.readable(stored):
+            async with fx_cv_kit.files.assets(book_record.id).readable(stored):
                 pass
         assert_expectations()
 
@@ -480,7 +480,7 @@ async def draw_the_cut_line(kit: ProcessingKit, book: SplitBook) -> None:
     """
     key = await kit.edit_key(book.book_record.id, book.page, Stage.PAGE_SPLIT, SPLIT_SPREAD)
     await kit.edits().save(
-        open_for(book.actor, book.book_record.id, databases=kit.databases),
+        open_for(book.actor, book.book_record.id, databases=kit.databases, files=kit.files),
         key,
         NewPageEdit(kind=CUT_LINE.editor, geometry=CUT_LINE),
         None,
@@ -564,6 +564,6 @@ class TestSplitApplyStep:
         expect(len(await book_of(book_record, databases=fx_open_book.databases)) == pages_left)
         expect(record is None)
         expect(versions.total == 0)
-        expect(await fx_cv_kit.assets.size_of(BookKeys(book_record.id).page(page.id)) == 0)
+        expect(await fx_cv_kit.files.assets(book_record.id).size_of(BookKeys(book_record.id).page(page.id)) == 0)
         expect(told == [])
         assert_expectations()

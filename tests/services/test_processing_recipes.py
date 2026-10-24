@@ -86,7 +86,9 @@ async def recipes_of(
     :returns: The recipe of each kind.
     :rtype: dict[RecipeKind, Recipe]
     """
-    listed = await kit.service().recipes(open_for(actor, book_record.id, databases=kit.databases), stage, EVERYTHING)
+    listed = await kit.service().recipes(
+        open_for(actor, book_record.id, databases=kit.databases, files=kit.files), stage, EVERYTHING
+    )
     return {recipe.kind: recipe for recipe in listed.items}
 
 

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import RunOutcome
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookDatabases
+    from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 
@@ -134,19 +135,19 @@ class TestCutTiles:
         assert job is not None
         cut = StepRunner.cut_tiles
 
-        async def cut_then_change(self: StepRunner, keys: BookKeys, version: PageVersion) -> PageVersion:
+        async def cut_then_change(self: StepRunner, book: Book, version: PageVersion) -> PageVersion:
             """Cut the pyramid, then let another request change the version before the job marks it.
 
             :param self: The runner that cuts.
             :type self: StepRunner
-            :param keys: Keys of the book owning the page.
-            :type keys: BookKeys
+            :param book: The book owning the page.
+            :type book: Book
             :param version: The version to cut.
             :type version: PageVersion
             :returns: The version with its pyramid marked as cut.
             :rtype: PageVersion
             """
-            cut_version = await cut(self, keys, version)
+            cut_version = await cut(self, book, version)
             await change(book_record.id, version, fx_kit.databases)
             return cut_version
 
@@ -161,7 +162,7 @@ class TestCutTiles:
         if stored is None:
             tiles = BookKeys(book_record.id).version_rendition(untiled, Rendition.TILES)
             with pytest.raises(NotFoundError):
-                async with fx_kit.assets.readable(tiles):
+                async with fx_kit.files.assets(book_record.id).readable(tiles):
                     pass
         assert_expectations()
 

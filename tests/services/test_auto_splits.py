@@ -62,7 +62,7 @@ async def choose(kit: ProcessingKit, actor: Actor, book_record: BookRecord, page
     """
     key = await kit.edit_key(book_record.id, page, Stage.PAGE_SPLIT, SPLIT_AUTO)
     await kit.edits().save(
-        open_for(actor, book_record.id, databases=kit.databases),
+        open_for(actor, book_record.id, databases=kit.databases, files=kit.files),
         key,
         NewPageEdit(kind=choice.editor, geometry=choice),
         None,

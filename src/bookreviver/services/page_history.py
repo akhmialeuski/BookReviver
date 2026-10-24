@@ -41,7 +41,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import PageStepKey
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import Clock
-    from bookreviver.ports.storage import AssetStore
     from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import JobStarter
     from bookreviver.services.stage_records import StageRecords
@@ -54,21 +53,18 @@ CHANGED_SINCE: str = 'The layer {layer} of a step changed after this change, so 
 class PageHistoryService:
     """Lists the history of the steps of the acting account's pages, takes its changes back, and clears a step."""
 
-    def __init__(self, *, records: StageRecords, starter: JobStarter, assets: AssetStore, clock: Clock) -> None:
+    def __init__(self, *, records: StageRecords, starter: JobStarter, clock: Clock) -> None:
         """Work over the ports of one request.
 
         :param records: Writer of the stage records, which an undo marks stale.
         :type records: StageRecords
         :param starter: Queuer of the jobs, which cuts the pyramid of the version a clear makes current.
         :type starter: JobStarter
-        :param assets: Store of the derived files, which the versions a clear deletes leave.
-        :type assets: AssetStore
         :param clock: Clock stamping the states and the undos.
         :type clock: Clock
         """
         self._records = records
         self._starter = starter
-        self._assets = assets
         self._clock = clock
 
     async def list(self, book: Book, key: PageStepKey) -> StepHistory:
@@ -207,7 +203,7 @@ class PageHistoryService:
         await self._starter.enqueue_tiles(book.id, untiled)
         for version in cleared.versions:
             try:
-                await self._assets.delete_prefix(BookKeys(book.id).version_directory(version))
+                await book.assets.delete_prefix(BookKeys(book.id).version_directory(version))
             except OSError:
                 logger.exception('The files of the version %s were not removed after its page was cleared', version.id)
         return cleared

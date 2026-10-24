@@ -40,7 +40,6 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Source
     from bookreviver.ports.persistence import BookDatabases
-    from bookreviver.ports.storage import AssetStore, SourceStore
     from tests.helpers.books import Book
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
@@ -58,8 +57,6 @@ SOURCE_ID_PARAM: str = 'source_id'
 @pytest.fixture
 async def fx_book(
     fx_database: SqlDatabase,
-    fx_source_store: SourceStore,
-    fx_asset_store: AssetStore,
     fx_actor: Actor,
     fx_open_book: BookOpener,
 ) -> Book:
@@ -67,10 +64,6 @@ async def fx_book(
 
     :param fx_database: Database of the test, which the application runs on.
     :type fx_database: SqlDatabase
-    :param fx_source_store: Source store of the application.
-    :type fx_source_store: SourceStore
-    :param fx_asset_store: Asset store of the application.
-    :type fx_asset_store: AssetStore
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :param fx_open_book: Opens the books of the test with their databases.
@@ -78,30 +71,24 @@ async def fx_book(
     :returns: The stored book.
     :rtype: Book
     """
-    return await commit_book(fx_database, fx_open_book, fx_source_store, fx_asset_store, fx_actor)
+    return await commit_book(fx_database, fx_open_book, fx_actor)
 
 
 @pytest.fixture
 async def fx_strangers_book(
     fx_database: SqlDatabase,
-    fx_source_store: SourceStore,
-    fx_asset_store: AssetStore,
     fx_open_book: BookOpener,
 ) -> Book:
     """Commit and store a book of an account that is not signed in.
 
     :param fx_database: Database of the test, which the application runs on.
     :type fx_database: SqlDatabase
-    :param fx_source_store: Source store of the application.
-    :type fx_source_store: SourceStore
-    :param fx_asset_store: Asset store of the application.
-    :type fx_asset_store: AssetStore
     :param fx_open_book: Opens the books of the test with their databases.
     :type fx_open_book: BookOpener
     :returns: The stored book.
     :rtype: Book
     """
-    return await commit_book(fx_database, fx_open_book, fx_source_store, fx_asset_store, None)
+    return await commit_book(fx_database, fx_open_book, None)
 
 
 def _sources_path(book: Book) -> str:

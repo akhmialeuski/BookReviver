@@ -472,11 +472,11 @@ class StageWork:
         :raises ConflictError: If the step makes more or fewer than one output.
         :raises DomainError: If the step cannot run on its input.
         """
-        async with self._runner.execute(run) as result:
+        async with self._runner.execute(self._book, run) as result:
             if len(result.outputs) != 1:
                 raise ConflictError(WRONG_OUTPUTS.format(key=run.processor_key, count=len(result.outputs)))
             return await self._runner.store(
-                self._keys, version, result.outputs[0], policy=self._book_record.image_policy, tiles=False
+                self._book, version, result.outputs[0], policy=self._book_record.image_policy, tiles=False
             )
 
     async def _attempt(self, version: PageVersion, run: StepRun) -> PageVersion:
@@ -696,7 +696,7 @@ class StageWork:
         try:
             await self._book.change(store)
         except Exception:
-            await self._runner.discard(self._keys.version_directory(made))
+            await self._runner.discard(self._book, self._keys.version_directory(made))
             raise
         if made.state is VersionState.READY:
             span.set_attribute(SpanAttribute.STEP_OUTCOME, StepOutcome.RAN)
@@ -882,7 +882,7 @@ class RecipeRun(StageWork):
         if version is None or version.state is not VersionState.READY:
             return None
         if version.renditions is not None and not version.tiles_ready:
-            version = await self._runner.cut_tiles(self._keys, version)
+            version = await self._runner.cut_tiles(self._book, version)
         return version
 
     async def _apply(
@@ -1095,7 +1095,7 @@ class RecipeRun(StageWork):
         try:
             await self._book.change(fail)
         except NotFoundError:
-            await self._runner.discard(self._keys.page(page.id))
+            await self._runner.discard(self._book, self._keys.page(page.id))
             return RunOutcome.SKIPPED
         return RunOutcome.FAILED
 

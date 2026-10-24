@@ -12,7 +12,7 @@ from dishka import make_async_container
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.settings import Settings
-from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
+from bookreviver.ports.storage import BookArchive, BookFileStores
 from tests.helpers.builders import make_record
 from tests.helpers.job_boards import BoardAdapter
 from tests.helpers.seeding import commit_account, store_book
@@ -138,15 +138,15 @@ async def fx_storage(request: pytest.FixtureRequest, fx_settings: Settings) -> A
 
 
 @pytest.fixture
-async def fx_source_store(fx_storage: AsyncContainer) -> SourceStore:
-    """Return the source store of the storage backend under test.
+async def fx_stores(fx_storage: AsyncContainer) -> BookFileStores:
+    """Return the opener of the stores of a book of the storage backend under test.
 
     :param fx_storage: Container holding the provider of one storage backend.
     :type fx_storage: AsyncContainer
-    :returns: The source store the backend's provider builds.
-    :rtype: SourceStore
+    :returns: The opener the backend's provider builds.
+    :rtype: BookFileStores
     """
-    return await fx_storage.get(SourceStore)
+    return await fx_storage.get(BookFileStores)
 
 
 @pytest.fixture
@@ -159,18 +159,6 @@ async def fx_book_archive(fx_storage: AsyncContainer) -> BookArchive:
     :rtype: BookArchive
     """
     return await fx_storage.get(BookArchive)
-
-
-@pytest.fixture
-async def fx_asset_store(fx_storage: AsyncContainer) -> AssetStore:
-    """Return the asset store of the storage backend under test.
-
-    :param fx_storage: Container holding the provider of one storage backend.
-    :type fx_storage: AsyncContainer
-    :returns: The asset store the backend's provider builds.
-    :rtype: AssetStore
-    """
-    return await fx_storage.get(AssetStore)
 
 
 class Book(NamedTuple):

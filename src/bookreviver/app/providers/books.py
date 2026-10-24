@@ -7,10 +7,10 @@ from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.persistence import BookDatabases, UnitOfWork
 from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
-from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
+from bookreviver.ports.storage import BookArchive, BookFileStores
 from bookreviver.services.base_versions import BaseVersions
 from bookreviver.services.book import BookTools
-from bookreviver.services.books import BooksService, BookStores
+from bookreviver.services.books import BooksService
 from bookreviver.services.freshness import BookFreshness
 from bookreviver.services.pages import PageImaging, PageRuntime, PageService
 from bookreviver.services.pagination import PaginationService
@@ -49,19 +49,6 @@ class BooksProvider(Provider):
         """
         return BookFreshness(board=board)
 
-    @provide(scope=Scope.APP)
-    def book_files(self, sources: SourceStore, assets: AssetStore) -> BookStores:
-        """Gather the stores whose files go when a book is deleted.
-
-        :param sources: Source store of the application.
-        :type sources: SourceStore
-        :param assets: Asset store of the application.
-        :type assets: AssetStore
-        :returns: The stores of the files of a book.
-        :rtype: BookStores
-        """
-        return BookStores(sources=sources, assets=assets)
-
     @provide
     def book_tools(self, stages: StageSummaries, clock: Clock, archive: BookArchive) -> BookTools:
         """Gather what every book a request opens works with besides its own database.
@@ -78,7 +65,9 @@ class BooksProvider(Provider):
         return BookTools(stages=stages, clock=clock, archive=archive)
 
     @provide
-    def books(self, uow: UnitOfWork, databases: BookDatabases, tools: BookTools, files: BookStores) -> BooksService:
+    def books(
+        self, uow: UnitOfWork, databases: BookDatabases, tools: BookTools, stores: BookFileStores
+    ) -> BooksService:
         """Build the books service over the request's unit of work and book databases.
 
         :param uow: Unit of work of the current request, which runs the transactions of the catalogue.
@@ -87,12 +76,12 @@ class BooksProvider(Provider):
         :type databases: BookDatabases
         :param tools: What every book the service opens works with.
         :type tools: BookTools
-        :param files: Source store and asset store of the application.
-        :type files: BookStores
+        :param stores: Opens the source store and the asset store of a book.
+        :type stores: BookFileStores
         :returns: The books service of the request.
         :rtype: BooksService
         """
-        return BooksService(uow=uow, databases=databases, tools=tools, files=files)
+        return BooksService(uow=uow, databases=databases, tools=tools, stores=stores)
 
     @provide(scope=Scope.APP)
     def page_runtime(
@@ -114,11 +103,9 @@ class BooksProvider(Provider):
         return PageRuntime(publisher=publisher, clock=clock, order_keys=order_keys, board=board)
 
     @provide(scope=Scope.APP)
-    def page_imaging(self, assets: AssetStore, tiler: Tiler, runner: StepRunner) -> PageImaging:
+    def page_imaging(self, tiler: Tiler, runner: StepRunner) -> PageImaging:
         """Gather what builds base versions and runs their processors, whose pyramids are served from the IIIF root.
 
-        :param assets: Asset store of the application.
-        :type assets: AssetStore
         :param tiler: Tiler of the application.
         :type tiler: Tiler
         :param runner: Runner of processors of the application.
@@ -126,17 +113,19 @@ class BooksProvider(Provider):
         :returns: The builder of base versions and the runner of their processors.
         :rtype: PageImaging
         """
-        base_versions = BaseVersions(assets=assets, tiler=tiler)
+        base_versions = BaseVersions(tiler=tiler)
         return PageImaging(base_versions=base_versions, runner=runner)
 
     @provide
-    def pages(self, books: BooksService, assets: AssetStore, runtime: PageRuntime, imaging: PageImaging) -> PageService:
+    def pages(
+        self, books: BooksService, stores: BookFileStores, runtime: PageRuntime, imaging: PageImaging
+    ) -> PageService:
         """Build the page service over the request's or job's books service.
 
         :param books: Books service of the current request or job, which opens the books a job runs on.
         :type books: BooksService
-        :param assets: Asset store of the application.
-        :type assets: AssetStore
+        :param stores: Opens the asset store of a book, whose files a viewer reads by key.
+        :type stores: BookFileStores
         :param runtime: The publisher, clock, order keys and job board of the application.
         :type runtime: PageRuntime
         :param imaging: The builder of base versions and the runner of their processors.
@@ -144,7 +133,7 @@ class BooksProvider(Provider):
         :returns: The page service of the request or job.
         :rtype: PageService
         """
-        return PageService(books=books, assets=assets, runtime=runtime, imaging=imaging)
+        return PageService(books=books, stores=stores, runtime=runtime, imaging=imaging)
 
     @provide
     def pagination(self, clock: Clock) -> PaginationService:
@@ -169,16 +158,12 @@ class BooksProvider(Provider):
         return PlaceService(clock=clock)
 
     @provide
-    def sources(self, board: JobBoard, sources: SourceStore, assets: AssetStore) -> SourceService:
-        """Build the source service over the request's unit of work.
+    def sources(self, board: JobBoard) -> SourceService:
+        """Build the source service of the request.
 
         :param board: Board holding the jobs of every book.
         :type board: JobBoard
-        :param sources: Source store of the application.
-        :type sources: SourceStore
-        :param assets: Asset store of the application.
-        :type assets: AssetStore
         :returns: The source service of the request.
         :rtype: SourceService
         """
-        return SourceService(board=board, sources=sources, assets=assets)
+        return SourceService(board=board)

@@ -21,14 +21,12 @@ from bookreviver.app.settings import Settings
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
 from bookreviver.ports.ordering import OrderKeys
 from bookreviver.ports.runtime import Clock, EventPublisher, EventStream, JobBoard
-from bookreviver.ports.storage import AssetStore, SourceStore
 from bookreviver.services.books import BooksService
 from bookreviver.services.imports import (
     ImportImaging,
     ImportLimits,
     ImportRuntime,
     ImportService,
-    ImportStorage,
 )
 from bookreviver.services.jobs import JobService
 from bookreviver.services.processing_parts import ProcessingParts, ProcessingRuntime
@@ -70,19 +68,17 @@ class ImportsProvider(Provider):
             await stack.aclose()
 
     @provide(scope=Scope.REQUEST)
-    def job_service(self, board: JobBoard, stream: EventStream, sources: SourceStore) -> JobService:
+    def job_service(self, board: JobBoard, stream: EventStream) -> JobService:
         """Build the job service of the request or job.
 
         :param board: Board holding the jobs of every book.
         :type board: JobBoard
         :param stream: Stream of the application's event bus.
         :type stream: EventStream
-        :param sources: Source store of the application.
-        :type sources: SourceStore
         :returns: The job service.
         :rtype: JobService
         """
-        return JobService(board=board, stream=stream, sources=sources)
+        return JobService(board=board, stream=stream)
 
     @provide(scope=Scope.APP)
     def import_limits(self, settings: Settings) -> ImportLimits:
@@ -98,19 +94,6 @@ class ImportsProvider(Provider):
             max_bytes=settings.max_upload_bytes,
             parallel_scans=settings.imaging.parallel_scans,
         )
-
-    @provide(scope=Scope.APP)
-    def import_storage(self, sources: SourceStore, assets: AssetStore) -> ImportStorage:
-        """Gather the two stores an import reads and writes.
-
-        :param sources: Source store of the application.
-        :type sources: SourceStore
-        :param assets: Asset store of the application.
-        :type assets: AssetStore
-        :returns: The stores.
-        :rtype: ImportStorage
-        """
-        return ImportStorage(sources=sources, assets=assets)
 
     @provide(scope=Scope.APP)
     def import_imaging(
@@ -157,7 +140,6 @@ class ImportsProvider(Provider):
     def import_service(
         self,
         books: BooksService,
-        storage: ImportStorage,
         imaging: ImportImaging,
         runtime: ImportRuntime,
         parts: ProcessingParts,
@@ -166,8 +148,6 @@ class ImportsProvider(Provider):
 
         :param books: Books service of the current request or job, which opens the book a job imports into.
         :type books: BooksService
-        :param storage: The stores of the application.
-        :type storage: ImportStorage
         :param imaging: The imaging ports of the application.
         :type imaging: ImportImaging
         :param runtime: The publisher, clock, order keys and limits of the application.
@@ -177,4 +157,4 @@ class ImportsProvider(Provider):
         :returns: The import service.
         :rtype: ImportService
         """
-        return ImportService(books=books, storage=storage, imaging=imaging, runtime=runtime, parts=parts)
+        return ImportService(books=books, imaging=imaging, runtime=runtime, parts=parts)

@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.imaging import RenditionWriter
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
-    from bookreviver.ports.storage import AssetStore
     from tests.helpers.builders import BookOpener
 
 # What the fake tiler writes, so a test can tell that a rendition of a version was cut
@@ -83,7 +82,6 @@ class FakeTiler(Tiler):
 
 def make_page_service(
     stores: BookOpener,
-    assets: AssetStore,
     runtime: tuple[EventPublisher, Clock, JobBoard],
     *,
     order_keys: OrderKeys | None = None,
@@ -91,10 +89,8 @@ def make_page_service(
 ) -> PageService:
     """Build a page service over a unit of work, as a new request or job would get one.
 
-    :param stores: Opens the unit of work and the databases of the service, over the database of the test.
+    :param stores: Opens the unit of work, the databases and the file stores of the service, over the test's own.
     :type stores: BookOpener
-    :param assets: Asset store the service writes and reads files through.
-    :type assets: AssetStore
     :param runtime: The publisher, the clock and the job board the service reports through.
     :type runtime: tuple[EventPublisher, Clock, JobBoard]
     :param order_keys: Order keys to build keys with, or None for the fractional-indexing adapter.
@@ -108,15 +104,14 @@ def make_page_service(
     publisher, clock, board = runtime
     tiler = FakeTiler()
     return PageService(
-        books=make_books_service(stores.uow(), databases=stores.databases),
-        assets=assets,
+        books=make_books_service(stores.uow(), databases=stores.databases, files=stores.files),
+        stores=stores.files,
         runtime=PageRuntime(
             publisher=publisher, clock=clock, order_keys=order_keys or FractionalOrderKeys(), board=board
         ),
         imaging=PageImaging(
-            base_versions=BaseVersions(assets=assets, tiler=tiler),
+            base_versions=BaseVersions(tiler=tiler),
             runner=StepRunner(
-                assets=assets,
                 executor=InProcessStepExecutor(FakeCatalogue([SplitNone(), BlankPage()])),
                 renditions=renditions or FakeRenditionWriter(),
                 tiler=tiler,

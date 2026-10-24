@@ -56,7 +56,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.ports.storage import AssetStore
     from bookreviver.services.book import Book
     from bookreviver.services.book_measure import BlockMeasure
     from bookreviver.services.books import BooksService
@@ -85,7 +84,6 @@ class ProcessingJobs:
         self,
         *,
         books: BooksService,
-        assets: AssetStore,
         runtime: StageRuntime,
         parts: ProcessingParts,
         pages: PageService,
@@ -95,8 +93,6 @@ class ProcessingJobs:
         :param books: Books service of the job, which opens the book the job runs on, whose blocks hold the work as it
                       goes.
         :type books: BooksService
-        :param assets: Store of the derived files, from which a collection removes directories.
-        :type assets: AssetStore
         :param runtime: The runner, the catalogue, the publisher, the clock and the size of a preview.
         :type runtime: StageRuntime
         :param parts: The recipes, the stage records and the job starter over the unit of work.
@@ -105,7 +101,6 @@ class ProcessingJobs:
         :type pages: PageService
         """
         self._books = books
-        self._assets = assets
         self._runtime = runtime
         self._parts = parts
         self._recipes = parts.recipes
@@ -389,7 +384,7 @@ class ProcessingJobs:
         ):
             return
         keys = BookKeys(book.id)
-        cut_version = await self._runtime.runner.cut_tiles(keys, version)
+        cut_version = await self._runtime.runner.cut_tiles(book, version)
 
         def mark(repos: BookRepositories, _book_record: BookRecord) -> tuple[bool, PageVersion | None]:
             """Store the version with its pyramid cut, when it is still as it was read.
@@ -411,7 +406,7 @@ class ProcessingJobs:
         if stored:
             await self._runtime.publisher.publish(PageVersionReady(book_id=book.id, version=cut_version))
         elif current is None:
-            await self._assets.delete_prefix(keys.version_rendition(version, Rendition.TILES))
+            await book.assets.delete_prefix(keys.version_rendition(version, Rendition.TILES))
 
     async def _collect(self, job: Job, control: JobControl) -> int:
         """Delete the versions that nothing needs, batch by batch, with their files and their rows.
@@ -435,7 +430,7 @@ class ProcessingJobs:
         old = await book.read(lambda repos: repos.page_versions.collectable(collection.previews_older_than))
         groups = [list(batched(group, self.COLLECTION_BATCH_SIZE, strict=False)) for group in readers_first(old)]
         control.plan(sum(len(batches) for batches in groups))
-        clearing = VersionClearing(assets=self._assets, book=book)
+        clearing = VersionClearing(book=book)
         deleted = 0
         for batches in groups:
             for batch in batches:

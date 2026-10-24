@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.storage import AssetStore
     from tests.helpers.board_idle import JobsIdle
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.storage import SharedBookFileStores
 
 pytestmark = pytest.mark.anyio
 
@@ -109,14 +110,14 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 @pytest.fixture
 async def fx_book(
-    fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_actor: Actor, fx_databases: BookDatabasesFactory
+    fx_uow: UnitOfWorkFactory, fx_file_stores: SharedBookFileStores, fx_actor: Actor, fx_databases: BookDatabasesFactory
 ) -> Book:
     """Commit a book of one page and store the full image of its scan as a real JPEG.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
-    :param fx_asset_store: Asset store of the application.
-    :type fx_asset_store: AssetStore
+    :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+    :type fx_file_stores: SharedBookFileStores
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -134,14 +135,14 @@ async def fx_book(
     await store_book(
         fx_uow(), book_record, page, owner=fx_actor.account_id, sources=[source], scans=[scan], databases=fx_databases()
     )
-    await store_scan_images(fx_asset_store, book_record, scan)
+    await store_scan_images(fx_file_stores.assets(book_record.id), book_record, scan)
     return Book(book_record=book_record, page=page)
 
 
 async def store_scan_images(asset_store: AssetStore, book_record: BookRecord, scan: Scan) -> None:
     """Store the full image and the preview of a scan as real JPEGs.
 
-    :param asset_store: Asset store of the application.
+    :param asset_store: Asset store of the book, the application's own.
     :type asset_store: AssetStore
     :param book_record: Book owning the scan.
     :type book_record: BookRecord
@@ -385,7 +386,7 @@ class TestStageSummaries:
         fx_client: httpx.AsyncClient,
         fx_idle: JobsIdle,
         fx_book: Book,
-        fx_asset_store: AssetStore,
+        fx_file_stores: SharedBookFileStores,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a text page and a plate are counted under the recipes of their kinds, and each row says its kind.
@@ -399,13 +400,13 @@ class TestStageSummaries:
         :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account with a text page.
         :type fx_book: Book
-        :param fx_asset_store: Asset store of the application.
-        :type fx_asset_store: AssetStore
+        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+        :type fx_file_stores: SharedBookFileStores
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         _, scan = await add_page(fx_book, 'a1', PageKind.PLATE, databases=fx_databases())
-        await store_scan_images(fx_asset_store, fx_book.book_record, scan)
+        await store_scan_images(fx_file_stores.assets(fx_book.book_record.id), fx_book.book_record, scan)
         await run_stage(fx_client, fx_idle, fx_book, 'geometry')
         recipes = await recipes_of(fx_client, fx_book, 'geometry')
         summaries = (await fx_client.get(f'{fx_book.path}/stages')).json()[ITEMS]
@@ -660,7 +661,7 @@ class TestRunAndVersions:
         fx_client: httpx.AsyncClient,
         fx_idle: JobsIdle,
         fx_book: Book,
-        fx_asset_store: AssetStore,
+        fx_file_stores: SharedBookFileStores,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the report names the versions a collection would delete and the bytes of their files, and deletes none.
@@ -671,8 +672,8 @@ class TestRunAndVersions:
         :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_asset_store: Asset store of the application.
-        :type fx_asset_store: AssetStore
+        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+        :type fx_file_stores: SharedBookFileStores
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
@@ -692,7 +693,7 @@ class TestRunAndVersions:
             id=PageVersionId(OLD_VERSION_ID),
             input_id=head_id,
         )
-        async with fx_asset_store.writable(
+        async with fx_file_stores.assets(fx_book.book_record.id).writable(
             BookKeys(fx_book.book_record.id).version_rendition(old, Rendition.FULL_JPEG)
         ) as path:
             path.write_bytes(OLD_VERSION_CONTENT)

@@ -35,7 +35,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobBoard
-    from bookreviver.ports.storage import AssetStore, SourceStore
     from bookreviver.services.book import Book
 
 SOURCE_IMPORTING: str = 'This book is importing files. Delete the source when the import has finished.'
@@ -57,19 +56,13 @@ def _window[ItemT](items: Sequence[ItemT], request: SliceRequest) -> Slice[ItemT
 class SourceService:
     """Sources and scans of the acting account's books, and the deletion of a source with its files."""
 
-    def __init__(self, *, board: JobBoard, sources: SourceStore, assets: AssetStore) -> None:
+    def __init__(self, *, board: JobBoard) -> None:
         """Work over the ports of one request.
 
         :param board: Board holding the jobs of every book, which tells whether the book imports.
         :type board: JobBoard
-        :param sources: Store of the uploaded sources, emptied of a source when it is deleted.
-        :type sources: SourceStore
-        :param assets: Store of the derived files, emptied of the renditions of a source's scans when it is deleted.
-        :type assets: AssetStore
         """
         self._board = board
-        self._sources = sources
-        self._assets = assets
 
     async def list(
         self,
@@ -192,6 +185,6 @@ class SourceService:
         await book.read(lambda repos: repos.sources.get(source_id))
         self._refuse_active_import(book.id)
         # The row goes last: only an existing row lets a repeated call reach files a failed call left behind
-        await self._sources.delete_source(book.id, source_id)
-        await self._assets.delete_prefix(BookKeys(book.id).source_scans(source_id))
+        await book.sources.delete_source(source_id)
+        await book.assets.delete_prefix(BookKeys(book.id).source_scans(source_id))
         await book.change(lambda repos, _book_record: repos.sources.delete(source_id))

@@ -36,7 +36,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import ProcessorSpec, RecipeDraft, RecipeKey, SliceRequest, StageRun, VersionFilter
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
-    from bookreviver.ports.storage import AssetStore
     from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import ProcessingParts
 
@@ -60,20 +59,16 @@ class ProcessingService:
     def __init__(
         self,
         *,
-        assets: AssetStore,
         catalogue: ProcessorCatalog,
         parts: ProcessingParts,
     ) -> None:
         """Work over the ports of one request.
 
-        :param assets: Store of the derived files, whose size a report of a collection reads.
-        :type assets: AssetStore
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
         :param parts: The recipes, the stage records, the job tracker and the job starter over the unit of work.
         :type parts: ProcessingParts
         """
-        self._assets = assets
         self._catalogue = catalogue
         self._recipes = parts.recipes
         self._records = parts.records
@@ -457,7 +452,7 @@ class ProcessingService:
 
         old = await book.read(work)
         keys = BookKeys(book.id)
-        sizes = [await self._assets.size_of(keys.version_directory(version)) for version in old]
+        sizes = [await book.assets.size_of(keys.version_directory(version)) for version in old]
         return CollectionReport(versions=len(old), size_bytes=sum(sizes))
 
     async def start_collection(self, book: Book) -> Job:

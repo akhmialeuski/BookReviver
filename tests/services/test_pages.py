@@ -27,7 +27,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion
     from bookreviver.domain.ids import AccountId
     from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
@@ -35,6 +34,7 @@ if TYPE_CHECKING:
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
     from tests.helpers.fake_board import FakeJobBoard
+    from tests.helpers.storage import SharedBookFileStores
 
 pytestmark = pytest.mark.anyio
 
@@ -443,7 +443,7 @@ class TestOpenAsset:
         self,
         fx_service: Callable[[], PageService],
         fx_uow: UnitOfWorkFactory,
-        fx_asset_store: LocalAssetStore,
+        fx_file_stores: SharedBookFileStores,
         fx_actor: Actor,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -453,8 +453,8 @@ class TestOpenAsset:
         :type fx_service: Callable[[], PageService]
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_asset_store: Local asset store over the test's storage root.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+        :type fx_file_stores: SharedBookFileStores
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -463,7 +463,7 @@ class TestOpenAsset:
         book_record = make_record()
         await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
         key = BookKeys(book_record.id).book
-        async with fx_asset_store.writable(key) as target:
+        async with fx_file_stores.assets(book_record.id).writable(key) as target:
             target.write_bytes(FILE_CONTENT)
 
         async with fx_service().open_asset(key) as path:
@@ -474,7 +474,7 @@ class TestOpenAsset:
         fx_service: Callable[[], PageService],
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
-        fx_asset_store: LocalAssetStore,
+        fx_file_stores: SharedBookFileStores,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a stored derived file is read by its key alone, whoever owns its book.
@@ -485,15 +485,15 @@ class TestOpenAsset:
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_asset_store: Local asset store over the test's storage root.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+        :type fx_file_stores: SharedBookFileStores
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
         await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id(), databases=fx_databases())
         key = BookKeys(book_record.id).book
-        async with fx_asset_store.writable(key) as target:
+        async with fx_file_stores.assets(book_record.id).writable(key) as target:
             target.write_bytes(FILE_CONTENT)
 
         async with fx_service().open_asset(key) as path:

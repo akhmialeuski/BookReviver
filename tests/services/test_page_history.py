@@ -95,7 +95,13 @@ async def history_of(
     :returns: The changes.
     :rtype: list[PageHistoryEntry]
     """
-    return list((await kit.page_history().list(open_for(actor, book_record.id, databases=kit.databases), key)).changes)
+    return list(
+        (
+            await kit.page_history().list(
+                open_for(actor, book_record.id, databases=kit.databases, files=kit.files), key
+            )
+        ).changes
+    )
 
 
 async def stored_edit(book_id: BookId, key: PageStepKey, *, databases: BookDatabases) -> PageEdit | None:
@@ -127,7 +133,7 @@ async def has_files(kit: ProcessingKit, book_record: BookRecord, version: PageVe
     :rtype: bool
     """
     try:
-        async with kit.assets.readable(BookKeys(book_record.id).version_directory(version)):
+        async with kit.files.assets(book_record.id).readable(BookKeys(book_record.id).version_directory(version)):
             return True
     except NotFoundError:
         return False
@@ -860,7 +866,11 @@ class TestClear:
         """
         actor, book_record, page, version = await ran_geometry(fx_kit)
         key = await step_key(fx_kit, book_record.id, page)
-        monkeypatch.setattr(fx_kit.assets, 'delete_prefix', AsyncMock(side_effect=OSError('The disk is read only.')))
+        monkeypatch.setattr(
+            fx_kit.files.assets(book_record.id),
+            'delete_prefix',
+            AsyncMock(side_effect=OSError('The disk is read only.')),
+        )
         cleared = await fx_kit.page_history().clear(fx_open_book(actor, book_record.id), key)
         expect([deleted.id for deleted in cleared.versions] == [version.id])
         expect(

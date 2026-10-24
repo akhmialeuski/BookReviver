@@ -59,7 +59,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from pathlib import Path
 
-    from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, BookRecord, Job, Page, PageOverview, PageStage, PageVersion
     from bookreviver.domain.ids import BookId, PageId
     from bookreviver.domain.values import JobEnd
@@ -116,10 +115,10 @@ class LeafBook(NamedTuple):
 class LeafDesk:
     """What the tests of the choice of leaves share: the database, the stores, the services and what they reported.
 
-    :ivar stores: Opens the units of work and the databases of the books of the test.
+    :ivar stores: Opens the units of work, the databases and the file stores of the books of the test.
     :ivar open_uow: Function opening a new unit of work over the database the requests and the jobs share.
     :ivar databases: Opens the databases of the books of the test.
-    :ivar assets: Asset store of the test.
+    :ivar files: Opens the source store and the asset store of a book of the test.
     :ivar actor: Account acting.
     :ivar board: Board recording the jobs the service puts on it, which runs them when a test says so.
     :ivar events: Bus recording what the service published.
@@ -129,7 +128,6 @@ class LeafDesk:
     def __init__(
         self,
         stores: BookOpener,
-        assets: LocalAssetStore,
         actor: Actor,
         runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         storage_root: Path,
@@ -138,8 +136,6 @@ class LeafDesk:
 
         :param stores: Opens the units of work and the databases of the books of the test.
         :type stores: BookOpener
-        :param assets: Local asset store of the test.
-        :type assets: LocalAssetStore
         :param actor: Account the service acts for.
         :type actor: Actor
         :param runtime: The recording bus, the stopped clock and the job board.
@@ -151,7 +147,7 @@ class LeafDesk:
         self.open_uow = stores.uow
         self.databases = stores.databases
         self.storage_root = storage_root
-        self.assets = assets
+        self.files = stores.files
         self.actor = actor
         self.events, self._clock, self.board = runtime
         self._runtime = runtime
@@ -164,7 +160,7 @@ class LeafDesk:
         :returns: A service over a new unit of work.
         :rtype: PageService
         """
-        return make_page_service(self.stores, self.assets, self._runtime, renditions=renditions)
+        return make_page_service(self.stores, self._runtime, renditions=renditions)
 
     async def book(self, kinds: Sequence[PageKind]) -> LeafBook:
         """Commit a book with a page of each kind, cut from a scan of text on yellowed paper, and store the images.
@@ -212,7 +208,9 @@ class LeafDesk:
         await self.databases.open(book_record.id).change(save_heads)
         keys = BookKeys(book_record.id)
         for version in versions:
-            async with self.assets.writable(keys.version_rendition(version, Rendition.FULL_PNG)) as target:
+            async with self.files.assets(book_record.id).writable(
+                keys.version_rendition(version, Rendition.FULL_PNG)
+            ) as target:
                 ruled_page((SCAN_WIDTH_PX, SCAN_HEIGHT_PX), PAPER, INK).save(target, format=PNG)
         return LeafBook(book_record=book_record, pages=pages, versions=versions)
 
@@ -228,7 +226,7 @@ class LeafDesk:
         """
         ids = [book.pages[position].id for position in positions]
         await self.service().set_blank_fill(
-            open_for(self.actor, book.book_record.id, databases=self.databases), ids, fill
+            open_for(self.actor, book.book_record.id, databases=self.databases, files=self.files), ids, fill
         )
 
     async def add_blank_page(self, book: LeafBook) -> PageOverview:
@@ -240,7 +238,9 @@ class LeafDesk:
         :rtype: PageOverview
         """
         new_page = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
-        return await self.service().add(open_for(self.actor, book.book_record.id, databases=self.databases), new_page)
+        return await self.service().add(
+            open_for(self.actor, book.book_record.id, databases=self.databases, files=self.files), new_page
+        )
 
     def prepare_jobs(self) -> list[Job]:
         """Read the ``prepare-pages`` jobs put on the board, as the board holds them now, in the order they were put.
@@ -360,7 +360,6 @@ class LeafDesk:
 @pytest.fixture
 def fx_desk(
     fx_open_book: BookOpener,
-    fx_asset_store: LocalAssetStore,
     fx_actor: Actor,
     fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
     fx_storage_root: Path,
@@ -369,8 +368,6 @@ def fx_desk(
 
     :param fx_open_book: Opens the books of the test with their databases.
     :type fx_open_book: BookOpener
-    :param fx_asset_store: Local asset store of the test.
-    :type fx_asset_store: LocalAssetStore
     :param fx_actor: Account the service acts for.
     :type fx_actor: Actor
     :param fx_runtime: The recording bus, the stopped clock and the job board.
@@ -380,7 +377,7 @@ def fx_desk(
     :returns: The desk.
     :rtype: LeafDesk
     """
-    return LeafDesk(fx_open_book, fx_asset_store, fx_actor, fx_runtime, fx_storage_root)
+    return LeafDesk(fx_open_book, fx_actor, fx_runtime, fx_storage_root)
 
 
 class TestChooseALeaf:
@@ -784,7 +781,9 @@ class TestRemakeOutdatedLeaves:
         await desk.databases.open(book.book_record.id).change(replace_leaf)
         keys = BookKeys(book.book_record.id)
         assert old.renditions is not None
-        async with desk.assets.writable(keys.version_rendition(old, old.renditions.full)) as target:
+        async with desk.files.assets(book.book_record.id).writable(
+            keys.version_rendition(old, old.renditions.full)
+        ) as target:
             Image.new(BILEVEL, (SCAN_WIDTH_PX, SCAN_HEIGHT_PX), 1).save(target, format=PNG)
 
     async def test_a_leaf_of_an_older_version_is_drawn_again_with_the_paper_and_its_stage_is_fresh(

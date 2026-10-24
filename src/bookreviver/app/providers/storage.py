@@ -6,37 +6,26 @@
 
 from dishka import Provider, Scope, provide
 
-from bookreviver.adapters.storage import LocalAssetStore, LocalBookArchive, LocalSourceStore
+from bookreviver.adapters.storage import LocalBookArchive, LocalBookFileStores
 from bookreviver.app.settings import Settings, StorageBackend
-from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
+from bookreviver.ports.storage import BookArchive, BookFileStores
 
 
 class LocalStorageProvider(Provider):
-    """Builds the source and asset stores, one of each per application, over the local storage root."""
+    """Builds the opener of the stores of each book and the archive, one of each per application, over the root."""
 
     scope = Scope.APP
 
     @provide
-    def source_store(self, settings: Settings) -> SourceStore:
-        """Build the store of uploaded sources.
+    def book_file_stores(self, settings: Settings) -> BookFileStores:
+        """Build the opener of the source store and the asset store of each book.
 
         :param settings: Application settings, of which ``storage_root`` is read.
         :type settings: Settings
-        :returns: The local source store under the storage root.
-        :rtype: SourceStore
+        :returns: The local stores of the books under the storage root.
+        :rtype: BookFileStores
         """
-        return LocalSourceStore(root=settings.storage_root)
-
-    @provide
-    def asset_store(self, settings: Settings) -> AssetStore:
-        """Build the store of derived page images and tile pyramids.
-
-        :param settings: Application settings, of which ``storage_root`` is read.
-        :type settings: Settings
-        :returns: The local asset store under the storage root.
-        :rtype: AssetStore
-        """
-        return LocalAssetStore(root=settings.storage_root)
+        return LocalBookFileStores(root=settings.storage_root)
 
     @provide
     def book_archive(self, settings: Settings) -> BookArchive:

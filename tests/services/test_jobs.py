@@ -7,7 +7,6 @@ import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.storage import LocalSourceStore
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.errors import ConflictError, NotFoundError
@@ -22,13 +21,13 @@ from tests.helpers.storage import upload
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import BookRecord
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.storage import SharedBookFileStores
 
 # The tests open books of the library with the databases of the test, whether or not they store any
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures('fx_databases')]
@@ -50,29 +49,15 @@ def fx_fakes() -> JobFakes:
 
 
 @pytest.fixture
-def fx_sources(tmp_path: Path) -> LocalSourceStore:
-    """Build the source store that holds the uploads of the imports of the test.
-
-    :param tmp_path: Temporary directory of the test.
-    :type tmp_path: Path
-    :returns: Local source store over the directory.
-    :rtype: LocalSourceStore
-    """
-    return LocalSourceStore(root=tmp_path)
-
-
-@pytest.fixture
-def fx_job_service(fx_fakes: JobFakes, fx_sources: LocalSourceStore) -> JobService:
+def fx_job_service(fx_fakes: JobFakes) -> JobService:
     """Build the job service of a request over the board and the event bus of the fakes.
 
     :param fx_fakes: Adapters of the service.
     :type fx_fakes: JobFakes
-    :param fx_sources: Store of the uploads, which a cancelled import that never began is removed from.
-    :type fx_sources: LocalSourceStore
     :returns: The job service.
     :rtype: JobService
     """
-    return JobService(board=fx_fakes.board, stream=fx_fakes.events, sources=fx_sources)
+    return JobService(board=fx_fakes.board, stream=fx_fakes.events)
 
 
 @pytest.fixture
@@ -299,7 +284,7 @@ class TestCancel:
         self,
         fx_fakes: JobFakes,
         fx_job_service: JobService,
-        fx_sources: LocalSourceStore,
+        fx_file_stores: SharedBookFileStores,
         fx_book: BookRecord,
         fx_open_own_book: Callable[[BookId], Book],
     ) -> None:
@@ -309,25 +294,27 @@ class TestCancel:
         :type fx_fakes: JobFakes
         :param fx_job_service: Job service of the request.
         :type fx_job_service: JobService
-        :param fx_sources: Store of the uploads.
-        :type fx_sources: LocalSourceStore
+        :param fx_file_stores: Opens the stores of a book of the test, whose source store holds the uploads.
+        :type fx_file_stores: SharedBookFileStores
         :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_open_own_book: Function opening a book of the acting account with its database.
         :type fx_open_own_book: Callable[[BookId], Book]
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.IMPORT_SOURCE))
-        await fx_sources.stage(fx_book.id, job.id, [upload(STAGED_UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
+        await fx_file_stores.sources(fx_book.id).stage(
+            job.id, [upload(STAGED_UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES
+        )
         await fx_job_service.cancel(fx_open_own_book(job.book_id), job.id)
         with pytest.raises(NotFoundError):
-            async with fx_sources.staged_files(fx_book.id, job.id):
+            async with fx_file_stores.sources(fx_book.id).staged_files(job.id):
                 pass
 
     async def test_import_cancelled_while_running_keeps_its_upload_for_its_own_run_to_remove(
         self,
         fx_fakes: JobFakes,
         fx_job_service: JobService,
-        fx_sources: LocalSourceStore,
+        fx_file_stores: SharedBookFileStores,
         fx_book: BookRecord,
         fx_open_own_book: Callable[[BookId], Book],
     ) -> None:
@@ -337,22 +324,24 @@ class TestCancel:
         :type fx_fakes: JobFakes
         :param fx_job_service: Job service of the request.
         :type fx_job_service: JobService
-        :param fx_sources: Store of the uploads.
-        :type fx_sources: LocalSourceStore
+        :param fx_file_stores: Opens the stores of a book of the test, whose source store holds the uploads.
+        :type fx_file_stores: SharedBookFileStores
         :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookRecord
         :param fx_open_own_book: Function opening a book of the acting account with its database.
         :type fx_open_own_book: Callable[[BookId], Book]
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book.id, kind=JobKind.IMPORT_SOURCE))
-        await fx_sources.stage(fx_book.id, job.id, [upload(STAGED_UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
+        await fx_file_stores.sources(fx_book.id).stage(
+            job.id, [upload(STAGED_UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES
+        )
         release = fx_fakes.scripted.hold(job)
         names: list[str] = []
         async with anyio.create_task_group() as group:
             group.start_soon(fx_fakes.board.run_queued)
             await anyio.wait_all_tasks_blocked()
             await fx_job_service.cancel(fx_open_own_book(job.book_id), job.id)
-            async with fx_sources.staged_files(fx_book.id, job.id) as staged:
+            async with fx_file_stores.sources(fx_book.id).staged_files(job.id) as staged:
                 names.extend(staged)
             release.set()
         expect(names == [STAGED_UPLOAD_NAME])

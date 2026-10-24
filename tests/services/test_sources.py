@@ -15,24 +15,22 @@ from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import SliceRequest
 from bookreviver.services.sources import SourceService
 from tests.helpers.books import SCANS_PER_SOURCE, commit_book, on_disk
-from tests.helpers.builders import make_job, make_record, make_source
+from tests.helpers.builders import BookOpener, make_job, make_record, make_source
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.scripted_runner import ScriptedRunner
 from tests.helpers.seeding import store_book
+from tests.helpers.storage import SharedBookFileStores
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, BookRecord, Source
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookDatabases, BookRepositories
-    from bookreviver.ports.storage import AssetStore, SourceStore
     from bookreviver.services.book import Book as OpenedBook
     from tests.helpers.books import Book
-    from tests.helpers.builders import BookOpener
     from tests.helpers.clock import FixedClock
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
@@ -47,19 +45,21 @@ class StoreFailedError(OSError):
 
 
 class SourceStoreFailingOnce(LocalSourceStore):
-    """The local source store, whose first source deletion fails before it removes anything."""
+    """The local source store of one book, whose first source deletion fails before it removes anything."""
 
-    def __init__(self, *, root: Path) -> None:
+    def __init__(self, *, root: Path, book_id: BookId) -> None:
         """Keep the sources under ``root`` and fail the first deletion.
 
         :param root: Storage root shared with the asset store.
         :type root: Path
+        :param book_id: The book whose sources the store holds.
+        :type book_id: BookId
         """
-        super().__init__(root=root)
+        super().__init__(root=root, book_id=book_id)
         self._failed = False
 
     @override
-    async def delete_source(self, book_id: BookId, source_id: SourceId) -> None:
+    async def delete_source(self, source_id: SourceId) -> None:
         """Fail on the first call, as a storage outage would, and remove the source's files on the later ones.
 
         :param book_id: Book owning the source.
@@ -71,7 +71,7 @@ class SourceStoreFailingOnce(LocalSourceStore):
         if not self._failed:
             self._failed = True
             raise StoreFailedError
-        await super().delete_source(book_id, source_id)
+        await super().delete_source(source_id)
 
 
 @pytest.fixture
@@ -88,58 +88,44 @@ def fx_import_board(fx_events: RecordingEventBus, fx_clock: FixedClock) -> FakeJ
     return FakeJobBoard(runner=ScriptedRunner(), publisher=fx_events, clock=fx_clock)
 
 
-def _service(board: FakeJobBoard, sources: SourceStore, assets: AssetStore) -> SourceService:
+def _service(board: FakeJobBoard) -> SourceService:
     """Build the source service for one request, over a unit of work and the stores and the board of the test.
 
     :param board: Board the service reads the jobs of a book from.
     :type board: FakeJobBoard
-    :param sources: Source store of the test.
-    :type sources: SourceStore
-    :param assets: Asset store of the test.
-    :type assets: AssetStore
     :returns: The service.
     :rtype: SourceService
     """
-    return SourceService(board=board, sources=sources, assets=assets)
+    return SourceService(board=board)
 
 
 @pytest.fixture
 def fx_service(
-    fx_source_store: LocalSourceStore,
-    fx_asset_store: LocalAssetStore,
     fx_import_board: FakeJobBoard,
 ) -> Callable[[], SourceService]:
     """Return a function building the service for one request.
 
-    :param fx_source_store: Local source store over the test's storage root.
-    :type fx_source_store: LocalSourceStore
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
     :param fx_import_board: Board the service reads the jobs of a book from.
     :type fx_import_board: FakeJobBoard
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], SourceService]
     """
-    return lambda: _service(fx_import_board, fx_source_store, fx_asset_store)
+    return lambda: _service(fx_import_board)
 
 
 @pytest.fixture
-def fx_flaky_service(
-    fx_asset_store: LocalAssetStore, fx_storage_root: Path, fx_import_board: FakeJobBoard
-) -> Callable[[], SourceService]:
-    """Return a function building the service for one request over a source store whose first deletion fails.
+def fx_flaky_open_book(fx_open_book: BookOpener, fx_storage_root: Path) -> BookOpener:
+    """Return the opener of the books of the test over source stores whose first deletion fails.
 
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
-    :param fx_storage_root: Storage root both stores share.
+    :param fx_open_book: Opens the books of the test, whose units of work and databases the opener shares.
+    :type fx_open_book: BookOpener
+    :param fx_storage_root: Storage root of the test, which holds the files of its books.
     :type fx_storage_root: Path
-    :param fx_import_board: Board the service reads the jobs of a book from.
-    :type fx_import_board: FakeJobBoard
-    :returns: Function building a service over a new unit of work and the one failing source store.
-    :rtype: Callable[[], SourceService]
+    :returns: The opener, whose books fail the first deletion of a source.
+    :rtype: BookOpener
     """
-    sources = SourceStoreFailingOnce(root=fx_storage_root)
-    return lambda: _service(fx_import_board, sources, fx_asset_store)
+    stores = SharedBookFileStores(root=fx_storage_root, source_store=SourceStoreFailingOnce)
+    return BookOpener(uow=fx_open_book.uow, databases=fx_open_book.databases, files=stores)
 
 
 async def _record_unimported(book_id: BookId, *, databases: BookDatabases) -> tuple[Source, Source]:
@@ -199,8 +185,6 @@ async def fx_unimported(fx_book: Book, fx_databases: BookDatabasesFactory) -> tu
 @pytest.fixture
 async def fx_book(
     fx_database: SqlDatabase,
-    fx_source_store: LocalSourceStore,
-    fx_asset_store: LocalAssetStore,
     fx_actor: Actor,
     fx_open_book: BookOpener,
 ) -> Book:
@@ -208,10 +192,6 @@ async def fx_book(
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
-    :param fx_source_store: Local source store over the test's storage root.
-    :type fx_source_store: LocalSourceStore
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
     :param fx_actor: Account the service acts for.
     :type fx_actor: Actor
     :param fx_open_book: Opens the books of the test with their databases.
@@ -219,30 +199,24 @@ async def fx_book(
     :returns: The stored book.
     :rtype: Book
     """
-    return await commit_book(fx_database, fx_open_book, fx_source_store, fx_asset_store, fx_actor)
+    return await commit_book(fx_database, fx_open_book, fx_actor)
 
 
 @pytest.fixture
 async def fx_strangers_book(
     fx_database: SqlDatabase,
-    fx_source_store: LocalSourceStore,
-    fx_asset_store: LocalAssetStore,
     fx_open_book: BookOpener,
 ) -> Book:
     """Commit and store a book of an account that acts nowhere in the test.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
-    :param fx_source_store: Local source store over the test's storage root.
-    :type fx_source_store: LocalSourceStore
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
     :param fx_open_book: Opens the books of the test with their databases.
     :type fx_open_book: BookOpener
     :returns: The stored book.
     :rtype: Book
     """
-    return await commit_book(fx_database, fx_open_book, fx_source_store, fx_asset_store, None)
+    return await commit_book(fx_database, fx_open_book, None)
 
 
 @pytest.fixture
@@ -578,34 +552,34 @@ class TestDelete:
 
     async def test_failed_deletion_keeps_the_source_and_a_repeat_finishes_it(
         self,
-        fx_flaky_service: Callable[[], SourceService],
+        fx_service: Callable[[], SourceService],
+        fx_flaky_open_book: BookOpener,
         fx_book: Book,
         fx_storage_root: Path,
         fx_actor: Actor,
-        fx_open_book: BookOpener,
     ) -> None:
         """Verify a storage failure leaves the source reachable, so deleting again removes what is left.
 
-        :param fx_flaky_service: Function building the service over a source store whose first deletion fails.
-        :type fx_flaky_service: Callable[[], SourceService]
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], SourceService]
+        :param fx_flaky_open_book: Opens the books of the test over a source store whose first deletion fails.
+        :type fx_flaky_open_book: BookOpener
         :param fx_book: Book of the acting account.
         :type fx_book: Book
         :param fx_storage_root: Storage root both stores share.
         :type fx_storage_root: Path
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_open_book: Opens the books of the test with their databases.
-        :type fx_open_book: BookOpener
         """
         with pytest.raises(StoreFailedError):
-            await fx_flaky_service().delete(fx_open_book(fx_actor, fx_book.book_record.id), fx_book.first.id)
-        kept = await fx_flaky_service().get(fx_open_book(fx_actor, fx_book.book_record.id), fx_book.first.id)
-        await fx_flaky_service().delete(fx_open_book(fx_actor, fx_book.book_record.id), fx_book.first.id)
+            await fx_service().delete(fx_flaky_open_book(fx_actor, fx_book.book_record.id), fx_book.first.id)
+        kept = await fx_service().get(fx_flaky_open_book(fx_actor, fx_book.book_record.id), fx_book.first.id)
+        await fx_service().delete(fx_flaky_open_book(fx_actor, fx_book.book_record.id), fx_book.first.id)
 
         expect(kept == fx_book.first)
         expect(on_disk(fx_storage_root, fx_book, fx_book.first) == (False, False))
         with pytest.raises(NotFoundError):
-            await fx_flaky_service().get(fx_open_book(fx_actor, fx_book.book_record.id), fx_book.first.id)
+            await fx_service().get(fx_flaky_open_book(fx_actor, fx_book.book_record.id), fx_book.first.id)
         assert_expectations()
 
 

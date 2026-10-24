@@ -20,6 +20,7 @@ from tests.helpers.database import SharedDatabaseProvider, copy_schema_template,
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.processing import InProcessExecutorProvider
 from tests.helpers.seeding import commit_account
+from tests.helpers.storage import SharedBookFileStores
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -105,6 +106,18 @@ def fx_book_changes() -> RecordingEventBus:
     :rtype: RecordingEventBus
     """
     return RecordingEventBus()
+
+
+@pytest.fixture
+def fx_file_stores(fx_storage_root: Path) -> SharedBookFileStores:
+    """Return the opener of the source store and the asset store of a book of the test.
+
+    :param fx_storage_root: Storage root of the test, which holds the files of its books.
+    :type fx_storage_root: Path
+    :returns: The local stores of the books under the storage root, one of each per book, the test adapter of the port.
+    :rtype: SharedBookFileStores
+    """
+    return SharedBookFileStores(root=fx_storage_root)
 
 
 @pytest.fixture
@@ -252,17 +265,21 @@ def fx_databases(
 
 
 @pytest.fixture
-def fx_open_book(fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory) -> BookOpener:
+def fx_open_book(
+    fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory, fx_file_stores: SharedBookFileStores
+) -> BookOpener:
     """Return the opener of the books of the test, which opens a book of an account with its database.
 
     :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
     :type fx_uow: UnitOfWorkFactory
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
     :type fx_databases: BookDatabasesFactory
+    :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+    :type fx_file_stores: SharedBookFileStores
     :returns: The opener, called with the actor and the identifier of the book.
     :rtype: BookOpener
     """
-    return BookOpener(uow=fx_uow, databases=fx_databases())
+    return BookOpener(uow=fx_uow, databases=fx_databases(), files=fx_file_stores)
 
 
 @pytest.fixture

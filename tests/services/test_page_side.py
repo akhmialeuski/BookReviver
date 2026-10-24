@@ -18,7 +18,6 @@ from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Page, PageVersion
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookDatabases, BookRepositories
@@ -54,7 +53,6 @@ class SidedProcessor(FakeProcessor):
 def fx_sided_kit(
     fx_database: SqlDatabase,
     fx_open_book: BookOpener,
-    fx_asset_store: LocalAssetStore,
 ) -> ProcessingKit:
     """Build a processing kit whose Geometry recipe is the one step that reads the side of the page.
 
@@ -62,8 +60,6 @@ def fx_sided_kit(
     :type fx_database: SqlDatabase
     :param fx_open_book: Opens the books of the test with their databases.
     :type fx_open_book: BookOpener
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
     :returns: The kit.
     :rtype: ProcessingKit
     """
@@ -76,7 +72,6 @@ def fx_sided_kit(
     return ProcessingKit(
         fx_database,
         fx_open_book,
-        fx_asset_store,
         processors=[SplitNone(), SidedProcessor()],
         defaults=defaults,
     )

@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion, Scan, Source
-    from bookreviver.ports.storage import AssetStore, SourceStore
     from tests.helpers.builders import BookOpener
 
 SCANS_PER_SOURCE: int = 3
@@ -45,21 +44,16 @@ class Book(NamedTuple):
     version: PageVersion
 
 
-async def commit_book(
-    database: SqlDatabase, stores: BookOpener, sources: SourceStore, assets: AssetStore, owner: Actor | None
-) -> Book:
+async def commit_book(database: SqlDatabase, stores: BookOpener, owner: Actor | None) -> Book:
     """Commit and store a book of two sources with scans, and one page cut from a scan of the first source.
 
     Every source has its file in the source store, and every scan and the page have their full image in the asset store.
 
     :param database: Catalogue to commit into, which gets the account of the owner when it does not store it.
     :type database: SqlDatabase
-    :param stores: Opens the unit of work to store the book through, over the same catalogue, and the databases.
+    :param stores: Opens the unit of work to store the book through, over the same catalogue, the databases, and the
+                   source store and the asset store receiving the sources, the renditions of the scans and the page.
     :type stores: BookOpener
-    :param sources: Source store receiving the two sources.
-    :type sources: SourceStore
-    :param assets: Asset store receiving the renditions of the scans and the image of the page.
-    :type assets: AssetStore
     :param owner: The actor owning the book, or None for an account that acts nowhere else.
     :type owner: Actor | None
     :returns: The stored book.
@@ -90,10 +84,11 @@ async def commit_book(
         databases=stores.databases,
     )
     keys = BookKeys(book_record.id)
+    sources, assets = stores.files.sources(book_record.id), stores.files.assets(book_record.id)
     for source in (first, second):
         job_id = JobId(uuid4())
-        await sources.stage(book_record.id, job_id, [upload(source.file_name)], max_bytes=MAX_UPLOAD_BYTES)
-        await sources.promote(book_record.id, job_id, source.id, names=[source.file_name])
+        await sources.stage(job_id, [upload(source.file_name)], max_bytes=MAX_UPLOAD_BYTES)
+        await sources.promote(job_id, source.id, names=[source.file_name])
     images = [keys.scan_rendition(scan, Rendition.FULL_JPEG) for scan in scans]
     for key in [*images, keys.version_rendition(version, Rendition.FULL_JPEG)]:
         async with assets.writable(key) as path:

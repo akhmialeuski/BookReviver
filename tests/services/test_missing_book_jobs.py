@@ -19,7 +19,6 @@ from tests.helpers.processors import FakeContentProbe, FakeProcessor
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.values import MetadataMap
     from tests.helpers.builders import BookOpener
 
@@ -66,7 +65,9 @@ class TestJobsOfAMissingBook:
         assert stored_job(fx_kit, queued.id).state is JobState.FAILED
 
     async def test_detection_ends_failed_where_the_processor_is_installed(
-        self, fx_database: SqlDatabase, fx_open_book: BookOpener, fx_asset_store: LocalAssetStore
+        self,
+        fx_database: SqlDatabase,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a detection of a book that is gone fails when the processor that reads the pages is installed.
 
@@ -74,10 +75,8 @@ class TestJobsOfAMissingBook:
         :type fx_database: SqlDatabase
         :param fx_open_book: Opens the units of work and the databases of the books of the test.
         :type fx_open_book: BookOpener
-        :param fx_asset_store: Local asset store over the test's storage root.
-        :type fx_asset_store: LocalAssetStore
         """
-        kit = ProcessingKit(fx_database, fx_open_book, fx_asset_store, processors=[FakeContentProbe([])])
+        kit = ProcessingKit(fx_database, fx_open_book, processors=[FakeContentProbe([])])
         queued = await kit.parts(kit.uow()).starter.enqueue(
             BookId(uuid4()), JobKind.DETECT_CONTENT, ContentDetection().to_map()
         )

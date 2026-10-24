@@ -28,26 +28,22 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import JobId
     from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.runtime import EventStream, JobBoard
-    from bookreviver.ports.storage import SourceStore
     from bookreviver.services.book import Book
 
 
 class JobService:
     """Reads and cancels jobs, and opens the event stream of a book, for the account that owns the book."""
 
-    def __init__(self, *, board: JobBoard, stream: EventStream, sources: SourceStore) -> None:
+    def __init__(self, *, board: JobBoard, stream: EventStream) -> None:
         """Build the service over the ports of one request.
 
         :param board: Board holding the jobs of every book.
         :type board: JobBoard
         :param stream: Source of the book's events.
         :type stream: EventStream
-        :param sources: Store of the uploads, which holds the files of an import that is cancelled before it begins.
-        :type sources: SourceStore
         """
         self._board = board
         self._stream = stream
-        self._sources = sources
 
     async def get(self, book: Book, job_id: JobId) -> Job:
         """Return a job of the book.
@@ -98,7 +94,7 @@ class JobService:
         await self.get(book, job_id)
         cancelled = await self._board.cancel(job_id)
         if cancelled.kind is JobKind.IMPORT_SOURCE and cancelled.started_at is None:
-            await self._sources.discard(cancelled.book_id, cancelled.id)
+            await book.sources.discard(cancelled.id)
         return cancelled
 
     async def events(self, book: Book) -> AbstractAsyncContextManager[AsyncIterator[DomainEvent]]:
