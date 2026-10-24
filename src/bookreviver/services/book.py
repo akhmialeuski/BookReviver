@@ -7,16 +7,16 @@ the book of its job in the same way. A use case reads the book through ``read``,
 asks ``version`` and ``snapshot`` for its version and a copy of its store, and names no identifier of a book to any
 transaction.
 
-The use cases of one open book are methods of the book: its overview, the change of its description and settings, and
-the sums and rows of its stages. ``BookTools`` holds what every book of a request works with besides its own database,
-so the books service hands the same tools to every book it opens.
+The use cases of one open book are methods of the book: its overview, the change of its description and settings, the
+sums and rows of its stages, and its archive. ``BookTools`` holds what every book of a request works with besides its
+own database, so the books service hands the same tools to every book it opens.
 """
 
 from typing import TYPE_CHECKING
 
 from attrs import evolve, field, frozen
 
-from bookreviver.domain.values import Slice
+from bookreviver.domain.values import ArchivedBook, Slice
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import SliceRequest
     from bookreviver.ports.persistence import BookDatabase, BookRepositories
     from bookreviver.ports.runtime import Clock
+    from bookreviver.ports.storage import BookArchive
     from bookreviver.services.stage_summaries import StageSummaries
 
 
@@ -38,10 +39,12 @@ class BookTools:
 
     :ivar stages: Sums of the stages of a book, which give the book its progress and its stage rows.
     :ivar clock: Clock setting the time a book was last changed.
+    :ivar archive: Archive of a whole book, which packs a book and unpacks one as a new book.
     """
 
     stages: StageSummaries
     clock: Clock
+    archive: BookArchive
 
 
 @frozen
@@ -179,3 +182,18 @@ class Book:
         :raises NotFoundError: If no recipe of the stage has the step.
         """
         return await self.read(lambda repos: self.tools.stages.rows(repos, stage, request, step_id))
+
+    async def export(self) -> ArchivedBook:
+        """Return the archive of the book, which another instance imports as a book of its own.
+
+        The database is copied first, as one committed state, and the files after it. A file is written once and never
+        replaced, so every file the copy names is on the disk when the archive reads it, unless the book is deleted or
+        a source of it removed while the archive is read.
+
+        :returns: The title of the book and the stream of its archive.
+        :rtype: ArchivedBook
+        :raises NotFoundError: If the book is not stored.
+        """
+        book_record = await self.read(lambda repos: repos.book_record.get(self.id))
+        database = await self.snapshot()
+        return ArchivedBook(title=book_record.details.title, pieces=self.tools.archive.export(self.id, database))

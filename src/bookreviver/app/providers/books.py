@@ -50,32 +50,32 @@ class BooksProvider(Provider):
         return BookFreshness(board=board)
 
     @provide(scope=Scope.APP)
-    def book_files(self, sources: SourceStore, assets: AssetStore, archive: BookArchive) -> BookStores:
-        """Gather the stores whose files go when a book is deleted, and the archive of a whole book.
+    def book_files(self, sources: SourceStore, assets: AssetStore) -> BookStores:
+        """Gather the stores whose files go when a book is deleted.
 
         :param sources: Source store of the application.
         :type sources: SourceStore
         :param assets: Asset store of the application.
         :type assets: AssetStore
-        :param archive: Archive of a whole book.
-        :type archive: BookArchive
         :returns: The stores of the files of a book.
         :rtype: BookStores
         """
-        return BookStores(sources=sources, assets=assets, archive=archive)
+        return BookStores(sources=sources, assets=assets)
 
     @provide
-    def book_tools(self, stages: StageSummaries, clock: Clock) -> BookTools:
+    def book_tools(self, stages: StageSummaries, clock: Clock, archive: BookArchive) -> BookTools:
         """Gather what every book a request opens works with besides its own database.
 
         :param stages: Sums of the stages of books of the request.
         :type stages: StageSummaries
         :param clock: Clock of the application.
         :type clock: Clock
+        :param archive: Archive of a whole book.
+        :type archive: BookArchive
         :returns: The tools of the books of the request.
         :rtype: BookTools
         """
-        return BookTools(stages=stages, clock=clock)
+        return BookTools(stages=stages, clock=clock, archive=archive)
 
     @provide
     def books(self, uow: UnitOfWork, databases: BookDatabases, tools: BookTools, files: BookStores) -> BooksService:

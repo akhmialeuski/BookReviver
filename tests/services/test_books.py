@@ -17,7 +17,7 @@ from bookreviver.domain.values import BookDetails, Slice, SliceRequest
 from bookreviver.services.book import BookTools
 from bookreviver.services.books import BooksService, BookStores
 from bookreviver.services.stage_summaries import StageSummaries
-from tests.helpers.builders import EPOCH, make_page, make_record, new_account_id, open_for
+from tests.helpers.builders import EPOCH, make_page, make_record, new_account_id
 from tests.helpers.clock import FixedClock
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.fake_processing import FakeCatalogue
@@ -70,8 +70,8 @@ def _service(
     return BooksService(
         uow=uow,
         databases=databases,
-        tools=BookTools(stages=stages, clock=clock),
-        files=BookStores(sources=sources, assets=assets, archive=LocalBookArchive(root=root)),
+        tools=BookTools(stages=stages, clock=clock, archive=LocalBookArchive(root=root)),
+        files=BookStores(sources=sources, assets=assets),
     )
 
 
@@ -416,26 +416,22 @@ async def _listed(service: BooksService, uow: UnitOfWork, actor: Actor) -> Slice
     return Slice(items=[await book.overview() for book in books], total=len(books))
 
 
-async def _archive(service: BooksService, actor: Actor, book_id: BookId, *, databases: BookDatabases) -> io.BytesIO:
-    """Read the whole archive of a book the actor owns, as the browser downloads it.
+async def _archive(service: BooksService, book_id: BookId) -> io.BytesIO:
+    """Read the whole archive of a book, opened by the service with its archive, as the browser downloads it.
 
     :param service: The book service of the request.
     :type service: BooksService
-    :param actor: Account the service acts for.
-    :type actor: Actor
     :param book_id: The book.
     :type book_id: BookId
-    :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
     :returns: The archive, ready to be read from its start.
     :rtype: io.BytesIO
     """
-    archived = await service.export(open_for(actor, book_id, databases=databases))
+    archived = await (await service.open(book_id)).export()
     return io.BytesIO(b''.join([piece async for piece in archived.pieces]))
 
 
 class TestExportAndImport:
-    """Tests for BooksService.export() and import_archive(), which carry a book from one instance to another."""
+    """Tests for Book.export() and BooksService.import_archive(), which carry a book from one instance to another."""
 
     async def test_an_imported_book_is_a_new_book_of_the_actor_with_the_pages_and_files_of_the_archive(
         self,
@@ -461,7 +457,7 @@ class TestExportAndImport:
         book_record, page = make_record(), make_page()
         await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
         await fx_files.store(book_record.id, page)
-        archive = await _archive(fx_service(), fx_actor, book_record.id, databases=fx_databases())
+        archive = await _archive(fx_service(), book_record.id)
 
         imported = await fx_service().import_archive(fx_actor, archive)
 

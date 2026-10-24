@@ -1,17 +1,13 @@
 """A books service for the tests of the services that open the book of their job through it."""
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from bookreviver.adapters.storage import LocalAssetStore, LocalBookArchive, LocalSourceStore
+from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.services.books import BooksService, BookStores
-from tests.helpers.builders import make_book_tools
+from tests.helpers.builders import UNUSED_ROOT, make_book_tools
 
 if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookDatabases, UnitOfWork
-
-# A storage root no test reads, since opening a book touches no file
-UNUSED_ROOT: Path = Path('unused-storage-root')
 
 
 def make_books_service(uow: UnitOfWork, *, databases: BookDatabases) -> BooksService:
@@ -34,6 +30,5 @@ def make_books_service(uow: UnitOfWork, *, databases: BookDatabases) -> BooksSer
         files=BookStores(
             sources=LocalSourceStore(root=UNUSED_ROOT),
             assets=LocalAssetStore(root=UNUSED_ROOT),
-            archive=LocalBookArchive(root=UNUSED_ROOT),
         ),
     )

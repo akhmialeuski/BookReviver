@@ -157,10 +157,7 @@ async def update_book(
     response_class=StreamingResponse,
     responses={status.HTTP_200_OK: {'content': {ARCHIVE_MEDIA_TYPE: {}}, 'description': 'The archive of the book'}},
 )
-async def export_book(
-    book: Annotated[Book, Depends(open_book)],
-    books: FromDishka[BooksService],
-) -> StreamingResponse:
+async def export_book(book: Annotated[Book, Depends(open_book)]) -> StreamingResponse:
     """Download the archive of a book, which another instance imports as a book of its own.
 
     The archive is a ZIP file of the database of the book and every file of its sources and derived files, streamed as
@@ -169,12 +166,10 @@ async def export_book(
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
-    :param books: Books service of the request.
-    :type books: BooksService
     :returns: The stream of the archive.
     :rtype: StreamingResponse
     """
-    archived = await books.export(book)
+    archived = await book.export()
     disposition = ARCHIVE_DISPOSITION.format(title=quote(archived.title, safe=''))
     return StreamingResponse(
         archived.pieces, media_type=ARCHIVE_MEDIA_TYPE, headers={CONTENT_DISPOSITION_HEADER: disposition}

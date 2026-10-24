@@ -1,8 +1,8 @@
-"""Use cases of the set of books: opening, creating, exporting, importing and deleting them.
+"""Use cases of the set of books: opening, creating, importing and deleting them.
 
-What reads or changes one open book, such as its overview or its description, is a method of ``Book``. A use case
-works on the ``Book`` objects it is given and checks no owner: the access dependencies of the API open a book of the
-signed-in account, and they choose the books of a list. The lookups ``book_page`` and ``book_pages`` are
+What reads or changes one open book, such as its overview, its description or its archive, is a method of ``Book``.
+A use case works on the ``Book`` objects it is given and checks no owner: the access dependencies of the API open a
+book of the signed-in account, and they choose the books of a list. The lookups ``book_page`` and ``book_pages`` are
 synchronous functions over repositories: the work of ``Book.read`` or ``Book.change`` calls them with the repositories
 it receives, and a caller outside a transaction wraps the call in ``Book.read``. ``open`` opens the book of an
 identifier with its database, which the jobs use, and ``book`` does the same for a library entry that is already read,
@@ -23,7 +23,7 @@ from attrs import frozen
 
 from bookreviver.domain.entities import BookRecord, LibraryEntry
 from bookreviver.domain.ids import BookId
-from bookreviver.domain.values import ArchivedBook, SliceRequest
+from bookreviver.domain.values import SliceRequest
 from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, BookOverview, Page
     from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import BookDatabases, PageRepository, UnitOfWork
-    from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
+    from bookreviver.ports.storage import AssetStore, SourceStore
     from bookreviver.services.book import BookTools
 
 # How many pages are read from the book at a time, when a use case needs all of them
@@ -58,16 +58,14 @@ def book_pages(pages: PageRepository) -> list[Page]:
 
 @frozen(kw_only=True)
 class BookStores:
-    """The stores of the files of a book, emptied when the book is deleted, and the archive that carries them all.
+    """The stores of the files of a book, emptied when the book is deleted.
 
     :ivar sources: Store of the uploaded sources.
     :ivar assets: Store of the derived files.
-    :ivar archive: Archive of a whole book, which packs a book and unpacks one as a new book.
     """
 
     sources: SourceStore
     assets: AssetStore
-    archive: BookArchive
 
 
 class BooksService:
@@ -88,7 +86,8 @@ class BooksService:
         :type uow: UnitOfWork
         :param databases: Opens the database of a book, which runs the transactions of that book.
         :type databases: BookDatabases
-        :param tools: What every book the service opens works with, whose clock also sets the creation times.
+        :param tools: What every book the service opens works with, whose clock also sets the creation times and whose
+                  archive also unpacks the imported books.
         :type tools: BookTools
         :param files: Stores of the source files and the derived files, emptied when a book is deleted.
         :type files: BookStores
@@ -149,22 +148,6 @@ class BooksService:
         await self._uow.change(lambda repos: repos.library.add(entry))
         return await self.book(entry).overview()
 
-    async def export(self, book: Book) -> ArchivedBook:
-        """Return the archive of the book, which another instance imports as a book of its own.
-
-        The database is copied first, as one committed state, and the files after it. A file is written once and never
-        replaced, so every file the copy names is on the disk when the archive reads it, unless the book is deleted or
-        a source of it removed while the archive is read.
-
-        :param book: The open book.
-        :type book: Book
-        :returns: The title of the book and the stream of its archive.
-        :rtype: ArchivedBook
-        """
-        book_record = await book.read(lambda repos: repos.book_record.get(book.id))
-        database = await book.snapshot()
-        return ArchivedBook(title=book_record.details.title, pieces=self._files.archive.export(book.id, database))
-
     async def import_archive(self, owner: Actor, archive: BinaryIO) -> BookOverview:
         """Take the archive of a book in as a new book of an account, under a new identifier.
 
@@ -183,7 +166,7 @@ class BooksService:
         """
         book_id = BookId(uuid4())
         try:
-            await self._files.archive.unpack(book_id, archive)
+            await self._tools.archive.unpack(book_id, archive)
             await self._uow.adopt_book(book_id)
         except Exception:
             await self._erase(book_id)

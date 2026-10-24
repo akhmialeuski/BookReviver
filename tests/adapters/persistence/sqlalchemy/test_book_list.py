@@ -101,10 +101,12 @@ async def _statements_of_list(stores: BookOpener, board: JobBoard, owner_id: Acc
     service = BooksService(
         uow=uow,
         databases=stores.databases,
-        tools=BookTools(stages=StageSummaries(catalogue=FakeCatalogue([]), board=board), clock=FixedClock(EPOCH)),
-        files=BookStores(
-            sources=LocalSourceStore(root=root), assets=LocalAssetStore(root=root), archive=LocalBookArchive(root=root)
+        tools=BookTools(
+            stages=StageSummaries(catalogue=FakeCatalogue([]), board=board),
+            clock=FixedClock(EPOCH),
+            archive=LocalBookArchive(root=root),
         ),
+        files=BookStores(sources=LocalSourceStore(root=root), assets=LocalAssetStore(root=root)),
     )
     request = SliceRequest(limit=window)
     entries = await uow.read(lambda repos: repos.library.list_for_owner(owner_id, request))
