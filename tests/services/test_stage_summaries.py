@@ -209,7 +209,7 @@ async def summaries_of(kit: ProcessingKit, book_id: BookId) -> dict[Stage, Stage
 
 
 class TestOfBook:
-    """Tests for StageSummaries.of_book."""
+    """Tests for StageSummaries.stages."""
 
     async def test_every_stage_is_summed_in_the_order_of_the_pipeline(self, fx_kit: ProcessingKit) -> None:
         """Verify there are ten summaries in pipeline order, and a stage with no processor installed is not available.
@@ -499,7 +499,7 @@ class TestRows:
 
 
 class TestWithProgress:
-    """Tests for StageSummaries.with_progress."""
+    """Tests for StageSummaries.overview."""
 
     async def test_the_progress_of_a_book_follows_its_stages(self, fx_kit: ProcessingKit) -> None:
         """Verify an imported book with a finished split has the geometry as its next stage.

@@ -30,7 +30,6 @@ from tests.helpers.books import IMAGE
 from tests.helpers.builders import (
     EPOCH,
     directory_of,
-    make_book_tools,
     make_page,
     make_scan,
     make_source,
@@ -93,7 +92,6 @@ class Rig:
             new_account_id(),
             database=Mock(spec=BookDatabase),
             directory=files.directory(directory_of(book_id)),
-            tools=make_book_tools(),
         )
         self.assets = self.book.assets
         self.tiler = FakeTiler()

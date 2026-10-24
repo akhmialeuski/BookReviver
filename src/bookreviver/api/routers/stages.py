@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Annotated
 
-from dishka.integrations.fastapi import DishkaRoute
+from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi_pagination import Page, Params
 
@@ -20,6 +20,7 @@ from bookreviver.api.schemas.stages import StagePageSchema, StageSummarySchema
 from bookreviver.domain.ids import StepId
 from bookreviver.domain.stage_summaries import StageRow, StageSummary
 from bookreviver.services.book import Book
+from bookreviver.services.stage_summaries import StageSummaries
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ router = APIRouter(prefix='/books', tags=['stages'], route_class=DishkaRoute, de
 async def list_stages(
     book: Annotated[Book, Depends(open_book)],
     params: Annotated[Params, Depends()],
+    stages: FromDishka[StageSummaries],
 ) -> Page[StageSummarySchema]:
     """List the stages of a book in the order of the pipeline, each summed over the pages of the book.
 
@@ -50,11 +52,13 @@ async def list_stages(
     :type book: Book
     :param params: Page number and size from the query; the ten stages fit one page of the default size.
     :type params: Params
+    :param stages: Stage summaries of the request.
+    :type stages: StageSummaries
     :returns: One page of the stages.
     :rtype: Page[StageSummarySchema]
     """
     pager = Pager[StageSummary, StageSummarySchema](params, StageSummarySchema.model_validate)
-    return pager.page(await book.stages(pager.request))
+    return pager.page(await stages.stages(book, pager.request))
 
 
 @router.get('/{book_id}/stages/{stage}/pages')
@@ -62,6 +66,7 @@ async def list_stage_pages(
     book: Annotated[Book, Depends(open_book)],
     address: Annotated[StageRowsPath, Depends()],
     params: Annotated[ManifestParams, Depends()],
+    stages: FromDishka[StageSummaries],
     step: Annotated[StepId | None, Query(description='A step of a recipe of the stage to place every page at')] = None,
 ) -> ManifestPage[StagePageSchema]:
     """List the pages of a book in book order, each with where it stands in a stage and the version that is its result.
@@ -80,6 +85,8 @@ async def list_stage_pages(
     :type address: StageRowsPath
     :param params: Page number and size from the query, the size up to a thousand.
     :type params: ManifestParams
+    :param stages: Stage summaries of the request.
+    :type stages: StageSummaries
     :param step: The step to place every page at, or None for the rows of the stage alone.
     :type step: StepId | None
     :returns: One page of the rows of the stage.
@@ -87,4 +94,4 @@ async def list_stage_pages(
     """
     to_schema = partial(StagePageSchema.of, book_id=book.id, request=address.request)
     pager = Pager[StageRow, StagePageSchema](params, to_schema)
-    return pager.page(await book.stage_pages(address.stage, pager.request, step))
+    return pager.page(await stages.rows(book, address.stage, pager.request, step))

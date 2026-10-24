@@ -1,13 +1,18 @@
-"""Tests for the use cases of one open book: its overview and the change of its description and settings."""
+"""Tests for the use cases of one open book: the change of its description and settings, and its overview."""
 
 from typing import TYPE_CHECKING
 
 import pytest
 from attrs import evolve
 
+from bookreviver.adapters.events.broadcast import InProcessEventBus
 from bookreviver.domain.changes import BookChanges
 from bookreviver.domain.enums import ImagePolicy
-from tests.helpers.builders import make_page, make_record, make_scan, make_source
+from bookreviver.services.stage_summaries import StageSummaries
+from tests.helpers.builders import EVENT_QUEUE_SIZE, make_page, make_record, make_scan, make_source
+from tests.helpers.fake_board import FakeJobBoard
+from tests.helpers.fake_processing import FakeCatalogue
+from tests.helpers.scripted_runner import ScriptedRunner
 from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
@@ -20,8 +25,18 @@ pytestmark = pytest.mark.anyio
 PAGE_COUNT: int = 2
 
 
+def _stages() -> StageSummaries:
+    """Build the stage sums over a catalogue with no processors and a board with no jobs.
+
+    :returns: The stage summaries.
+    :rtype: StageSummaries
+    """
+    board = FakeJobBoard(runner=ScriptedRunner(), publisher=InProcessEventBus(queue_size=EVENT_QUEUE_SIZE))
+    return StageSummaries(catalogue=FakeCatalogue([]), board=board)
+
+
 class TestOverview:
-    """Tests for Book.overview()."""
+    """Tests for StageSummaries.overview() of a book."""
 
     async def test_returns_the_book_with_the_counts_of_its_book(
         self, fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_open_book: BookOpener
@@ -51,7 +66,7 @@ class TestOverview:
             databases=fx_open_book.databases,
         )
 
-        overview = await fx_open_book(fx_actor, book_id).overview()
+        overview = await _stages().overview(fx_open_book(fx_actor, book_id))
 
         assert (overview.book_record, overview.page_count, overview.source_count, overview.scan_count) == (
             book_record,
@@ -78,6 +93,8 @@ class TestUpdate:
         """
         book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_open_book.databases)
 
-        changed = await fx_open_book(fx_actor, book_id).update(BookChanges(image_policy=ImagePolicy.LOSSLESS))
+        book = fx_open_book(fx_actor, book_id)
 
-        assert changed.book_record.image_policy == ImagePolicy.LOSSLESS
+        await book.update(BookChanges(image_policy=ImagePolicy.LOSSLESS))
+
+        assert (await _stages().overview(book)).book_record.image_policy == ImagePolicy.LOSSLESS

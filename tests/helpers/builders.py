@@ -7,7 +7,6 @@ from uuid import UUID, uuid4
 
 from attrs import frozen
 
-from bookreviver.adapters.events.broadcast import InProcessEventBus
 from bookreviver.domain.entities import (
     BookPlace,
     BookRecord,
@@ -68,11 +67,7 @@ from bookreviver.domain.ids import (
     SourceId,
     StepId,
 )
-from bookreviver.services.book import Book, BookTools
-from bookreviver.services.stage_summaries import StageSummaries
-from tests.helpers.fake_board import FakeJobBoard
-from tests.helpers.fake_processing import FakeCatalogue
-from tests.helpers.scripted_runner import ScriptedRunner
+from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor
@@ -233,7 +228,7 @@ def open_for(actor: Actor, book_id: BookId, *, databases: BookDatabases, files: 
     :type databases: BookDatabases
     :param files: The directories of the books, which hold the directory of the book.
     :type files: BookDirectories
-    :returns: The open book, with the tools of ``make_book_tools``.
+    :returns: The open book.
     :rtype: Book
     """
     directory = files.directory(directory_of(book_id))
@@ -242,20 +237,7 @@ def open_for(actor: Actor, book_id: BookId, *, databases: BookDatabases, files: 
         actor.account_id,
         database=databases.open(book_id, directory.database),
         directory=directory,
-        tools=make_book_tools(),
     )
-
-
-def make_book_tools() -> BookTools:
-    """Build the tools of an open book for a test that does not look at them: no processor and no running job.
-
-    A test of the progress or the stages of a book builds its own, with the processors and the board it needs.
-
-    :returns: Stage sums over an empty catalogue and an empty board.
-    :rtype: BookTools
-    """
-    board = FakeJobBoard(runner=ScriptedRunner(), publisher=InProcessEventBus(queue_size=EVENT_QUEUE_SIZE))
-    return BookTools(stages=StageSummaries(catalogue=FakeCatalogue([]), board=board))
 
 
 def make_book_change(*, book_id: BookId, version: int = 1) -> BookChanged:

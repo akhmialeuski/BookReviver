@@ -60,7 +60,8 @@ npm --prefix frontend run e2e            # builds, then Playwright against a rea
   pydantic-ai, PyMuPDF, Pillow, pyvips or OpenCV. `api`, `adapters` and `plugins` never import each other. Adapter families never import each other. `import-linter` in the gate enforces
   all of this, and a contract failure is fixed by moving code, never by editing the contract.
 - A route validates input, calls one method of a service or of the `Book` it was given, and returns a typed response
-  built from what it got back, reading the overview of a `Book` with `Book.overview`: the resource schema, or
+  built from what it got back, reading the overview and the stages of a `Book` from `StageSummaries`, which it gets
+  with `FromDishka[StageSummaries]` and calls with the `Book`: the resource schema, or
   fastapi-pagination's `Page[T]` for a collection. Every error is an RFC 9457 problem from fastapi-problem, mapped from
   domain errors in the one handler registered in `app`.
 - Who may work on what is decided only by the FastAPI dependencies of `api/access.py`. `open_book` and `open_profile`

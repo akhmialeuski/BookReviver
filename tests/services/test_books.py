@@ -16,7 +16,6 @@ from bookreviver.domain.errors import DomainError, NotFoundError
 from bookreviver.domain.ids import StorageKey
 from bookreviver.domain.keys import BookKeys, KeySegment
 from bookreviver.domain.values import PageStepKey, Slice, SliceRequest
-from bookreviver.services.book import BookTools
 from bookreviver.services.books import BooksService
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import (
@@ -59,8 +58,18 @@ FILE_CONTENT: bytes = b'derived file'
 MASK_CONTENT: bytes = b'mask of the edit'
 
 
+def _stages() -> StageSummaries:
+    """Build the stage sums over a catalogue with no processors and a board with no jobs.
+
+    :returns: The stage summaries.
+    :rtype: StageSummaries
+    """
+    board = FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus())
+    return StageSummaries(catalogue=FakeCatalogue([]), board=board)
+
+
 def _service(uow: UnitOfWork, stores: SharedBookDirectories, *, databases: LocatedBookDatabases) -> BooksService:
-    """Build the book service for one request, over a unit of work, a catalogue with no processors and no jobs.
+    """Build the book service for one request, over a unit of work.
 
     :param uow: Unit of work of the request.
     :type uow: UnitOfWork
@@ -71,9 +80,7 @@ def _service(uow: UnitOfWork, stores: SharedBookDirectories, *, databases: Locat
     :returns: The service.
     :rtype: BooksService
     """
-    board = FakeJobBoard(runner=ScriptedRunner(), publisher=RecordingEventBus())
-    stages = StageSummaries(catalogue=FakeCatalogue([]), board=board)
-    return BooksService(uow=uow, databases=databases, directories=stores, tools=BookTools(stages=stages))
+    return BooksService(uow=uow, databases=databases, directories=stores)
 
 
 @pytest.fixture
@@ -493,7 +500,8 @@ async def _listed(service: BooksService, uow: UnitOfWork, actor: Actor) -> Slice
     :rtype: Slice[BookOverview]
     """
     books = await books_of(uow, service, actor.account_id)
-    return Slice(items=[await book.overview() for book in books], total=len(books))
+    stages = _stages()
+    return Slice(items=[await stages.overview(book) for book in books], total=len(books))
 
 
 async def _archive(service: BooksService, book_id: BookId) -> io.BytesIO:
@@ -539,7 +547,7 @@ class TestExportAndImport:
         await fx_files.store(book_id, page)
         archive = await _archive(fx_service(), book_id)
 
-        imported = await (await fx_service().import_archive(fx_actor, archive)).overview()
+        imported = await _stages().overview(await fx_service().import_archive(fx_actor, archive))
 
         copy_id = imported.book_id
         pages = await fx_databases().open(copy_id).read(lambda repos: repos.pages.list_window(SliceRequest()).items)

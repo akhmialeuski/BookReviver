@@ -2,12 +2,15 @@
 
 from typing import TYPE_CHECKING
 
+from bookreviver.domain.values import SliceRequest
+from tests.helpers.processing import open_book
+
 if TYPE_CHECKING:
     from bookreviver.domain.entities import BookOverview
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import BookId, StepId
     from bookreviver.domain.stage_summaries import StageRow, StageSummary
-    from bookreviver.domain.values import Slice, SliceRequest
+    from bookreviver.domain.values import Slice
     from tests.helpers.processing import ProcessingKit
 
 
@@ -30,12 +33,11 @@ async def stage_rows(
     :rtype: Slice[StageRow]
     :raises NotFoundError: If no recipe of the stage has the step.
     """
-    stages = kit.stages()
-    return await kit.databases.open(book_id).read(lambda repos: stages.rows(repos, stage, request, step_id))
+    return await kit.stages().rows(await open_book(kit, book_id), stage, request, step_id)
 
 
 async def book_summaries(kit: ProcessingKit, book_id: BookId) -> list[StageSummary]:
-    """Sum every stage of a book, as ``StageSummaries.of_book`` does.
+    """Sum every stage of a book, as ``StageSummaries.stages`` does.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
@@ -44,14 +46,11 @@ async def book_summaries(kit: ProcessingKit, book_id: BookId) -> list[StageSumma
     :returns: One summary for each stage, in the order of the pipeline.
     :rtype: list[StageSummary]
     """
-    stages = kit.stages()
-    return await kit.databases.open(book_id).read(
-        lambda repos: stages.of_book(repos, repos.book_record.overview(book_id))
-    )
+    return list((await kit.stages().stages(await open_book(kit, book_id), SliceRequest())).items)
 
 
 async def books_with_progress(kit: ProcessingKit, *books: BookId) -> list[BookOverview]:
-    """Read the overviews of some books with their progress, as ``StageSummaries.with_progress`` gives them.
+    """Read the overviews of some books with their progress, as ``StageSummaries.overview`` gives them.
 
     :param kit: What the processing services of the test share.
     :type kit: ProcessingKit
@@ -70,8 +69,6 @@ async def books_with_progress(kit: ProcessingKit, *books: BookId) -> list[BookOv
         :returns: The overview with the progress.
         :rtype: BookOverview
         """
-        return await kit.databases.open(book_id).read(
-            lambda repos: stages.with_progress(repos, repos.book_record.overview(book_id))
-        )
+        return await stages.overview(await open_book(kit, book_id))
 
     return [await overview_of(book_id) for book_id in books]

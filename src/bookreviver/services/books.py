@@ -1,6 +1,6 @@
 """Use cases of the set of books: opening, creating, importing and deleting them.
 
-What reads or changes one open book, such as its overview, its description or its archive, is a method of ``Book``.
+What reads or changes one open book, such as its description or its archive, is a method of ``Book``.
 A use case works on the ``Book`` objects it is given and checks no owner: the access dependencies of the API open a
 book of the signed-in account, and they choose the books of a list. The lookups ``book_page`` and ``book_pages`` are
 synchronous functions over repositories: the work of ``Book.read`` or ``Book.change`` calls them with the repositories
@@ -38,7 +38,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import BookDatabases, PageRepository, UnitOfWork
     from bookreviver.ports.storage import BookDirectories
-    from bookreviver.services.book import BookTools
 
 # How many pages are read from the book at a time, when a use case needs all of them
 PAGE_WINDOW: int = 1_000
@@ -69,7 +68,6 @@ class BooksService:
         uow: UnitOfWork,
         databases: BookDatabases,
         directories: BookDirectories,
-        tools: BookTools,
     ) -> None:
         """Work over the ports of one request.
 
@@ -80,13 +78,10 @@ class BooksService:
         :type databases: BookDatabases
         :param directories: The directories of the books, which make, unpack and open the directory of a book.
         :type directories: BookDirectories
-        :param tools: What every book the service opens works with.
-        :type tools: BookTools
         """
         self._uow = uow
         self._databases = databases
         self._directories = directories
-        self._tools = tools
 
     def book(self, entry: LibraryEntry) -> Book:
         """Open the book a library entry names with its database, without reading anything.
@@ -102,7 +97,6 @@ class BooksService:
             entry.owner_id,
             database=self._databases.open(entry.book_id, directory.database),
             directory=directory,
-            tools=self._tools,
         )
 
     async def open(self, book_id: BookId) -> Book:

@@ -9,7 +9,6 @@ from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.ports.runtime import EventPublisher, JobBoard
 from bookreviver.ports.storage import BookDirectories
 from bookreviver.services.base_versions import BaseVersions
-from bookreviver.services.book import BookTools
 from bookreviver.services.books import BooksService
 from bookreviver.services.freshness import BookFreshness
 from bookreviver.services.pages import PageImaging, PageRuntime, PageService
@@ -50,20 +49,7 @@ class BooksProvider(Provider):
         return BookFreshness(board=board)
 
     @provide
-    def book_tools(self, stages: StageSummaries) -> BookTools:
-        """Gather what every book a request opens works with besides its own database and directory.
-
-        :param stages: Sums of the stages of books of the request.
-        :type stages: StageSummaries
-        :returns: The tools of the books of the request.
-        :rtype: BookTools
-        """
-        return BookTools(stages=stages)
-
-    @provide
-    def books(
-        self, uow: UnitOfWork, databases: BookDatabases, directories: BookDirectories, tools: BookTools
-    ) -> BooksService:
+    def books(self, uow: UnitOfWork, databases: BookDatabases, directories: BookDirectories) -> BooksService:
         """Build the books service over the request's unit of work, book databases and book directories.
 
         :param uow: Unit of work of the current request, which runs the transactions of the catalogue.
@@ -72,12 +58,10 @@ class BooksProvider(Provider):
         :type databases: BookDatabases
         :param directories: The directories of the books.
         :type directories: BookDirectories
-        :param tools: What every book the service opens works with.
-        :type tools: BookTools
         :returns: The books service of the request.
         :rtype: BooksService
         """
-        return BooksService(uow=uow, databases=databases, directories=directories, tools=tools)
+        return BooksService(uow=uow, databases=databases, directories=directories)
 
     @provide(scope=Scope.APP)
     def page_runtime(self, publisher: EventPublisher, order_keys: OrderKeys, board: JobBoard) -> PageRuntime:

@@ -7,8 +7,8 @@ no page has a record of is counted as not run, since the records are written whe
 
 A stage is available when it is done by hand or a processor of it is installed, so a stage turns from soon to
 available the day the first plugin of it is installed, with no change here. The class does not check who owns a
-book: the books service does that through the library. Every method reads, synchronously, through the
-repositories of the book of the transaction its caller runs in, which is the work of ``Book.read``.
+book: the books service does that through the library. Every method reads through one read transaction of the
+``Book`` it is given.
 """
 
 from collections import defaultdict
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import JobBoard
+    from bookreviver.services.book import Book
 
 
 class StageSummaries:
@@ -50,37 +51,79 @@ class StageSummaries:
         self._catalogue = catalogue
         self._board = board
 
-    def of_book(self, repos: BookRepositories, overview: BookOverview) -> list[StageSummary]:
-        """Sum every stage of a book, in the order of the pipeline.
+    async def overview(self, book: Book) -> BookOverview:
+        """Return a book with its counts and progress.
 
-        :param repos: Repositories of the transaction the caller runs in, which are only read.
-        :type repos: BookRepositories
-        :param overview: The book with the number of its pages that have an image.
-        :type overview: BookOverview
-        :returns: One summary for each stage, with the recipe of each kind of page when the stage has them.
-        :rtype: list[StageSummary]
+        A stage is running while a job that runs it is queued or running.
+
+        :param book: The book to read.
+        :type book: Book
+        :returns: The book with its counts and progress.
+        :rtype: BookOverview
+        :raises NotFoundError: If the book is not stored.
         """
-        tallies = {tally.stage: tally for tally in repos.page_stages.tally()}
-        recipes: defaultdict[Stage, list[Recipe]] = defaultdict(list)
-        for recipe in repos.recipes.list_all():
-            recipes[recipe.stage].append(recipe)
-        kinds = repos.pages.kind_tally()
-        stopped: defaultdict[Stage, list[StepTally]] = defaultdict(list)
-        for step_tally in repos.page_stages.step_tally():
-            stopped[step_tally.stage].append(step_tally)
-        return self._summarize(overview, tallies, recipes, kinds, stopped)
 
-    def rows(
+        def work(repos: BookRepositories) -> BookOverview:
+            """Read the overview of the book and add the progress of its stages.
+
+            :param repos: Repositories of the transaction.
+            :type repos: BookRepositories
+            :returns: The overview with its progress.
+            :rtype: BookOverview
+            """
+            overview = repos.book_record.overview(book.id)
+            tallies = {tally.stage: tally for tally in repos.page_stages.tally()}
+            jobs = self._board.jobs_of({overview.book_id}, active=True)
+            running = {job.stage for job in jobs if job.stage is not None}
+            return evolve(overview, progress=BookProgress.of(self._summarize(overview, tallies, {}, {}, {}), running))
+
+        return await book.read(work)
+
+    async def stages(self, book: Book, request: SliceRequest) -> Slice[StageSummary]:
+        """Sum every stage of a book over its pages, in the order of the pipeline, and cut a window of them.
+
+        :param book: The book to read.
+        :type book: Book
+        :param request: Offset and limit of the window of stages.
+        :type request: SliceRequest
+        :returns: The window of the stages in the order of the pipeline, with the recipes of each kind of page when the
+                  stage has them, and the number of all the stages.
+        :rtype: Slice[StageSummary]
+        :raises NotFoundError: If the book is not stored.
+        """
+
+        def work(repos: BookRepositories) -> Slice[StageSummary]:
+            """Sum every stage of the book and cut the window the request asks for.
+
+            :param repos: Repositories of the transaction.
+            :type repos: BookRepositories
+            :returns: The window of the stages and the number of all the stages.
+            :rtype: Slice[StageSummary]
+            """
+            tallies = {tally.stage: tally for tally in repos.page_stages.tally()}
+            recipes: defaultdict[Stage, list[Recipe]] = defaultdict(list)
+            for recipe in repos.recipes.list_all():
+                recipes[recipe.stage].append(recipe)
+            kinds = repos.pages.kind_tally()
+            stopped: defaultdict[Stage, list[StepTally]] = defaultdict(list)
+            for step_tally in repos.page_stages.step_tally():
+                stopped[step_tally.stage].append(step_tally)
+            summaries = self._summarize(repos.book_record.overview(book.id), tallies, recipes, kinds, stopped)
+            return Slice(items=summaries[request.offset : request.offset + request.limit], total=len(summaries))
+
+        return await book.read(work)
+
+    async def rows(
         self,
-        repos: BookRepositories,
+        book: Book,
         stage: Stage,
         request: SliceRequest,
         step_id: StepId | None = None,
     ) -> Slice[StageRow]:
         """Give a window of the pages of a book, in book order, with where each stands in a stage.
 
-        :param repos: Repositories of the transaction the caller runs in, which are only read.
-        :type repos: BookRepositories
+        :param book: The book to read.
+        :type book: Book
         :param stage: The stage.
         :type stage: Stage
         :param request: Offset and limit of the window of pages.
@@ -92,50 +135,62 @@ class StageSummaries:
                   on the page and where its shape comes from. Every row has the picture that stands for the page at the
                   place asked for, whether the stage has run on the page or not.
         :rtype: Slice[StageRow]
-        :raises NotFoundError: If no recipe of the stage has the step.
+        :raises NotFoundError: If the book is not stored, or no recipe of the stage has the step.
         """
-        pages = repos.pages.list_window(request)
-        records = {
-            record.page_id: record
-            for record in repos.page_stages.list_for_pages([page.id for page in pages.items])
-            if record.stage is stage
-        }
-        head_ids = {record.head_version_id for record in records.values() if record.head_version_id is not None}
-        heads = {version.id: version for version in repos.page_versions.list_by_ids(head_ids)}
-        markers = self._markers(repos, heads.values())
-        steps = (
-            {}
-            if step_id is None
-            else StepRows(catalogue=self._catalogue, stage=stage, step_id=step_id).of(
-                repos, pages.items, records, heads
-            )
-        )
-        reads = StageInputs.of(repos, [page.id for page in pages.items], stage)
-        rows: list[StageRow] = []
-        for page in pages.items:
-            record = records.get(page.id)
-            head = None if record is None or record.head_version_id is None else heads.get(record.head_version_id)
-            step = steps.get(page.id)
-            # A page that has nothing of its own at the place asked for is drawn from what the stage reads
-            own = head if step is None else step.preceding
-            picture = reads.get(page.id) if own is None else own
-            if record is None:
-                rows.append(StageRow(page_id=page.id, kind=page.recipe_kind, step=step, picture=picture))
-                continue
-            rows.append(
-                StageRow(
-                    page_id=page.id,
-                    status=PageStageStatus.of(record.state),
-                    recipe_id=record.recipe_id,
-                    kind=page.recipe_kind,
-                    head_version=head,
-                    through_step=record.through_step,
-                    review_processor=None if head is None else markers.get(head.id),
-                    step=step,
-                    picture=picture,
+
+        def work(repos: BookRepositories) -> Slice[StageRow]:
+            """Place the pages of the window at the stage, and at the step when one is asked for.
+
+            :param repos: Repositories of the transaction.
+            :type repos: BookRepositories
+            :returns: The rows of the window and the number of pages of the book.
+            :rtype: Slice[StageRow]
+            :raises NotFoundError: If no recipe of the stage has the step.
+            """
+            pages = repos.pages.list_window(request)
+            records = {
+                record.page_id: record
+                for record in repos.page_stages.list_for_pages([page.id for page in pages.items])
+                if record.stage is stage
+            }
+            head_ids = {record.head_version_id for record in records.values() if record.head_version_id is not None}
+            heads = {version.id: version for version in repos.page_versions.list_by_ids(head_ids)}
+            markers = self._markers(repos, heads.values())
+            steps = (
+                {}
+                if step_id is None
+                else StepRows(catalogue=self._catalogue, stage=stage, step_id=step_id).of(
+                    repos, pages.items, records, heads
                 )
             )
-        return Slice(items=rows, total=pages.total)
+            reads = StageInputs.of(repos, [page.id for page in pages.items], stage)
+            rows: list[StageRow] = []
+            for page in pages.items:
+                record = records.get(page.id)
+                head = None if record is None or record.head_version_id is None else heads.get(record.head_version_id)
+                step = steps.get(page.id)
+                # A page that has nothing of its own at the place asked for is drawn from what the stage reads
+                own = head if step is None else step.preceding
+                picture = reads.get(page.id) if own is None else own
+                if record is None:
+                    rows.append(StageRow(page_id=page.id, kind=page.recipe_kind, step=step, picture=picture))
+                    continue
+                rows.append(
+                    StageRow(
+                        page_id=page.id,
+                        status=PageStageStatus.of(record.state),
+                        recipe_id=record.recipe_id,
+                        kind=page.recipe_kind,
+                        head_version=head,
+                        through_step=record.through_step,
+                        review_processor=None if head is None else markers.get(head.id),
+                        step=step,
+                        picture=picture,
+                    )
+                )
+            return Slice(items=rows, total=pages.total)
+
+        return await book.read(work)
 
     @staticmethod
     def _markers(repos: BookRepositories, heads: Collection[PageVersion]) -> dict[PageVersionId, str]:
@@ -172,23 +227,6 @@ class StageSummaries:
                     ahead[head_id] = earlier
             walking = ahead
         return markers
-
-    def with_progress(self, repos: BookRepositories, overview: BookOverview) -> BookOverview:
-        """Add the progress of a book to its overview.
-
-        A stage is running while a job that runs it is queued or running.
-
-        :param repos: Repositories of the transaction of the book the caller runs in, which are only read.
-        :type repos: BookRepositories
-        :param overview: The book with the number of its pages that have an image.
-        :type overview: BookOverview
-        :returns: The overview with its progress.
-        :rtype: BookOverview
-        """
-        tallies = {tally.stage: tally for tally in repos.page_stages.tally()}
-        jobs = self._board.jobs_of({overview.book_id}, active=True)
-        running = {job.stage for job in jobs if job.stage is not None}
-        return evolve(overview, progress=BookProgress.of(self._summarize(overview, tallies, {}, {}, {}), running))
 
     def _summarize(
         self,
