@@ -313,25 +313,23 @@ class ProcessingProvider(Provider):
     def run_impact_service(self, parts: ProcessingParts) -> RunImpactService:
         """Build the run impact service of a request.
 
-        :param parts: The parts the processing use cases share, of which the recipes and the clock are used.
+        :param parts: The parts the processing use cases share, of which the recipes are used.
         :type parts: ProcessingParts
         :returns: The run impact service.
         :rtype: RunImpactService
         """
-        return RunImpactService(recipes=parts.recipes, clock=parts.clock)
+        return RunImpactService(recipes=parts.recipes)
 
     @provide(scope=Scope.REQUEST)
-    def carry_over_service(self, parts: ProcessingParts, clock: Clock) -> CarryOverService:
+    def carry_over_service(self, parts: ProcessingParts) -> CarryOverService:
         """Build the carry-over service of a request.
 
         :param parts: The parts the processing use cases share, of which the stage records are used.
         :type parts: ProcessingParts
-        :param clock: Clock of the application.
-        :type clock: Clock
         :returns: The carry-over service.
         :rtype: CarryOverService
         """
-        return CarryOverService(records=parts.records, clock=clock)
+        return CarryOverService(records=parts.records)
 
     @provide(scope=Scope.REQUEST)
     def page_history_service(self, parts: ProcessingParts, clock: Clock) -> PageHistoryService:

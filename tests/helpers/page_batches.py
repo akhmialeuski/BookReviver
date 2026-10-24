@@ -27,7 +27,7 @@ def carry_over(kit: ProcessingKit) -> CarryOverService:
     :rtype: CarryOverService
     """
     uow = kit.uow()
-    return CarryOverService(records=kit.parts(uow).records, clock=kit.clock)
+    return CarryOverService(records=kit.parts(uow).records)
 
 
 def run_impact(kit: ProcessingKit) -> RunImpactService:
@@ -39,7 +39,7 @@ def run_impact(kit: ProcessingKit) -> RunImpactService:
     :rtype: RunImpactService
     """
     uow = kit.uow()
-    return RunImpactService(recipes=kit.parts(uow).recipes, clock=kit.clock)
+    return RunImpactService(recipes=kit.parts(uow).recipes)
 
 
 def _page_field(key: PageStepKey, name: str) -> ValueField:

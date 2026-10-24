@@ -14,6 +14,7 @@ A change of the pages or of a section is announced by the unit of work once it c
 pages and their labels again for it.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from attrs import evolve
@@ -29,19 +30,10 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.pagination import Numbering
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.runtime import Clock
 
 
 class PageLabels:
     """Settles the sections of a book in the transaction of its caller."""
-
-    def __init__(self, *, clock: Clock) -> None:
-        """Stamp the pages and sections with a clock.
-
-        :param clock: Clock stamping the pages and sections it writes.
-        :type clock: Clock
-        """
-        self._clock = clock
 
     def settle(
         self, repos: BookRepositories, *, leaving: Collection[PageId] = (), unpin: Collection[PageId] = ()
@@ -61,7 +53,7 @@ class PageLabels:
         :raises ConflictError: If a section cannot write a number, such as 4000 in Roman numerals.
         """
         if unpin:
-            moment = self._clock.now()
+            moment = datetime.now(UTC)
             pinned = [page for page in repos.pages.list_by_ids(unpin) if page.manual_label is not None]
             repos.pages.update_many([evolve(page, manual_label=None, updated_at=moment) for page in pinned])
         if not (sections := repos.pagination_sections.list_all()):
@@ -124,7 +116,7 @@ class PageLabels:
             heir = next(
                 (page for page in pages[position.get(section.first_page_id, 0) + 1 :] if page.id not in leaving), None
             )
-            moved = None if heir is None else evolve(section, first_page_id=heir.id, updated_at=self._clock.now())
+            moved = None if heir is None else evolve(section, first_page_id=heir.id, updated_at=datetime.now(UTC))
             if moved is None or any(moved.clashes_with(other) for other in settled):
                 repos.pagination_sections.delete(section.id)
             else:

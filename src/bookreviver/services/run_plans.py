@@ -11,6 +11,7 @@ before the first page is run. Every layer removed is a change of the history of 
 are one batch, so one undo gives the work back on every page.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from bookreviver.domain.enums import ChangeSource, PageOrigin, RunMode, StageState, VersionState
@@ -27,7 +28,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import PageId, PageVersionId, StepId
     from bookreviver.domain.values import StageRun
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.runtime import Clock
     from bookreviver.services.book import Book
     from bookreviver.services.recipes import RecipeBook
 
@@ -35,13 +35,11 @@ if TYPE_CHECKING:
 class RunPlan:
     """The pages of one run, the recipe of each, and what the mode of the run does to the work of the pages."""
 
-    def __init__(self, *, recipes: RecipeBook, clock: Clock, book: Book, run: StageRun) -> None:
+    def __init__(self, *, recipes: RecipeBook, book: Book, run: StageRun) -> None:
         """Plan one run over the ports of a request or a job.
 
         :param recipes: The recipes of the book, which supply the recipe of each page.
         :type recipes: RecipeBook
-        :param clock: Clock stamping the changes a mode writes.
-        :type clock: Clock
         :param book: The open book owning the pages, which the pages and the states are read from and the work of the
                      mode is written to.
         :type book: Book
@@ -49,7 +47,6 @@ class RunPlan:
         :type run: StageRun
         """
         self._recipes = recipes
-        self._clock = clock
         self._book = book
         self._run = run
         self._named_pages: Sequence[Page] | None = None
@@ -132,7 +129,7 @@ class RunPlan:
             :returns: The changes written, one for each layer removed.
             :rtype: Sequence[PageHistoryEntry]
             """
-            batch = PageBatch(repos=repos, source=ChangeSource.RUN, moment=self._clock.now())
+            batch = PageBatch(repos=repos, source=ChangeSource.RUN, moment=datetime.now(UTC))
             for state in self._states_in(repos, picked):
                 batch.clear_work(state)
             return batch.flush()
@@ -303,16 +300,13 @@ class RunPlan:
 class RunImpactService:
     """Counts the pages a run would take work from, for the user to confirm before the run is sent."""
 
-    def __init__(self, *, recipes: RecipeBook, clock: Clock) -> None:
+    def __init__(self, *, recipes: RecipeBook) -> None:
         """Count over the ports of one request.
 
         :param recipes: The recipes of the book.
         :type recipes: RecipeBook
-        :param clock: Clock the plan of the run is built with.
-        :type clock: Clock
         """
         self._recipes = recipes
-        self._clock = clock
 
     async def impact(self, book: Book, run: StageRun) -> RunImpact:
         """Count the pages a run would take work from, which is what a run asks the user to confirm.
@@ -326,5 +320,5 @@ class RunImpactService:
         :rtype: RunImpact
         :raises NotFoundError: If the book has no such page, or the stage has no recipe.
         """
-        plan = RunPlan(recipes=self._recipes, clock=self._clock, book=book, run=run)
+        plan = RunPlan(recipes=self._recipes, book=book, run=run)
         return await plan.impact()

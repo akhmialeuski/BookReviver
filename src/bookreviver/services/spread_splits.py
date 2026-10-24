@@ -161,7 +161,7 @@ class SpreadSplit:
         self._clock = runtime.clock
         self._order_keys = runtime.order_keys
         self._records = records
-        self._labels = PageLabels(clock=runtime.clock)
+        self._labels = PageLabels()
         self._keys = BookKeys()
 
     def splits(self, recipe: Recipe) -> bool:

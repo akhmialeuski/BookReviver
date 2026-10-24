@@ -198,8 +198,8 @@ class ImportRun:
         self._inspector = imaging.inspector
         self._rasterizer = imaging.rasterizer
         self._runner = imaging.runner
-        self._records = StageRecords(clock=runtime.clock)
-        self._labels = PageLabels(clock=runtime.clock)
+        self._records = StageRecords()
+        self._labels = PageLabels()
         self._base_versions = BaseVersions(tiler=imaging.tiler)
         self._order_keys = runtime.order_keys
         self._clock = runtime.clock

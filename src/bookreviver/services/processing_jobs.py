@@ -249,7 +249,7 @@ class ProcessingJobs:
         run = StageRun.from_map(job.params)
         book = await self._books.open(job.book_id)
         book_record = await book.read(lambda repos: repos.book_record.get())
-        plan = RunPlan(recipes=self._recipes, clock=self._clock, book=book, run=run)
+        plan = RunPlan(recipes=self._recipes, book=book, run=run)
         pages = await plan.pages()
         executor = RecipeRun(
             book=book, book_record=book_record, runtime=self._runtime, control=control, parts=self._parts

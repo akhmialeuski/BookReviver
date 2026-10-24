@@ -184,8 +184,8 @@ class PageService:
         self._board = runtime.board
         self._base_versions = imaging.base_versions
         self._runner = imaging.runner
-        self._records = StageRecords(clock=runtime.clock)
-        self._labels = PageLabels(clock=runtime.clock)
+        self._records = StageRecords()
+        self._labels = PageLabels()
 
     async def manifest(self, book: Book, request: SliceRequest, *, included_only: bool = False) -> Slice[PageOverview]:
         """Return a window of the book's pages in book order, every page with its position and base version.

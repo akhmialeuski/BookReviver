@@ -14,6 +14,7 @@ A value for the odd pages or the even pages is taken by place, so a page that a 
 over to the other side runs with other parameters, and its stages are marked stale by ``watching_sides``.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Self
 
 from attrs import evolve
@@ -30,19 +31,10 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.ids import PageId, PageVersionId, RecipeId
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.runtime import Clock
 
 
 class StageRecords:
     """Writes the stage records of pages inside the transaction of the caller."""
-
-    def __init__(self, *, clock: Clock) -> None:
-        """Stamp the records with a clock.
-
-        :param clock: Clock stamping the records.
-        :type clock: Clock
-        """
-        self._clock = clock
 
     def set_head(
         self,
@@ -77,7 +69,7 @@ class StageRecords:
             head_version_id=head_version_id,
             state=StageState.FRESH,
             through_step=through_step,
-            updated_at=self._clock.now(),
+            updated_at=datetime.now(UTC),
         )
         repos.page_stages.save(record)
         if previous is None or previous.head_version_id != head_version_id:
@@ -235,7 +227,7 @@ class StageRecords:
             head_version_id=None if previous is None else previous.head_version_id,
             state=StageState.FAILED,
             through_step=None if previous is None else previous.through_step,
-            updated_at=self._clock.now(),
+            updated_at=datetime.now(UTC),
         )
         repos.page_stages.save(record)
 
@@ -263,7 +255,7 @@ class StageRecords:
         :type records: Iterable[PageStage]
         """
         stale = [
-            evolve(record, state=StageState.STALE, updated_at=self._clock.now())
+            evolve(record, state=StageState.STALE, updated_at=datetime.now(UTC))
             for record in records
             if record.state is StageState.FRESH
         ]

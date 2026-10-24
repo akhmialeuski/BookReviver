@@ -16,6 +16,7 @@ All the changes are one batch of the history, from a carry-over, so one undo tak
 carry-over marks the stage of each page that changed stale and processes nothing, like any change of an edit.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from bookreviver.domain.entities import PageStepState
@@ -33,7 +34,6 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import CarryRequest, PageStepKey
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.runtime import Clock
     from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
 
@@ -44,16 +44,13 @@ MASK_NOT_CARRIED: str = 'The edit of this step is a mask painted on one page, wh
 class CarryOverService:
     """Carries the shape a page has set by hand over to the following, the selected or the same kind pages."""
 
-    def __init__(self, *, records: StageRecords, clock: Clock) -> None:
+    def __init__(self, *, records: StageRecords) -> None:
         """Work over the ports of one request.
 
         :param records: Writer of the stage records, which a changed edit marks stale.
         :type records: StageRecords
-        :param clock: Clock stamping the states and the changes.
-        :type clock: Clock
         """
         self._records = records
-        self._clock = clock
 
     async def carry(self, book: Book, request: CarryRequest) -> CarryOver:
         """Write the shape a page has set by hand for a step to other pages, as one batch.
@@ -90,7 +87,7 @@ class CarryOverService:
                 state.page_id: state
                 for state in repos.page_step_states.list_for_step([page.id for page in targets], key.stage, key.step_id)
             }
-            moment = self._clock.now()
+            moment = datetime.now(UTC)
             carried: list[PageStepState] = []
             skipped: list[PageId] = []
             for page in targets:

@@ -83,7 +83,7 @@ class PaginationService:
         :type clock: Clock
         """
         self._clock = clock
-        self._labels = PageLabels(clock=clock)
+        self._labels = PageLabels()
 
     async def sections(self, book: Book, request: SliceRequest) -> Slice[PaginationSection]:
         """List the sections of a book in book order, the order of the pages they start at.

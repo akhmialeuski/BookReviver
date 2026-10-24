@@ -189,7 +189,7 @@ class ProcessingService:
         :returns: The pages and recipes of the run.
         :rtype: RunPlan
         """
-        return RunPlan(recipes=self._recipes, clock=self._clock, book=book, run=run)
+        return RunPlan(recipes=self._recipes, book=book, run=run)
 
     async def start_measure(self, book: Book) -> Job:
         """Record a job that measures the book and writes the medians into the normalize step, and queue it.

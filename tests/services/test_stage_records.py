@@ -89,7 +89,7 @@ class TestMarkRecipeStale:
         fresh_second = make_page_stage(page_id=second.id, recipe_id=recipe.id)
         failed = make_page_stage(page_id=third.id, recipe_id=recipe.id, state=StageState.FAILED)
         without_recipe = make_page_stage(page_id=first.id, stage=Stage.CLEANUP)
-        records = StageRecords(clock=fx_clock)
+        records = StageRecords()
         await store_records(
             book_id, recipe, [fresh_first, fresh_second, failed, without_recipe], databases=fx_databases()
         )
@@ -141,7 +141,7 @@ class TestMarkRecipeStale:
         )
         recipe = make_recipe()
         fresh = [make_page_stage(page_id=page.id, recipe_id=recipe.id) for page in pages]
-        records = StageRecords(clock=fx_clock)
+        records = StageRecords()
         await store_records(book_id, recipe, fresh, databases=fx_databases())
         fx_clock.moment = CHANGED_AT
         fx_page_stage_writes.start()
