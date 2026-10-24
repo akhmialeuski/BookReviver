@@ -113,9 +113,9 @@ async def create_book(
     :returns: The new book.
     :rtype: BookSchema
     """
-    overview = await books.create(actor, body.to_details())
-    response.headers[LOCATION_HEADER] = str(request.url_for(RouteName.BOOK, book_id=overview.book_record.id))
-    return BookSchema.from_overview(overview)
+    book = await books.create(actor, body.to_details())
+    response.headers[LOCATION_HEADER] = str(request.url_for(RouteName.BOOK, book_id=book.id))
+    return BookSchema.from_overview(await book.overview())
 
 
 @one_book.get('/{book_id}', name=RouteName.BOOK)
@@ -213,9 +213,9 @@ async def import_book(
     :returns: The new book.
     :rtype: BookSchema
     """
-    overview = await books.import_archive(actor, archive.file)
-    response.headers[LOCATION_HEADER] = str(request.url_for(RouteName.BOOK, book_id=overview.book_record.id))
-    return BookSchema.from_overview(overview)
+    book = await books.import_archive(actor, archive.file)
+    response.headers[LOCATION_HEADER] = str(request.url_for(RouteName.BOOK, book_id=book.id))
+    return BookSchema.from_overview(await book.overview())
 
 
 @one_book.delete('/{book_id}', status_code=status.HTTP_204_NO_CONTENT)

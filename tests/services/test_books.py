@@ -246,10 +246,12 @@ class TestCreate:
         """
         details = BookDetails(title='Book', orthography=Orthography.PRE_REFORM)
 
-        overview = await fx_service().create(fx_actor, details)
+        book = await fx_service().create(fx_actor, details)
 
+        overview = await book.overview()
         stored = await _stored(overview.book_record, databases=fx_databases())
         entry = await fx_uow().read(lambda repos: repos.library.get(stored.id))
+        expect((book.id, book.owner_id) == (stored.id, fx_actor.account_id))
         expect(stored == overview.book_record)
         expect((entry.owner_id, entry.added_at) == (fx_actor.account_id, NOW))
         expect(stored.details == details)
@@ -459,7 +461,7 @@ class TestExportAndImport:
         await fx_files.store(book_record.id, page)
         archive = await _archive(fx_service(), book_record.id)
 
-        imported = await fx_service().import_archive(fx_actor, archive)
+        imported = await (await fx_service().import_archive(fx_actor, archive)).overview()
 
         copy_id = imported.book_record.id
         pages = await fx_databases().open(copy_id).read(lambda repos: repos.pages.list_window(SliceRequest()).items)

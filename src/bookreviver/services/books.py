@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from typing import BinaryIO
 
-    from bookreviver.domain.entities import Actor, BookOverview, Page
+    from bookreviver.domain.entities import Actor, Page
     from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import BookDatabases, PageRepository, UnitOfWork
     from bookreviver.ports.storage import AssetStore, SourceStore
@@ -130,15 +130,15 @@ class BooksService:
         entries = await self._uow.read(lambda repos: repos.library.list_all())
         return [self.book(entry) for entry in entries]
 
-    async def create(self, owner: Actor, details: BookDetails) -> BookOverview:
+    async def create(self, owner: Actor, details: BookDetails) -> Book:
         """Create an empty book of an account: its store first, then its entry in the library.
 
         :param owner: Account the entry of the library names as the owner.
         :type owner: Actor
         :param details: Description of the book.
         :type details: BookDetails
-        :returns: The stored book, which has no pages, sources or scans yet.
-        :rtype: BookOverview
+        :returns: The new book, open for its owner, which has no pages, sources or scans yet.
+        :rtype: Book
         """
         moment = self._tools.clock.now()
         book_record = await self._uow.create_book(
@@ -146,9 +146,9 @@ class BooksService:
         )
         entry = LibraryEntry(book_id=book_record.id, owner_id=owner.account_id, added_at=moment)
         await self._uow.change(lambda repos: repos.library.add(entry))
-        return await self.book(entry).overview()
+        return self.book(entry)
 
-    async def import_archive(self, owner: Actor, archive: BinaryIO) -> BookOverview:
+    async def import_archive(self, owner: Actor, archive: BinaryIO) -> Book:
         """Take the archive of a book in as a new book of an account, under a new identifier.
 
         The archive is unpacked database first, then the database is brought to this release and the record of its book
@@ -159,8 +159,8 @@ class BooksService:
         :type owner: Actor
         :param archive: The archive, a file that can be read from any position.
         :type archive: BinaryIO
-        :returns: The new book with its counts and progress.
-        :rtype: BookOverview
+        :returns: The new book, open for its owner.
+        :rtype: Book
         :raises InvalidArchiveError: If the file is not the archive of a book.
         :raises BookTooNewError: If the book was exported by a newer release.
         """
@@ -173,7 +173,7 @@ class BooksService:
             raise
         entry = LibraryEntry(book_id=book_id, owner_id=owner.account_id, added_at=self._tools.clock.now())
         await self._uow.change(lambda repos: repos.library.add(entry))
-        return await self.book(entry).overview()
+        return self.book(entry)
 
     async def _erase(self, book_id: BookId) -> None:
         """Delete the source files and derived files of a book, then its store, which a repeated call finishes.
