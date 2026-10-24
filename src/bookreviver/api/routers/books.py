@@ -74,7 +74,6 @@ one_book = APIRouter(prefix='/books', route_class=DishkaRoute, dependencies=[Dep
 async def list_books(
     params: Annotated[Params, Depends()],
     window: Annotated[Slice[Book], Depends(own_books)],
-    books: FromDishka[BooksService],
 ) -> Page[BookSchema]:
     """List the books of the signed-in account, the latest added first.
 
@@ -83,13 +82,11 @@ async def list_books(
     :type params: Params
     :param window: The books of the signed-in account the page asks for.
     :type window: Slice[Book]
-    :param books: Books service of the request.
-    :type books: BooksService
     :returns: One page of the account's books.
     :rtype: Page[BookSchema]
     """
     pager = Pager[BookOverview, BookSchema](params, BookSchema.from_overview)
-    return pager.page(await books.overviews(window))
+    return pager.page(Slice(items=[await book.overview() for book in window.items], total=window.total))
 
 
 @collection.post('', status_code=status.HTTP_201_CREATED)
@@ -116,34 +113,28 @@ async def create_book(
     :returns: The new book.
     :rtype: BookSchema
     """
-    overview = await books.create(actor, body.to_details())
-    response.headers[LOCATION_HEADER] = str(request.url_for(RouteName.BOOK, book_id=overview.book_record.id))
-    return BookSchema.from_overview(overview)
+    book = await books.create(actor, body.to_details())
+    response.headers[LOCATION_HEADER] = str(request.url_for(RouteName.BOOK, book_id=book.id))
+    return BookSchema.from_overview(await book.overview())
 
 
 @one_book.get('/{book_id}', name=RouteName.BOOK)
-async def get_book(
-    book: Annotated[Book, Depends(open_book)],
-    books: FromDishka[BooksService],
-) -> BookSchema:
+async def get_book(book: Annotated[Book, Depends(open_book)]) -> BookSchema:
     """Return one book of the signed-in account.
 
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
-    :param books: Books service of the request.
-    :type books: BooksService
     :returns: The book.
     :rtype: BookSchema
     """
-    return BookSchema.from_overview(await books.get(book))
+    return BookSchema.from_overview(await book.overview())
 
 
 @one_book.patch('/{book_id}')
 async def update_book(
     book: Annotated[Book, Depends(open_book)],
     body: Annotated[BookUpdate, Body()],
-    books: FromDishka[BooksService],
 ) -> BookSchema:
     """Merge the body into the book, as JSON Merge Patch (RFC 7396) defines.
 
@@ -155,12 +146,10 @@ async def update_book(
     :type book: Book
     :param body: Fields to change, with null for a field to clear.
     :type body: BookUpdate
-    :param books: Books service of the request.
-    :type books: BooksService
     :returns: The changed book.
     :rtype: BookSchema
     """
-    return BookSchema.from_overview(await books.update(book, body.to_changes()))
+    return BookSchema.from_overview(await book.update(body.to_changes()))
 
 
 @one_book.get(
@@ -168,10 +157,7 @@ async def update_book(
     response_class=StreamingResponse,
     responses={status.HTTP_200_OK: {'content': {ARCHIVE_MEDIA_TYPE: {}}, 'description': 'The archive of the book'}},
 )
-async def export_book(
-    book: Annotated[Book, Depends(open_book)],
-    books: FromDishka[BooksService],
-) -> StreamingResponse:
+async def export_book(book: Annotated[Book, Depends(open_book)]) -> StreamingResponse:
     """Download the archive of a book, which another instance imports as a book of its own.
 
     The archive is a ZIP file of the database of the book and every file of its sources and derived files, streamed as
@@ -180,12 +166,10 @@ async def export_book(
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
-    :param books: Books service of the request.
-    :type books: BooksService
     :returns: The stream of the archive.
     :rtype: StreamingResponse
     """
-    archived = await books.export(book)
+    archived = await book.export()
     disposition = ARCHIVE_DISPOSITION.format(title=quote(archived.title, safe=''))
     return StreamingResponse(
         archived.pieces, media_type=ARCHIVE_MEDIA_TYPE, headers={CONTENT_DISPOSITION_HEADER: disposition}
@@ -229,9 +213,9 @@ async def import_book(
     :returns: The new book.
     :rtype: BookSchema
     """
-    overview = await books.import_archive(actor, archive.file)
-    response.headers[LOCATION_HEADER] = str(request.url_for(RouteName.BOOK, book_id=overview.book_record.id))
-    return BookSchema.from_overview(overview)
+    book = await books.import_archive(actor, archive.file)
+    response.headers[LOCATION_HEADER] = str(request.url_for(RouteName.BOOK, book_id=book.id))
+    return BookSchema.from_overview(await book.overview())
 
 
 @one_book.delete('/{book_id}', status_code=status.HTTP_204_NO_CONTENT)

@@ -9,6 +9,7 @@ from bookreviver.ports.processing import ProcessorCatalog
 from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard
 from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
 from bookreviver.services.base_versions import BaseVersions
+from bookreviver.services.book import BookTools
 from bookreviver.services.books import BooksService, BookStores
 from bookreviver.services.freshness import BookFreshness
 from bookreviver.services.pages import PageImaging, PageRuntime, PageService
@@ -49,40 +50,49 @@ class BooksProvider(Provider):
         return BookFreshness(board=board)
 
     @provide(scope=Scope.APP)
-    def book_files(self, sources: SourceStore, assets: AssetStore, archive: BookArchive) -> BookStores:
-        """Gather the stores whose files go when a book is deleted, and the archive of a whole book.
+    def book_files(self, sources: SourceStore, assets: AssetStore) -> BookStores:
+        """Gather the stores whose files go when a book is deleted.
 
         :param sources: Source store of the application.
         :type sources: SourceStore
         :param assets: Asset store of the application.
         :type assets: AssetStore
-        :param archive: Archive of a whole book.
-        :type archive: BookArchive
         :returns: The stores of the files of a book.
         :rtype: BookStores
         """
-        return BookStores(sources=sources, assets=assets, archive=archive)
+        return BookStores(sources=sources, assets=assets)
 
     @provide
-    def books(
-        self, uow: UnitOfWork, databases: BookDatabases, clock: Clock, files: BookStores, stages: StageSummaries
-    ) -> BooksService:
+    def book_tools(self, stages: StageSummaries, clock: Clock, archive: BookArchive) -> BookTools:
+        """Gather what every book a request opens works with besides its own database.
+
+        :param stages: Sums of the stages of books of the request.
+        :type stages: StageSummaries
+        :param clock: Clock of the application.
+        :type clock: Clock
+        :param archive: Archive of a whole book.
+        :type archive: BookArchive
+        :returns: The tools of the books of the request.
+        :rtype: BookTools
+        """
+        return BookTools(stages=stages, clock=clock, archive=archive)
+
+    @provide
+    def books(self, uow: UnitOfWork, databases: BookDatabases, tools: BookTools, files: BookStores) -> BooksService:
         """Build the books service over the request's unit of work and book databases.
 
         :param uow: Unit of work of the current request, which runs the transactions of the catalogue.
         :type uow: UnitOfWork
         :param databases: Opens the database of a book, which runs the transactions of that book.
         :type databases: BookDatabases
-        :param clock: Clock of the application.
-        :type clock: Clock
+        :param tools: What every book the service opens works with.
+        :type tools: BookTools
         :param files: Source store and asset store of the application.
         :type files: BookStores
-        :param stages: Sums of the stages of books of the request.
-        :type stages: StageSummaries
         :returns: The books service of the request.
         :rtype: BooksService
         """
-        return BooksService(uow=uow, databases=databases, clock=clock, files=files, stages=stages)
+        return BooksService(uow=uow, databases=databases, tools=tools, files=files)
 
     @provide(scope=Scope.APP)
     def page_runtime(
