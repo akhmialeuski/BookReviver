@@ -26,11 +26,11 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, Page
     from bookreviver.domain.ids import BookId, PageId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
     from tests.helpers.clock import FixedClock
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
     from tests.helpers.page_writes import PageWrites
 
@@ -52,7 +52,7 @@ LAYOUT: list[tuple[PageKind, bool]] = [
 ]
 
 
-async def _commit_book(uow: UnitOfWork, owner: Actor, *, databases: BookDatabases) -> tuple[BookId, list[Page]]:
+async def _commit_book(uow: UnitOfWork, owner: Actor, *, databases: LocatedBookDatabases) -> tuple[BookId, list[Page]]:
     """Commit a book of seven pages of the kinds in ``LAYOUT``, each labelled by hand with a stale number.
 
     :param uow: Unit of work to commit through, over a database that stores the account of the owner.
@@ -60,7 +60,7 @@ async def _commit_book(uow: UnitOfWork, owner: Actor, *, databases: BookDatabase
     :param owner: Account owning the book.
     :type owner: Actor
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The book and its pages in book order.
     :rtype: tuple[BookRecord, list[Page]]
     """
@@ -78,13 +78,13 @@ async def _commit_book(uow: UnitOfWork, owner: Actor, *, databases: BookDatabase
     return book_id, pages
 
 
-async def _stored(book_id: BookId, *, databases: BookDatabases) -> dict[PageId, Page]:
+async def _stored(book_id: BookId, *, databases: LocatedBookDatabases) -> dict[PageId, Page]:
     """Read the committed pages of a book.
 
     :param book_id: Identifier of the book.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The pages of the book as committed, in book order, by identifier.
     :rtype: dict[PageId, Page]
     """

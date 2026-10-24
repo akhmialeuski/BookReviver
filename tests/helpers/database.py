@@ -10,7 +10,7 @@ migrations build the same schemas as the models.
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, override
 
 import anyio
 from alembic.runtime.migration import MigrationContext
@@ -19,6 +19,7 @@ from attrs import frozen
 from dishka import Provider, Scope, provide
 from sqlalchemy.engine import make_url
 
+from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabases
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.tracing.null import NullTracer
@@ -30,10 +31,14 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
+    from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
     from bookreviver.adapters.persistence.sqlalchemy.database import Schema
     from bookreviver.app.settings import Settings
+    from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabases, UnitOfWork
+    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.runtime import EventPublisher
+    from bookreviver.ports.storage import BookDirectories
 
 NO_DATABASE_FILE: str = (
     'The settings name a catalogue without a file, so there is nowhere to copy the schema template to.'
@@ -55,10 +60,68 @@ class UnitOfWorkFactory(Protocol):
         """
 
 
+class LocatedBookDatabases(SqlAlchemyBookDatabases):
+    """The databases of the books of a test, which find the file of a book in its directory when no path is given.
+
+    :ivar directories: The directories of the books of the test, which hold their database files.
+    """
+
+    def __init__(
+        self, books: BookRegistry, *, directories: BookDirectories, publisher: EventPublisher, wait_seconds: float
+    ) -> None:
+        """Open the databases of the books of a test, whose files lie in ``directories``.
+
+        :param books: The registry of the databases of the books of the test.
+        :type books: BookRegistry
+        :param directories: The directories of the books of the test.
+        :type directories: BookDirectories
+        :param publisher: Where a committed change of a book is announced.
+        :type publisher: EventPublisher
+        :param wait_seconds: How long a change waits for the writer of its book.
+        :type wait_seconds: float
+        """
+        super().__init__(books, publisher=publisher, wait_seconds=wait_seconds)
+        self.directories = directories
+
+    @override
+    def open(self, book_id: BookId, path: Path | None = None) -> SqlAlchemyBookDatabase:
+        """Return the database of a book, from the file of its directory unless another path is given.
+
+        :param book_id: Identifier of the book.
+        :type book_id: BookId
+        :param path: The database file of the book, or None for the one in the directory of the book.
+        :type path: Path | None
+        :returns: The database of the book.
+        :rtype: SqlAlchemyBookDatabase
+        """
+        return super().open(book_id, self.directories.directory(book_id).database if path is None else path)
+
+    async def create_book(self, book_id: BookId, book_record: BookRecord) -> None:
+        """Make the directory of a new book with the blank database, and store its record, as a creation does.
+
+        :param book_id: Identifier of the new book.
+        :type book_id: BookId
+        :param book_record: The record of the book.
+        :type book_record: BookRecord
+        :raises ConflictError: If the book has a directory already.
+        """
+        directory = await self.directories.create(book_id, await self.blank())
+        await self.open(book_id, directory.database).create(book_record)
+
+    async def delete_book(self, book_id: BookId) -> None:
+        """Close the database of a book once its transactions have ended, and delete its directory, as a deletion does.
+
+        :param book_id: Identifier of the book.
+        :type book_id: BookId
+        """
+        await self.open(book_id).close()
+        await self.directories.directory(book_id).delete()
+
+
 class BookDatabasesFactory(Protocol):
     """A function opening a new opener of the databases of the books of the test."""
 
-    def __call__(self, *, wait_seconds: float | None = None) -> BookDatabases:
+    def __call__(self, *, wait_seconds: float | None = None) -> LocatedBookDatabases:
         """Open the databases of the books of the test.
 
         :param wait_seconds: How long a change of a book waits for its turn before it gives up with
@@ -66,7 +129,7 @@ class BookDatabasesFactory(Protocol):
                              in the settings of the test.
         :type wait_seconds: float | None
         :returns: A new opener of the databases of the books.
-        :rtype: BookDatabases
+        :rtype: LocatedBookDatabases
         """
 
 
@@ -165,9 +228,11 @@ class BookSessions:
     """Runs a function over a session of the file of a book, for a test that reads or writes rows with plain SQL.
 
     :ivar books: Registry of the books of the test.
+    :ivar directories: The directories of the books of the test, which hold their database files.
     """
 
     books: BookRegistry
+    directories: BookDirectories
 
     async def read[T](self, book_id: BookId, work: Callable[[Session], T]) -> T:
         """Run ``work`` on a transaction of the book that only reads.
@@ -179,7 +244,7 @@ class BookSessions:
         :returns: What the work returns.
         :rtype: T
         """
-        async with self.books.use(book_id) as database:
+        async with self.books.use(book_id, self.directories.directory(book_id).database) as database:
             return await database.read(work)
 
     async def write[T](self, book_id: BookId, work: Callable[[Session], T]) -> T:
@@ -192,7 +257,7 @@ class BookSessions:
         :returns: What the work returns.
         :rtype: T
         """
-        async with self.books.use(book_id) as database:
+        async with self.books.use(book_id, self.directories.directory(book_id).database) as database:
             return await database.write(
                 work, kind=BlockKind.BOOK, book=book_id, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS
             )

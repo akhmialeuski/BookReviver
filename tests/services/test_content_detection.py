@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from bookreviver.services.book import Book
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 
@@ -111,7 +111,7 @@ async def book_of(kit: ProcessingKit, kinds: list[PageKind]) -> tuple[Actor, Boo
 
 
 async def keep(
-    book_id: BookId, page: Page, content_type: ContentType, *, by_hand: bool = False, databases: BookDatabases
+    book_id: BookId, page: Page, content_type: ContentType, *, by_hand: bool = False, databases: LocatedBookDatabases
 ) -> Page:
     """Write a content type into a stored page, as an earlier detection or the user would have.
 
@@ -124,7 +124,7 @@ async def keep(
     :param by_hand: Whether the user set it.
     :type by_hand: bool
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The page as stored.
     :rtype: Page
     """
@@ -135,7 +135,7 @@ async def keep(
     )
 
 
-async def geometry_records(book_id: BookId, pages: list[Page], *, databases: BookDatabases) -> None:
+async def geometry_records(book_id: BookId, pages: list[Page], *, databases: LocatedBookDatabases) -> None:
     """Store a fresh record of the Geometry stage for each of the pages.
 
     :param book_id: Identifier of the book owning the pages.
@@ -143,7 +143,7 @@ async def geometry_records(book_id: BookId, pages: list[Page], *, databases: Boo
     :param pages: Pages that have been through the Geometry stage.
     :type pages: list[Page]
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
 
     def save_records(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -181,7 +181,7 @@ async def detect(kit: ProcessingKit, actor: Actor, book_id: BookId, page_ids: li
     return stored_job(kit, job.id)
 
 
-async def stored(book_id: BookId, page: Page, *, databases: BookDatabases) -> Page:
+async def stored(book_id: BookId, page: Page, *, databases: LocatedBookDatabases) -> Page:
     """Read a page as committed.
 
     :param book_id: Identifier of the book.
@@ -189,14 +189,14 @@ async def stored(book_id: BookId, page: Page, *, databases: BookDatabases) -> Pa
     :param page: The page.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The page as the database holds it now.
     :rtype: Page
     """
     return await databases.open(book_id).read(lambda repos: repos.pages.get(page.id))
 
 
-async def geometry_state(book_id: BookId, page: Page, *, databases: BookDatabases) -> StageState:
+async def geometry_state(book_id: BookId, page: Page, *, databases: LocatedBookDatabases) -> StageState:
     """Read the state of the record of the Geometry stage of a page as committed.
 
     :param book_id: Identifier of the book.
@@ -204,7 +204,7 @@ async def geometry_state(book_id: BookId, page: Page, *, databases: BookDatabase
     :param page: The page.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The state of the record.
     :rtype: StageState
     """
@@ -540,7 +540,7 @@ class TestChangeOfContent:
         assert await geometry_state(book_id, pages[0], databases=fx_open_book.databases) is StageState.FRESH
 
 
-async def delete_the_page(book_id: BookId, page: Page, databases: BookDatabases) -> None:
+async def delete_the_page(book_id: BookId, page: Page, databases: LocatedBookDatabases) -> None:
     """Delete a page in a change of its own, as a request of the user would while a job reads it.
 
     :param book_id: Identifier of the book.
@@ -548,12 +548,12 @@ async def delete_the_page(book_id: BookId, page: Page, databases: BookDatabases)
     :param page: Page to delete.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await databases.open(book_id).change(lambda repos, _book_record: repos.pages.delete(page.id))
 
 
-async def set_the_type_by_hand(book_id: BookId, page: Page, databases: BookDatabases) -> None:
+async def set_the_type_by_hand(book_id: BookId, page: Page, databases: LocatedBookDatabases) -> None:
     """Set a content type by hand, as the user would while a job reads the page.
 
     :param book_id: Identifier of the book.
@@ -561,12 +561,12 @@ async def set_the_type_by_hand(book_id: BookId, page: Page, databases: BookDatab
     :param page: Page to change.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await keep(book_id, page, ContentType.BW_PICTURE, by_hand=True, databases=databases)
 
 
-async def detect_the_same_type(book_id: BookId, page: Page, databases: BookDatabases) -> None:
+async def detect_the_same_type(book_id: BookId, page: Page, databases: LocatedBookDatabases) -> None:
     """Store the type the probe is going to find, as another job that read the page first would.
 
     :param book_id: Identifier of the book.
@@ -574,7 +574,7 @@ async def detect_the_same_type(book_id: BookId, page: Page, databases: BookDatab
     :param page: Page to change.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await keep(book_id, page, ContentType.TEXT, databases=databases)
 

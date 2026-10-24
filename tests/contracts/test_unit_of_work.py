@@ -3,8 +3,7 @@
 A change of the catalogue by the unit of work and a change of a book by its database run their work on one transaction
 of one store, commit it when the work returns, roll it back when the work raises, and wait for any other change of the
 same store: the same book, or the catalogue. A change of one book never waits for a change of another book or of the
-catalogue. A read of either runs its work on one committed state and refuses every write. ``create_book`` and
-``delete_book`` make and remove the books. Concurrency is real: tasks of an ``anyio`` task group, ordered by a held
+catalogue. A read of either runs its work on one committed state and refuses every write. Concurrency is real: tasks of an ``anyio`` task group, ordered by a held
 store, by events and by ``anyio.wait_all_tasks_blocked`` and never by a sleep. The contract of the book database alone
 is in ``test_book_database.py``.
 """
@@ -22,7 +21,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.app.settings import ChangeWaitSettings
 from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.enums import Stage, ValueScope
-from bookreviver.domain.errors import BookBusyError, ConflictError, DomainError, NotFoundError
+from bookreviver.domain.errors import BookBusyError, DomainError
 from bookreviver.domain.ids import BookId
 from bookreviver.domain.values import PageStepKey, SliceRequest
 from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories, NoChangeOpenError
@@ -42,7 +41,6 @@ from tests.helpers.builders import (
     make_section,
     make_source,
     make_step_values,
-    new_book_id,
 )
 
 if TYPE_CHECKING:
@@ -50,9 +48,9 @@ if TYPE_CHECKING:
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import BookRecord
-    from bookreviver.ports.persistence import BookDatabase, BookDatabases, UnitOfWork
+    from bookreviver.ports.persistence import BookDatabase, UnitOfWork
     from tests.contracts.conftest import Book
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -102,7 +100,7 @@ class Stores(NamedTuple):
     """
 
     uow: UnitOfWork
-    databases: BookDatabases
+    databases: LocatedBookDatabases
 
 
 type StoresFactory = Callable[..., Stores]
@@ -556,118 +554,6 @@ class TestChangeEnd:
         await kind.run(uow, fx_book, lambda repos: kind.add(repos, rows))
         expect(await kind.read(fx_stores(), fx_book, lambda repos: kind.found(repos, fx_book)) == before | wanted)
         assert_expectations()
-
-
-class TestBookLifecycle:
-    """Contract of create_book and delete_book, which make and remove the books."""
-
-    async def test_create_book_stores_the_book_and_returns_it(
-        self, fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory
-    ) -> None:
-        """Verify a created book holds its record, which a later unit of work reads back unchanged.
-
-        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
-        """
-        book_id, book_record = new_book_id(), make_record()
-        created = await fx_uow().create_book(book_id, book_record)
-        read = await fx_databases().open(book_id).read(lambda repos: repos.book_record.get())
-        expect(created == book_record)
-        expect(read == book_record)
-        assert_expectations()
-
-    async def test_creating_a_stored_book_again_raises_conflict_and_keeps_the_first(
-        self, fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory
-    ) -> None:
-        """Verify a second creation under the identifier of a stored book is a ConflictError, never an overwrite.
-
-        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
-        """
-        book_id, book_record = new_book_id(), make_record(title='First')
-        await fx_uow().create_book(book_id, book_record)
-        duplicate = evolve(book_record, details=evolve(book_record.details, title='Second'))
-        with pytest.raises(ConflictError, match=str(book_id)):
-            await fx_uow().create_book(book_id, duplicate)
-        stored = await fx_databases().open(book_id).read(lambda repos: repos.book_record.get())
-        assert stored == book_record
-
-    async def test_deleted_book_answers_not_found_and_other_books_stay(
-        self, fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory
-    ) -> None:
-        """Verify nothing of a deleted book can be read or changed any more, and another book is left as it was.
-
-        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
-        """
-        doomed_id, kept_id = new_book_id(), new_book_id()
-
-        async def book_with_a_page(book_id: BookId) -> None:
-            """Make a book and store one page in it.
-
-            :param book_id: The identifier of the book.
-            :type book_id: BookId
-            """
-            await fx_uow().create_book(book_id, make_record())
-            await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.add(make_page()))
-
-        for book_id in (doomed_id, kept_id):
-            await book_with_a_page(book_id)
-
-        await fx_uow().delete_book(doomed_id)
-
-        with pytest.raises(NotFoundError, match=str(doomed_id)):
-            await fx_databases().open(doomed_id).read(lambda repos: repos.book_record.get())
-        with pytest.raises(NotFoundError, match=str(doomed_id)):
-            await fx_databases().open(doomed_id).change(lambda _repos, _book_record: None)
-        remaining = await fx_databases().open(kept_id).read(lambda repos: repos.pages.list_window(SLICE_ALL))
-        assert remaining.total == 1
-
-    async def test_deleting_a_book_again_or_one_never_stored_does_nothing(
-        self, fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory
-    ) -> None:
-        """Verify a deletion broken off half way can run again, and a book that does not exist is left as it is.
-
-        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
-        """
-        book_id = new_book_id()
-        await fx_uow().create_book(book_id, make_record())
-        await fx_uow().delete_book(book_id)
-
-        await fx_uow().delete_book(book_id)
-        await fx_uow().delete_book(new_book_id())
-
-        with pytest.raises(NotFoundError, match=str(book_id)):
-            await fx_databases().open(book_id).read(lambda repos: repos.book_record.get())
-
-    async def test_a_deleted_book_can_be_created_again(
-        self, fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory
-    ) -> None:
-        """Verify the identifier of a deleted book is free, and the new book starts empty.
-
-        :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
-        """
-        book_id, book_record = new_book_id(), make_record()
-        await fx_uow().create_book(book_id, book_record)
-        await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pages.add(make_page()))
-        await fx_uow().delete_book(book_id)
-
-        await fx_uow().create_book(book_id, book_record)
-
-        pages = await fx_databases().open(book_id).read(lambda repos: repos.pages.list_window(SLICE_ALL))
-        assert pages.total == 0
 
 
 class TestRead:

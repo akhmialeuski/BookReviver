@@ -20,9 +20,10 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Page, PageVersion
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import StepInput
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 
@@ -77,7 +78,7 @@ def fx_sided_kit(
     )
 
 
-async def head_of(book_id: BookId, page: Page, *, databases: BookDatabases) -> PageVersion:
+async def head_of(book_id: BookId, page: Page, *, databases: LocatedBookDatabases) -> PageVersion:
     """Read the current version of the Geometry stage of a page.
 
     :param book_id: Identifier of the book.
@@ -85,7 +86,7 @@ async def head_of(book_id: BookId, page: Page, *, databases: BookDatabases) -> P
     :param page: The page.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The version the stage record names.
     :rtype: PageVersion
     """

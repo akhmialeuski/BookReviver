@@ -29,7 +29,8 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories, CatalogueRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories, UnitOfWork
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.recording_tracer import RecordingSpan
     from tests.helpers.tracers import AskingTracer
 
@@ -69,7 +70,7 @@ class TestWriteBlockSpan:
     """Tests for the span of one change of one unit of work."""
 
     async def test_book_change_makes_one_span_of_its_book_with_its_timings(
-        self, fx_traced_databases: Callable[..., BookDatabases], fx_book: BookId, fx_tracer: AskingTracer
+        self, fx_traced_databases: Callable[..., LocatedBookDatabases], fx_book: BookId, fx_tracer: AskingTracer
     ) -> None:
         """Verify a committed ``Book.change`` gives one span with its kind, its book, its timings and its end.
 
@@ -77,7 +78,7 @@ class TestWriteBlockSpan:
         duration that cannot be negative.
 
         :param fx_traced_databases: Function opening the databases of the traced books.
-        :type fx_traced_databases: Callable[..., BookDatabases]
+        :type fx_traced_databases: Callable[..., LocatedBookDatabases]
         :param fx_book: Committed book of the database.
         :type fx_book: BookId
         :param fx_tracer: Tracer of the test.
@@ -94,7 +95,7 @@ class TestWriteBlockSpan:
         assert_expectations()
 
     async def test_block_is_a_child_of_the_span_current_at_its_caller(
-        self, fx_traced_databases: Callable[..., BookDatabases], fx_book: BookId, fx_tracer: AskingTracer
+        self, fx_traced_databases: Callable[..., LocatedBookDatabases], fx_book: BookId, fx_tracer: AskingTracer
     ) -> None:
         """Verify the ``write.block`` span, started on the event loop, has the span of its caller as its parent.
 
@@ -102,7 +103,7 @@ class TestWriteBlockSpan:
         the real adapter.
 
         :param fx_traced_databases: Function opening the databases of the traced books.
-        :type fx_traced_databases: Callable[..., BookDatabases]
+        :type fx_traced_databases: Callable[..., LocatedBookDatabases]
         :param fx_book: Committed book of the database.
         :type fx_book: BookId
         :param fx_tracer: Tracer of the test.
@@ -116,12 +117,12 @@ class TestWriteBlockSpan:
         assert block.parent is step
 
     async def test_block_that_fails_makes_a_span_marked_rolled_back(
-        self, fx_traced_databases: Callable[..., BookDatabases], fx_book: BookId, fx_tracer: AskingTracer
+        self, fx_traced_databases: Callable[..., LocatedBookDatabases], fx_book: BookId, fx_tracer: AskingTracer
     ) -> None:
         """Verify a change whose work raises is rolled back, and its span says so and has no commit time.
 
         :param fx_traced_databases: Function opening the databases of the traced books.
-        :type fx_traced_databases: Callable[..., BookDatabases]
+        :type fx_traced_databases: Callable[..., LocatedBookDatabases]
         :param fx_book: Committed book of the database.
         :type fx_book: BookId
         :param fx_tracer: Tracer of the test.
@@ -166,12 +167,12 @@ class TestWriteBlockSpan:
         assert_expectations()
 
     async def test_read_makes_no_write_block_span(
-        self, fx_traced_databases: Callable[..., BookDatabases], fx_book: BookId, fx_tracer: AskingTracer
+        self, fx_traced_databases: Callable[..., LocatedBookDatabases], fx_book: BookId, fx_tracer: AskingTracer
     ) -> None:
         """Verify a read leaves no ``write.block`` span, since it never asks for the writer.
 
         :param fx_traced_databases: Function opening the databases of the traced books.
-        :type fx_traced_databases: Callable[..., BookDatabases]
+        :type fx_traced_databases: Callable[..., LocatedBookDatabases]
         :param fx_book: Committed book of the database.
         :type fx_book: BookId
         :param fx_tracer: Tracer of the test.
@@ -214,7 +215,7 @@ class TestWaitForTheWriter:
     """Tests for changes of two units of work, of which the second asks while the first holds the writer."""
 
     async def test_second_block_waits_at_least_as_long_as_the_first_held_the_writer_after_it_began_to_wait(
-        self, fx_traced_databases: Callable[..., BookDatabases], fx_book: BookId, fx_tracer: AskingTracer
+        self, fx_traced_databases: Callable[..., LocatedBookDatabases], fx_book: BookId, fx_tracer: AskingTracer
     ) -> None:
         """Verify the wait of the second change covers what is left of the holding of the first, which ends later.
 
@@ -223,7 +224,7 @@ class TestWaitForTheWriter:
         commits, so the wait of the second is at least the time between the two notes.
 
         :param fx_traced_databases: Function opening the databases of the traced books.
-        :type fx_traced_databases: Callable[..., BookDatabases]
+        :type fx_traced_databases: Callable[..., LocatedBookDatabases]
         :param fx_book: Committed book of the database.
         :type fx_book: BookId
         :param fx_tracer: Tracer of the test.
@@ -252,8 +253,8 @@ class TestWaitForTheWriter:
     @pytest.mark.parametrize(REFUSER_ARG, list(Refuser), ids=list(Refuser))
     async def test_refused_block_ends_its_span_as_not_begun(
         self,
-        fx_traced_databases: Callable[..., BookDatabases],
-        fx_impatient_databases: Callable[..., BookDatabases],
+        fx_traced_databases: Callable[..., LocatedBookDatabases],
+        fx_impatient_databases: Callable[..., LocatedBookDatabases],
         fx_book: BookId,
         fx_tracer: AskingTracer,
         refuser: Refuser,
@@ -267,10 +268,10 @@ class TestWaitForTheWriter:
         never reaches SQLite: the queue of the book refuses it after the limit.
 
         :param fx_traced_databases: Function opening the databases of the books whose changes wait long.
-        :type fx_traced_databases: Callable[..., BookDatabases]
+        :type fx_traced_databases: Callable[..., LocatedBookDatabases]
         :param fx_impatient_databases: Function opening the databases of a registry of the same books, whose queues are its
                                      own and whose connections give up after a few milliseconds.
-        :type fx_impatient_databases: Callable[..., BookDatabases]
+        :type fx_impatient_databases: Callable[..., LocatedBookDatabases]
         :param fx_book: Committed record of the book.
         :type fx_book: BookId
         :param fx_tracer: Tracer of the test.

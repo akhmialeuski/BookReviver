@@ -410,7 +410,7 @@ class TestGetBook:
             owner = await commit_account(fx_database)
             await store_book(fx_uow(), make_record(), owner=owner, databases=fx_databases(), book_id=book_id)
         elif stored is InvisibleBook.UNLISTED:
-            await fx_uow().create_book(book_id, make_record())
+            await fx_databases().create_book(book_id, make_record())
 
         response = await fx_client.get(_book_path(book_id))
 

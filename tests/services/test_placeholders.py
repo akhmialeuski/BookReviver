@@ -51,15 +51,14 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import ColorMode
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import RenditionInfo
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.ports.storage import BookFileStores
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
     from tests.helpers.clock import FixedClock
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
-    from tests.helpers.storage import SharedBookFileStores
+    from tests.helpers.storage import SharedBookDirectories
 
 pytestmark = pytest.mark.anyio
 
@@ -137,24 +136,24 @@ class FlakyRenditionWriter(FakeRenditionWriter):
 
 async def _commit_book(
     uow: UnitOfWork,
-    files: BookFileStores,
+    files: SharedBookDirectories,
     owner: Actor,
     sizes: Sequence[tuple[int, int, float | None]] = (FIRST_SCAN_SIZE,),
     *,
-    databases: BookDatabases,
+    databases: LocatedBookDatabases,
 ) -> BookOfScans:
     """Commit a book with a scan of each size, a page of each scan and its ready base version, and store the images.
 
     :param uow: Unit of work to commit through, over a database that stores the account of the owner.
     :type uow: UnitOfWork
     :param files: Opens the asset store of the book, which receives the full image of each scan.
-    :type files: BookFileStores
+    :type files: SharedBookDirectories
     :param owner: Account owning the book.
     :type owner: Actor
     :param sizes: Width, height and resolution of each scan.
     :type sizes: Sequence[tuple[int, int, float | None]]
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The stored book.
     :rtype: BookOfScans
     """
@@ -187,18 +186,18 @@ async def _commit_book(
 
 
 async def _placeholder_book(
-    uow: UnitOfWork, files: BookFileStores, owner: Actor, *, databases: BookDatabases
+    uow: UnitOfWork, files: SharedBookDirectories, owner: Actor, *, databases: LocatedBookDatabases
 ) -> tuple[BookOfScans, Page]:
     """Commit a book of one scan page, and a placeholder after it.
 
     :param uow: Unit of work to commit through, over a database that stores the account of the owner.
     :type uow: UnitOfWork
     :param files: Opens the asset store of the book, which receives the full image of the scan.
-    :type files: BookFileStores
+    :type files: SharedBookDirectories
     :param owner: Account owning the book.
     :type owner: Actor
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The book and its placeholder.
     :rtype: tuple[BookOfScans, Page]
     """
@@ -209,15 +208,15 @@ async def _placeholder_book(
     return book, placeholder
 
 
-async def _spare_scan(files: BookFileStores, book: BookOfScans, *, databases: BookDatabases) -> Scan:
+async def _spare_scan(files: SharedBookDirectories, book: BookOfScans, *, databases: LocatedBookDatabases) -> Scan:
     """Commit a cut scan of a second source that no page shows, and store its image.
 
     :param files: Opens the asset store of the book, which receives the full image.
-    :type files: BookFileStores
+    :type files: SharedBookDirectories
     :param book: The book that gets the source.
     :type book: BookOfScans
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The scan, with its label ``xii``.
     :rtype: Scan
     """
@@ -241,7 +240,7 @@ async def _spare_scan(files: BookFileStores, book: BookOfScans, *, databases: Bo
     return scan
 
 
-async def _stored_versions(book_id: BookId, page: Page, *, databases: BookDatabases) -> list[PageVersion]:
+async def _stored_versions(book_id: BookId, page: Page, *, databases: LocatedBookDatabases) -> list[PageVersion]:
     """Read the committed versions of a page.
 
     :param book_id: Identifier of the book.
@@ -249,20 +248,20 @@ async def _stored_versions(book_id: BookId, page: Page, *, databases: BookDataba
     :param page: The page.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: Its versions, the earliest first.
     :rtype: list[PageVersion]
     """
     return list(await databases.open(book_id).read(lambda repos: repos.page_versions.list_for_page(page.id)))
 
 
-async def _stored_pages(*books: BookId, databases: BookDatabases) -> list[Page]:
+async def _stored_pages(*books: BookId, databases: LocatedBookDatabases) -> list[Page]:
     """Read the committed pages of books.
 
     :param books: Books whose pages are read.
     :type books: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The pages of each book in book order, one book after the other.
     :rtype: list[Page]
     """
@@ -355,7 +354,7 @@ class TestAddPlaceholder:
     async def test_adds_a_page_without_an_image_at_the_end_and_queues_no_job(
         self,
         fx_service: Callable[[], PageService],
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         fx_open_book: BookOpener,
@@ -364,8 +363,8 @@ class TestAddPlaceholder:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
@@ -374,7 +373,7 @@ class TestAddPlaceholder:
         :type fx_open_book: BookOpener
         """
         _, _, board = fx_runtime
-        book = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
         new = NewPage(origin=NewPageOrigin.PLACEHOLDER, kind=PageKind.TITLE, label=THIRD_LABEL, notes=LOST_NOTES)
 
         overview = await fx_service().add(fx_open_book(fx_actor, book.book_id), new)
@@ -395,7 +394,7 @@ class TestAddPlaceholder:
     async def test_puts_the_page_next_to_the_anchor(
         self,
         fx_service: Callable[[], PageService],
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         side: Side,
         fx_open_book: BookOpener,
@@ -404,8 +403,8 @@ class TestAddPlaceholder:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param side: Side of the first page the new page goes to.
@@ -415,7 +414,7 @@ class TestAddPlaceholder:
         """
         book = await _commit_book(
             fx_open_book.uow(),
-            fx_file_stores,
+            fx_directories,
             fx_actor,
             [FIRST_SCAN_SIZE, FIRST_SCAN_SIZE],
             databases=fx_open_book.databases,
@@ -431,7 +430,7 @@ class TestAddPlaceholder:
     async def test_anchor_that_is_not_a_page_of_the_book_is_not_found(
         self,
         fx_service: Callable[[], PageService],
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_stranger: Actor,
         fx_open_book: BookOpener,
@@ -440,8 +439,8 @@ class TestAddPlaceholder:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_stranger: Account of another user.
@@ -449,8 +448,8 @@ class TestAddPlaceholder:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases)
-        stranger = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_stranger, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        stranger = await _commit_book(fx_open_book.uow(), fx_directories, fx_stranger, databases=fx_open_book.databases)
         pages_before = await _stored_pages(book.book_id, stranger.book_id, databases=fx_open_book.databases)
         lost = NewPage(
             origin=NewPageOrigin.PLACEHOLDER,
@@ -470,7 +469,7 @@ class TestAddBlank:
     async def test_takes_the_median_size_of_the_scan_pages_and_queues_one_job(
         self,
         fx_service: Callable[[], PageService],
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_board: FakeJobBoard,
         fx_open_book: BookOpener,
@@ -481,8 +480,8 @@ class TestAddBlank:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_board: Board that records the jobs put on it.
@@ -490,7 +489,7 @@ class TestAddBlank:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_actor, SIZES, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, SIZES, databases=fx_open_book.databases)
         new = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.ENDPAPER)
 
         first = await fx_service().add(fx_open_book(fx_actor, book.book_id), new)
@@ -511,7 +510,7 @@ class TestAddBlank:
         self,
         fx_service: Callable[[], PageService],
         fx_uow: UnitOfWorkFactory,
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -521,15 +520,15 @@ class TestAddBlank:
         :type fx_service: Callable[[], PageService]
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         sizes = [(100, 100, None), (102, 200, None), (9999, 9999, None), (500, 500, None), (300, 300, None)]
-        book = await _commit_book(fx_uow(), fx_file_stores, fx_actor, sizes, databases=fx_open_book.databases)
+        book = await _commit_book(fx_uow(), fx_directories, fx_actor, sizes, databases=fx_open_book.databases)
         await fx_open_book.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.pages.update(evolve(book.pages[2], included=False))
         )
@@ -616,7 +615,7 @@ class TestAttachScan:
     async def test_turns_the_placeholder_into_a_page_of_the_scan_with_a_pending_base_version(
         self,
         fx_service: Callable[[], PageService],
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_board: FakeJobBoard,
         fx_open_book: BookOpener,
@@ -625,8 +624,8 @@ class TestAttachScan:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_board: Board that records the jobs put on it.
@@ -635,9 +634,9 @@ class TestAttachScan:
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases
+            fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
-        scan = await _spare_scan(fx_file_stores, book, databases=fx_open_book.databases)
+        scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
 
         overview = await fx_service().attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, scan.id)
 
@@ -661,7 +660,7 @@ class TestAttachScan:
     async def test_binds_the_scan_after_a_printed_number_written_before_it_in_the_queue_of_the_book(
         self,
         fx_uow: UnitOfWorkFactory,
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -674,8 +673,8 @@ class TestAttachScan:
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_runtime: The recording bus, the clock and the job board the service reports through.
         :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         :param fx_actor: Account the service acts for.
@@ -684,9 +683,9 @@ class TestAttachScan:
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases
+            fx_uow(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
-        scan = await _spare_scan(fx_file_stores, book, databases=fx_open_book.databases)
+        scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
         binding = make_page_service(fx_open_book, fx_runtime)
         bound: list[PageOverview] = []
 
@@ -724,7 +723,7 @@ class TestAttachScan:
         self,
         fx_service: Callable[[], PageService],
         fx_uow: UnitOfWorkFactory,
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -734,20 +733,20 @@ class TestAttachScan:
         :type fx_service: Callable[[], PageService]
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases
+            fx_uow(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
         await fx_open_book.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.pages.update(evolve(placeholder, manual_label=FIRST_LABEL)),
         )
-        scan = await _spare_scan(fx_file_stores, book, databases=fx_open_book.databases)
+        scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
 
         overview = await fx_service().attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, scan.id)
 
@@ -757,7 +756,7 @@ class TestAttachScan:
         self,
         fx_service: Callable[[], PageService],
         fx_uow: UnitOfWorkFactory,
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -767,17 +766,17 @@ class TestAttachScan:
         :type fx_service: Callable[[], PageService]
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases
+            fx_uow(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
-        elsewhere = await _commit_book(fx_uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases)
+        elsewhere = await _commit_book(fx_uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
 
         with pytest.raises(NotFoundError):
             await fx_service().attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, elsewhere.scans[0].id)
@@ -795,7 +794,7 @@ class TestAttachScan:
     async def test_page_that_is_not_a_placeholder_conflicts(
         self,
         fx_service: Callable[[], PageService],
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         origin: PageOrigin,
         fx_open_book: BookOpener,
@@ -804,8 +803,8 @@ class TestAttachScan:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param origin: Origin of the page the scan is bound to.
@@ -813,8 +812,8 @@ class TestAttachScan:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases)
-        scan = await _spare_scan(fx_file_stores, book, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
         page = book.pages[0]
         if origin is PageOrigin.BLANK:
             page = evolve(make_page(order_key='a9'), origin=PageOrigin.BLANK)
@@ -827,7 +826,7 @@ class TestAttachScan:
         self,
         fx_service: Callable[[], PageService],
         fx_uow: UnitOfWorkFactory,
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -837,15 +836,15 @@ class TestAttachScan:
         :type fx_service: Callable[[], PageService]
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases
+            fx_uow(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
         before = await _stored_pages(book.book_id, databases=fx_open_book.databases)
 
@@ -857,7 +856,7 @@ class TestAttachScan:
     async def test_take_over_deletes_the_page_of_the_scan_with_its_versions_and_files(
         self,
         fx_service: Callable[[], PageService],
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_storage_root: Path,
         fx_open_book: BookOpener,
@@ -866,8 +865,8 @@ class TestAttachScan:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_storage_root: Storage root of the test.
@@ -876,10 +875,10 @@ class TestAttachScan:
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases
+            fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
         keys = BookKeys()
-        async with fx_file_stores.assets(book.book_id).writable(
+        async with fx_directories.assets(book.book_id).writable(
             keys.version_rendition(book.versions[0], Rendition.FULL_JPEG)
         ) as path:
             await anyio.Path(path).write_bytes(IMAGE)
@@ -906,7 +905,7 @@ class TestAttachScan:
     async def test_take_over_is_one_change_of_the_pages(
         self,
         fx_service: Callable[[], PageService],
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_book_changes: RecordingEventBus,
         fx_open_book: BookOpener,
@@ -915,8 +914,8 @@ class TestAttachScan:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
@@ -925,7 +924,7 @@ class TestAttachScan:
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases
+            fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
         fx_book_changes.published.clear()
 
@@ -939,7 +938,7 @@ class TestAttachScan:
         self,
         fx_service: Callable[[], PageService],
         fx_uow: UnitOfWorkFactory,
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -949,17 +948,17 @@ class TestAttachScan:
         :type fx_service: Callable[[], PageService]
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases
+            fx_uow(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
-        scan = await _spare_scan(fx_file_stores, book, databases=fx_open_book.databases)
+        scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
         await fx_open_book.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.scans.update(evolve(scan, renditions=Renditions(ready=False))),
         )
@@ -974,7 +973,7 @@ class TestDelete:
     async def test_removes_the_page_its_versions_and_files_and_keeps_the_scan_and_the_source(
         self,
         fx_service: Callable[[], PageService],
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_storage_root: Path,
         fx_open_book: BookOpener,
@@ -983,8 +982,8 @@ class TestDelete:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_storage_root: Storage root of the test.
@@ -994,7 +993,7 @@ class TestDelete:
         """
         book = await _commit_book(
             fx_open_book.uow(),
-            fx_file_stores,
+            fx_directories,
             fx_actor,
             [FIRST_SCAN_SIZE, FIRST_SCAN_SIZE],
             databases=fx_open_book.databases,
@@ -1002,7 +1001,7 @@ class TestDelete:
         keys = BookKeys()
         doomed, kept = book.pages
         for version in book.versions:
-            async with fx_file_stores.assets(book.book_id).writable(
+            async with fx_directories.assets(book.book_id).writable(
                 keys.version_rendition(version, Rendition.FULL_JPEG)
             ) as path:
                 await anyio.Path(path).write_bytes(IMAGE)
@@ -1028,7 +1027,7 @@ class TestDelete:
     async def test_a_deletion_is_one_change_of_the_pages(
         self,
         fx_service: Callable[[], PageService],
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_book_changes: RecordingEventBus,
         fx_open_book: BookOpener,
@@ -1037,8 +1036,8 @@ class TestDelete:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
@@ -1046,7 +1045,7 @@ class TestDelete:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
         fx_book_changes.published.clear()
 
         await fx_service().delete(fx_open_book(fx_actor, book.book_id), book.pages[0].id)
@@ -1056,7 +1055,7 @@ class TestDelete:
     async def test_page_of_another_book_is_not_found(
         self,
         fx_service: Callable[[], PageService],
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_stranger: Actor,
         fx_open_book: BookOpener,
@@ -1065,8 +1064,8 @@ class TestDelete:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_stranger: Account of another user.
@@ -1074,8 +1073,8 @@ class TestDelete:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases)
-        stranger = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_stranger, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        stranger = await _commit_book(fx_open_book.uow(), fx_directories, fx_stranger, databases=fx_open_book.databases)
 
         with pytest.raises(NotFoundError):
             await fx_service().delete(fx_open_book(fx_actor, book.book_id), stranger.pages[0].id)
@@ -1143,7 +1142,7 @@ class TestPrepareImages:
 
     async def test_copies_the_scan_of_a_bound_page_into_its_own_directory(
         self,
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         fx_storage_root: Path,
@@ -1151,8 +1150,8 @@ class TestPrepareImages:
     ) -> None:
         """Verify the version of a page bound to a scan holds a byte copy of the scan's full image, and is ready.
 
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
@@ -1163,9 +1162,9 @@ class TestPrepareImages:
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases
+            fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
-        scan = await _spare_scan(fx_file_stores, book, databases=fx_open_book.databases)
+        scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
         service = make_page_service(fx_open_book, fx_runtime)
         await service.attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, scan.id)
 
@@ -1286,7 +1285,7 @@ class TestPrepareImages:
     async def test_page_whose_scan_was_deleted_fails_with_that_reason(
         self,
         fx_service: Callable[[], PageService],
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_board: FakeJobBoard,
         fx_open_book: BookOpener,
@@ -1295,8 +1294,8 @@ class TestPrepareImages:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_board: Board that records the jobs put on it.
@@ -1305,9 +1304,9 @@ class TestPrepareImages:
         :type fx_open_book: BookOpener
         """
         book, placeholder = await _placeholder_book(
-            fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases
+            fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases
         )
-        scan = await _spare_scan(fx_file_stores, book, databases=fx_open_book.databases)
+        scan = await _spare_scan(fx_directories, book, databases=fx_open_book.databases)
         await fx_service().attach_scan(fx_open_book(fx_actor, book.book_id), placeholder.id, scan.id)
         await fx_open_book.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.sources.delete(scan.source_id)
@@ -1684,7 +1683,7 @@ class TestAddBlankWithoutSizedPages:
         self,
         fx_service: Callable[[], PageService],
         fx_uow: UnitOfWorkFactory,
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_open_book: BookOpener,
     ) -> None:
@@ -1697,14 +1696,14 @@ class TestAddBlankWithoutSizedPages:
         :type fx_service: Callable[[], PageService]
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_file_stores, fx_actor, SIZES, databases=fx_open_book.databases)
+        book = await _commit_book(fx_uow(), fx_directories, fx_actor, SIZES, databases=fx_open_book.databases)
         await fx_open_book.databases.open(book.book_id).change(
             lambda repos, _book_record: repos.pages.update_many([evolve(page, included=False) for page in book.pages]),
         )
@@ -1749,13 +1748,13 @@ class CountingOrderKeys(FractionalOrderKeys):
         return super().spread(lower=lower, upper=upper, count=count)
 
 
-async def _labels_in_book_order(book_id: BookId, *, databases: BookDatabases) -> list[str]:
+async def _labels_in_book_order(book_id: BookId, *, databases: LocatedBookDatabases) -> list[str]:
     """Read the labels the committed pages of a book show, in the order of the book.
 
     :param book_id: Identifier of the book whose pages are read.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The label of each page, in order key order.
     :rtype: list[str]
     """
@@ -1780,7 +1779,7 @@ class TestAddMany:
 
     async def test_adds_the_whole_list_at_the_end_in_order_in_one_change_and_one_key_call(
         self,
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         fx_actor: Actor,
         fx_book_changes: RecordingEventBus,
@@ -1788,8 +1787,8 @@ class TestAddMany:
     ) -> None:
         """Verify pages without a place stand at the end in the order listed, in one change, with one key call.
 
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_runtime: The recording bus, the stopped clock and the job board.
         :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         :param fx_actor: Account the service acts for.
@@ -1799,7 +1798,7 @@ class TestAddMany:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
         keys = CountingOrderKeys()
         service = make_page_service(fx_open_book, fx_runtime, order_keys=keys)
         fx_book_changes.published.clear()
@@ -1819,7 +1818,7 @@ class TestAddMany:
     async def test_pages_without_a_place_follow_the_page_before_them_and_each_anchor_is_one_place(
         self,
         fx_uow: UnitOfWorkFactory,
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         fx_actor: Actor,
         fx_open_book: BookOpener,
@@ -1828,8 +1827,8 @@ class TestAddMany:
 
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_runtime: The recording bus, the stopped clock and the job board.
         :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         :param fx_actor: Account the service acts for.
@@ -1838,7 +1837,7 @@ class TestAddMany:
         :type fx_open_book: BookOpener
         """
         book = await _commit_book(
-            fx_uow(), fx_file_stores, fx_actor, [FIRST_SCAN_SIZE] * 3, databases=fx_open_book.databases
+            fx_uow(), fx_directories, fx_actor, [FIRST_SCAN_SIZE] * 3, databases=fx_open_book.databases
         )
         first, _, last = book.pages
         keys = CountingOrderKeys()
@@ -1868,7 +1867,7 @@ class TestAddMany:
     async def test_blank_leaves_get_one_pending_version_each_and_one_job(
         self,
         fx_service: Callable[[], PageService],
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_board: FakeJobBoard,
         fx_open_book: BookOpener,
@@ -1877,8 +1876,8 @@ class TestAddMany:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_board: Board that records the jobs put on it.
@@ -1886,7 +1885,7 @@ class TestAddMany:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_actor, SIZES, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, SIZES, databases=fx_open_book.databases)
         sized = PageSize(width_px=8, height_px=9)
         new = [
             NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK),
@@ -1910,7 +1909,7 @@ class TestAddMany:
     async def test_a_bad_anchor_in_the_middle_names_its_index_and_stores_nothing(
         self,
         fx_service: Callable[[], PageService],
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_book_changes: RecordingEventBus,
         fx_open_book: BookOpener,
@@ -1919,8 +1918,8 @@ class TestAddMany:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
@@ -1928,7 +1927,7 @@ class TestAddMany:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
         lost = PageAnchor(page_id=PageId(UUID(int=7)), side=Side.AFTER)
         new = [_placeholder('1'), _placeholder('2'), _placeholder('3', lost)]
 
@@ -1969,7 +1968,7 @@ class TestAddMany:
     async def test_refuses_more_pages_than_the_limit(
         self,
         fx_service: Callable[[], PageService],
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_actor: Actor,
         fx_stranger: Actor,
         fx_open_book: BookOpener,
@@ -1978,8 +1977,8 @@ class TestAddMany:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_stranger: Account of another user.
@@ -1987,8 +1986,8 @@ class TestAddMany:
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_actor, databases=fx_open_book.databases)
-        stranger = await _commit_book(fx_open_book.uow(), fx_file_stores, fx_stranger, databases=fx_open_book.databases)
+        book = await _commit_book(fx_open_book.uow(), fx_directories, fx_actor, databases=fx_open_book.databases)
+        stranger = await _commit_book(fx_open_book.uow(), fx_directories, fx_stranger, databases=fx_open_book.databases)
         too_many = [_placeholder('x')] * (fx_service().MAX_PAGES_PER_BATCH + 1)
 
         with pytest.raises(ConflictError):

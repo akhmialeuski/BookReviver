@@ -57,9 +57,9 @@ from tests.helpers.seeding import store_book
 if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, Page, Source
     from bookreviver.domain.ids import AccountId, PageId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories, CatalogueRepositories
+    from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories
     from tests.contracts.conftest import OwnerFactory
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -98,7 +98,7 @@ WIDTH_PX: str = 'width_px'
 BLANK_PROCESSOR_KEY: str = 'pages.blank'
 
 
-async def _add_book(book_id: BookId, *, databases: BookDatabases) -> list[Page]:
+async def _add_book(book_id: BookId, *, databases: LocatedBookDatabases) -> list[Page]:
     """Add a source of ``PAGE_COUNT`` scans and one page per scan, the last kept out of the book, in one change.
 
     The change is ``Book.change`` of the book, so the book must be stored already.
@@ -106,7 +106,7 @@ async def _add_book(book_id: BookId, *, databases: BookDatabases) -> list[Page]:
     :param book_id: The identifier of the book.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The pages in book order.
     :rtype: list[Page]
     """

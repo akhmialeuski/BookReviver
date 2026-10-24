@@ -16,8 +16,8 @@ from tests.helpers.seeding import store_book
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Recipe, RecipeProfile
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabases
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -74,7 +74,7 @@ async def another_book(kit: ProcessingKit, actor: Actor) -> BookId:
     return book_id
 
 
-async def stored_recipe(book_id: BookId, recipe: Recipe, *, databases: BookDatabases) -> Recipe:
+async def stored_recipe(book_id: BookId, recipe: Recipe, *, databases: LocatedBookDatabases) -> Recipe:
     """Read a recipe back through a new unit of work.
 
     :param book_id: Identifier of the book.
@@ -82,7 +82,7 @@ async def stored_recipe(book_id: BookId, recipe: Recipe, *, databases: BookDatab
     :param recipe: The recipe to read.
     :type recipe: Recipe
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The recipe as committed.
     :rtype: Recipe
     """

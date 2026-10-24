@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId, StorageKey
     from bookreviver.ports.persistence import BookDatabases, BookRepositories
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -140,7 +141,9 @@ async def ran_two_steps(
     return actor, book_id, page, [step.step_id for step in recipe.steps], made
 
 
-async def mark_version(book_id: BookId, version: PageVersion, mark: ResultMark, *, databases: BookDatabases) -> None:
+async def mark_version(
+    book_id: BookId, version: PageVersion, mark: ResultMark, *, databases: LocatedBookDatabases
+) -> None:
     """Set the mark of a stored version.
 
     :param book_id: Book that holds the version.
@@ -150,7 +153,7 @@ async def mark_version(book_id: BookId, version: PageVersion, mark: ResultMark, 
     :param mark: The mark to set.
     :type mark: ResultMark
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await change_versions(book_id, lambda versions: versions.update(evolve(version, mark=mark)), databases=databases)
 
@@ -1168,7 +1171,7 @@ class TestMapToScan:
         assert mapped == Point(x=1115, y=27)
 
 
-async def fail_the_chosen_version(book_id: BookId, version: PageVersion, databases: BookDatabases) -> None:
+async def fail_the_chosen_version(book_id: BookId, version: PageVersion, databases: LocatedBookDatabases) -> None:
     """Store the version as failed, as a run that made it again and failed would.
 
     :param book_id: Book that holds the version.
@@ -1176,14 +1179,16 @@ async def fail_the_chosen_version(book_id: BookId, version: PageVersion, databas
     :param version: The version a user chose.
     :type version: PageVersion
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await change_versions(
         book_id, lambda versions: versions.update(evolve(version, state=VersionState.FAILED)), databases=databases
     )
 
 
-async def delete_the_page_of_the_version(book_id: BookId, version: PageVersion, databases: BookDatabases) -> None:
+async def delete_the_page_of_the_version(
+    book_id: BookId, version: PageVersion, databases: LocatedBookDatabases
+) -> None:
     """Delete the page the version belongs to, as a request of the user does.
 
     :param book_id: Book that holds the version.
@@ -1191,7 +1196,7 @@ async def delete_the_page_of_the_version(book_id: BookId, version: PageVersion, 
     :param version: The version a user chose, which goes with its page.
     :type version: PageVersion
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await databases.open(book_id).change(lambda repos, _book_record: repos.pages.delete(version.page_id))
 

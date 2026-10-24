@@ -30,11 +30,11 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, Page, PaginationSection
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from bookreviver.services.pagination import PaginationService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
     from tests.helpers.page_writes import PageWrites
 
@@ -90,7 +90,7 @@ NUMBERING_CASES: list[NumberingCase] = [
 
 
 async def _commit_book(
-    uow: UnitOfWork, owner: Actor, *layout: tuple[PageKind, bool], databases: BookDatabases, label: str = ''
+    uow: UnitOfWork, owner: Actor, *layout: tuple[PageKind, bool], databases: LocatedBookDatabases, label: str = ''
 ) -> tuple[BookId, list[Page]]:
     """Commit a book of pages of the given kinds and inclusion, all labelled by hand with ``label`` when it is given.
 
@@ -101,7 +101,7 @@ async def _commit_book(
     :param layout: Kind and inclusion of each page in book order.
     :type layout: tuple[PageKind, bool]
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :param label: Label every page gets as an exception, or empty for pages that are not labelled.
     :type label: str
     :returns: The book and its pages in book order.
@@ -132,7 +132,7 @@ def _text_book(count: int) -> tuple[tuple[PageKind, bool], ...]:
     return ((TEXT, True),) * count
 
 
-async def _labels(book_id: BookId, pages: list[Page], *, databases: BookDatabases) -> list[str]:
+async def _labels(book_id: BookId, pages: list[Page], *, databases: LocatedBookDatabases) -> list[str]:
     """Read the labels pages show, as the sections and the manual labels committed give them on read.
 
     :param book_id: Identifier of the book of the pages.
@@ -140,7 +140,7 @@ async def _labels(book_id: BookId, pages: list[Page], *, databases: BookDatabase
     :param pages: Pages to read the labels of.
     :type pages: list[Page]
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The label of each page, in the order given.
     :rtype: list[str]
     """
@@ -160,13 +160,13 @@ async def _labels(book_id: BookId, pages: list[Page], *, databases: BookDatabase
     return await databases.open(book_id).read(read)
 
 
-async def _sections(book_id: BookId, *, databases: BookDatabases) -> list[PaginationSection]:
+async def _sections(book_id: BookId, *, databases: LocatedBookDatabases) -> list[PaginationSection]:
     """Read the committed sections of a book in the order they were made.
 
     :param book_id: The identifier of the book.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The sections of the book.
     :rtype: list[PaginationSection]
     """

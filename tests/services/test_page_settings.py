@@ -47,8 +47,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.step_values import StepValues
     from bookreviver.domain.values import Step
-    from bookreviver.ports.persistence import BookDatabases
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -134,7 +134,7 @@ def on(scope: ValueScope, *pages: Page, label: str = '') -> ValueTarget:
     return ValueTarget(scope=scope, page_ids=tuple(page.id for page in pages), group_label=label)
 
 
-async def put_in_group(book_id: BookId, page: Page, label: str, *, databases: BookDatabases) -> None:
+async def put_in_group(book_id: BookId, page: Page, label: str, *, databases: LocatedBookDatabases) -> None:
     """Put a page in a group, as the user does by hand.
 
     :param book_id: Identifier of the book.
@@ -144,7 +144,7 @@ async def put_in_group(book_id: BookId, page: Page, label: str, *, databases: Bo
     :param label: Label of the group.
     :type label: str
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await databases.open(book_id).change(
         lambda repos, _book_record: repos.pages.update(evolve(repos.pages.get(page.id), group_label=label)),
@@ -174,7 +174,7 @@ async def strengths(kit: ProcessingKit, actor: Actor, book_id: BookId, pages: li
     return found
 
 
-async def stored_parts(book_id: BookId, step_id: StepId, *, databases: BookDatabases) -> Sequence[StepValues]:
+async def stored_parts(book_id: BookId, step_id: StepId, *, databases: LocatedBookDatabases) -> Sequence[StepValues]:
     """Read the values the odd pages, the even pages and the groups have for a step, as committed.
 
     :param book_id: The book.
@@ -182,14 +182,14 @@ async def stored_parts(book_id: BookId, step_id: StepId, *, databases: BookDatab
     :param step_id: The step of a recipe.
     :type step_id: StepId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The stored values of the step.
     :rtype: Sequence[StepValues]
     """
     return await databases.open(book_id).read(lambda repos: repos.step_values.list_for_step(step_id))
 
 
-async def stages_of(book_id: BookId, pages: list[Page], *, databases: BookDatabases) -> list[StageState]:
+async def stages_of(book_id: BookId, pages: list[Page], *, databases: LocatedBookDatabases) -> list[StageState]:
     """Read the state of the geometry stage of each page.
 
     :param book_id: Identifier of the book.
@@ -197,7 +197,7 @@ async def stages_of(book_id: BookId, pages: list[Page], *, databases: BookDataba
     :param pages: The pages.
     :type pages: list[Page]
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The states.
     :rtype: list[StageState]
     """

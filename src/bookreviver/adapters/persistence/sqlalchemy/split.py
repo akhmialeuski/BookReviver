@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from bookreviver.ports.storage import BookDirectories
 
 # The last revision of the shared database, the only one the split reads
 SHARED_REVISION: Final = '15e015051f5c'
@@ -86,19 +87,24 @@ class SplitReport:
 class SharedDatabaseSplit:
     """Moves the rows of the shared database into the catalogue and the files of the books."""
 
-    def __init__(self, shared: Path, *, catalogue: SqlDatabase, books: BookRegistry) -> None:
+    def __init__(
+        self, shared: Path, *, catalogue: SqlDatabase, books: BookRegistry, directories: BookDirectories
+    ) -> None:
         """Split ``shared`` into the given catalogue and books.
 
         :param shared: The shared database file of the earlier releases.
         :type shared: Path
         :param catalogue: The database of the catalogue, which must hold no account yet.
         :type catalogue: SqlDatabase
-        :param books: The registry of the databases of the books, which makes their files.
+        :param books: The registry of the databases of the books, which opens their files.
         :type books: BookRegistry
+        :param directories: The directories of the books, which make the directory of each book with its file.
+        :type directories: BookDirectories
         """
         self._shared = shared
         self._catalogue = catalogue
         self._books = books
+        self._directories = directories
 
     async def run(self) -> SplitReport:
         """Fill the catalogue, then make and fill the file of every book.
@@ -115,15 +121,15 @@ class SharedDatabaseSplit:
         book_ids = await to_thread.run_sync(self._book_ids)
         for book_id in book_ids:
             try:
-                await self._books.create(book_id)
+                directory = await self._directories.create(book_id, await self._books.blank())
             except ConflictError as error:
                 err_msg = f'The book {book_id} has a database already, so the split would overwrite it.'
                 raise SplitRefusedError(err_msg) from error
-            async with self._books.use(book_id) as database:
+            async with self._books.use(book_id, directory.database) as database:
                 await to_thread.run_sync(database.migrations.downgrade, BOOK_BASELINE)
                 await database.dispose()
                 versions = database.config.alembic_config.version_table_name
-                await to_thread.run_sync(self._fill_book, self._books.path(book_id), book_id, versions)
+                await to_thread.run_sync(self._fill_book, directory.database, book_id, versions)
                 await to_thread.run_sync(database.migrations.upgrade)
         return SplitReport(accounts=accounts, books=len(book_ids))
 

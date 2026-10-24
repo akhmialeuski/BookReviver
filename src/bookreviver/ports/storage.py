@@ -1,16 +1,18 @@
-"""Storage ports: the uploads and sources of a book, and the files derived from them.
+"""Storage ports: the directory of each book, with its database file, its uploads and sources, and its derived files.
 
-Two stores of one book divide its files by prefix, as ``BookKeys`` lays them out, and ``BookFileStores`` opens both
-for a book, so a use case reaches the files of the book it holds and names no book to any call. The ``SourceStore``
-owns ``incoming/`` and ``sources/``: an upload is received into the directory of the import job receiving it, and
-every source the upload holds is promoted into a directory of its own, named by its ``SourceId``. A book gathers any
-number of sources of any kind that way, and deleting one source leaves the others. The ``AssetStore`` owns
-``assets/``, where everything derived from the sources lives, such as the renditions of scans and page versions.
+``BookDirectories`` owns the directories of the books: it makes the directory of a new book from the blank database
+file, unpacks the archive of a book into a new directory, and opens the ``BookDirectory`` of a book, which deletes the
+directory whole and packs it into an archive. The database file is a file of the directory like any other, so it is
+written, copied, archived and deleted only here, and the persistence port opens it by its path.
 
-The ``BookArchive`` packs the directory of a book into one file and unpacks such a file into the directory of a new
-book. Both stores write once and never replace what they store: a source is immutable once promoted, and a regenerated
-asset gets a new key. Each store deletes everything of its book it holds, so deleting a book is one call to
-each. Local paths, not open files, cross these ports, because the imaging libraries read and write paths.
+Two stores of one book divide its other files by prefix, as ``BookKeys`` lays them out, so a use case reaches the files
+of the book it holds and names no book to any call. The ``SourceStore`` owns ``incoming/`` and ``sources/``: an upload
+is received into the directory of the import job receiving it, and every source the upload holds is promoted into a
+directory of its own, named by its ``SourceId``. A book gathers any number of sources of any kind that way, and
+deleting one source leaves the others. The ``AssetStore`` owns ``assets/``, where everything derived from the sources
+lives, such as the renditions of scans and page versions. Both stores write once and never replace what they store: a
+source is immutable once promoted, and a regenerated asset gets a new key. Local paths, not open files, cross these
+ports, because the imaging libraries and the database read and write paths.
 """
 
 from abc import ABC, abstractmethod
@@ -129,16 +131,12 @@ class SourceStore(ABC):
         :type source_id: SourceId
         """
 
-    @abstractmethod
-    async def delete_all(self) -> None:
-        """Remove every source and every staged upload of the book; a book without either is not an error."""
-
 
 class AssetStore(ABC):
     """Derived files of one book addressed by storage keys, such as the renditions of scans and page versions.
 
     Each file is written once. A regenerated file gets a new key, such as the next renditions version of a scan, so a
-    stored file is never replaced. Every key lies under ``projects/<id>/assets/`` of the book of the store, as
+    stored file is never replaced. Every key lies under ``assets/`` of the book of the store, as
     ``BookKeys`` builds it, so no key reaches the uploads and sources of a book, which belong to the ``SourceStore``,
     or the files of another book.
     """
@@ -154,7 +152,7 @@ class AssetStore(ABC):
         :returns: Context manager yielding the path to write, which does not exist yet.
         :rtype: AbstractAsyncContextManager[Path]
         :raises ConflictError: If something is stored at ``key``, when the context opens or when it publishes.
-        :raises ValueError: If the key does not lie under ``projects/<id>/assets/`` of the book.
+        :raises ValueError: If the key does not lie under ``assets/`` of the book.
         """
 
     @abstractmethod
@@ -166,7 +164,7 @@ class AssetStore(ABC):
         :returns: Context manager yielding the path, valid while the context is open.
         :rtype: AbstractAsyncContextManager[Path]
         :raises NotFoundError: If nothing is stored at the key.
-        :raises ValueError: If the key does not lie under ``projects/<id>/assets/`` of the book.
+        :raises ValueError: If the key does not lie under ``assets/`` of the book.
         """
 
     @abstractmethod
@@ -182,7 +180,7 @@ class AssetStore(ABC):
         :type target: StorageKey
         :raises NotFoundError: If nothing is stored at ``source``.
         :raises ConflictError: If something is stored at ``target``, which is never replaced.
-        :raises ValueError: If either key does not lie under ``projects/<id>/assets/`` of the book.
+        :raises ValueError: If either key does not lie under ``assets/`` of the book.
         """
 
     @abstractmethod
@@ -194,7 +192,7 @@ class AssetStore(ABC):
 
         :param prefix: Key of the file or directory to remove.
         :type prefix: StorageKey
-        :raises ValueError: If the prefix does not lie under ``projects/<id>/assets/`` of the book.
+        :raises ValueError: If the prefix does not lie under ``assets/`` of the book.
         """
 
     @abstractmethod
@@ -208,39 +206,91 @@ class AssetStore(ABC):
         :type prefix: StorageKey
         :returns: The total size of the files, 0 when nothing is stored at the prefix.
         :rtype: int
-        :raises ValueError: If the prefix does not lie under ``projects/<id>/assets/`` of the book.
-        """
-
-    @abstractmethod
-    async def delete_all(self) -> None:
-        """Remove every derived file of the book; a book without any is not an error.
-
-        The store removes the whole ``assets/`` directory of the book, which no ``delete_prefix`` may name. The
-        uploads and sources are left to ``SourceStore.delete_all``.
+        :raises ValueError: If the prefix does not lie under ``assets/`` of the book.
         """
 
 
-class BookFileStores(ABC):
-    """Opens the source store and the asset store of a book, so a use case works on the files of that book alone."""
+class BookDirectory(ABC):
+    """The directory of one book: its database file, its two stores, and its archive."""
+
+    @property
+    @abstractmethod
+    def database(self) -> Path:
+        """The local path of the database file of the book, which may not exist yet."""
+
+    @property
+    @abstractmethod
+    def sources(self) -> SourceStore:
+        """The store of the uploads and sources of the book."""
+
+    @property
+    @abstractmethod
+    def assets(self) -> AssetStore:
+        """The store of the derived files of the book."""
 
     @abstractmethod
-    def sources(self, book_id: BookId) -> SourceStore:
-        """Return the store of the uploads and sources of a book, without touching its files.
+    def export(self, database: bytes) -> AsyncIterator[bytes]:
+        """Stream the archive of the book in pieces, without holding it whole anywhere.
+
+        The archive carries the copy of the database first, so an archive cut short is never a book without one, then
+        the sources and the derived files, and nothing of an upload still being received.
+
+        :param database: The copy of the database of the book, which the archive carries in place of the file.
+        :type database: bytes
+        :returns: The pieces of the archive, in order.
+        :rtype: AsyncIterator[bytes]
+        """
+
+    @abstractmethod
+    async def delete(self) -> None:
+        """Remove the directory of the book whole, its database file included; a book with none is not an error.
+
+        Whoever holds the database open closes it first. A deletion broken off half way runs again to the end.
+        """
+
+
+class BookDirectories(ABC):
+    """The directories of the books: the one place that makes, walks and opens them."""
+
+    @abstractmethod
+    def directory(self, book_id: BookId) -> BookDirectory:
+        """Return the directory of a book, without touching its files.
 
         :param book_id: The book.
         :type book_id: BookId
-        :returns: The source store of the book.
-        :rtype: SourceStore
+        :returns: The directory of the book.
+        :rtype: BookDirectory
         """
 
     @abstractmethod
-    def assets(self, book_id: BookId) -> AssetStore:
-        """Return the store of the derived files of a book, without touching its files.
+    async def create(self, book_id: BookId, blank: Path) -> BookDirectory:
+        """Make the directory of a new book, holding a copy of the blank database file and nothing else.
 
-        :param book_id: The book.
+        :param book_id: The new book.
         :type book_id: BookId
-        :returns: The asset store of the book.
-        :rtype: AssetStore
+        :param blank: A database file of a book with no rows, which the directory gets a copy of.
+        :type blank: Path
+        :returns: The directory of the new book.
+        :rtype: BookDirectory
+        :raises ConflictError: If the book has a directory already.
+        """
+
+    @abstractmethod
+    async def unpack(self, book_id: BookId, archive: BinaryIO) -> BookDirectory:
+        """Place the content of an archive as the directory of a new book, its database first.
+
+        Every name in the archive is checked before anything is written, and a failure while writing removes what was
+        written, so a refused archive leaves nothing behind.
+
+        :param book_id: The new book, which has no directory yet.
+        :type book_id: BookId
+        :param archive: The archive, a file that can be read from any position.
+        :type archive: BinaryIO
+        :returns: The directory of the new book.
+        :rtype: BookDirectory
+        :raises InvalidArchiveError: If the file is not a ZIP archive, holds no database, or holds a file outside what
+                                     the archive of a book carries.
+        :raises ConflictError: If the new book has a directory already.
         """
 
     @abstractmethod
@@ -249,39 +299,4 @@ class BookFileStores(ABC):
 
         The application calls it when it starts, because the board of jobs is empty then and the uploads that a
         restart interrupted would stay for good. The sources already promoted are not touched.
-        """
-
-
-class BookArchive(ABC):
-    """The archive of a whole book as one file: the copy of its database, its sources and its derived files.
-
-    Another instance takes the archive in as a new book, so the archive carries everything a book is, and nothing of an
-    upload still being received. The database comes first, so an archive cut short is never a book without one.
-    """
-
-    @abstractmethod
-    def export(self, book_id: BookId, database: bytes) -> AsyncIterator[bytes]:
-        """Stream the archive of a book in pieces, without holding it whole anywhere.
-
-        :param book_id: The book.
-        :type book_id: BookId
-        :param database: The copy of the database of the book, which the archive carries in place of the file.
-        :type database: bytes
-        :returns: The pieces of the archive, in order.
-        :rtype: AsyncIterator[bytes]
-        """
-
-    @abstractmethod
-    async def unpack(self, book_id: BookId, archive: BinaryIO) -> None:
-        """Place the content of an archive as the directory of a new book, its database first.
-
-        Every name in the archive is checked before anything is written, so a refused archive leaves nothing behind.
-
-        :param book_id: The new book, which has no directory yet.
-        :type book_id: BookId
-        :param archive: The archive, a file that can be read from any position.
-        :type archive: BinaryIO
-        :raises InvalidArchiveError: If the file is not a ZIP archive, holds no database, or holds a file outside what
-                                     the archive of a book carries.
-        :raises ConflictError: If the new book has a directory already.
         """

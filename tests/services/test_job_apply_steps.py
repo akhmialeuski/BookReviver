@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookDatabases
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -57,7 +58,7 @@ async def untiled_version(kit: ProcessingKit) -> tuple[Actor, BookId, PageVersio
     return actor, book_id, untiled
 
 
-async def delete_the_version(book_id: BookId, version: PageVersion, databases: BookDatabases) -> None:
+async def delete_the_version(book_id: BookId, version: PageVersion, databases: LocatedBookDatabases) -> None:
     """Delete the version in a change of its own, as the removal of a page would.
 
     :param book_id: Book that holds the version.
@@ -65,12 +66,12 @@ async def delete_the_version(book_id: BookId, version: PageVersion, databases: B
     :param version: The version to delete.
     :type version: PageVersion
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await change_versions(book_id, lambda versions: versions.delete(version.id), databases=databases)
 
 
-async def fail_the_version(book_id: BookId, version: PageVersion, databases: BookDatabases) -> None:
+async def fail_the_version(book_id: BookId, version: PageVersion, databases: LocatedBookDatabases) -> None:
     """Mark the version failed in a change of its own, as the collection of old versions would.
 
     :param book_id: Book that holds the version.
@@ -78,14 +79,14 @@ async def fail_the_version(book_id: BookId, version: PageVersion, databases: Boo
     :param version: The version to mark.
     :type version: PageVersion
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await change_versions(
         book_id, lambda versions: versions.update(evolve(version, state=VersionState.FAILED)), databases=databases
     )
 
 
-async def cut_the_tiles_elsewhere(book_id: BookId, version: PageVersion, databases: BookDatabases) -> None:
+async def cut_the_tiles_elsewhere(book_id: BookId, version: PageVersion, databases: LocatedBookDatabases) -> None:
     """Mark the pyramid of the version cut in a change of its own, as the end of a run would.
 
     :param book_id: Book that holds the version.
@@ -93,7 +94,7 @@ async def cut_the_tiles_elsewhere(book_id: BookId, version: PageVersion, databas
     :param version: The version to mark.
     :type version: PageVersion
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await change_versions(
         book_id, lambda versions: versions.update(evolve(version, tiles_ready=True)), databases=databases

@@ -1,6 +1,6 @@
 """Database of one book that runs the work of a use case whole in a worker thread, on one transaction of its file.
 
-A :class:`SqlAlchemyBookDatabase` holds the identifier of a book, the
+A :class:`SqlAlchemyBookDatabase` holds the identifier of a book, the path of its file, the
 :class:`~bookreviver.adapters.persistence.sqlalchemy.books.BookRegistry` of the books and a wait limit, and nothing
 else, so it keeps no state between calls and coroutines may share one. Each call hands a synchronous function to the
 database of the book, which runs it in a thread of its own on a session of a transaction that the call opens and ends:
@@ -20,7 +20,10 @@ database of the book, which runs it in a thread of its own on a session of a tra
   :class:`~bookreviver.adapters.persistence.sqlalchemy.changes.WrittenParts`.
 
 A book is held open by the registry for the length of each call, so it is never closed under a transaction. The work
-receives the repositories of its file bound to the session of the transaction.
+receives the repositories of its file bound to the session of the transaction. ``create`` stores the first record of a
+new book with no announcement, since nobody can watch a book that is not listed yet, and ``close`` closes the book for
+good before the storage deletes its file. :class:`SqlAlchemyBookDatabases` hands out the blank file of the registry
+and adopts the file of an imported book, which it brings to the head revision and checks for a record.
 """
 
 import sqlite3
@@ -29,16 +32,19 @@ from functools import partial
 from typing import TYPE_CHECKING, cast, override
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import DatabaseError
 
 from bookreviver.adapters.persistence.sqlalchemy.changes import WrittenParts
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyBookRepositories
 from bookreviver.adapters.persistence.sqlalchemy.tables import BookRecordRow
 from bookreviver.domain.enums import BlockKind
+from bookreviver.domain.errors import InvalidArchiveError, NotFoundError
 from bookreviver.domain.events import BookChanged
 from bookreviver.ports.persistence import BookDatabase, BookDatabases
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from sqlalchemy.orm import Session
 
@@ -51,22 +57,29 @@ if TYPE_CHECKING:
 
 # Where SQLite keeps a database that lives in memory alone, as the copy of a book does
 MEMORY_DATABASE: str = ':memory:'
+NO_RECORD: str = 'The database of the archive holds no book.'
+NOT_A_DATABASE: str = 'The database of the archive is not a database of a book.'
 
 
 class SqlAlchemyBookDatabase(BookDatabase):
     """Runs the work of a use case on the repositories of one transaction of one book.
 
     :ivar _book_id: Identifier of the book.
+    :ivar _path: The database file of the book.
     :ivar _books: The registry of the databases of the books.
     :ivar _publisher: Where a committed change of the book is announced, with the new version of the book.
     :ivar _wait_seconds: How long a change waits for the writer of the book before it gives up with ``BookBusyError``.
     """
 
-    def __init__(self, book_id: BookId, books: BookRegistry, *, publisher: EventPublisher, wait_seconds: float) -> None:
+    def __init__(
+        self, book_id: BookId, path: Path, books: BookRegistry, *, publisher: EventPublisher, wait_seconds: float
+    ) -> None:
         """Run the transactions of a book with the given wait limit for its writer.
 
         :param book_id: Identifier of the book.
         :type book_id: BookId
+        :param path: The database file of the book.
+        :type path: Path
         :param books: The registry of the databases of the books, shared by every book database.
         :type books: BookRegistry
         :param publisher: Where a committed change of the book is announced.
@@ -77,6 +90,7 @@ class SqlAlchemyBookDatabase(BookDatabase):
         :type wait_seconds: float
         """
         self._book_id = book_id
+        self._path = path
         self._books = books
         self._publisher = publisher
         self._wait_seconds = wait_seconds
@@ -93,7 +107,7 @@ class SqlAlchemyBookDatabase(BookDatabase):
         :raises BookTooNewError: If the file of the book is at a revision this code does not ship.
         :raises NoChangeOpenError: If the work writes.
         """
-        async with self._books.use(self._book_id) as database:
+        async with self._books.use(self._book_id, self._path) as database:
             return await database.read(lambda session: work(SqlAlchemyBookRepositories(session)))
 
     @override
@@ -108,7 +122,7 @@ class SqlAlchemyBookDatabase(BookDatabase):
         :raises BookTooNewError: If the file of the book is at a revision this code does not ship.
         :raises BookBusyError: If the writer of the book or SQLite's write lock was not free within the wait limit.
         """
-        async with self._books.use(self._book_id) as database:
+        async with self._books.use(self._book_id, self._path) as database:
             done, changed = await database.write(
                 partial(self._work_on_book, work),
                 kind=BlockKind.BOOK,
@@ -129,7 +143,7 @@ class SqlAlchemyBookDatabase(BookDatabase):
         :raises NotFoundError: If the book is not stored.
         :raises BookTooNewError: If the file of the book is at a revision this code does not ship.
         """
-        async with self._books.use(self._book_id) as database:
+        async with self._books.use(self._book_id, self._path) as database:
             return await database.read(lambda session: session.scalars(select(BookRecordRow.version)).one())
 
     @override
@@ -141,8 +155,30 @@ class SqlAlchemyBookDatabase(BookDatabase):
         :raises NotFoundError: If the book is not stored.
         :raises BookTooNewError: If the file of the book is at a revision this code does not ship.
         """
-        async with self._books.use(self._book_id) as database:
+        async with self._books.use(self._book_id, self._path) as database:
             return await database.read(_copy_of_database)
+
+    @override
+    async def create(self, book_record: BookRecord) -> None:
+        """Store the record of a new book in one transaction of the writer of the book, announcing nothing.
+
+        :param book_record: The record of the book.
+        :type book_record: BookRecord
+        :raises NotFoundError: If the book is not stored.
+        :raises ConflictError: If the database holds a record already.
+        """
+        async with self._books.use(self._book_id, self._path) as database:
+            await database.write(
+                lambda session: SqlAlchemyBookRepositories(session).book_record.add(book_record),
+                kind=BlockKind.BOOK,
+                book=self._book_id,
+                wait_seconds=self._wait_seconds,
+            )
+
+    @override
+    async def close(self) -> None:
+        """Close the book in the registry for good, once the transactions using it have ended."""
+        await self._books.close(self._book_id)
 
     def _work_on_book[T](
         self, work: Callable[[BookRepositories, BookRecord], T], session: Session
@@ -197,15 +233,60 @@ class SqlAlchemyBookDatabases(BookDatabases):
         self._wait_seconds = wait_seconds
 
     @override
-    def open(self, book_id: BookId) -> SqlAlchemyBookDatabase:
+    def open(self, book_id: BookId, path: Path) -> SqlAlchemyBookDatabase:
         """Return the database of a book, without touching its file.
 
         :param book_id: Identifier of the book.
         :type book_id: BookId
+        :param path: The database file of the book.
+        :type path: Path
         :returns: The database of the book.
         :rtype: SqlAlchemyBookDatabase
         """
-        return SqlAlchemyBookDatabase(book_id, self._books, publisher=self._publisher, wait_seconds=self._wait_seconds)
+        return SqlAlchemyBookDatabase(
+            book_id, path, self._books, publisher=self._publisher, wait_seconds=self._wait_seconds
+        )
+
+    @override
+    async def blank(self) -> Path:
+        """Return the blank file of the registry, made on the first call.
+
+        :returns: A file of the book schema at the head revision, with no rows.
+        :rtype: Path
+        """
+        return await self._books.blank()
+
+    @override
+    async def adopt(self, book_id: BookId, path: Path) -> None:
+        """Open the file an archive placed, which brings it to the head revision, and read its record.
+
+        :param book_id: Identifier of the new book.
+        :type book_id: BookId
+        :param path: The database file the archive placed.
+        :type path: Path
+        :raises BookTooNewError: If the file is at a revision this code does not ship.
+        :raises InvalidArchiveError: If the file is not an SQLite database, or holds no record of a book.
+        """
+        try:
+            async with self._books.use(book_id, path) as database:
+                await database.read(_the_record)
+        except DatabaseError as error:
+            raise InvalidArchiveError(NOT_A_DATABASE) from error
+
+
+def _the_record(session: Session) -> BookRecord:
+    """Read the one record of a book file an archive placed.
+
+    :param session: Session of the transaction of the read.
+    :type session: Session
+    :returns: The record of the book.
+    :rtype: BookRecord
+    :raises InvalidArchiveError: If the file holds no record of a book.
+    """
+    try:
+        return SqlAlchemyBookRepositories(session).book_record.get()
+    except NotFoundError as error:
+        raise InvalidArchiveError(NO_RECORD) from error
 
 
 def _copy_of_database(session: Session) -> bytes:

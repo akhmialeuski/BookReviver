@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.storage import LocalBookFileStores
+from bookreviver.adapters.storage import LocalBookDirectories
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import BookId, JobId, SourceId
 from tests.helpers.fakes_jobs import FakeBoardProvider, JobFakes, JobFakesProvider
@@ -34,11 +34,11 @@ class Uploads:
     :ivar kept: The book and the source whose files an earlier import had promoted.
     """
 
-    def __init__(self, stores: LocalBookFileStores) -> None:
+    def __init__(self, stores: LocalBookDirectories) -> None:
         """Start with nothing on disk.
 
         :param stores: Opens the source store of a book over the storage root.
-        :type stores: LocalBookFileStores
+        :type stores: LocalBookDirectories
         """
         self.stores = stores
         self.interrupted: list[tuple[BookId, JobId]] = []
@@ -48,11 +48,15 @@ class Uploads:
         """Stage an upload in each of two books, and promote the files of a source in a third."""
         for _ in range(2):
             book_id, job_id = BookId(uuid4()), JobId(uuid4())
-            await self.stores.sources(book_id).stage(job_id, [upload(UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
+            await self.stores.directory(book_id).sources.stage(
+                job_id, [upload(UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES
+            )
             self.interrupted.append((book_id, job_id))
         book_id, job_id, source_id = BookId(uuid4()), JobId(uuid4()), SourceId(uuid4())
-        await self.stores.sources(book_id).stage(job_id, [upload(PROMOTED_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
-        await self.stores.sources(book_id).promote(job_id, source_id, names=[PROMOTED_NAME])
+        await self.stores.directory(book_id).sources.stage(
+            job_id, [upload(PROMOTED_NAME)], max_bytes=UPLOAD_LIMIT_BYTES
+        )
+        await self.stores.directory(book_id).sources.promote(job_id, source_id, names=[PROMOTED_NAME])
         self.kept = (book_id, source_id)
 
 
@@ -75,7 +79,7 @@ async def fx_uploads(fx_settings: Settings) -> Uploads:
     :returns: The uploads left on disk.
     :rtype: Uploads
     """
-    uploads = Uploads(LocalBookFileStores(root=fx_settings.storage_root))
+    uploads = Uploads(LocalBookDirectories(root=fx_settings.storage_root))
     await uploads.leave()
     return uploads
 
@@ -110,13 +114,13 @@ class TestStart:
         gone: list[bool] = []
         for book_id, job_id in fx_uploads.interrupted:
             try:
-                async with fx_uploads.stores.sources(book_id).staged_files(job_id):
+                async with fx_uploads.stores.directory(book_id).sources.staged_files(job_id):
                     gone.append(False)
             except NotFoundError:
                 gone.append(True)
         assert fx_uploads.kept is not None
         kept_book, kept_source = fx_uploads.kept
-        async with fx_uploads.stores.sources(kept_book).source_files(kept_source) as files:
+        async with fx_uploads.stores.directory(kept_book).sources.source_files(kept_source) as files:
             kept = [file.name for file in files]
         expect(gone == [True, True])
         expect(kept == [PROMOTED_NAME])

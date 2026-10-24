@@ -6,31 +6,32 @@ after it has checked the owner, so a use case that takes a ``Book`` works on it 
 the book of its job in the same way. A use case reads the book through ``read``, changes it through ``change``, and
 asks ``version`` and ``snapshot`` for its version and a copy of its store, and names no identifier of a book to any
 transaction. It reaches its uploads and sources through ``sources`` and its derived files through ``assets``, the stores
-of this book alone.
+of the directory of this book alone.
 
-The use cases of one open book are methods of the book: its overview, the change of its description and settings, the
-sums and rows of its stages, and its archive. ``BookTools`` holds what every book of a request works with besides its
-own database, so the books service hands the same tools to every book it opens.
+The use cases of one open book are methods of the book: its first description, its overview, the change of its
+description and settings, the sums and rows of its stages, its archive and its deletion. ``BookTools`` holds what every
+book of a request works with besides its own database, so the books service hands the same tools to every book it opens.
 """
 
 from typing import TYPE_CHECKING
 
 from attrs import evolve, field, frozen
 
+from bookreviver.domain.entities import BookRecord
 from bookreviver.domain.values import ArchivedBook, Slice
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bookreviver.domain.changes import BookChanges
-    from bookreviver.domain.entities import BookOverview, BookRecord
+    from bookreviver.domain.entities import BookOverview
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import AccountId, BookId, StepId
     from bookreviver.domain.stage_summaries import StageRow, StageSummary
-    from bookreviver.domain.values import SliceRequest
+    from bookreviver.domain.values import BookDetails, SliceRequest
     from bookreviver.ports.persistence import BookDatabase, BookRepositories
     from bookreviver.ports.runtime import Clock
-    from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
+    from bookreviver.ports.storage import AssetStore, BookDirectory, SourceStore
     from bookreviver.services.stage_summaries import StageSummaries
 
 
@@ -39,13 +40,11 @@ class BookTools:
     """What every open book of a request works with besides its own database.
 
     :ivar stages: Sums of the stages of a book, which give the book its progress and its stage rows.
-    :ivar clock: Clock setting the time a book was last changed.
-    :ivar archive: Archive of a whole book, which packs a book and unpacks one as a new book.
+    :ivar clock: Clock setting the time a book was created and last changed.
     """
 
     stages: StageSummaries
     clock: Clock
-    archive: BookArchive
 
 
 @frozen
@@ -56,17 +55,26 @@ class Book:
     :ivar owner_id: The account that owns the book.
     :ivar database: The database of the book, which runs the transactions of the book. It is no part of what makes two
                     books equal.
-    :ivar sources: The store of the uploads and sources of the book, no part of what makes two books equal.
-    :ivar assets: The store of the derived files of the book, no part of what makes two books equal.
+    :ivar directory: The directory of the book, which holds its files and its database file, no part of what makes two
+                     books equal.
     :ivar tools: What the use cases of the book work with besides its database, no part of what makes two books equal.
     """
 
     id: BookId
     owner_id: AccountId
     database: BookDatabase = field(eq=False, repr=False)
-    sources: SourceStore = field(eq=False, repr=False)
-    assets: AssetStore = field(eq=False, repr=False)
+    directory: BookDirectory = field(eq=False, repr=False)
     tools: BookTools = field(eq=False, repr=False)
+
+    @property
+    def sources(self) -> SourceStore:
+        """The store of the uploads and sources of the book."""
+        return self.directory.sources
+
+    @property
+    def assets(self) -> AssetStore:
+        """The store of the derived files of the book."""
+        return self.directory.assets
 
     async def read[T](self, work: Callable[[BookRepositories], T]) -> T:
         """Run ``work`` on a transaction of the book that only reads, and return what it returns.
@@ -199,4 +207,22 @@ class Book:
         """
         book_record = await self.read(lambda repos: repos.book_record.get())
         database = await self.snapshot()
-        return ArchivedBook(title=book_record.details.title, pieces=self.tools.archive.export(self.id, database))
+        return ArchivedBook(title=book_record.details.title, pieces=self.directory.export(database))
+
+    async def describe(self, details: BookDetails) -> None:
+        """Write the first description of a new book, whose database holds no record yet, created and changed now.
+
+        :param details: Description of the book.
+        :type details: BookDetails
+        :raises ConflictError: If the book is described already.
+        """
+        moment = self.tools.clock.now()
+        await self.database.create(BookRecord(details=details, created_at=moment, updated_at=moment))
+
+    async def delete(self) -> None:
+        """Close the database of the book once its transactions have ended, then delete its directory whole.
+
+        A deletion broken off half way, such as by a failure of the disk, removes what is left when it runs again.
+        """
+        await self.database.close()
+        await self.directory.delete()

@@ -24,8 +24,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor
     from bookreviver.domain.ids import AccountId, BookId
-    from bookreviver.ports.persistence import BookDatabases, UnitOfWork
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from bookreviver.ports.persistence import UnitOfWork
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
     from tests.helpers.fakes_jobs import JobFakes
 
 pytestmark = pytest.mark.anyio
@@ -34,7 +34,7 @@ pytestmark = pytest.mark.anyio
 OPEN_TABS: int = 3
 
 
-async def _store_book_of(uow: UnitOfWork, owner_id: AccountId, *, databases: BookDatabases) -> BookId:
+async def _store_book_of(uow: UnitOfWork, owner_id: AccountId, *, databases: LocatedBookDatabases) -> BookId:
     """Commit a book of an account to the catalogue and the books of the test.
 
     :param uow: Unit of work over the catalogue and the books of the running application.
@@ -42,7 +42,7 @@ async def _store_book_of(uow: UnitOfWork, owner_id: AccountId, *, databases: Boo
     :param owner_id: Committed account that owns the book.
     :type owner_id: AccountId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The identifier of the stored book.
     :rtype: BookId
     """

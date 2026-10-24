@@ -45,8 +45,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, BookRecord, PageStage, PageVersion
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import Slice
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -78,7 +79,7 @@ async def width_of(kit: ProcessingKit, book_id: BookId, version: PageVersion) ->
             return image.width
 
 
-async def versions_of(book_id: BookId, page: Page, *, databases: BookDatabases) -> list[PageVersion]:
+async def versions_of(book_id: BookId, page: Page, *, databases: LocatedBookDatabases) -> list[PageVersion]:
     """Read the versions of a page, the earliest first, as committed.
 
     :param book_id: Identifier of the book.
@@ -86,14 +87,14 @@ async def versions_of(book_id: BookId, page: Page, *, databases: BookDatabases) 
     :param page: The page.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: Every version of the page.
     :rtype: list[PageVersion]
     """
     return list(await databases.open(book_id).read(lambda repos: repos.page_versions.list_for_page(page.id)))
 
 
-async def give_odd_pages_a_value(book_id: BookId, page: Page, *, databases: BookDatabases) -> None:
+async def give_odd_pages_a_value(book_id: BookId, page: Page, *, databases: LocatedBookDatabases) -> None:
     """Give the odd pages a value for a step of the geometry stage, and the page a fresh record of that stage.
 
     :param book_id: Identifier of the book owning the page.
@@ -101,7 +102,7 @@ async def give_odd_pages_a_value(book_id: BookId, page: Page, *, databases: Book
     :param page: The page that has been through the geometry stage.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
 
     def save_value_and_record(repos: BookRepositories, _book_record: BookRecord) -> None:

@@ -21,8 +21,9 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, PageStage, Recipe
     from bookreviver.domain.ids import BookId, PageId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
 
 pytestmark = pytest.mark.anyio
 
@@ -122,7 +123,7 @@ async def run_all(kit: ProcessingKit, actor: Actor, book_id: BookId, run: StageR
     await run_stage(kit, actor, book_id, StageRun(stage=Stage.GEOMETRY) if run is None else run)
 
 
-async def record_of(book_id: BookId, page_id: PageId, *, databases: BookDatabases) -> PageStage:
+async def record_of(book_id: BookId, page_id: PageId, *, databases: LocatedBookDatabases) -> PageStage:
     """Read the record of the geometry stage of a page.
 
     :param book_id: Book that holds the page.
@@ -130,7 +131,7 @@ async def record_of(book_id: BookId, page_id: PageId, *, databases: BookDatabase
     :param page_id: The page.
     :type page_id: PageId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The record as committed.
     :rtype: PageStage
     """

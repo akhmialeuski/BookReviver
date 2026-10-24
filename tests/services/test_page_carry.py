@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Page
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import PageStepKey
-    from bookreviver.ports.persistence import BookDatabases
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -61,7 +61,7 @@ async def carry_book(kit: ProcessingKit) -> tuple[Actor, BookId, list[Page], lis
     return actor, book_id, pages, keys
 
 
-async def strength_of(book_id: BookId, key: PageStepKey, *, databases: BookDatabases) -> object:
+async def strength_of(book_id: BookId, key: PageStepKey, *, databases: LocatedBookDatabases) -> object:
     """Read the strength a page changes for the step, or None when it changes none.
 
     :param book_id: Book that holds the page.
@@ -69,7 +69,7 @@ async def strength_of(book_id: BookId, key: PageStepKey, *, databases: BookDatab
     :param key: The page, the stage and the step.
     :type key: PageStepKey
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The value the page stores for the field.
     :rtype: object
     """
@@ -77,7 +77,7 @@ async def strength_of(book_id: BookId, key: PageStepKey, *, databases: BookDatab
     return None if state is None else state.params.get(STRENGTH_PARAMETER)
 
 
-async def angle_of(book_id: BookId, key: PageStepKey, *, databases: BookDatabases) -> float | None:
+async def angle_of(book_id: BookId, key: PageStepKey, *, databases: LocatedBookDatabases) -> float | None:
     """Read the angle of the rotation a page has set by hand for the step, or None when it set no shape.
 
     :param book_id: Book that holds the page.
@@ -85,7 +85,7 @@ async def angle_of(book_id: BookId, key: PageStepKey, *, databases: BookDatabase
     :param key: The page, the stage and the step.
     :type key: PageStepKey
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The angle in degrees.
     :rtype: float | None
     """

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Page as BookPage
     from bookreviver.domain.ids import BookId
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
-    from tests.helpers.storage import SharedBookFileStores
+    from tests.helpers.storage import SharedBookDirectories
 
 pytestmark = pytest.mark.anyio
 
@@ -154,7 +154,7 @@ class TestListPages:
         assert_expectations()
 
     async def test_image_paths_have_no_scheme_or_host_and_lead_to_the_files(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_file_stores: SharedBookFileStores
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_directories: SharedBookDirectories
     ) -> None:
         """Verify every image address is a path of the IIIF route, and the thumbnail path serves the stored file.
 
@@ -162,12 +162,12 @@ class TestListPages:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the source store and the asset store of a book of the test.
+        :type fx_directories: SharedBookDirectories
         """
         keys = BookKeys()
         version = fx_book.versions[0]
-        async with fx_file_stores.assets(fx_book.book_id).writable(
+        async with fx_directories.assets(fx_book.book_id).writable(
             keys.version_rendition(version, Rendition.THUMBNAIL)
         ) as path:
             path.write_bytes(THUMBNAIL_CONTENT)

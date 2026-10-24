@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
-    from tests.helpers.storage import SharedBookFileStores
+    from tests.helpers.storage import SharedBookDirectories
 
 # The tests open books of the library with the databases of the test, whether or not they store any
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures('fx_databases')]
@@ -284,7 +284,7 @@ class TestCancel:
         self,
         fx_fakes: JobFakes,
         fx_job_service: JobService,
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_book: BookId,
         fx_open_own_book: Callable[[BookId], Book],
     ) -> None:
@@ -294,25 +294,25 @@ class TestCancel:
         :type fx_fakes: JobFakes
         :param fx_job_service: Job service of the request.
         :type fx_job_service: JobService
-        :param fx_file_stores: Opens the stores of a book of the test, whose source store holds the uploads.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the stores of a book of the test, whose source store holds the uploads.
+        :type fx_directories: SharedBookDirectories
         :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookId
         :param fx_open_own_book: Function opening a book of the acting account with its database.
         :type fx_open_own_book: Callable[[BookId], Book]
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book, kind=JobKind.IMPORT_SOURCE))
-        await fx_file_stores.sources(fx_book).stage(job.id, [upload(STAGED_UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
+        await fx_directories.sources(fx_book).stage(job.id, [upload(STAGED_UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
         await fx_job_service.cancel(fx_open_own_book(job.book_id), job.id)
         with pytest.raises(NotFoundError):
-            async with fx_file_stores.sources(fx_book).staged_files(job.id):
+            async with fx_directories.sources(fx_book).staged_files(job.id):
                 pass
 
     async def test_import_cancelled_while_running_keeps_its_upload_for_its_own_run_to_remove(
         self,
         fx_fakes: JobFakes,
         fx_job_service: JobService,
-        fx_file_stores: SharedBookFileStores,
+        fx_directories: SharedBookDirectories,
         fx_book: BookId,
         fx_open_own_book: Callable[[BookId], Book],
     ) -> None:
@@ -322,22 +322,22 @@ class TestCancel:
         :type fx_fakes: JobFakes
         :param fx_job_service: Job service of the request.
         :type fx_job_service: JobService
-        :param fx_file_stores: Opens the stores of a book of the test, whose source store holds the uploads.
-        :type fx_file_stores: SharedBookFileStores
+        :param fx_directories: Opens the stores of a book of the test, whose source store holds the uploads.
+        :type fx_directories: SharedBookDirectories
         :param fx_book: Book of ``fx_owner``.
         :type fx_book: BookId
         :param fx_open_own_book: Function opening a book of the acting account with its database.
         :type fx_open_own_book: Callable[[BookId], Book]
         """
         job = fx_fakes.board.put(make_job(book_id=fx_book, kind=JobKind.IMPORT_SOURCE))
-        await fx_file_stores.sources(fx_book).stage(job.id, [upload(STAGED_UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
+        await fx_directories.sources(fx_book).stage(job.id, [upload(STAGED_UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES)
         release = fx_fakes.scripted.hold(job)
         names: list[str] = []
         async with anyio.create_task_group() as group:
             group.start_soon(fx_fakes.board.run_queued)
             await anyio.wait_all_tasks_blocked()
             await fx_job_service.cancel(fx_open_own_book(job.book_id), job.id)
-            async with fx_file_stores.sources(fx_book).staged_files(job.id) as staged:
+            async with fx_directories.sources(fx_book).staged_files(job.id) as staged:
                 names.extend(staged)
             release.set()
         expect(names == [STAGED_UPLOAD_NAME])

@@ -15,7 +15,7 @@ from bookreviver.app.providers.accounts import UserManager
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import AccountId
 from bookreviver.ports.persistence import BookDatabases, UnitOfWork
-from bookreviver.ports.storage import BookFileStores
+from bookreviver.ports.storage import BookDirectories
 from tests.helpers.builders import make_page, make_record
 from tests.helpers.fakes_accounts import PASSWORD
 from tests.helpers.seeding import commit_account, store_book
@@ -63,12 +63,17 @@ async def _stored(container: AsyncContainer, book_id: BookId) -> bool:
     :type container: AsyncContainer
     :param book_id: The book to look up.
     :type book_id: BookId
-    :returns: True when a new book database still finds the book.
+    :returns: True when a new book database still finds the book in its directory.
     :rtype: bool
     """
     async with container() as scope:
+        directory = (await scope.get(BookDirectories)).directory(book_id)
         try:
-            await (await scope.get(BookDatabases)).open(book_id).read(lambda repos: repos.book_record.get())
+            await (
+                (await scope.get(BookDatabases))
+                .open(book_id, directory.database)
+                .read(lambda repos: repos.book_record.get())
+            )
         except NotFoundError:
             return False
     return True
@@ -101,7 +106,7 @@ class TestDelete:
                 pages[await store_book(uow, make_record(), page, owner=owner, databases=fx_databases())] = page
         *owned, kept = pages
         files = BookFiles(
-            stores=await fx_container.get(BookFileStores),
+            stores=await fx_container.get(BookDirectories),
             root=fx_settings.storage_root,
         )
         for book_id, page in pages.items():

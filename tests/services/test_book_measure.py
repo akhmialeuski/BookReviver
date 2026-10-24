@@ -35,8 +35,9 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Actor, BookRecord, Job, Page, PageStage, Recipe
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -180,7 +181,7 @@ async def measure(kit: ProcessingKit, actor: Actor, book_id: BookId) -> Job:
     return stored_job(kit, job.id)
 
 
-async def geometry_record(book_id: BookId, page: Page, *, databases: BookDatabases) -> PageStage:
+async def geometry_record(book_id: BookId, page: Page, *, databases: LocatedBookDatabases) -> PageStage:
     """Read the committed record of the Geometry stage of a page.
 
     :param book_id: Identifier of the book.
@@ -188,7 +189,7 @@ async def geometry_record(book_id: BookId, page: Page, *, databases: BookDatabas
     :param page: The page.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The record.
     :rtype: PageStage
     """

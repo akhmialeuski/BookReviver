@@ -44,8 +44,9 @@ if TYPE_CHECKING:
         PageVersion,
     )
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -98,7 +99,7 @@ async def history_of(kit: ProcessingKit, actor: Actor, book_id: BookId, key: Pag
     )
 
 
-async def stored_edit(book_id: BookId, key: PageStepKey, *, databases: BookDatabases) -> PageEdit | None:
+async def stored_edit(book_id: BookId, key: PageStepKey, *, databases: LocatedBookDatabases) -> PageEdit | None:
     """Read the manual edit a step has on a page.
 
     :param book_id: Book that holds the page.
@@ -106,7 +107,7 @@ async def stored_edit(book_id: BookId, key: PageStepKey, *, databases: BookDatab
     :param key: The page, the stage and the step.
     :type key: PageStepKey
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The edit, or None.
     :rtype: PageEdit | None
     """
@@ -134,7 +135,7 @@ async def has_files(kit: ProcessingKit, book_id: BookId, version: PageVersion) -
 
 
 async def store_carried_batch(
-    book_id: BookId, keys: tuple[PageStepKey, ...], batch: ChangeBatchId, *, databases: BookDatabases
+    book_id: BookId, keys: tuple[PageStepKey, ...], batch: ChangeBatchId, *, databases: LocatedBookDatabases
 ) -> None:
     """Store the setting and the change that one carry-over batch writes on each of the pages of some steps.
 
@@ -145,7 +146,7 @@ async def store_carried_batch(
     :param batch: The batch the changes belong to.
     :type batch: ChangeBatchId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
 
     def carry(repos: BookRepositories, _book_record: BookRecord) -> None:

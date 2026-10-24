@@ -45,8 +45,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.stage_summaries import StageSummary
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -92,7 +93,7 @@ class GeometrySeed(NamedTuple):
     through_step: int | None = None
 
 
-async def seed_geometry(book_id: BookId, page: Page, seed: GeometrySeed, *, databases: BookDatabases) -> None:
+async def seed_geometry(book_id: BookId, page: Page, seed: GeometrySeed, *, databases: LocatedBookDatabases) -> None:
     """Commit a record of the geometry stage of a page with a ready current version.
 
     :param book_id: Identifier of the book.
@@ -102,7 +103,7 @@ async def seed_geometry(book_id: BookId, page: Page, seed: GeometrySeed, *, data
     :param seed: The state, the review mark and the last step run of the record.
     :type seed: GeometrySeed
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     base = (await databases.open(book_id).read(lambda repos: repos.page_versions.list_for_page(page.id)))[0]
     version = evolve(
@@ -128,7 +129,9 @@ async def seed_geometry(book_id: BookId, page: Page, seed: GeometrySeed, *, data
     await databases.open(book_id).change(work)
 
 
-async def mark_version(book_id: BookId, version: PageVersion, mark: ResultMark, *, databases: BookDatabases) -> None:
+async def mark_version(
+    book_id: BookId, version: PageVersion, mark: ResultMark, *, databases: LocatedBookDatabases
+) -> None:
     """Commit the mark of a stored version.
 
     :param book_id: Book that holds the version.
@@ -138,7 +141,7 @@ async def mark_version(book_id: BookId, version: PageVersion, mark: ResultMark, 
     :param mark: The mark to set.
     :type mark: ResultMark
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await databases.open(book_id).change(
         lambda repos, _book_record: repos.page_versions.update(evolve(version, mark=mark))
@@ -146,7 +149,7 @@ async def mark_version(book_id: BookId, version: PageVersion, mark: ResultMark, 
 
 
 async def seed_marked_chain(
-    book_id: BookId, page: Page, *, steps: int, marked_at: int, databases: BookDatabases
+    book_id: BookId, page: Page, *, steps: int, marked_at: int, databases: LocatedBookDatabases
 ) -> None:
     """Commit a geometry record whose current version is the last of a chain of steps, the marks starting at one.
 
@@ -161,7 +164,7 @@ async def seed_marked_chain(
     :param marked_at: Index of the first version that carries the mark.
     :type marked_at: int
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     first = (await databases.open(book_id).read(lambda repos: repos.page_versions.list_for_page(page.id)))[0]
 
@@ -571,13 +574,13 @@ async def seed_text_and_leaf(kit: ProcessingKit) -> tuple[Actor, BookId, Page, P
     return actor, book_id, text, leaf
 
 
-async def step_ids_of(book_id: BookId, *, databases: BookDatabases) -> list[StepId]:
+async def step_ids_of(book_id: BookId, *, databases: LocatedBookDatabases) -> list[StepId]:
     """Read the identifiers of the steps of the recipe of text pages of the geometry stage, in order.
 
     :param book_id: The identifier of the book.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The identifiers of the steps.
     :rtype: list[StepId]
     """

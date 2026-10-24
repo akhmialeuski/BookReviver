@@ -10,14 +10,13 @@ from typing import TYPE_CHECKING
 import pytest
 from attrs import evolve
 
-from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabases
 from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.values import JobEnd
 from tests.helpers.builders import make_record
-from tests.helpers.database import BookSessions, copy_schema_template, database_file
+from tests.helpers.database import BookSessions, LocatedBookDatabases, copy_schema_template, database_file
 from tests.helpers.fakes_imports import DEFAULT_PARALLEL_SCANS, ImportRig
 from tests.helpers.fakes_jobs import JobFakes, RecordingEventBus
 from tests.helpers.seeding import commit_account, store_book
@@ -31,9 +30,10 @@ if TYPE_CHECKING:
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Job
     from bookreviver.domain.ids import AccountId, BookId
-    from bookreviver.ports.persistence import BookDatabases, UnitOfWork
+    from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.runtime import JobControl
     from tests.helpers.builders import BookOpener
+    from tests.helpers.storage import SharedBookDirectories
 
 # Long enough that a block which wrongly waits for a lock that is never given fails the test, and does not hang it
 TRACED_WAIT_SECONDS: float = 10.0
@@ -55,15 +55,17 @@ async def fx_owner_id(fx_database: SqlDatabase) -> AccountId:
 
 
 @pytest.fixture
-def fx_book_sessions(fx_books: BookRegistry) -> BookSessions:
+def fx_book_sessions(fx_books: BookRegistry, fx_directories: SharedBookDirectories) -> BookSessions:
     """Give the sessions of the files of the books of the test, for the tests that read and write rows directly.
 
     :param fx_books: Registry of the books of the test.
     :type fx_books: BookRegistry
+    :param fx_directories: The directories of the books of the test, which hold their database files.
+    :type fx_directories: SharedBookDirectories
     :returns: The sessions over the registry.
     :rtype: BookSessions
     """
-    return BookSessions(fx_books)
+    return BookSessions(fx_books, fx_directories)
 
 
 @pytest.fixture
@@ -152,15 +154,13 @@ async def fx_traced_database(
 
 @pytest.fixture
 async def fx_open_books(
-    fx_settings: Settings, fx_book_template: Path, fx_tracer: AskingTracer
+    fx_book_template: Path, fx_tracer: AskingTracer
 ) -> AsyncIterator[Callable[[float], BookRegistry]]:
     """Give a function that opens a registry of the books of the test, with the busy timeout it is told.
 
     Each registry opens a database of its own over the file of a book, with a write queue of its own, so the blocks of
     two registries meet at the busy timeout of SQLite, as the blocks of two processes do.
 
-    :param fx_settings: Settings naming the storage root of the books.
-    :type fx_settings: Settings
     :param fx_book_template: The blank file every new book copies.
     :type fx_book_template: Path
     :param fx_tracer: Tracer of the test.
@@ -180,7 +180,6 @@ async def fx_open_books(
         """
         opened.append(
             BookRegistry(
-                fx_settings.storage_root,
                 tracer=fx_tracer,
                 wait_seconds=wait_seconds,
                 idle_seconds=TRACED_IDLE_SECONDS,
@@ -223,97 +222,82 @@ def fx_impatient_books(fx_open_books: Callable[[float], BookRegistry]) -> BookRe
 
 
 @pytest.fixture
-def fx_traced_uow(fx_traced_database: SqlDatabase, fx_traced_books: BookRegistry) -> Callable[..., UnitOfWork]:
-    """Give a function opening a unit of work over the traced catalogue and books, with the limit it is told.
+def fx_traced_uow(fx_traced_database: SqlDatabase) -> Callable[..., UnitOfWork]:
+    """Give a function opening a unit of work over the traced catalogue, with the limit it is told.
 
     :param fx_traced_database: The traced catalogue.
     :type fx_traced_database: SqlDatabase
-    :param fx_traced_books: The traced registry of the books.
-    :type fx_traced_books: BookRegistry
     :returns: Function taking an optional wait limit and returning a new unit of work.
     :rtype: Callable[..., UnitOfWork]
     """
 
     def open_unit_of_work(*, wait_seconds: float = TRACED_WAIT_SECONDS) -> UnitOfWork:
-        """Open a unit of work over the traced catalogue and books.
+        """Open a unit of work over the traced catalogue.
 
         :param wait_seconds: How long a change waits for its writer.
         :type wait_seconds: float
         :returns: A new unit of work.
         :rtype: UnitOfWork
         """
-        return SqlAlchemyUnitOfWork(fx_traced_database, fx_traced_books, wait_seconds=wait_seconds)
+        return SqlAlchemyUnitOfWork(fx_traced_database, wait_seconds=wait_seconds)
 
     return open_unit_of_work
 
 
 @pytest.fixture
-def fx_impatient_uow(fx_traced_database: SqlDatabase, fx_impatient_books: BookRegistry) -> Callable[..., UnitOfWork]:
-    """Give a function opening a unit of work over the traced catalogue and the impatient registry of the books.
-
-    :param fx_traced_database: The traced catalogue.
-    :type fx_traced_database: SqlDatabase
-    :param fx_impatient_books: The registry over the same books whose connections give up for the lock at once.
-    :type fx_impatient_books: BookRegistry
-    :returns: Function taking an optional wait limit and returning a new unit of work.
-    :rtype: Callable[..., UnitOfWork]
-    """
-
-    def open_unit_of_work(*, wait_seconds: float = TRACED_WAIT_SECONDS) -> UnitOfWork:
-        """Open a unit of work over the traced catalogue and the impatient books.
-
-        :param wait_seconds: How long a change waits for its writer.
-        :type wait_seconds: float
-        :returns: A new unit of work.
-        :rtype: UnitOfWork
-        """
-        return SqlAlchemyUnitOfWork(fx_traced_database, fx_impatient_books, wait_seconds=wait_seconds)
-
-    return open_unit_of_work
-
-
-@pytest.fixture
-def fx_traced_databases(fx_traced_books: BookRegistry) -> Callable[..., BookDatabases]:
+def fx_traced_databases(
+    fx_traced_books: BookRegistry, fx_directories: SharedBookDirectories
+) -> Callable[..., LocatedBookDatabases]:
     """Give a function opening the databases of the traced books, with the limit it is told.
 
     :param fx_traced_books: The traced registry of the books.
     :type fx_traced_books: BookRegistry
+    :param fx_directories: The directories of the books of the test, which hold their database files.
+    :type fx_directories: SharedBookDirectories
     :returns: Function taking an optional wait limit and returning a new opener of the databases of the books.
-    :rtype: Callable[..., BookDatabases]
+    :rtype: Callable[..., LocatedBookDatabases]
     """
 
-    def open_databases(*, wait_seconds: float = TRACED_WAIT_SECONDS) -> BookDatabases:
+    def open_databases(*, wait_seconds: float = TRACED_WAIT_SECONDS) -> LocatedBookDatabases:
         """Open the databases of the traced books.
 
         :param wait_seconds: How long a change waits for its writer.
         :type wait_seconds: float
         :returns: A new opener of the databases of the books.
-        :rtype: BookDatabases
+        :rtype: LocatedBookDatabases
         """
-        return SqlAlchemyBookDatabases(fx_traced_books, publisher=RecordingEventBus(), wait_seconds=wait_seconds)
+        return LocatedBookDatabases(
+            fx_traced_books, directories=fx_directories, publisher=RecordingEventBus(), wait_seconds=wait_seconds
+        )
 
     return open_databases
 
 
 @pytest.fixture
-def fx_impatient_databases(fx_impatient_books: BookRegistry) -> Callable[..., BookDatabases]:
+def fx_impatient_databases(
+    fx_impatient_books: BookRegistry, fx_directories: SharedBookDirectories
+) -> Callable[..., LocatedBookDatabases]:
     """Give a function opening the databases of the impatient registry of the books, with the limit it is told.
 
     :param fx_impatient_books: The registry over the same books whose connections give up for the lock at once.
     :type fx_impatient_books: BookRegistry
+    :param fx_directories: The directories of the books of the test, which hold their database files.
+    :type fx_directories: SharedBookDirectories
     :returns: Function taking an optional wait limit and returning a new opener of the databases of the books.
-    :rtype: Callable[..., BookDatabases]
+    :rtype: Callable[..., LocatedBookDatabases]
     """
 
-    def open_databases(*, wait_seconds: float = TRACED_WAIT_SECONDS) -> BookDatabases:
+    def open_databases(*, wait_seconds: float = TRACED_WAIT_SECONDS) -> LocatedBookDatabases:
         """Open the databases of the impatient books.
 
         :param wait_seconds: How long a change waits for its writer.
         :type wait_seconds: float
         :returns: A new opener of the databases of the books.
-        :rtype: BookDatabases
+        :rtype: LocatedBookDatabases
         """
-        return SqlAlchemyBookDatabases(fx_impatient_books, publisher=RecordingEventBus(), wait_seconds=wait_seconds)
+        return LocatedBookDatabases(
+            fx_impatient_books, directories=fx_directories, publisher=RecordingEventBus(), wait_seconds=wait_seconds
+        )
 
     return open_databases
 
@@ -322,7 +306,7 @@ def fx_impatient_databases(fx_impatient_books: BookRegistry) -> Callable[..., Bo
 async def fx_book(
     fx_traced_database: SqlDatabase,
     fx_traced_uow: Callable[..., UnitOfWork],
-    fx_traced_databases: Callable[..., BookDatabases],
+    fx_traced_databases: Callable[..., LocatedBookDatabases],
     fx_tracer: AskingTracer,
 ) -> BookId:
     """Commit an account and a book of it, which a ``Book.change`` block needs to find.
@@ -334,7 +318,7 @@ async def fx_book(
     :param fx_traced_uow: Function opening a unit of work over the traced catalogue and books.
     :type fx_traced_uow: Callable[..., UnitOfWork]
     :param fx_traced_databases: Function opening the databases of the traced books.
-    :type fx_traced_databases: Callable[..., BookDatabases]
+    :type fx_traced_databases: Callable[..., LocatedBookDatabases]
     :param fx_tracer: Tracer of the test.
     :type fx_tracer: AskingTracer
     :returns: The book.

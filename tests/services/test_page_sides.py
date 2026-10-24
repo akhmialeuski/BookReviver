@@ -15,10 +15,10 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Actor, BookRecord, Page
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -128,7 +128,7 @@ REORDERINGS: dict[str, Reordering] = {
 
 
 async def _commit_book(
-    uow: UnitOfWork, actor: Actor, valued: tuple[ValueScope, Stage] | None, *, databases: BookDatabases
+    uow: UnitOfWork, actor: Actor, valued: tuple[ValueScope, Stage] | None, *, databases: LocatedBookDatabases
 ) -> Book:
     """Commit a book of four pages with a fresh record of each checked stage, and one value for a step of a stage.
 
@@ -139,7 +139,7 @@ async def _commit_book(
     :param valued: The part of the pages and the stage of the one value the book has for a step, or None for no value.
     :type valued: tuple[ValueScope, Stage] | None
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The book.
     :rtype: Book
     """
@@ -167,13 +167,13 @@ async def _commit_book(
     return Book(book_id=book_id, pages=pages)
 
 
-async def _stale(book: Book, *, databases: BookDatabases) -> set[tuple[int, Stage]]:
+async def _stale(book: Book, *, databases: LocatedBookDatabases) -> set[tuple[int, Stage]]:
     """Read which stages of which pages are stale.
 
     :param book: The book.
     :type book: Book
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The index of the page in the original book order and the stage, of each stale record.
     :rtype: set[tuple[int, Stage]]
     """

@@ -19,9 +19,8 @@ from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabases
     from tests.contracts.conftest import OwnerFactory
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -29,7 +28,9 @@ pytestmark = pytest.mark.anyio
 LATER: timedelta = timedelta(minutes=5)
 
 
-async def _store_book(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *, databases: BookDatabases) -> BookId:
+async def _store_book(
+    uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *, databases: LocatedBookDatabases
+) -> BookId:
     """Store a book of a new account.
 
     :param uow_factory: Function opening a new unit of work over the catalogue and the books of the test.
@@ -37,7 +38,7 @@ async def _store_book(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *
     :param new_owner: Function creating an account the catalogue accepts as an owner.
     :type new_owner: OwnerFactory
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The identifier of the book.
     :rtype: BookId
     """

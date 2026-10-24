@@ -106,7 +106,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.storage import AssetStore, IncomingFile
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases
     from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
@@ -387,85 +387,87 @@ async def _running_import(rig: ImportRig, actor: Actor, book_id: BookId, files: 
             released.set()
 
 
-async def _report(book_id: BookId, *, databases: BookDatabases) -> list[Source]:
+async def _report(book_id: BookId, *, databases: LocatedBookDatabases) -> list[Source]:
     """Read the rejected and skipped files of a book as committed, which are the report of its imports.
 
     :param book_id: Book owning the files.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The files, in the order the imports recorded them.
     :rtype: list[Source]
     """
     return list(await databases.open(book_id).read(lambda repos: repos.sources.list_unimported()))
 
 
-async def _sources(book_id: BookId, *, databases: BookDatabases) -> list[Source]:
+async def _sources(book_id: BookId, *, databases: LocatedBookDatabases) -> list[Source]:
     """Read the sources of a book as committed, in import order.
 
     :param book_id: Book owning the sources.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The sources.
     :rtype: list[Source]
     """
     return (await stored_book(book_id, databases=databases)).sources
 
 
-async def _scans(book_id: BookId, *, databases: BookDatabases) -> list[Scan]:
+async def _scans(book_id: BookId, *, databases: LocatedBookDatabases) -> list[Scan]:
     """Read the scans of a book as committed, source by source.
 
     :param book_id: Book owning the scans.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The scans.
     :rtype: list[Scan]
     """
     return (await stored_book(book_id, databases=databases)).scans
 
 
-async def _pages(book_id: BookId, *, databases: BookDatabases) -> list[Page]:
+async def _pages(book_id: BookId, *, databases: LocatedBookDatabases) -> list[Page]:
     """Read the pages of a book as committed, in book order.
 
     :param book_id: Book owning the pages.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The pages.
     :rtype: list[Page]
     """
     return (await stored_book(book_id, databases=databases)).pages
 
 
-async def _labels(book_id: BookId, *, databases: BookDatabases) -> list[str]:
+async def _labels(book_id: BookId, *, databases: LocatedBookDatabases) -> list[str]:
     """Read the labels the pages of a book show, in book order, as the sections committed give them.
 
     :param book_id: Book owning the pages.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The labels.
     :rtype: list[str]
     """
     return (await stored_book(book_id, databases=databases)).labels
 
 
-async def _sections(book_id: BookId, *, databases: BookDatabases) -> list[PaginationSection]:
+async def _sections(book_id: BookId, *, databases: LocatedBookDatabases) -> list[PaginationSection]:
     """Read the pagination sections of a book as committed, in the order they were made.
 
     :param book_id: Book owning the sections.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The sections.
     :rtype: list[PaginationSection]
     """
     return (await stored_book(book_id, databases=databases)).sections
 
 
-async def _versions(book_id: BookId, page_ids: Collection[PageId], *, databases: BookDatabases) -> list[PageVersion]:
+async def _versions(
+    book_id: BookId, page_ids: Collection[PageId], *, databases: LocatedBookDatabases
+) -> list[PageVersion]:
     """Read the versions of some pages as committed, page by page in the order the versions were created.
 
     :param book_id: Book owning the pages.
@@ -473,7 +475,7 @@ async def _versions(book_id: BookId, page_ids: Collection[PageId], *, databases:
     :param page_ids: Pages owning the versions.
     :type page_ids: Collection[PageId]
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The versions.
     :rtype: list[PageVersion]
     """
@@ -482,13 +484,13 @@ async def _versions(book_id: BookId, page_ids: Collection[PageId], *, databases:
     )
 
 
-async def _book_record(book_id: BookId, *, databases: BookDatabases) -> BookRecord:
+async def _book_record(book_id: BookId, *, databases: LocatedBookDatabases) -> BookRecord:
     """Read a book as committed.
 
     :param book_id: Identifier of the book.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The book.
     :rtype: BookRecord
     """
@@ -2584,37 +2586,37 @@ class TestRunImportSplit:
         assert_expectations()
 
 
-async def delete_the_page(book_id: BookId, databases: BookDatabases) -> None:
+async def delete_the_page(book_id: BookId, databases: LocatedBookDatabases) -> None:
     """Delete the only page of the book in a change of its own, as the user would while its scan is cut.
 
     :param book_id: Identifier of the book whose page is deleted.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     [page] = await _pages(book_id, databases=databases)
     await databases.open(book_id).change(lambda repos, _book_record: repos.pages.delete(page.id))
 
 
-async def delete_the_source(book_id: BookId, databases: BookDatabases) -> None:
+async def delete_the_source(book_id: BookId, databases: LocatedBookDatabases) -> None:
     """Delete the only source of the book, with its scan, in a change of its own.
 
     :param book_id: Identifier of the book whose source is deleted.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     [source] = await _sources(book_id, databases=databases)
     await databases.open(book_id).change(lambda repos, _book_record: repos.sources.delete(source.id))
 
 
-async def make_the_scan_ready(book_id: BookId, databases: BookDatabases) -> None:
+async def make_the_scan_ready(book_id: BookId, databases: LocatedBookDatabases) -> None:
     """Mark the only scan of the book ready in a change of its own, as another run would have.
 
     :param book_id: Identifier of the book whose scan is marked.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     [scan] = await _scans(book_id, databases=databases)
     ready = evolve(scan, renditions=evolve(scan.renditions, ready=True))

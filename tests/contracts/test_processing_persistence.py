@@ -55,9 +55,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, Page, PageStage, PageVersion
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.step_values import StepValues
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookRepositories
     from tests.contracts.conftest import OwnerFactory
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -132,7 +132,7 @@ def _add_head(repos: BookRepositories, _book_record: BookRecord, *, version: Pag
 
 
 async def _store_page(
-    uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *, databases: BookDatabases
+    uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *, databases: LocatedBookDatabases
 ) -> tuple[BookId, PageId]:
     """Store a book with one page, each in the change that owns it.
 
@@ -141,7 +141,7 @@ async def _store_page(
     :param new_owner: Function creating an account the database accepts as an owner.
     :type new_owner: OwnerFactory
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The identifiers of the book and its page.
     :rtype: tuple[BookId, PageId]
     """
@@ -161,7 +161,7 @@ def _blank_page(order_key: str) -> Page:
     return evolve(make_page(order_key=order_key), origin=PageOrigin.BLANK)
 
 
-async def _add_marked_head(book_id: BookId, page: Page, *, databases: BookDatabases) -> PageVersionId:
+async def _add_marked_head(book_id: BookId, page: Page, *, databases: LocatedBookDatabases) -> PageVersionId:
     """Store a base version of a page and a version of the geometry stage marked for review.
 
     :param book_id: Identifier of the book of the page.
@@ -169,7 +169,7 @@ async def _add_marked_head(book_id: BookId, page: Page, *, databases: BookDataba
     :param page: The page, which is stored.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The identifier of the marked version.
     :rtype: PageVersionId
     """
@@ -371,7 +371,7 @@ class TestRecipeRepository:
         book_id, _ = await _store_page(fx_uow, fx_new_owner, databases=fx_databases())
         recipe = make_recipe()
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.recipes.add(recipe))
-        await fx_uow().delete_book(book_id)
+        await fx_databases().delete_book(book_id)
         with pytest.raises(NotFoundError):
             await fx_databases().open(book_id).read(lambda repos: repos.recipes.get(recipe.id))
 
@@ -1399,7 +1399,7 @@ class TestStepValuesRepository:
         mine = make_step_values()
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.step_values.save(mine))
         await fx_databases().open(other_book_id).change(lambda repos, _book_record: repos.step_values.save(kept))
-        await fx_uow().delete_book(book_id)
+        await fx_databases().delete_book(book_id)
         remaining = (
             await fx_databases().open(other_book_id).read(lambda repos: repos.step_values.list_for_step(DESKEW_STEP_ID))
         )

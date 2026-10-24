@@ -18,9 +18,9 @@ from tests.helpers.seeding import store_book
 if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, Page
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookRepositories
     from tests.contracts.conftest import OwnerFactory
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -34,7 +34,7 @@ SECOND_PAGE: int = 1
 
 
 async def _store_book(
-    uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *, databases: BookDatabases
+    uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *, databases: LocatedBookDatabases
 ) -> tuple[BookId, list[Page]]:
     """Store a book of three pages in the changes that own them.
 
@@ -43,7 +43,7 @@ async def _store_book(
     :param new_owner: Function creating an account the database accepts as an owner.
     :type new_owner: OwnerFactory
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The book and its pages in book order.
     :rtype: tuple[BookId, list[Page]]
     """
@@ -228,7 +228,7 @@ class TestPaginationSectionRepository:
         book_id, pages = await _store_book(fx_uow, fx_new_owner, databases=fx_databases())
         section = make_section(page=pages[0])
         await fx_databases().open(book_id).change(lambda repos, _book_record: repos.pagination_sections.add(section))
-        await fx_uow().delete_book(book_id)
+        await fx_databases().delete_book(book_id)
         with pytest.raises(NotFoundError):
             await fx_databases().open(book_id).read(lambda repos: repos.pagination_sections.get(section.id))
 

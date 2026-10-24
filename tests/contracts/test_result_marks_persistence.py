@@ -18,9 +18,8 @@ from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId, PageId, PageVersionId
-    from bookreviver.ports.persistence import BookDatabases
     from tests.contracts.conftest import OwnerFactory
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -28,7 +27,7 @@ COMMENT: str = 'Too tight on the left.\nTry the other method.'
 
 
 async def _store_version(
-    uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *, databases: BookDatabases
+    uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *, databases: LocatedBookDatabases
 ) -> tuple[BookId, PageId, PageVersionId]:
     """Store a book with one page and one version of it, each in the change that owns it.
 
@@ -37,7 +36,7 @@ async def _store_version(
     :param new_owner: Function creating an account the database accepts as an owner.
     :type new_owner: OwnerFactory
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The identifiers of the book, its page and the version of the page.
     :rtype: tuple[BookId, PageId, PageVersionId]
     """

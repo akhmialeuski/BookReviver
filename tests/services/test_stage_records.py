@@ -17,9 +17,9 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import BookRecord, PageStage, Recipe
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.clock import FixedClock
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
     from tests.helpers.page_stage_writes import PageStageWrites
 
 pytestmark = pytest.mark.anyio
@@ -31,7 +31,7 @@ PAGE_ORDER_KEYS: tuple[str, ...] = ('a0', 'a1', 'a2')
 
 
 async def store_records(
-    book_id: BookId, recipe: Recipe, records: Sequence[PageStage], *, databases: BookDatabases
+    book_id: BookId, recipe: Recipe, records: Sequence[PageStage], *, databases: LocatedBookDatabases
 ) -> None:
     """Store a recipe and the stage records of the pages of a book that exists already.
 
@@ -42,7 +42,7 @@ async def store_records(
     :param records: Records to store in one batch.
     :type records: Sequence[PageStage]
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
 
     def seed(repos: BookRepositories, _book_record: BookRecord) -> None:

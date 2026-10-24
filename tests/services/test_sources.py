@@ -19,7 +19,7 @@ from tests.helpers.builders import BookOpener, make_job, make_record, make_sourc
 from tests.helpers.fake_board import FakeJobBoard
 from tests.helpers.scripted_runner import ScriptedRunner
 from tests.helpers.seeding import store_book
-from tests.helpers.storage import SharedBookFileStores, book_directory
+from tests.helpers.storage import SharedBookDirectories, book_directory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -28,11 +28,11 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, Source
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book as OpenedBook
     from tests.helpers.books import Book
     from tests.helpers.clock import FixedClock
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
 
 pytestmark = pytest.mark.anyio
@@ -124,17 +124,17 @@ def fx_flaky_open_book(fx_open_book: BookOpener, fx_storage_root: Path) -> BookO
     :returns: The opener, whose books fail the first deletion of a source.
     :rtype: BookOpener
     """
-    stores = SharedBookFileStores(root=fx_storage_root, source_store=SourceStoreFailingOnce)
+    stores = SharedBookDirectories(root=fx_storage_root, source_store=SourceStoreFailingOnce)
     return BookOpener(uow=fx_open_book.uow, databases=fx_open_book.databases, files=stores)
 
 
-async def _record_unimported(book_id: BookId, *, databases: BookDatabases) -> tuple[Source, Source]:
+async def _record_unimported(book_id: BookId, *, databases: LocatedBookDatabases) -> tuple[Source, Source]:
     """Record a rejected and a skipped file of a book, after the sources made by ``commit_book``.
 
     :param book_id: Book the files were uploaded to.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The rejected file and the skipped file, in the order they were recorded.
     :rtype: tuple[Source, Source]
     """

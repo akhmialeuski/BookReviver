@@ -39,10 +39,9 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Source
-    from bookreviver.ports.persistence import BookDatabases
     from tests.helpers.books import Book
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -125,7 +124,7 @@ def fx_extra_providers(fx_board: FakeJobBoard) -> Sequence[Provider]:
 
 
 async def _add_unimported(
-    book: Book, status_of: SourceStatus, name: str, *, minutes: int, databases: BookDatabases
+    book: Book, status_of: SourceStatus, name: str, *, minutes: int, databases: LocatedBookDatabases
 ) -> Source:
     """Commit a file of the book that the import rejected or skipped, which has no scan and no stored file.
 
@@ -138,7 +137,7 @@ async def _add_unimported(
     :param minutes: Minutes after the epoch the file was recorded.
     :type minutes: int
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The stored source.
     :rtype: Source
     """

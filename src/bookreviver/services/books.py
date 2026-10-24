@@ -8,16 +8,19 @@ it receives, and a caller outside a transaction wraps the call in ``Book.read``.
 identifier with its database, which the jobs use, and ``book`` does the same for a library entry that is already read,
 which the access dependencies of the API use. Neither checks an owner.
 
-A book is deleted entry first, then its files and its store. Once the entry is gone no request can open the book,
-so a deletion broken off half way leaves a directory nobody lists, which only takes room on the disk. The use case that
-holds the book can repeat the deletion and remove what is left. The files go outside any transaction.
+A new book is a directory with the blank database file, described through its ``Book``, and its library entry comes
+last, so a creation broken off half way leaves a directory nobody lists. An imported book is the content of its archive
+in a new directory, adopted by the database port, and gets its entry last in the same way. A book is deleted entry
+first, then ``Book.delete`` closes its database and removes its directory whole. Once the entry is gone no request can
+open the book, so a deletion broken off half way leaves a directory nobody lists, which only takes room on the disk,
+and the use case that holds the book can repeat ``Book.delete`` to remove what is left.
 """
 
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from bookreviver.domain.entities import BookRecord, LibraryEntry
+from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import BookId
 from bookreviver.domain.keys import BookKeys
@@ -33,7 +36,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import JobId, StorageKey
     from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import BookDatabases, PageRepository, UnitOfWork
-    from bookreviver.ports.storage import BookFileStores
+    from bookreviver.ports.storage import BookDirectories
     from bookreviver.services.book import BookTools
 
 # How many pages are read from the book at a time, when a use case needs all of them
@@ -64,26 +67,26 @@ class BooksService:
         *,
         uow: UnitOfWork,
         databases: BookDatabases,
+        directories: BookDirectories,
         tools: BookTools,
-        stores: BookFileStores,
     ) -> None:
         """Work over the ports of one request.
 
         :param uow: Unit of work of the request, which runs the work of every use case on the catalogue in one
                     transaction.
         :type uow: UnitOfWork
-        :param databases: Opens the database of a book, which runs the transactions of that book.
+        :param databases: Opens the database of a book from its file, which runs the transactions of that book.
         :type databases: BookDatabases
-        :param tools: What every book the service opens works with, whose clock also sets the creation times and whose
-                  archive also unpacks the imported books.
+        :param directories: The directories of the books, which make, unpack and open the directory of a book.
+        :type directories: BookDirectories
+        :param tools: What every book the service opens works with, whose clock also sets when a book joined the
+                      library.
         :type tools: BookTools
-        :param stores: Opens the source store and the asset store of a book, emptied when the book is deleted.
-        :type stores: BookFileStores
         """
         self._uow = uow
         self._databases = databases
+        self._directories = directories
         self._tools = tools
-        self._stores = stores
 
     def book(self, entry: LibraryEntry) -> Book:
         """Open the book a library entry names with its database, without reading anything.
@@ -93,12 +96,12 @@ class BooksService:
         :returns: The book, whose owner is the one the entry names.
         :rtype: Book
         """
+        directory = self._directories.directory(entry.book_id)
         return Book(
             entry.book_id,
             entry.owner_id,
-            database=self._databases.open(entry.book_id),
-            sources=self._stores.sources(entry.book_id),
-            assets=self._stores.assets(entry.book_id),
+            database=self._databases.open(entry.book_id, directory.database),
+            directory=directory,
             tools=self._tools,
         )
 
@@ -124,7 +127,7 @@ class BooksService:
         :param job_id: The import job whose upload is removed.
         :type job_id: JobId
         """
-        await self._stores.sources(book_id).discard(job_id)
+        await self._directories.directory(book_id).sources.discard(job_id)
 
     @asynccontextmanager
     async def open_asset(self, book_id: BookId, key: StorageKey) -> AsyncIterator[Path]:
@@ -144,7 +147,7 @@ class BooksService:
         """
         if not BookKeys.is_asset(key):
             raise NotFoundError(key)
-        async with self._stores.assets(book_id).readable(key) as path:
+        async with self._directories.directory(book_id).assets.readable(key) as path:
             yield path
 
     async def listed(self) -> list[Book]:
@@ -157,7 +160,7 @@ class BooksService:
         return [self.book(entry) for entry in entries]
 
     async def create(self, owner: Actor, details: BookDetails) -> Book:
-        """Create an empty book of an account: its store first, then its entry in the library.
+        """Create an empty book of an account: its directory with a blank database, its description, then its entry.
 
         :param owner: Account the entry of the library names as the owner.
         :type owner: Actor
@@ -166,18 +169,20 @@ class BooksService:
         :returns: The new book, open for its owner, which has no pages, sources or scans yet.
         :rtype: Book
         """
-        book_id, moment = BookId(uuid4()), self._tools.clock.now()
-        await self._uow.create_book(book_id, BookRecord(details=details, created_at=moment, updated_at=moment))
-        entry = LibraryEntry(book_id=book_id, owner_id=owner.account_id, added_at=moment)
+        book_id = BookId(uuid4())
+        await self._directories.create(book_id, await self._databases.blank())
+        entry = LibraryEntry(book_id=book_id, owner_id=owner.account_id, added_at=self._tools.clock.now())
+        book = self.book(entry)
+        await book.describe(details)
         await self._uow.change(lambda repos: repos.library.add(entry))
-        return self.book(entry)
+        return book
 
     async def import_archive(self, owner: Actor, archive: BinaryIO) -> Book:
         """Take the archive of a book in as a new book of an account, under a new identifier.
 
-        The archive is unpacked database first, then the database is brought to this release, and the entry of the
-        library comes last, as for a book created here. The record of the book names no book, so nothing in it changes.
-        A failure removes what was unpacked, and an import broken off is a store without an entry, which nobody lists.
+        The archive is unpacked into a new directory, database first, then the database is brought to this release, and
+        the entry of the library comes last, as for a book created here. The record of the book names no book, so
+        nothing in it changes. A database that cannot be adopted removes the whole directory.
 
         :param owner: Account the entry of the library names as the owner.
         :type owner: Actor
@@ -189,38 +194,28 @@ class BooksService:
         :raises BookTooNewError: If the book was exported by a newer release.
         """
         book_id = BookId(uuid4())
-        try:
-            await self._tools.archive.unpack(book_id, archive)
-            await self._uow.adopt_book(book_id)
-        except Exception:
-            await self._erase(book_id)
-            raise
+        directory = await self._directories.unpack(book_id, archive)
         entry = LibraryEntry(book_id=book_id, owner_id=owner.account_id, added_at=self._tools.clock.now())
+        book = self.book(entry)
+        try:
+            await self._databases.adopt(book_id, directory.database)
+        except Exception:
+            await book.delete()
+            raise
         await self._uow.change(lambda repos: repos.library.add(entry))
-        return self.book(entry)
-
-    async def _erase(self, book_id: BookId) -> None:
-        """Delete the source files and derived files of a book, then its store, which a repeated call finishes.
-
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
-        """
-        await self._stores.sources(book_id).delete_all()
-        await self._stores.assets(book_id).delete_all()
-        await self._uow.delete_book(book_id)
+        return book
 
     async def delete(self, book: Book) -> None:
-        """Delete the book's entry in the library, then its source files and derived files, then its store.
+        """Delete the book's entry in the library, then the book with its directory.
 
-        The entry goes first, so a request that comes later finds no book. The files go outside any transaction, so a
-        slow store holds no lock of the book. A failure after the entry leaves files nobody lists, and calling this
-        again with the same book removes them.
+        The entry goes first, so a request that comes later finds no book. A failure after the entry leaves a directory
+        nobody lists, and ``Book.delete`` of the same book removes it.
 
         :param book: The open book.
         :type book: Book
         """
         await self._uow.change(lambda repos: repos.library.delete(book.id))
-        await self._erase(book.id)
+        await book.delete()
 
     async def delete_all(self, books: Iterable[Book]) -> None:
         """Delete the books with all their files, as the deletion of the account that owns them needs.

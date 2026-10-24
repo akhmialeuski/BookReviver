@@ -29,11 +29,11 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, Page, Source
     from bookreviver.domain.ids import BookId, PageId
-    from bookreviver.ports.persistence import BookDatabases, UnitOfWork
+    from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
     from tests.helpers.clock import FixedClock
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
     from tests.helpers.fake_board import FakeJobBoard
     from tests.helpers.fakes_jobs import RecordingEventBus
     from tests.helpers.page_writes import PageWrites
@@ -130,7 +130,7 @@ class TakenKey(OrderKeys):
         return [self.key] * count
 
 
-async def _commit_book(uow: UnitOfWork, owner: Actor, *, databases: BookDatabases) -> Book:
+async def _commit_book(uow: UnitOfWork, owner: Actor, *, databases: LocatedBookDatabases) -> Book:
     """Commit a book of five pages, three from one source and two from another, in the order of upload.
 
     :param uow: Unit of work to commit through, over a database that stores the account of the owner.
@@ -138,7 +138,7 @@ async def _commit_book(uow: UnitOfWork, owner: Actor, *, databases: BookDatabase
     :param owner: Account owning the book.
     :type owner: Actor
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The stored book.
     :rtype: Book
     """

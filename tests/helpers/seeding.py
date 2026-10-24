@@ -14,7 +14,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import BookRecord, Page, PageVersion, Scan, Source
     from bookreviver.domain.ids import AccountId, BookId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from tests.helpers.database import LocatedBookDatabases
 
 # Domain of the addresses of seeded accounts, reserved for examples by RFC 2606
 ACCOUNT_DOMAIN: str = 'example.org'
@@ -88,7 +89,7 @@ async def store_book(
     book_record: BookRecord,
     *pages: Page,
     owner: AccountId,
-    databases: BookDatabases,
+    databases: LocatedBookDatabases,
     book_id: BookId | None = None,
     **content: Unpack[BookContent],
 ) -> BookId:
@@ -107,7 +108,7 @@ async def store_book(
     :param owner: Account owning the book.
     :type owner: AccountId
     :param databases: Opens the database that stores the content.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :param book_id: Identifier the book gets, for a test that builds what refers to the book before storing it; a new
                     one when omitted.
     :type book_id: BookId | None
@@ -132,7 +133,7 @@ async def store_book(
 
     if book_id is None:
         book_id = new_book_id()
-    await uow.create_book(book_id, book_record)
+    await databases.create_book(book_id, book_record)
     await databases.open(book_id).change(store_content)
     entry = LibraryEntry(book_id=book_id, owner_id=owner, added_at=book_record.created_at)
     await uow.change(lambda repos: repos.library.add(entry))
@@ -145,7 +146,7 @@ async def commit_record(
     book_record: BookRecord,
     *pages: Page,
     owner: AccountId,
-    databases: BookDatabases,
+    databases: LocatedBookDatabases,
     **content: Unpack[BookContent],
 ) -> BookId:
     """Store a new book as ``store_book`` does, after committing its owner account when the catalogue lacks it.
@@ -161,7 +162,7 @@ async def commit_record(
     :param owner: Account owning the book, which is committed first unless the catalogue stores it.
     :type owner: AccountId
     :param databases: Opens the database that stores the content.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :param content: The sources of the book, their scans and the versions of the pages, as far as the book has them.
     :type content: Unpack[BookContent]
     :returns: The identifier of the new book.

@@ -18,7 +18,8 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Page, PageVersion
     from bookreviver.domain.ids import BookId, PageId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookRepositories
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -46,7 +47,7 @@ async def seed_page(kit: ProcessingKit, book_id: BookId, order_key: str) -> tupl
 
 
 async def seed_loose_base(
-    book_id: BookId, page: Page, *, minutes: int, pending: bool = False, databases: BookDatabases
+    book_id: BookId, page: Page, *, minutes: int, pending: bool = False, databases: LocatedBookDatabases
 ) -> PageVersion:
     """Commit a base version of a page that no record of a stage names, as a page cut from its scan again has.
 
@@ -59,7 +60,7 @@ async def seed_loose_base(
     :param pending: Whether the version is still to make, with no files published, where a ready one has them.
     :type pending: bool
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The version.
     :rtype: PageVersion
     """
@@ -73,7 +74,7 @@ async def seed_loose_base(
 
 
 async def inputs_of(
-    book_id: BookId, page_ids: Collection[PageId], stage: Stage, *, databases: BookDatabases
+    book_id: BookId, page_ids: Collection[PageId], stage: Stage, *, databases: LocatedBookDatabases
 ) -> dict[PageId, PageVersion]:
     """Find the version a stage reads on pages, in a transaction that only reads.
 
@@ -84,7 +85,7 @@ async def inputs_of(
     :param stage: The stage that reads.
     :type stage: Stage
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The version read, by page.
     :rtype: dict[PageId, PageVersion]
     """

@@ -72,12 +72,13 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, Job, Page, PageVersion, Recipe, RecipeProfile, Scan
     from bookreviver.domain.ids import BookId, JobId, PageVersionId
     from bookreviver.domain.values import JobEnd, MetadataMap, RecipeDraft
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories, PageVersionRepository, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, PageVersionRepository, UnitOfWork
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.book import Book
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
 
 IMAGE_CONTENT: bytes = b'image'
 PREVIEW_RETENTION_HOURS: int = 24
@@ -548,7 +549,7 @@ async def open_book(kit: ProcessingKit, book_id: BookId) -> Book:
 
 
 async def change_versions(
-    book_id: BookId, work: Callable[[PageVersionRepository], object], *, databases: BookDatabases
+    book_id: BookId, work: Callable[[PageVersionRepository], object], *, databases: LocatedBookDatabases
 ) -> None:
     """Change the versions of a book in a change of its own, as another request would.
 
@@ -557,12 +558,14 @@ async def change_versions(
     :param work: What is done to the version repository of the change.
     :type work: Callable[[PageVersionRepository], object]
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
     await databases.open(book_id).change(lambda repos, _book_record: work(repos.page_versions))
 
 
-async def found_version(book_id: BookId, version_id: PageVersionId, *, databases: BookDatabases) -> PageVersion | None:
+async def found_version(
+    book_id: BookId, version_id: PageVersionId, *, databases: LocatedBookDatabases
+) -> PageVersion | None:
     """Read a version as committed, which is None for a version that the book does not hold.
 
     :param book_id: Book that is read.
@@ -570,14 +573,16 @@ async def found_version(book_id: BookId, version_id: PageVersionId, *, databases
     :param version_id: Identifier of the version.
     :type version_id: PageVersionId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The version, or None.
     :rtype: PageVersion | None
     """
     return await databases.open(book_id).read(lambda repos: repos.page_versions.find(version_id))
 
 
-async def found_stage(book_id: BookId, page: Page, stage: Stage, *, databases: BookDatabases) -> PageStage | None:
+async def found_stage(
+    book_id: BookId, page: Page, stage: Stage, *, databases: LocatedBookDatabases
+) -> PageStage | None:
     """Read the record of a stage of a page as committed, which is None for a stage that has not run on the page.
 
     :param book_id: Identifier of the book of the page.
@@ -587,7 +592,7 @@ async def found_stage(book_id: BookId, page: Page, stage: Stage, *, databases: B
     :param stage: The stage.
     :type stage: Stage
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The record, or None.
     :rtype: PageStage | None
     """
@@ -595,7 +600,7 @@ async def found_stage(book_id: BookId, page: Page, stage: Stage, *, databases: B
 
 
 async def stage_versions(
-    book_id: BookId, page: Page, stage: Stage | None, *, databases: BookDatabases
+    book_id: BookId, page: Page, stage: Stage | None, *, databases: LocatedBookDatabases
 ) -> Slice[PageVersion]:
     """Read the versions a page has made in a stage or in all, as committed, the earliest first.
 
@@ -606,7 +611,7 @@ async def stage_versions(
     :param stage: The stage, or None for every stage.
     :type stage: Stage | None
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The versions of every scale and mark, and their number.
     :rtype: Slice[PageVersion]
     """

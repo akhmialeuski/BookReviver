@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.enums import Stage
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import StageRun
-    from bookreviver.ports.persistence import BookDatabases
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 
 PAGE_WIDTH_PX: int = 900
@@ -79,13 +79,13 @@ async def run_stage(kit: ProcessingKit, actor: Actor, book_id: BookId, run: Stag
     await kit.work_queue()
 
 
-async def book_of(book_id: BookId, *, databases: BookDatabases) -> list[Page]:
+async def book_of(book_id: BookId, *, databases: LocatedBookDatabases) -> list[Page]:
     """Read the pages of a book in book order, as committed.
 
     :param book_id: The identifier of the book.
     :type book_id: BookId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: Its pages.
     :rtype: list[Page]
     """
@@ -93,7 +93,7 @@ async def book_of(book_id: BookId, *, databases: BookDatabases) -> list[Page]:
     return list(listed.items)
 
 
-async def stage_of(book_id: BookId, page: Page, stage: Stage, *, databases: BookDatabases) -> PageStage:
+async def stage_of(book_id: BookId, page: Page, stage: Stage, *, databases: LocatedBookDatabases) -> PageStage:
     """Read the record of a stage of a page, as committed.
 
     :param book_id: Identifier of the book of the page.
@@ -103,7 +103,7 @@ async def stage_of(book_id: BookId, page: Page, stage: Stage, *, databases: Book
     :param stage: The stage.
     :type stage: Stage
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The record.
     :rtype: PageStage
     """

@@ -28,10 +28,10 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion
     from bookreviver.domain.ids import AccountId, BookId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import LocatedBookDatabases, UnitOfWorkFactory
     from tests.helpers.fake_board import FakeJobBoard
 
 pytestmark = pytest.mark.anyio
@@ -55,7 +55,7 @@ def _ready(version: PageVersion) -> PageVersion:
 
 
 async def _commit_book(
-    database: SqlDatabase, uow: UnitOfWork, owner: AccountId, *, databases: BookDatabases
+    database: SqlDatabase, uow: UnitOfWork, owner: AccountId, *, databases: LocatedBookDatabases
 ) -> tuple[BookId, list[Page], list[PageVersion]]:
     """Commit a book of three pages stored against the book order, the middle one in the book a placeholder.
 
@@ -66,7 +66,7 @@ async def _commit_book(
     :param owner: Account owning the book.
     :type owner: AccountId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The identifier of the book, the pages in the order they were stored, and the base versions of the two
               that have one.
     :rtype: tuple[BookId, list[Page], list[PageVersion]]

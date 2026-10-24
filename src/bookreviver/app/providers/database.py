@@ -100,8 +100,7 @@ class DatabaseProvider(Provider):
     async def books(self, settings: Settings, tracer: Tracer) -> AsyncIterator[BookRegistry]:
         """Open the registry of the databases of the books, and close every open book with the application.
 
-        :param settings: Application settings, of which the storage root, the wait limit of a job and the idle limit of
-                         a book are read.
+        :param settings: Application settings, of which the wait limit of a job and the idle limit of a book are read.
         :type settings: Settings
         :param tracer: Tracer the write blocks of the books are timed with.
         :type tracer: Tracer
@@ -109,7 +108,6 @@ class DatabaseProvider(Provider):
         :rtype: AsyncIterator[BookRegistry]
         """
         books = BookRegistry(
-            settings.storage_root,
             tracer=tracer,
             wait_seconds=settings.change_wait.job_seconds,
             idle_seconds=settings.book_idle_seconds,
@@ -123,7 +121,6 @@ class DatabaseProvider(Provider):
     def unit_of_work(
         self,
         database: SqlDatabase,
-        books: BookRegistry,
         wait_seconds: ChangeWaitSeconds,
     ) -> SqlAlchemyUnitOfWork:
         """Build the unit of work of a request or job, which keeps no state but the wait limit of its scope.
@@ -133,14 +130,12 @@ class DatabaseProvider(Provider):
 
         :param database: The catalogue, whose threads and connections the transactions of the catalogue use.
         :type database: SqlDatabase
-        :param books: The registry of the databases of the books.
-        :type books: BookRegistry
         :param wait_seconds: How long a change of the unit of work waits for a writer, by the scope it lives in.
         :type wait_seconds: ChangeWaitSeconds
-        :returns: Unit of work over the catalogue and the books.
+        :returns: Unit of work over the catalogue.
         :rtype: SqlAlchemyUnitOfWork
         """
-        return SqlAlchemyUnitOfWork(database, books, wait_seconds=wait_seconds)
+        return SqlAlchemyUnitOfWork(database, wait_seconds=wait_seconds)
 
     unit_of_work_port = alias(source=SqlAlchemyUnitOfWork, provides=UnitOfWork)
 

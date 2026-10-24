@@ -29,9 +29,10 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageStage, Recipe
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookDatabase, BookDatabases, BookRepositories
+    from bookreviver.ports.persistence import BookDatabase, BookRepositories
     from bookreviver.services.book import Book
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -90,7 +91,7 @@ async def recipes_of(kit: ProcessingKit, actor: Actor, book_id: BookId, stage: S
     return {recipe.kind: recipe for recipe in listed.items}
 
 
-async def save_stage_records(book_id: BookId, *records: PageStage, databases: BookDatabases) -> None:
+async def save_stage_records(book_id: BookId, *records: PageStage, databases: LocatedBookDatabases) -> None:
     """Store records of the Geometry stage, as earlier runs of the pages would have.
 
     :param book_id: Identifier of the book owning the pages of the records.
@@ -98,7 +99,7 @@ async def save_stage_records(book_id: BookId, *records: PageStage, databases: Bo
     :param records: The records to store.
     :type records: PageStage
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     """
 
     def save(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -115,7 +116,7 @@ async def save_stage_records(book_id: BookId, *records: PageStage, databases: Bo
     await databases.open(book_id).change(save)
 
 
-async def geometry_state(book_id: BookId, page: Page, *, databases: BookDatabases) -> StageState:
+async def geometry_state(book_id: BookId, page: Page, *, databases: LocatedBookDatabases) -> StageState:
     """Read the state of the record of the Geometry stage of a page as committed.
 
     :param book_id: Identifier of the book.
@@ -123,7 +124,7 @@ async def geometry_state(book_id: BookId, page: Page, *, databases: BookDatabase
     :param page: The page.
     :type page: Page
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The state of the record.
     :rtype: StageState
     """

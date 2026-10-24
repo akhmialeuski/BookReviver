@@ -12,7 +12,7 @@ from dishka import make_async_container
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
 from bookreviver.app.providers.storage import STORAGE_PROVIDERS
 from bookreviver.app.settings import Settings
-from bookreviver.ports.storage import BookArchive, BookFileStores
+from bookreviver.ports.storage import BookDirectories
 from tests.helpers.builders import make_record
 from tests.helpers.job_boards import BoardAdapter
 from tests.helpers.seeding import commit_account, store_book
@@ -28,8 +28,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord
     from bookreviver.domain.ids import AccountId, BookId
     from bookreviver.ports.ordering import OrderKeys
-    from bookreviver.ports.persistence import BookDatabases
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
 
 type OwnerFactory = Callable[[], Awaitable[AccountId]]
 
@@ -138,27 +137,15 @@ async def fx_storage(request: pytest.FixtureRequest, fx_settings: Settings) -> A
 
 
 @pytest.fixture
-async def fx_stores(fx_storage: AsyncContainer) -> BookFileStores:
-    """Return the opener of the stores of a book of the storage backend under test.
+async def fx_stores(fx_storage: AsyncContainer) -> BookDirectories:
+    """Return the directories of the books of the storage backend under test, with the stores of each book.
 
     :param fx_storage: Container holding the provider of one storage backend.
     :type fx_storage: AsyncContainer
-    :returns: The opener the backend's provider builds.
-    :rtype: BookFileStores
+    :returns: The directories the backend's provider builds.
+    :rtype: BookDirectories
     """
-    return await fx_storage.get(BookFileStores)
-
-
-@pytest.fixture
-async def fx_book_archive(fx_storage: AsyncContainer) -> BookArchive:
-    """Return the book archive of the storage backend under test, over the same root as its stores.
-
-    :param fx_storage: Container holding the provider of one storage backend.
-    :type fx_storage: AsyncContainer
-    :returns: The book archive the backend's provider builds.
-    :rtype: BookArchive
-    """
-    return await fx_storage.get(BookArchive)
+    return await fx_storage.get(BookDirectories)
 
 
 class Book(NamedTuple):
@@ -174,7 +161,9 @@ class Book(NamedTuple):
     owner_id: AccountId
 
 
-async def _store_book(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *, databases: BookDatabases) -> Book:
+async def _store_book(
+    uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *, databases: LocatedBookDatabases
+) -> Book:
     """Store a book of a new account.
 
     :param uow_factory: Function opening a new unit of work over the catalogue and the books of the test.
@@ -182,7 +171,7 @@ async def _store_book(uow_factory: UnitOfWorkFactory, new_owner: OwnerFactory, *
     :param new_owner: Function creating an account the catalogue accepts as an owner.
     :type new_owner: OwnerFactory
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The stored book.
     :rtype: Book
     """

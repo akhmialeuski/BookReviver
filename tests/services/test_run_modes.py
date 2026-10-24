@@ -22,8 +22,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, Page, PageHistoryEntry, PageStepState, PageVersion
     from bookreviver.domain.ids import BookId
     from bookreviver.domain.values import PageStepKey
-    from bookreviver.ports.persistence import BookDatabases
     from tests.helpers.builders import BookOpener
+    from tests.helpers.database import LocatedBookDatabases
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -76,7 +76,7 @@ async def head_of(kit: ProcessingKit, book_id: BookId, page: Page) -> PageVersio
     return await kit.stored_version(book_id, record.head_version_id)
 
 
-async def state_of(book_id: BookId, key: PageStepKey, *, databases: BookDatabases) -> PageStepState:
+async def state_of(book_id: BookId, key: PageStepKey, *, databases: LocatedBookDatabases) -> PageStepState:
     """Read the state of a step on a page as committed.
 
     :param book_id: Book that holds the pages.
@@ -84,7 +84,7 @@ async def state_of(book_id: BookId, key: PageStepKey, *, databases: BookDatabase
     :param key: The page, the stage and the step.
     :type key: PageStepKey
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The state.
     :rtype: PageStepState
     """
@@ -92,7 +92,7 @@ async def state_of(book_id: BookId, key: PageStepKey, *, databases: BookDatabase
 
 
 async def states_of(
-    book_id: BookId, keys: Sequence[PageStepKey], *, databases: BookDatabases
+    book_id: BookId, keys: Sequence[PageStepKey], *, databases: LocatedBookDatabases
 ) -> list[PageStepState | None]:
     """Read the states of some steps as committed, with None for a step that has neither a setting nor an edit.
 
@@ -101,7 +101,7 @@ async def states_of(
     :param keys: The pages, the stages and the steps.
     :type keys: Sequence[PageStepKey]
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The state found for each key, in order.
     :rtype: list[PageStepState | None]
     """
@@ -109,7 +109,7 @@ async def states_of(
 
 
 async def histories(
-    book_id: BookId, pages: Sequence[Page], *, databases: BookDatabases
+    book_id: BookId, pages: Sequence[Page], *, databases: LocatedBookDatabases
 ) -> list[Sequence[PageHistoryEntry]]:
     """Read the history of the steps of each page as committed.
 
@@ -118,7 +118,7 @@ async def histories(
     :param pages: The pages.
     :type pages: Sequence[Page]
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The changes of each page, in order.
     :rtype: list[Sequence[PageHistoryEntry]]
     """

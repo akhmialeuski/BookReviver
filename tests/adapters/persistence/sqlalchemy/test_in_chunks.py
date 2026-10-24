@@ -21,8 +21,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.domain.entities import BookRecord, Page, PageVersion
     from bookreviver.domain.ids import AccountId, BookId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -76,7 +76,7 @@ class Statements:
 
 
 async def _seed_book(
-    uow: UnitOfWork, owner_id: AccountId, *, databases: BookDatabases
+    uow: UnitOfWork, owner_id: AccountId, *, databases: LocatedBookDatabases
 ) -> tuple[BookId, list[Page], list[PageVersion]]:
     """Commit a book of seven pages in book order, each with one version created a minute after the one before.
 
@@ -85,7 +85,7 @@ async def _seed_book(
     :param owner_id: Account owning the book.
     :type owner_id: AccountId
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The book, the pages in book order and the versions in the order they were created.
     :rtype: tuple[BookRecord, list[Page], list[PageVersion]]
     """
@@ -206,7 +206,7 @@ class TestListsLongerThanAChunk:
                 repos.page_versions.delete_many(version_ids)
             return counted
 
-        async with fx_books.use(book_id) as book:
+        async with fx_books.use(book_id, fx_databases().directories.directory(book_id).database) as book:
             reading = await fx_databases().open(book_id).read(list_versions)
             deleting = await fx_databases().open(book_id).change(delete_versions)
         remaining = (

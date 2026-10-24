@@ -26,8 +26,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.domain.entities import BookRecord, Page
     from bookreviver.domain.ids import AccountId, BookId
-    from bookreviver.ports.persistence import BookDatabases, BookRepositories
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from bookreviver.ports.persistence import BookRepositories
+    from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -67,7 +67,7 @@ async def _statements_of(
     book_id: BookId,
     calls: Sequence[Callable[[BookRepositories], object]],
     *,
-    databases: BookDatabases,
+    databases: LocatedBookDatabases,
 ) -> list[int]:
     """Run the calls one after another in one change of the book and count the statements each of them sends.
 
@@ -78,11 +78,11 @@ async def _statements_of(
     :param calls: Functions over the repositories of the change.
     :type calls: Sequence[Callable[[BookRepositories], object]]
     :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :type databases: LocatedBookDatabases
     :returns: The number of statements of each call, in the order given.
     :rtype: list[int]
     """
-    async with books.use(book_id) as book:
+    async with books.use(book_id, databases.directories.directory(book_id).database) as book:
         with StatementLog(book.engine) as log:
 
             def work(repos: BookRepositories, _book_record: BookRecord) -> list[int]:
