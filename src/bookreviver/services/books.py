@@ -16,20 +16,24 @@ transaction. A start pass, ``sweep``, finishes a deletion or a creation that was
 repeated by anyone: a store without an entry, or an entry without a store.
 """
 
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from bookreviver.domain.entities import BookRecord, LibraryEntry
+from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import BookId
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import SliceRequest
 from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import AsyncIterator, Iterable
+    from pathlib import Path
     from typing import BinaryIO
 
     from bookreviver.domain.entities import Actor, Page
-    from bookreviver.domain.ids import JobId
+    from bookreviver.domain.ids import JobId, StorageKey
     from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import BookDatabases, PageRepository, UnitOfWork
     from bookreviver.ports.storage import BookFileStores
@@ -124,6 +128,27 @@ class BooksService:
         :type job_id: JobId
         """
         await self._stores.sources(book_id).discard(job_id)
+
+    @asynccontextmanager
+    async def open_asset(self, book_id: BookId, key: StorageKey) -> AsyncIterator[Path]:
+        """Give a local path of the derived file at ``key`` for as long as the context is open.
+
+        The derived files are read by anyone who has the identifier of their book and their key, with no owner checked.
+        A key under the book's ``incoming/`` or ``sources/`` belongs to no derived file and is reported as not found
+        without a look at the store.
+
+        :param book_id: The book of the file, such as one taken from the address of an image.
+        :type book_id: BookId
+        :param key: Storage key of a derived file relative to the directory of its book, from the same address.
+        :type key: StorageKey
+        :returns: Context manager yielding the path of the file, valid while the context is open.
+        :rtype: AsyncIterator[Path]
+        :raises NotFoundError: If the key is not under the ``assets/`` of a book, or nothing is stored at it.
+        """
+        if not BookKeys.is_asset(key):
+            raise NotFoundError(key)
+        async with self._stores.assets(book_id).readable(key) as path:
+            yield path
 
     async def listed(self) -> list[Book]:
         """Open every book the library lists, whoever owns it, for the passes of the start.

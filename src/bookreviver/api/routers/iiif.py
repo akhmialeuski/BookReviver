@@ -28,7 +28,7 @@ from bookreviver.api.schemas.iiif import IIIF_INFO_FILE, IIIF_INFO_MEDIA_TYPE
 from bookreviver.api.schemas.types import AssetKey
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import BookId, StorageKey
-from bookreviver.services.pages import PageService
+from bookreviver.services.books import BooksService
 
 # Where the router is mounted below the API prefix, which a pyramid's ``info.json`` names as its address
 IIIF_PREFIX: str = '/iiif'
@@ -45,7 +45,7 @@ router = APIRouter(prefix=IIIF_PREFIX, tags=['iiif'], route_class=DishkaRoute)
 async def opened_asset(
     book_id: Annotated[BookId, Path(description=BOOK_ID_DESCRIPTION)],
     key: Annotated[AssetKey, Path(description=KEY_DESCRIPTION)],
-    pages: FromDishka[PageService],
+    books: FromDishka[BooksService],
 ) -> AsyncIterator[pathlib.Path]:
     """Keep the stored file at ``key`` of a book open until the response carrying it has been sent.
 
@@ -53,8 +53,8 @@ async def opened_asset(
     :type book_id: BookId
     :param key: Storage key of the file, relative to the directory of the book.
     :type key: AssetKey
-    :param pages: Page service of the request.
-    :type pages: PageService
+    :param books: Books service of the request.
+    :type books: BooksService
     :returns: Iterator yielding once the path of the file, and closing the file afterwards.
     :rtype: AsyncIterator[pathlib.Path]
     :raises NotFoundError: If the key is not under the ``assets/`` of a book, no file is stored there, or the key
@@ -63,7 +63,7 @@ async def opened_asset(
     # try/finally rather than a context manager around the yield, because FastAPI drives this generator
     opened = AsyncExitStack()
     try:
-        path = await opened.enter_async_context(pages.open_asset(book_id, StorageKey(key)))
+        path = await opened.enter_async_context(books.open_asset(book_id, StorageKey(key)))
         if not await anyio.Path(path).is_file():
             raise NotFoundError(key)
         yield path

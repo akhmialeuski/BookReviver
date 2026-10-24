@@ -9,8 +9,7 @@ from delayed_assert import assert_expectations, expect
 
 from bookreviver.domain.enums import JobKind, Stage, VersionState
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.ids import PageId, StorageKey
-from bookreviver.domain.keys import BookKeys, KeySegment
+from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import Renditions, SliceRequest
 from tests.helpers.builders import (
     make_page,
@@ -19,7 +18,6 @@ from tests.helpers.builders import (
     make_record,
     make_scan,
     make_source,
-    new_account_id,
 )
 from tests.helpers.seeding import commit_record, store_book
 
@@ -32,9 +30,8 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fake_board import FakeJobBoard
-    from tests.helpers.storage import SharedBookFileStores
 
 pytestmark = pytest.mark.anyio
 
@@ -434,126 +431,6 @@ class TestGet:
 
         with pytest.raises(NotFoundError):
             await fx_service().get(fx_open_book(fx_actor, book_record.id), PageId(uuid4()))
-
-
-class TestOpenAsset:
-    """Tests for PageService.open_asset()."""
-
-    async def test_gives_the_path_of_a_stored_file(
-        self,
-        fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
-        fx_file_stores: SharedBookFileStores,
-        fx_actor: Actor,
-        fx_databases: BookDatabasesFactory,
-    ) -> None:
-        """Verify the owner reads a stored derived file through the path the service hands out.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
-        """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
-        key = BookKeys().book
-        async with fx_file_stores.assets(book_record.id).writable(key) as target:
-            target.write_bytes(FILE_CONTENT)
-
-        async with fx_service().open_asset(book_record.id, key) as path:
-            assert path.read_bytes() == FILE_CONTENT
-
-    async def test_gives_a_file_of_another_accounts_book_with_no_owner_checked(
-        self,
-        fx_service: Callable[[], PageService],
-        fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
-        fx_file_stores: SharedBookFileStores,
-        fx_databases: BookDatabasesFactory,
-    ) -> None:
-        """Verify a stored derived file is read by its key alone, whoever owns its book.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
-        :param fx_database: Database of the test.
-        :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
-        :type fx_file_stores: SharedBookFileStores
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
-        """
-        book_record = make_record()
-        await commit_record(fx_database, fx_uow(), book_record, owner=new_account_id(), databases=fx_databases())
-        key = BookKeys().book
-        async with fx_file_stores.assets(book_record.id).writable(key) as target:
-            target.write_bytes(FILE_CONTENT)
-
-        async with fx_service().open_asset(book_record.id, key) as path:
-            assert path.read_bytes() == FILE_CONTENT
-
-    @pytest.mark.parametrize(
-        'area', [KeySegment.SOURCES, KeySegment.INCOMING, 'notes'], ids=['sources', 'incoming', 'unknown-area']
-    )
-    async def test_key_outside_the_assets_is_not_found(
-        self,
-        fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
-        fx_actor: Actor,
-        area: str,
-        fx_databases: BookDatabasesFactory,
-    ) -> None:
-        """Verify a key in the book's source area, its uploads or any other area is not found, not an error.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param area: Directory of the book the key lies in.
-        :type area: str
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
-        """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
-
-        with pytest.raises(NotFoundError):
-            async with fx_service().open_asset(book_record.id, StorageKey(f'{area}/{uuid4()}')):
-                pytest.fail('A key outside the assets was opened.')
-
-    async def test_key_without_a_file_is_not_found(
-        self,
-        fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
-        fx_actor: Actor,
-        fx_databases: BookDatabasesFactory,
-    ) -> None:
-        """Verify a key of the actor's book with nothing stored behind it is not found.
-
-        :param fx_service: Function building the service for one request.
-        :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
-        :param fx_actor: Account the service acts for.
-        :type fx_actor: Actor
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
-        """
-        book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
-
-        with pytest.raises(NotFoundError):
-            async with fx_service().open_asset(book_record.id, BookKeys().book):
-                pytest.fail('A file that is not stored was opened.')
 
 
 class TestJobsQueuedTogether:

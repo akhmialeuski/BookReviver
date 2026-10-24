@@ -42,7 +42,6 @@ record of the page, so the page split and the page order stage read like any oth
 
 import logging
 import statistics
-from contextlib import asynccontextmanager
 from functools import partial
 from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
@@ -87,18 +86,16 @@ from bookreviver.services.stage_records import StageRecords
 from bookreviver.services.steps import StepRun
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Collection, Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
     from datetime import datetime
-    from pathlib import Path
 
     from bookreviver.domain.changes import PageChanges
     from bookreviver.domain.entities import BookRecord, PageVersion
-    from bookreviver.domain.ids import BookId, PageVersionId, ScanId, SourceId, StorageKey
+    from bookreviver.domain.ids import BookId, PageVersionId, ScanId, SourceId
     from bookreviver.domain.values import MetadataMap, NewPage, PageAnchor
     from bookreviver.ports.ordering import OrderKeys
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import Clock, EventPublisher, JobBoard, JobControl
-    from bookreviver.ports.storage import BookFileStores
     from bookreviver.services.book import Book
     from bookreviver.services.books import BooksService
     from bookreviver.services.steps import StepRunner
@@ -169,23 +166,18 @@ class PageService:
     PAPER_RADIUS: ClassVar[int] = 10
     PAPER_PAGES: ClassVar[int] = 6
 
-    def __init__(
-        self, *, books: BooksService, stores: BookFileStores, runtime: PageRuntime, imaging: PageImaging
-    ) -> None:
+    def __init__(self, *, books: BooksService, runtime: PageRuntime, imaging: PageImaging) -> None:
         """Work over the ports of one request or job.
 
         :param books: Books service of the request or job, which opens the book a job runs on and the books of the
                       library the passes of the start go over.
         :type books: BooksService
-        :param stores: Opens the asset store of a book, whose files a viewer reads by key.
-        :type stores: BookFileStores
         :param runtime: The publisher, the clock, the order keys and the job board.
         :type runtime: PageRuntime
         :param imaging: The builder of base versions and the runner of their processors.
         :type imaging: PageImaging
         """
         self._books = books
-        self._stores = stores
         self._order_keys = runtime.order_keys
         self._publisher = runtime.publisher
         self._clock = runtime.clock
@@ -909,27 +901,6 @@ class PageService:
             self._move_run(repos, repos.pages.list_for_source(source_id), anchor)
 
         await book.change(work)
-
-    @asynccontextmanager
-    async def open_asset(self, book_id: BookId, key: StorageKey) -> AsyncIterator[Path]:
-        """Give a local path of the derived file at ``key`` for as long as the context is open.
-
-        The derived files are read by anyone who has the identifier of their book and their key, with no owner checked.
-        A key under the book's ``incoming/`` or ``sources/`` belongs to no derived file and is reported as not found
-        without a look at the store.
-
-        :param book_id: The book of the file, such as one taken from the address of an image.
-        :type book_id: BookId
-        :param key: Storage key of a derived file relative to the directory of its book, from the same address.
-        :type key: StorageKey
-        :returns: Context manager yielding the path of the file, valid while the context is open.
-        :rtype: AsyncIterator[Path]
-        :raises NotFoundError: If the key is not under the ``assets/`` of a book, or nothing is stored at it.
-        """
-        if not BookKeys.is_asset(key):
-            raise NotFoundError(key)
-        async with self._stores.assets(book_id).readable(key) as path:
-            yield path
 
     def _overviews(
         self, repos: BookRepositories, pages: Sequence[Page], first_position: int, *, numbered: bool = True

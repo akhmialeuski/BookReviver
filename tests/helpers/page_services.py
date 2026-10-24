@@ -105,7 +105,6 @@ def make_page_service(
     tiler = FakeTiler()
     return PageService(
         books=make_books_service(stores.uow(), databases=stores.databases, files=stores.files),
-        stores=stores.files,
         runtime=PageRuntime(
             publisher=publisher, clock=clock, order_keys=order_keys or FractionalOrderKeys(), board=board
         ),

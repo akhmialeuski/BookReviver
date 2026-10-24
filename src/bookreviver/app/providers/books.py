@@ -117,15 +117,11 @@ class BooksProvider(Provider):
         return PageImaging(base_versions=base_versions, runner=runner)
 
     @provide
-    def pages(
-        self, books: BooksService, stores: BookFileStores, runtime: PageRuntime, imaging: PageImaging
-    ) -> PageService:
+    def pages(self, books: BooksService, runtime: PageRuntime, imaging: PageImaging) -> PageService:
         """Build the page service over the request's or job's books service.
 
         :param books: Books service of the current request or job, which opens the books a job runs on.
         :type books: BooksService
-        :param stores: Opens the asset store of a book, whose files a viewer reads by key.
-        :type stores: BookFileStores
         :param runtime: The publisher, clock, order keys and job board of the application.
         :type runtime: PageRuntime
         :param imaging: The builder of base versions and the runner of their processors.
@@ -133,7 +129,7 @@ class BooksProvider(Provider):
         :returns: The page service of the request or job.
         :rtype: PageService
         """
-        return PageService(books=books, stores=stores, runtime=runtime, imaging=imaging)
+        return PageService(books=books, runtime=runtime, imaging=imaging)
 
     @provide
     def pagination(self, clock: Clock) -> PaginationService:
