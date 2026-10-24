@@ -21,11 +21,11 @@ from sqlalchemy.orm import contains_eager
 
 from bookreviver.adapters.persistence.sqlalchemy.book_record import SqlAlchemyBookRecordRepository
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow, RecipeProfileRow
+from bookreviver.adapters.persistence.sqlalchemy.catalogue_mappers import LibraryEntryMapper, RecipeProfileMapper
 from bookreviver.adapters.persistence.sqlalchemy.groups import PageGroups
 from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     BookPlaceMapper,
     GroupValuesMapper,
-    LibraryEntryMapper,
     PageHistoryMapper,
     PageMapper,
     PageStageMapper,
@@ -33,7 +33,6 @@ from bookreviver.adapters.persistence.sqlalchemy.mappers import (
     PageVersionMapper,
     PaginationSectionMapper,
     RecipeMapper,
-    RecipeProfileMapper,
     ScanMapper,
     SourceMapper,
     StepValuesMapper,
