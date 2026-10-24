@@ -35,7 +35,6 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.adapters.storage.local import LocalAssetStore
     from bookreviver.domain.entities import Actor, BookRecord, Job, Page, PageVersion
     from bookreviver.domain.ids import BookId
     from bookreviver.ports.persistence import BookDatabases, BookRepositories
@@ -55,7 +54,6 @@ ANSWERS: tuple[ContentType, ...] = (ContentType.TEXT, ContentType.COLOR_PICTURE,
 def fx_probe_kit(
     fx_database: SqlDatabase,
     fx_open_book: BookOpener,
-    fx_asset_store: LocalAssetStore,
 ) -> ProbeKitFactory:
     """Return a function building the processing kit with the fake processor that tells what an image shows.
 
@@ -63,8 +61,6 @@ def fx_probe_kit(
     :type fx_database: SqlDatabase
     :param fx_open_book: Opens the books of the test with their databases.
     :type fx_open_book: BookOpener
-    :param fx_asset_store: Local asset store of the test.
-    :type fx_asset_store: LocalAssetStore
     :returns: Function taking what the pages are found to show, in the order they are read, and returning the kit and
               the fake processor.
     :rtype: ProbeKitFactory
@@ -79,7 +75,7 @@ def fx_probe_kit(
         :rtype: tuple[ProcessingKit, FakeContentProbe]
         """
         probe = FakeContentProbe(answers)
-        return ProcessingKit(fx_database, fx_open_book, fx_asset_store, processors=[SplitNone(), probe]), probe
+        return ProcessingKit(fx_database, fx_open_book, processors=[SplitNone(), probe]), probe
 
     return build
 
@@ -92,7 +88,7 @@ def pages_of(kit: ProcessingKit) -> PageService:
     :returns: The service.
     :rtype: PageService
     """
-    return make_page_service(kit.stores, kit.assets, (kit.events, kit.clock, kit.board))
+    return make_page_service(kit.stores, (kit.events, kit.clock, kit.board))
 
 
 async def book_of(kit: ProcessingKit, kinds: list[PageKind]) -> tuple[Actor, BookRecord, list[Page]]:
@@ -180,7 +176,9 @@ async def detect(
     :returns: The job as it stands when the board is done.
     :rtype: Job
     """
-    job = await pages_of(kit).start_detection(open_for(actor, book_record.id, databases=kit.databases), page_ids)
+    job = await pages_of(kit).start_detection(
+        open_for(actor, book_record.id, databases=kit.databases, files=kit.files), page_ids
+    )
     await kit.work_queue()
     return stored_job(kit, job.id)
 
@@ -344,7 +342,6 @@ class TestDetectionJob:
         self,
         fx_database: SqlDatabase,
         fx_open_book: BookOpener,
-        fx_asset_store: LocalAssetStore,
     ) -> None:
         """Verify a catalogue without the processor, as a machine without OpenCV has, gives a job that reads nothing.
 
@@ -352,10 +349,8 @@ class TestDetectionJob:
         :type fx_database: SqlDatabase
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
         """
-        kit = ProcessingKit(fx_database, fx_open_book, fx_asset_store, processors=[SplitNone()])
+        kit = ProcessingKit(fx_database, fx_open_book, processors=[SplitNone()])
         actor, book_record, pages = await book_of(kit, [PageKind.TEXT])
 
         job = await detect(kit, actor, book_record)

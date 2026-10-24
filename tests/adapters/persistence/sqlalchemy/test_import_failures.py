@@ -8,7 +8,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.values import JobEnd, SliceRequest
-from tests.helpers.builders import make_record
+from tests.helpers.builders import make_record, open_for
 from tests.helpers.fakes_imports import pdf_upload
 from tests.helpers.seeding import store_book
 
@@ -62,9 +62,10 @@ class TestFailedImportOnSqlAlchemy:
         uow = fx_uow()
         await store_book(uow, book_record, owner=fx_owner_id, databases=fx_open_book.databases)
         job = await rig.service(uow=uow).start_import(
-            fx_open_book(Actor(account_id=fx_owner_id), book_record.id), [pdf_upload(samples, 'a.pdf', pages=PAGES)]
+            open_for(Actor(account_id=fx_owner_id), book_record.id, databases=rig.databases, files=rig.files),
+            [pdf_upload(samples, 'a.pdf', pages=PAGES)],
         )
-        rig.sources.fail_on_promote = OSError('disk full')
+        rig.files.fail_on_promote = OSError('disk full')
 
         await rig.fakes.board.run_queued()
 

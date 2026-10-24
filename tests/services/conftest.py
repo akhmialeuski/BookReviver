@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
 from bookreviver.domain.enums import JobKind, JobState
 from bookreviver.domain.values import JobEnd
 from bookreviver.plugins.split_none import SplitNone
@@ -29,37 +28,12 @@ from tests.helpers.samples import CV_MISSING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Job
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
     from tests.helpers.builders import BookOpener
-
-
-@pytest.fixture
-def fx_source_store(fx_storage_root: Path) -> LocalSourceStore:
-    """Build the source store over the test's storage root.
-
-    :param fx_storage_root: Storage root shared with the asset store.
-    :type fx_storage_root: Path
-    :returns: Local source store, the test adapter of the port.
-    :rtype: LocalSourceStore
-    """
-    return LocalSourceStore(root=fx_storage_root)
-
-
-@pytest.fixture
-def fx_asset_store(fx_storage_root: Path) -> LocalAssetStore:
-    """Build the asset store over the test's storage root.
-
-    :param fx_storage_root: Storage root shared with the source store.
-    :type fx_storage_root: Path
-    :returns: Local asset store, the test adapter of the port.
-    :rtype: LocalAssetStore
-    """
-    return LocalAssetStore(root=fx_storage_root)
 
 
 @pytest.fixture
@@ -109,7 +83,6 @@ def fx_page_writes(monkeypatch: pytest.MonkeyPatch) -> PageWrites:
 @pytest.fixture
 def fx_board(
     fx_open_book: BookOpener,
-    fx_asset_store: LocalAssetStore,
     fx_events: RecordingEventBus,
     fx_clock: FixedClock,
 ) -> FakeJobBoard:
@@ -120,8 +93,6 @@ def fx_board(
 
     :param fx_open_book: Opens the units of work and the databases of the books of the test.
     :type fx_open_book: BookOpener
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
     :param fx_events: Recording event bus.
     :type fx_events: RecordingEventBus
     :param fx_clock: Clock stopped at the epoch.
@@ -142,7 +113,7 @@ def fx_board(
         """
         if job.kind is not JobKind.PREPARE_PAGES:
             return JobEnd(state=JobState.SUCCEEDED)
-        service = make_page_service(fx_open_book, fx_asset_store, (fx_events, fx_clock, board))
+        service = make_page_service(fx_open_book, (fx_events, fx_clock, board))
         return await service.prepare_images(job, control)
 
     board = FakeJobBoard(runner=run, publisher=fx_events, clock=fx_clock)
@@ -170,21 +141,18 @@ def fx_runtime(
 @pytest.fixture
 def fx_service(
     fx_open_book: BookOpener,
-    fx_asset_store: LocalAssetStore,
     fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
 ) -> Callable[[], PageService]:
     """Return a function building the page service for one request or job.
 
     :param fx_open_book: Opens the units of work and the databases of the books of the test.
     :type fx_open_book: BookOpener
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
     :param fx_runtime: The recording bus, the stopped clock and the job board the service reports through.
     :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], PageService]
     """
-    return lambda: make_page_service(fx_open_book, fx_asset_store, fx_runtime)
+    return lambda: make_page_service(fx_open_book, fx_runtime)
 
 
 @pytest.fixture
@@ -203,7 +171,6 @@ def fx_pagination(fx_clock: FixedClock) -> Callable[[], PaginationService]:
 def fx_kit(
     fx_database: SqlDatabase,
     fx_open_book: BookOpener,
-    fx_asset_store: LocalAssetStore,
 ) -> ProcessingKit:
     """Build what the processing services of a test share, over the database and the asset store of the test.
 
@@ -211,19 +178,16 @@ def fx_kit(
     :type fx_database: SqlDatabase
     :param fx_open_book: Opens the books of the test with their databases.
     :type fx_open_book: BookOpener
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
     :returns: The kit that builds the processing service, the jobs of the workers and the edit service.
     :rtype: ProcessingKit
     """
-    return ProcessingKit(fx_database, fx_open_book, fx_asset_store)
+    return ProcessingKit(fx_database, fx_open_book)
 
 
 @pytest.fixture
 def fx_cv_kit(
     fx_database: SqlDatabase,
     fx_open_book: BookOpener,
-    fx_asset_store: LocalAssetStore,
 ) -> ProcessingKit:
     """Build the processing kit with the real OpenCV plugins, or skip the test where OpenCV is not installed.
 
@@ -231,8 +195,6 @@ def fx_cv_kit(
     :type fx_database: SqlDatabase
     :param fx_open_book: Opens the books of the test with their databases.
     :type fx_open_book: BookOpener
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
     :returns: The kit whose catalogue has ``split.none``, ``split.spread``, ``split.auto``, the five geometry
               processors and the four cleanup processors, which the default recipes of those stages need.
     :rtype: ProcessingKit
@@ -251,7 +213,6 @@ def fx_cv_kit(
     return ProcessingKit(
         fx_database,
         fx_open_book,
-        fx_asset_store,
         processors=[
             SplitNone(),
             split,
@@ -274,7 +235,6 @@ def fx_cv_kit(
 def fx_ordered_kit(
     fx_database: SqlDatabase,
     fx_open_book: BookOpener,
-    fx_asset_store: LocalAssetStore,
 ) -> ProcessingKit:
     """Build the processing kit over processors that declare a place.
 
@@ -282,8 +242,6 @@ def fx_ordered_kit(
     :type fx_database: SqlDatabase
     :param fx_open_book: Opens the books of the test with their databases.
     :type fx_open_book: BookOpener
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
     :returns: The kit whose catalogue holds the fakes of the tests and the processors that ask for a place.
     :rtype: ProcessingKit
     """
@@ -295,14 +253,13 @@ def fx_ordered_kit(
         SecondProcessor(),
         ThirdProcessor(),
     ]
-    return ProcessingKit(fx_database, fx_open_book, fx_asset_store, processors=processors)
+    return ProcessingKit(fx_database, fx_open_book, processors=processors)
 
 
 @pytest.fixture
 def fx_measuring_kit(
     fx_database: SqlDatabase,
     fx_open_book: BookOpener,
-    fx_asset_store: LocalAssetStore,
 ) -> ProcessingKit:
     """Build the processing kit over a processor that finds an angle on each page.
 
@@ -310,14 +267,11 @@ def fx_measuring_kit(
     :type fx_database: SqlDatabase
     :param fx_open_book: Opens the books of the test with their databases.
     :type fx_open_book: BookOpener
-    :param fx_asset_store: Local asset store over the test's storage root.
-    :type fx_asset_store: LocalAssetStore
     :returns: The kit whose catalogue holds the fakes of the tests and ``geometry.measuring``.
     :rtype: ProcessingKit
     """
     return ProcessingKit(
         fx_database,
         fx_open_book,
-        fx_asset_store,
         processors=[SplitNone(), FakeProcessor(), CleanupProcessor(), MeasuringProcessor()],
     )

@@ -24,14 +24,14 @@ from bookreviver.adapters.imaging import (
     VipsTiler,
 )
 from bookreviver.adapters.ordering.fractional import FractionalOrderKeys
-from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore
+from bookreviver.adapters.storage import LocalBookFileStores, LocalSourceStore
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ImagingSettings
 from bookreviver.domain.pagination import Pagination
 from bookreviver.domain.values import SliceRequest
 from bookreviver.plugins.split_none import SplitNone
 from bookreviver.ports.imaging import PageRasterizer, SourceInspector, Tiler
-from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRuntime, ImportService, ImportStorage
+from bookreviver.services.imports import ImportImaging, ImportLimits, ImportRuntime, ImportService
 from bookreviver.services.processing_parts import ProcessingConfig, ProcessingParts, ProcessingRuntime
 from bookreviver.services.steps import StepRunner
 from tests.adapters.imaging.samples import PdfPage, ScanImage, write_image, write_pdf
@@ -59,7 +59,6 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
     from bookreviver.ports.processing import Processor
     from bookreviver.ports.runtime import JobControl
-    from bookreviver.ports.storage import SourceStore
     from bookreviver.services.recipes import DefaultRecipes
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import UnitOfWorkFactory
@@ -373,22 +372,56 @@ class WatchedTiler(Tiler):
         await self._inner.thumbnail(image, target)
 
 
-class CrashingSourceStore(LocalSourceStore):
-    """The local source store, whose next promotion can crash the worker or fail with an error.
+class CrashingBookFileStores(LocalBookFileStores):
+    """The local stores of the books, whose next promotion of a source in any book can crash the worker or fail.
 
     :ivar crash_on_promote: Whether the next ``promote`` raises ``WorkerCrashError``, once.
     :ivar fail_on_promote: Error the next ``promote`` raises, once, leaving the files staged as a refused one does.
     """
 
-    crash_on_promote: bool = False
-    fail_on_promote: Exception | None = None
+    def __init__(self, *, root: Path) -> None:
+        """Keep the files of the books under ``root``, with no fault asked for.
+
+        :param root: Storage root of the stores.
+        :type root: Path
+        """
+        super().__init__(root=root)
+        self._files_root = root
+        self.crash_on_promote = False
+        self.fail_on_promote: Exception | None = None
 
     @override
-    async def promote(self, book_id: BookId, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
+    def sources(self, book_id: BookId) -> CrashingSourceStore:
+        """Return the source store of a book, which reads the faults of this opener.
+
+        :param book_id: The book.
+        :type book_id: BookId
+        :returns: The source store of the book.
+        :rtype: CrashingSourceStore
+        """
+        return CrashingSourceStore(root=self._files_root, book_id=book_id, faults=self)
+
+
+class CrashingSourceStore(LocalSourceStore):
+    """The local source store of one book, whose next promotion can crash the worker or fail with an error."""
+
+    def __init__(self, *, root: Path, book_id: BookId, faults: CrashingBookFileStores) -> None:
+        """Keep the uploads and sources of one book under ``root``, failing as ``faults`` asks.
+
+        :param root: Storage root of the stores.
+        :type root: Path
+        :param book_id: The book.
+        :type book_id: BookId
+        :param faults: The opener that holds the faults a test asks for.
+        :type faults: CrashingBookFileStores
+        """
+        super().__init__(root=root, book_id=book_id)
+        self._faults = faults
+
+    @override
+    async def promote(self, job_id: JobId, source_id: SourceId, *, names: Sequence[str]) -> None:
         """Promote the files, unless the test made this promotion crash.
 
-        :param book_id: Book owning the upload and the source.
-        :type book_id: BookId
         :param job_id: Import job whose upload holds the files.
         :type job_id: JobId
         :param source_id: Source the files become.
@@ -398,13 +431,13 @@ class CrashingSourceStore(LocalSourceStore):
         :raises WorkerCrashError: If a crash was asked for, which is then forgotten.
         :raises Exception: The error asked for, which is then forgotten.
         """
-        if self.crash_on_promote:
-            self.crash_on_promote = False
+        if self._faults.crash_on_promote:
+            self._faults.crash_on_promote = False
             raise WorkerCrashError
-        if (failure := self.fail_on_promote) is not None:
-            self.fail_on_promote = None
+        if (failure := self._faults.fail_on_promote) is not None:
+            self._faults.fail_on_promote = None
             raise failure
-        await super().promote(book_id, job_id, source_id, names=names)
+        await super().promote(job_id, source_id, names=names)
 
 
 @frozen(kw_only=True)
@@ -417,8 +450,7 @@ class ImportRig:
     :ivar fakes: The recording event bus, the clock and the board, which the job tests share. The board runs a job
                  through the import service of the rig when a test calls ``run_queued``.
     :ivar events: The event bus of ``fakes``.
-    :ivar sources: Local source store, whose promotion can crash.
-    :ivar assets: Local asset store.
+    :ivar files: Opens the local stores of a book, whose promotion of a source can crash.
     :ivar inspector: Real inspector, watched.
     :ivar rasterizer: Real rasterizer, watched.
     :ivar tiler: Real tiler, watched.
@@ -431,8 +463,7 @@ class ImportRig:
     databases: BookDatabases
     fakes: JobFakes
     events: RecordingEventBus
-    sources: CrashingSourceStore
-    assets: LocalAssetStore
+    files: CrashingBookFileStores
     inspector: WatchedInspector
     rasterizer: WatchedRasterizer
     tiler: WatchedTiler
@@ -494,8 +525,7 @@ class ImportRig:
             databases=stores.databases,
             fakes=JobFakes(events=events, clock=TickingClock(EPOCH), runner=run),
             events=events,
-            sources=CrashingSourceStore(root=root),
-            assets=LocalAssetStore(root=root),
+            files=CrashingBookFileStores(root=root),
             inspector=WatchedInspector(reader),
             rasterizer=WatchedRasterizer(reader),
             tiler=WatchedTiler(tiler),
@@ -510,7 +540,6 @@ class ImportRig:
         :rtype: StepRunner
         """
         return StepRunner(
-            assets=self.assets,
             executor=InProcessStepExecutor(FakeCatalogue([SplitNone()])),
             renditions=VipsRenditionWriter(
                 preview_long_side_px=ImagingSettings().preview_long_side_px,
@@ -532,7 +561,6 @@ class ImportRig:
         self,
         *,
         uow: UnitOfWork | None = None,
-        sources: SourceStore | None = None,
         parallel_scans: int = DEFAULT_PARALLEL_SCANS,
         max_files: int = MAX_FILES,
         max_bytes: int = MAX_BYTES,
@@ -541,8 +569,6 @@ class ImportRig:
 
         :param uow: Unit of work the service works in, or None for a new one over the rig's database.
         :type uow: UnitOfWork | None
-        :param sources: Source store the service works with, or None for the rig's own.
-        :type sources: SourceStore | None
         :param parallel_scans: Largest number of scans cut at once.
         :type parallel_scans: int
         :param max_files: Largest number of files in an upload.
@@ -566,8 +592,7 @@ class ImportRig:
             ),
         )
         return ImportService(
-            books=make_books_service(uow, databases=self.databases),
-            storage=ImportStorage(sources=sources or self.sources, assets=self.assets),
+            books=make_books_service(uow, databases=self.databases, files=self.files),
             imaging=ImportImaging(
                 inspector=self.inspector, rasterizer=self.rasterizer, tiler=self.tiler, runner=self.runner()
             ),

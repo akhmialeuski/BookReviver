@@ -118,7 +118,7 @@ class BookRegistry:
         :returns: The path of ``projects/<id>/book.db`` under the storage root.
         :rtype: Path
         """
-        return self._root / BookKeys(book_id).database
+        return self._root / KeySegment.BOOKS / str(book_id) / BookKeys().database
 
     @asynccontextmanager
     async def use(self, book_id: BookId) -> AsyncIterator[SqlDatabase]:

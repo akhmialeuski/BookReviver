@@ -15,8 +15,8 @@ from tests.helpers.seeding import commit_record
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.adapters.storage import LocalAssetStore
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.storage import SharedBookFileStores
 
 pytestmark = pytest.mark.anyio
 
@@ -30,7 +30,7 @@ class TestClear:
         self,
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
-        fx_asset_store: LocalAssetStore,
+        fx_file_stores: SharedBookFileStores,
         fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a version a request deleted meanwhile neither fails the batch nor keeps the others from going.
@@ -39,8 +39,8 @@ class TestClear:
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+        :type fx_file_stores: SharedBookFileStores
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
         :type fx_databases: BookDatabasesFactory
         """
@@ -64,8 +64,7 @@ class TestClear:
             .change(lambda repos, _book_record: repos.page_versions.delete_many([deleted.id]))
         )
         clearing = VersionClearing(
-            assets=fx_asset_store,
-            book=await make_books_service(fx_uow(), databases=fx_databases()).open(book_record.id),
+            book=await make_books_service(fx_uow(), databases=fx_databases(), files=fx_file_stores).open(book_record.id)
         )
 
         await clearing.clear([kept, deleted])
@@ -80,7 +79,7 @@ class TestClear:
         self,
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
-        fx_asset_store: LocalAssetStore,
+        fx_file_stores: SharedBookFileStores,
         monkeypatch: pytest.MonkeyPatch,
         fx_databases: BookDatabasesFactory,
     ) -> None:
@@ -92,8 +91,8 @@ class TestClear:
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
-        :param fx_asset_store: Local asset store of the test.
-        :type fx_asset_store: LocalAssetStore
+        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+        :type fx_file_stores: SharedBookFileStores
         :param monkeypatch: Fixture that restores the patched store after the test.
         :type monkeypatch: pytest.MonkeyPatch
         :param fx_databases: Function opening a new opener of the databases of the books of the test.
@@ -117,10 +116,9 @@ class TestClear:
             .change(lambda repos, _book_record: repos.page_versions.update(evolve(chosen, comment=KEPT_COMMENT)))
         )
 
-        monkeypatch.setattr(fx_asset_store, 'delete_prefix', AsyncMock(side_effect=OSError))
+        monkeypatch.setattr(fx_file_stores.assets(book_record.id), 'delete_prefix', AsyncMock(side_effect=OSError))
         clearing = VersionClearing(
-            assets=fx_asset_store,
-            book=await make_books_service(fx_uow(), databases=fx_databases()).open(book_record.id),
+            book=await make_books_service(fx_uow(), databases=fx_databases(), files=fx_file_stores).open(book_record.id)
         )
 
         await clearing.clear([chosen])

@@ -19,7 +19,6 @@ from tests.helpers.spreads import run_stage
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, BookRecord, PageStage, Recipe
     from bookreviver.domain.ids import BookId, PageId
     from bookreviver.ports.persistence import BookDatabases, BookRepositories
@@ -96,12 +95,16 @@ async def tune_recipes(kit: ProcessingKit, actor: Actor, book_record: BookRecord
     tuned: dict[RecipeKind, Recipe] = {}
     for recipe in (
         await service.recipes(
-            open_for(actor, book_record.id, databases=kit.databases), Stage.GEOMETRY, SliceRequest(limit=10)
+            open_for(actor, book_record.id, databases=kit.databases, files=kit.files),
+            Stage.GEOMETRY,
+            SliceRequest(limit=10),
         )
     ).items:
         draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAM: STRENGTHS[recipe.kind]})])
         tuned[recipe.kind] = await service.save_recipe(
-            open_for(actor, book_record.id, databases=kit.databases), RecipeKey(Stage.GEOMETRY, recipe.id), draft
+            open_for(actor, book_record.id, databases=kit.databases, files=kit.files),
+            RecipeKey(Stage.GEOMETRY, recipe.id),
+            draft,
         )
     return tuned
 
@@ -167,15 +170,12 @@ class TestRecipesOfAStage:
     async def test_a_kind_without_a_template_starts_with_a_copy_of_the_recipe_of_text(
         self,
         fx_database: SqlDatabase,
-        fx_asset_store: LocalAssetStore,
         fx_open_book: BookOpener,
     ) -> None:
         """Verify a template that is given for text pages alone leaves the other kinds the same steps, identifiers too.
 
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
-        :param fx_asset_store: Local asset store over the test's storage root.
-        :type fx_asset_store: LocalAssetStore
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
@@ -183,7 +183,6 @@ class TestRecipesOfAStage:
         kit = ProcessingKit(
             fx_database,
             fx_open_book,
-            fx_asset_store,
             defaults=DefaultRecipes({Stage.GEOMETRY: {RecipeKind.TEXT: template}}),
         )
         actor, book_record = await kit.seed_record()
@@ -329,7 +328,7 @@ class TestRecipeOfAPage:
         recipes = await tune_recipes(fx_kit, actor, book_record)
         await run_all(fx_kit, actor, book_record)
         before = await record_of(book_record.id, page_id, databases=fx_open_book.databases)
-        pages = make_page_service(fx_kit.stores, fx_kit.assets, (fx_kit.events, fx_kit.clock, fx_kit.board))
+        pages = make_page_service(fx_kit.stores, (fx_kit.events, fx_kit.clock, fx_kit.board))
 
         await pages.update(
             fx_open_book(actor, book_record.id), page_id, PageChanges(content_type=ContentType.BW_PICTURE)
@@ -356,7 +355,7 @@ class TestRecipeOfAPage:
         actor, book_record, (page_id,) = await seed_book(fx_kit, [PageKind.TEXT])
         recipes = await tune_recipes(fx_kit, actor, book_record)
         await run_all(fx_kit, actor, book_record)
-        pages = make_page_service(fx_kit.stores, fx_kit.assets, (fx_kit.events, fx_kit.clock, fx_kit.board))
+        pages = make_page_service(fx_kit.stores, (fx_kit.events, fx_kit.clock, fx_kit.board))
 
         await pages.update(fx_open_book(actor, book_record.id), page_id, PageChanges(kind=PageKind.BLANK))
         stale = await record_of(book_record.id, page_id, databases=fx_open_book.databases)
@@ -437,15 +436,12 @@ class TestResetToTheDefaultSteps:
     async def test_a_recipe_takes_the_template_of_its_own_kind(
         self,
         fx_database: SqlDatabase,
-        fx_asset_store: LocalAssetStore,
         fx_open_book: BookOpener,
     ) -> None:
         """Verify each recipe gets the template of its kind.
 
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
-        :param fx_asset_store: Local asset store over the test's storage root.
-        :type fx_asset_store: LocalAssetStore
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
@@ -457,7 +453,7 @@ class TestResetToTheDefaultSteps:
                 }
             }
         )
-        kit = ProcessingKit(fx_database, fx_open_book, fx_asset_store, defaults=templates)
+        kit = ProcessingKit(fx_database, fx_open_book, defaults=templates)
         actor, book_record = await kit.seed_record()
         found = (
             await kit.service().recipes(fx_open_book(actor, book_record.id), Stage.GEOMETRY, SliceRequest(limit=10))

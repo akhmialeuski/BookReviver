@@ -407,9 +407,12 @@ class PageSchema(ResponseModel):
         page, version = overview.page, overview.image_version
         images = None
         if version is not None and version.renditions is not None and version.renditions.ready:
-            keys = BookKeys(book_id)
+            keys = BookKeys()
             images = ImagePathsSchema.of(
-                request, lambda rendition: keys.version_rendition(version, rendition), full=version.renditions.full
+                request,
+                book_id,
+                lambda rendition: keys.version_rendition(version, rendition),
+                full=version.renditions.full,
             )
         return cls(
             id=page.id,

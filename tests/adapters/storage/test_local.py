@@ -8,7 +8,7 @@ import anyio
 import pytest
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.storage import LocalAssetStore, LocalSourceStore, local
+from bookreviver.adapters.storage import LocalAssetStore, LocalBookFileStores, LocalSourceStore, local
 from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId
@@ -26,7 +26,9 @@ pytestmark = pytest.mark.anyio
 STORE_TYPES_ARG: str = 'store_types'
 BOOK_ID: BookId = BookId(uuid4())
 OTHER_BOOK_ID: BookId = BookId(uuid4())
-KEYS: BookKeys = BookKeys(BOOK_ID)
+KEYS: BookKeys = BookKeys()
+# The directory of the book under the storage root, as the local stores lay it out
+BOOK_DIRECTORY: str = f'projects/{BOOK_ID}'
 JOB_ID: JobId = JobId(uuid4())
 SOURCE_ID: SourceId = SourceId(uuid4())
 PAGE_NAME: str = 'page.png'
@@ -45,9 +47,9 @@ class TestLocalSourceStore:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        store = LocalSourceStore(root=tmp_path)
+        stores = LocalBookFileStores(root=tmp_path)
 
-        await store.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await stores.sources(BOOK_ID).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
 
         assert (tmp_path / 'projects' / str(BOOK_ID) / 'incoming' / str(JOB_ID) / PAGE_NAME).read_bytes() == (
             PAGE_CONTENT
@@ -59,10 +61,10 @@ class TestLocalSourceStore:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        store = LocalSourceStore(root=tmp_path)
-        await store.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        stores = LocalBookFileStores(root=tmp_path)
+        await stores.sources(BOOK_ID).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
 
-        await store.promote(BOOK_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+        await stores.sources(BOOK_ID).promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
         sources_dir = tmp_path / 'projects' / str(BOOK_ID) / 'sources'
         assert [path.name for path in sources_dir.iterdir()] == [str(SOURCE_ID)]
@@ -74,14 +76,14 @@ class TestLocalSourceStore:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        store = LocalSourceStore(root=tmp_path)
-        await store.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
-        sources_dir = tmp_path / KEYS.sources_area
+        stores = LocalBookFileStores(root=tmp_path)
+        await stores.sources(BOOK_ID).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        sources_dir = tmp_path / BOOK_DIRECTORY / KEYS.sources_area
         (sources_dir / str(SOURCE_ID)).mkdir(parents=True)
         (sources_dir / str(SOURCE_ID) / PAGE_NAME).write_bytes(PAGE_CONTENT)
 
         with pytest.raises(ConflictError):
-            await store.promote(BOOK_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+            await stores.sources(BOOK_ID).promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
         assert [path.name for path in sources_dir.iterdir()] == [str(SOURCE_ID)]
 
@@ -96,14 +98,14 @@ class TestLocalSourceStore:
         :type monkeypatch: pytest.MonkeyPatch
         """
         monkeypatch.setattr(local, '_publish', AsyncMock(side_effect=ConflictError(SOURCE_TAKEN)))
-        store = LocalSourceStore(root=tmp_path)
-        await store.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        stores = LocalBookFileStores(root=tmp_path)
+        await stores.sources(BOOK_ID).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
 
         with pytest.raises(ConflictError):
-            await store.promote(BOOK_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+            await stores.sources(BOOK_ID).promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
-        expect((tmp_path / KEYS.incoming(JOB_ID) / PAGE_NAME).read_bytes() == PAGE_CONTENT)
-        expect(list((tmp_path / KEYS.sources_area).iterdir()) == [])
+        expect((tmp_path / BOOK_DIRECTORY / KEYS.incoming(JOB_ID) / PAGE_NAME).read_bytes() == PAGE_CONTENT)
+        expect(list((tmp_path / BOOK_DIRECTORY / KEYS.sources_area).iterdir()) == [])
         assert_expectations()
 
     async def test_discarding_all_staged_removes_the_directory_of_a_book_left_empty(self, tmp_path: Path) -> None:
@@ -112,16 +114,20 @@ class TestLocalSourceStore:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        store = LocalSourceStore(root=tmp_path)
-        other_sources_dir = tmp_path / BookKeys(OTHER_BOOK_ID).sources_area
-        await store.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
-        await store.stage(OTHER_BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
-        await store.promote(OTHER_BOOK_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
-        await store.stage(OTHER_BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        stores = LocalBookFileStores(root=tmp_path)
+        other_sources_dir = tmp_path / 'projects' / str(OTHER_BOOK_ID) / BookKeys().sources_area
+        await stores.sources(BOOK_ID).stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await stores.sources(OTHER_BOOK_ID).stage(
+            JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
+        )
+        await stores.sources(OTHER_BOOK_ID).promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+        await stores.sources(OTHER_BOOK_ID).stage(
+            JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
+        )
 
-        await store.discard_all_staged()
+        await stores.discard_all_staged()
 
-        expect(not (tmp_path / KEYS.sources_area).parent.exists())
+        expect(not (tmp_path / BOOK_DIRECTORY / KEYS.sources_area).parent.exists())
         expect([path.name for path in other_sources_dir.parent.iterdir()] == [other_sources_dir.name])
         assert_expectations()
 
@@ -135,12 +141,12 @@ class TestLocalAssetStore:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        store = LocalAssetStore(root=tmp_path)
+        store = LocalAssetStore(root=tmp_path, book_id=BOOK_ID)
 
         async with store.writable(FILE_KEY) as path:
             path.write_bytes(PAGE_CONTENT)
 
-        assert (tmp_path / FILE_KEY).read_bytes() == PAGE_CONTENT
+        assert (tmp_path / BOOK_DIRECTORY / FILE_KEY).read_bytes() == PAGE_CONTENT
 
     async def test_failed_write_leaves_no_partial_file(self, tmp_path: Path) -> None:
         """Verify an abandoned write removes the hidden file it was writing.
@@ -148,12 +154,12 @@ class TestLocalAssetStore:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        store = LocalAssetStore(root=tmp_path)
+        store = LocalAssetStore(root=tmp_path, book_id=BOOK_ID)
 
         with pytest.raises(WriterFailedError):
             await abandon_write(store, key=FILE_KEY, content=PAGE_CONTENT)
 
-        assert [path async for path in anyio.Path(tmp_path / FILE_KEY).parent.iterdir()] == []
+        assert [path async for path in anyio.Path(tmp_path / BOOK_DIRECTORY / FILE_KEY).parent.iterdir()] == []
 
     async def test_book_deletion_keeps_uploads_and_sources(self, tmp_path: Path) -> None:
         """Verify ``incoming/`` and ``sources/`` stay, since removing them is the source store's job.
@@ -161,15 +167,15 @@ class TestLocalAssetStore:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        sources = LocalSourceStore(root=tmp_path)
-        assets = LocalAssetStore(root=tmp_path)
-        await sources.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
-        await sources.promote(BOOK_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
-        await sources.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        sources = LocalSourceStore(root=tmp_path, book_id=BOOK_ID)
+        assets = LocalAssetStore(root=tmp_path, book_id=BOOK_ID)
+        await sources.stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await sources.promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+        await sources.stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
         async with assets.writable(FILE_KEY) as path:
             path.write_bytes(PAGE_CONTENT)
 
-        await assets.delete_book(BOOK_ID)
+        await assets.delete_all()
 
         book_dir = tmp_path / 'projects' / str(BOOK_ID)
         assert sorted(path.name for path in book_dir.iterdir()) == ['incoming', 'sources']
@@ -189,14 +195,14 @@ class TestLocalAssetStore:
         :param store_types: The two local stores in the order they delete the book.
         :type store_types: tuple[type[LocalSourceStore | LocalAssetStore], ...]
         """
-        sources = LocalSourceStore(root=tmp_path)
-        assets = LocalAssetStore(root=tmp_path)
-        await sources.stage(BOOK_ID, JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
-        await sources.promote(BOOK_ID, JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+        sources = LocalSourceStore(root=tmp_path, book_id=BOOK_ID)
+        assets = LocalAssetStore(root=tmp_path, book_id=BOOK_ID)
+        await sources.stage(JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES)
+        await sources.promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
         async with assets.writable(FILE_KEY) as path:
             path.write_bytes(PAGE_CONTENT)
 
         for store_type in store_types:
-            await store_type(root=tmp_path).delete_book(BOOK_ID)
+            await store_type(root=tmp_path, book_id=BOOK_ID).delete_all()
 
         assert list((tmp_path / 'projects').iterdir()) == []

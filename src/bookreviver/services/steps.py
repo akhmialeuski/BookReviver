@@ -34,6 +34,7 @@ from bookreviver.domain.enums import (
 )
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.geometry import Transform
+from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import COLOR_MODE_KEY, Renditions
 from bookreviver.ports.processing import StepInput, StepOutput, StepResult
 
@@ -43,11 +44,10 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import PageEdit, PageVersion
     from bookreviver.domain.enums import ImagePolicy, PageSide
     from bookreviver.domain.ids import StorageKey
-    from bookreviver.domain.keys import BookKeys
     from bookreviver.domain.values import MetadataMap
     from bookreviver.ports.imaging import RenditionWriter, Tiler
     from bookreviver.ports.processing import StepExecutor
-    from bookreviver.ports.storage import AssetStore
+    from bookreviver.services.book import Book
 
 NOT_READY: str = 'The version {version_id} has no image that is ready to cut.'
 
@@ -87,15 +87,12 @@ class StepRunner:
     def __init__(
         self,
         *,
-        assets: AssetStore,
         executor: StepExecutor,
         renditions: RenditionWriter,
         tiler: Tiler,
     ) -> None:
-        """Run processors through the executor, storing files through the asset store.
+        """Run processors through the executor, storing files through the asset store of the book of each call.
 
-        :param assets: Store of the derived files, which hands out the local paths processors work on.
-        :type assets: AssetStore
         :param executor: Runs the step of a processor of the catalogue, in a thread or in another process.
         :type executor: StepExecutor
         :param renditions: Writer of the ``full``, ``preview`` and ``thumb`` files of an output.
@@ -103,19 +100,20 @@ class StepRunner:
         :param tiler: Port cutting the pyramid, and the preview of a preview run.
         :type tiler: Tiler
         """
-        self._assets = assets
         self._executor = executor
         self._renditions = renditions
         self._tiler = tiler
 
     @asynccontextmanager
-    async def execute(self, run: StepRun) -> AsyncIterator[StepResult]:
+    async def execute(self, book: Book, run: StepRun) -> AsyncIterator[StepResult]:
         """Run the processor through the executor while its input files and its work directory are open.
 
         The outputs name files in the work directory, which is removed when the context exits, so they are stored
         inside it. The work directory is made in the temporary directory of the machine, which ``TMPDIR`` moves to a
         disk with room for the largest page.
 
+        :param book: The book of the page, whose asset store hands out the local paths the processor works on.
+        :type book: Book
         :param run: What the step reads.
         :type run: StepRun
         :returns: Context manager yielding the result of the processor.
@@ -124,14 +122,14 @@ class StepRunner:
         :raises DomainError: If the processor cannot run on this input.
         """
         async with AsyncExitStack() as stack:
-            image = None if run.image is None else await stack.enter_async_context(self._assets.readable(run.image))
+            image = None if run.image is None else await stack.enter_async_context(book.assets.readable(run.image))
             if run.skipped:
                 yield self._unchanged(run, image)
                 return
             mask = None
             if run.edit is not None and run.edit.mask_key is not None:
-                mask = await stack.enter_async_context(self._assets.readable(run.edit.mask_key))
-            references = [await stack.enter_async_context(self._assets.readable(key)) for key in run.references]
+                mask = await stack.enter_async_context(book.assets.readable(run.edit.mask_key))
+            references = [await stack.enter_async_context(book.assets.readable(key)) for key in run.references]
             workdir = stack.enter_context(tempfile.TemporaryDirectory())
             step_input = StepInput(
                 image=image,
@@ -174,15 +172,15 @@ class StepRunner:
         )
 
     async def store(
-        self, keys: BookKeys, version: PageVersion, output: StepOutput, *, policy: ImagePolicy, tiles: bool
+        self, book: Book, version: PageVersion, output: StepOutput, *, policy: ImagePolicy, tiles: bool
     ) -> PageVersion:
         """Store the files of a version from one output of its step, and return the version as ready.
 
         Whatever an earlier attempt of the version left in its directory is removed first, since a stored file is
         never replaced, and a version that is stored again is one that never became ready.
 
-        :param keys: Keys of the book owning the page.
-        :type keys: BookKeys
+        :param book: The book owning the page, whose asset store keeps the files of the version.
+        :type book: Book
         :param version: The version being made, whose identifier names its directory.
         :type version: PageVersion
         :param output: What the processor made.
@@ -194,10 +192,11 @@ class StepRunner:
         :returns: The version with its transform, data, review mark, renditions and the state ready.
         :rtype: PageVersion
         """
+        keys = BookKeys()
         directory = keys.version_directory(version)
-        await self._assets.delete_prefix(directory)
+        await book.assets.delete_prefix(directory)
         renditions: Renditions | None = None
-        async with self._assets.writable(directory) as target:
+        async with book.assets.writable(directory) as target:
             if version.scale is VersionScale.PREVIEW:
                 await anyio.Path(target).mkdir()
                 if output.image is not None:
@@ -226,22 +225,25 @@ class StepRunner:
             state=VersionState.READY,
         )
         if tiles and version.scale is VersionScale.FULL and renditions is not None:
-            return await self.cut_tiles(keys, stored)
+            return await self.cut_tiles(book, stored)
         return stored
 
-    async def discard(self, prefix: StorageKey) -> None:
+    @staticmethod
+    async def discard(book: Book, prefix: StorageKey) -> None:
         """Remove every file stored under a prefix, such as the directory of a page that was deleted.
 
+        :param book: The book whose asset store holds the files.
+        :type book: Book
         :param prefix: Storage key of the directory, which may hold nothing.
         :type prefix: StorageKey
         """
-        await self._assets.delete_prefix(prefix)
+        await book.assets.delete_prefix(prefix)
 
-    async def cut_tiles(self, keys: BookKeys, version: PageVersion) -> PageVersion:
+    async def cut_tiles(self, book: Book, version: PageVersion) -> PageVersion:
         """Cut the IIIF tile pyramid of a ready version from its ``full`` image.
 
-        :param keys: Keys of the book owning the page.
-        :type keys: BookKeys
+        :param book: The book owning the page, whose asset store keeps the files of the version.
+        :type book: Book
         :param version: A ready version of a full run that has an image.
         :type version: PageVersion
         :returns: The version with its pyramid marked as cut.
@@ -250,9 +252,10 @@ class StepRunner:
         """
         if version.renditions is None or not version.renditions.ready or version.scale is not VersionScale.FULL:
             raise ConflictError(NOT_READY.format(version_id=version.id))
+        keys = BookKeys()
         tiles = keys.version_rendition(version, Rendition.TILES)
-        await self._assets.delete_prefix(tiles)
+        await book.assets.delete_prefix(tiles)
         full = keys.version_rendition(version, version.renditions.full)
-        async with self._assets.readable(full) as image, self._assets.writable(tiles) as target:
+        async with book.assets.readable(full) as image, book.assets.writable(tiles) as target:
             await self._tiler.tile(image, target)
         return evolve(version, tiles_ready=True)

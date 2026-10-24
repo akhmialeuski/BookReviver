@@ -61,7 +61,6 @@ from tests.helpers.stage_heads import seed_head
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, BookRecord, Job, Page
     from bookreviver.ports.persistence import BookRepositories
     from tests.helpers.builders import BookOpener
@@ -109,8 +108,10 @@ class TestRunStage:
         await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
         version = await head_of(fx_kit, book_record.id, page, Stage.GEOMETRY)
         record = await stage_of(book_record.id, page, Stage.GEOMETRY, databases=fx_kit.databases)
-        keys = BookKeys(book_record.id)
-        async with fx_kit.assets.readable(keys.version_rendition(version, Rendition.FULL_JPEG)) as full:
+        keys = BookKeys()
+        async with fx_kit.files.assets(book_record.id).readable(
+            keys.version_rendition(version, Rendition.FULL_JPEG)
+        ) as full:
             content = full.read_bytes()
         expect((version.state, version.scale) == (VersionState.READY, VersionScale.FULL))
         expect((version.renditions is not None and version.renditions.ready, version.tiles_ready) == (True, True))
@@ -714,8 +715,8 @@ class TestPreviewStep:
             lambda repos: repos.page_versions.list_for_stage(page.id, Stage.GEOMETRY, VersionScale.PREVIEW, EVERYTHING),
         )
         [version] = versions.items
-        async with fx_kit.assets.readable(
-            BookKeys(book_record.id).version_rendition(version, Rendition.PREVIEW)
+        async with fx_kit.files.assets(book_record.id).readable(
+            BookKeys().version_rendition(version, Rendition.PREVIEW)
         ) as file:
             content = file.read_bytes()
         record = await found_stage(book_record.id, page, Stage.GEOMETRY, databases=fx_open_book.databases)
@@ -927,7 +928,7 @@ async def save_the_recipe(kit: ProcessingKit, seeded: SeededPage) -> None:
     recipe = await kit.recipe_of(seeded.actor, seeded.book_record, Stage.GEOMETRY)
     draft = RecipeDraft(steps=[Step(processor_key=FAKE_KEY, params={STRENGTH_PARAMETER: STRENGTH_BY_HAND})])
     await kit.service().save_recipe(
-        open_for(seeded.actor, seeded.book_record.id, databases=kit.databases),
+        open_for(seeded.actor, seeded.book_record.id, databases=kit.databases, files=kit.files),
         RecipeKey(Stage.GEOMETRY, recipe.id),
         draft,
     )
@@ -997,7 +998,7 @@ class TestRunApplyStep:
         )
         change_while_writing(fx_kit, monkeypatch, partial(delete_the_page, fx_kit, seeded))
         await fx_kit.work_queue()
-        left = await fx_kit.assets.size_of(BookKeys(seeded.book_record.id).page(seeded.page.id))
+        left = await fx_kit.files.assets(seeded.book_record.id).size_of(BookKeys().page(seeded.page.id))
         assert left == 0
 
     async def test_a_mark_and_a_comment_put_on_the_version_while_it_ran_are_kept(
@@ -1047,7 +1048,9 @@ async def interrupted_book(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[
         await kit.seed_base_version(book_record.id, page)
         pages.append(page)
     job = await kit.service().start_run(
-        open_for(actor, book_record.id, databases=kit.databases), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+        open_for(actor, book_record.id, databases=kit.databases, files=kit.files),
+        Stage.GEOMETRY,
+        StageRun(stage=Stage.GEOMETRY),
     )
     async with steps_held(kit, after=INTERRUPTED_BOOK_PAGES - 1):
         await kit.board.cancel(job.id)
@@ -1092,7 +1095,7 @@ class TestRestart:
     """Tests for a run asked for after the process restarted, whose board holds none of the jobs of the one before."""
 
     async def test_whole_book_run_after_a_restart_goes_over_the_page_that_was_left_and_makes_its_running_version_again(
-        self, fx_kit: ProcessingKit, fx_asset_store: LocalAssetStore, fx_open_book: BookOpener
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
         """Verify only the third page gets tasks, and its version that a crash left running is made again.
 
@@ -1102,8 +1105,6 @@ class TestRestart:
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
-        :param fx_asset_store: Asset store the two kits share.
-        :type fx_asset_store: LocalAssetStore
         :param fx_open_book: Opens the books of the test with their databases.
         :type fx_open_book: BookOpener
         """
@@ -1118,7 +1119,7 @@ class TestRestart:
             ),
             databases=fx_open_book.databases,
         )
-        restarted = ProcessingKit(fx_kit.database, fx_open_book, fx_asset_store)
+        restarted = ProcessingKit(fx_kit.database, fx_open_book)
         job = await restarted.service().start_run(
             fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )

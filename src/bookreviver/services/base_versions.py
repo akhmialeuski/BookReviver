@@ -37,15 +37,12 @@ PAGES_BLANK: ProcessorRef = ProcessorRef(key='pages.blank', version='2')
 class BaseVersions:
     """Builds the base versions of pages and cuts the files of scans."""
 
-    def __init__(self, *, assets: AssetStore, tiler: Tiler) -> None:
-        """Cut the files of scans through the asset store with the tiler.
+    def __init__(self, *, tiler: Tiler) -> None:
+        """Cut the files of scans with the tiler.
 
-        :param assets: Store of the derived files.
-        :type assets: AssetStore
         :param tiler: Port cutting the pyramid, the preview and the thumbnail of an image.
         :type tiler: Tiler
         """
-        self._assets = assets
         self._tiler = tiler
 
     @staticmethod
@@ -125,19 +122,21 @@ class BaseVersions:
             created_at=moment,
         )
 
-    async def derive(self, key: Callable[[Rendition], StorageKey], *, full: Rendition) -> None:
+    async def derive(self, key: Callable[[Rendition], StorageKey], *, assets: AssetStore, full: Rendition) -> None:
         """Cut the preview, the thumbnail and the tile pyramid from the ``full`` image stored under the keys.
 
         :param key: Function giving the storage key of each rendition of one scan or one page version.
         :type key: Callable[[Rendition], StorageKey]
+        :param assets: Store of the derived files of the book the scan or the page version belongs to.
+        :type assets: AssetStore
         :param full: Format the ``full`` image was written in, which names the file to cut from.
         :type full: Rendition
         """
-        async with self._assets.readable(key(full)) as image:
-            async with self._assets.writable(key(Rendition.PREVIEW)) as target:
+        async with assets.readable(key(full)) as image:
+            async with assets.writable(key(Rendition.PREVIEW)) as target:
                 await self._tiler.preview(image, target)
-            async with self._assets.writable(key(Rendition.THUMBNAIL)) as target:
+            async with assets.writable(key(Rendition.THUMBNAIL)) as target:
                 await self._tiler.thumbnail(image, target)
             tiles = key(Rendition.TILES)
-            async with self._assets.writable(tiles) as target:
+            async with assets.writable(tiles) as target:
                 await self._tiler.tile(image, target)

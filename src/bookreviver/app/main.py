@@ -23,7 +23,7 @@ from bookreviver.app.settings import Settings
 from bookreviver.app.tracing import LoopLagProbe, TracingMiddleware
 from bookreviver.domain.errors import DomainError
 from bookreviver.ports.processing import StepExecutor
-from bookreviver.ports.storage import SourceStore
+from bookreviver.ports.storage import BookFileStores
 from bookreviver.ports.tracing import Tracer
 from bookreviver.services.books import BooksService
 from bookreviver.services.outdated_results import OutdatedResults
@@ -62,7 +62,7 @@ async def prepare_start(container: AsyncContainer) -> None:
     """
     await container.get(SqlDatabase)
     await container.get(StepExecutor)
-    await (await container.get(SourceStore)).discard_all_staged()
+    await (await container.get(BookFileStores)).discard_all_staged()
     async with container() as request:
         await (await request.get(BooksService)).sweep()
         await (await request.get(OutdatedResults)).mark_stale()

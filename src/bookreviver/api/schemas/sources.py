@@ -167,11 +167,11 @@ class ScanSchema(ResponseModel):
         :returns: The scan resource, with images once its renditions are ready.
         :rtype: Self
         """
-        keys = BookKeys(book_id)
+        keys = BookKeys()
         images = None
         if scan.renditions.ready:
             images = ImagePathsSchema.of(
-                request, lambda rendition: keys.scan_rendition(scan, rendition), full=scan.renditions.full
+                request, book_id, lambda rendition: keys.scan_rendition(scan, rendition), full=scan.renditions.full
             )
         return cls(
             id=scan.id,

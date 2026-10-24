@@ -159,7 +159,9 @@ async def mark_stale(kit: ProcessingKit) -> list[PageStage]:
     kit.clock.moment = CHECKED_AT
     uow = kit.uow()
     return await OutdatedResults(
-        books=make_books_service(uow, databases=kit.databases), catalogue=kit.catalogue, clock=kit.clock
+        books=make_books_service(uow, databases=kit.databases, files=kit.files),
+        catalogue=kit.catalogue,
+        clock=kit.clock,
     ).mark_stale()
 
 
@@ -237,7 +239,9 @@ class TestMarkStale:
         fx_kit.clock.moment = CHECKED_AT
 
         marked = await OutdatedResults(
-            books=make_books_service(uow, databases=fx_kit.databases), catalogue=fx_kit.catalogue, clock=fx_kit.clock
+            books=make_books_service(uow, databases=fx_kit.databases, files=fx_kit.files),
+            catalogue=fx_kit.catalogue,
+            clock=fx_kit.clock,
         ).mark_stale()
 
         stored = await fx_kit.databases.open(page.book_id).read(lambda repos: repos.page_stages.find(record.key))
@@ -393,7 +397,9 @@ class TestMarkStale:
 
         uow = fx_kit.uow()
         await OutdatedResults(
-            books=make_books_service(uow, databases=fx_kit.databases), catalogue=fx_kit.catalogue, clock=fx_kit.clock
+            books=make_books_service(uow, databases=fx_kit.databases, files=fx_kit.files),
+            catalogue=fx_kit.catalogue,
+            clock=fx_kit.clock,
         ).mark_stale()
 
         assert asked == {(await page.base()).id: 1, geometry.id: 1, cleanup.id: 1}

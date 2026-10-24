@@ -12,10 +12,10 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
-from bookreviver.adapters.storage import LocalAssetStore, LocalBookArchive, LocalSourceStore
+from bookreviver.adapters.storage import LocalBookArchive
 from bookreviver.domain.values import SliceRequest
 from bookreviver.services.book import BookTools
-from bookreviver.services.books import BooksService, BookStores
+from bookreviver.services.books import BooksService
 from bookreviver.services.stage_summaries import StageSummaries
 from tests.helpers.builders import EPOCH, make_job, make_page, make_page_stage, make_record
 from tests.helpers.clock import FixedClock
@@ -106,7 +106,7 @@ async def _statements_of_list(stores: BookOpener, board: JobBoard, owner_id: Acc
             clock=FixedClock(EPOCH),
             archive=LocalBookArchive(root=root),
         ),
-        files=BookStores(sources=LocalSourceStore(root=root), assets=LocalAssetStore(root=root)),
+        stores=stores.files,
     )
     request = SliceRequest(limit=window)
     entries = await uow.read(lambda repos: repos.library.list_for_owner(owner_id, request))

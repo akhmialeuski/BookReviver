@@ -29,9 +29,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, BookRecord
     from bookreviver.domain.entities import Page as BookPage
     from bookreviver.ports.persistence import BookRepositories
-    from bookreviver.ports.storage import AssetStore
     from tests.helpers.board_idle import JobsIdle
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.storage import SharedBookFileStores
 
 pytestmark = pytest.mark.anyio
 
@@ -97,18 +97,18 @@ def _jpeg() -> bytes:
 
 @pytest.fixture
 async def fx_book(
-    fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_actor: Actor, fx_databases: BookDatabasesFactory
+    fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory, fx_file_stores: SharedBookFileStores
 ) -> Book:
     """Commit the book and store the full image of every scan and of every base version as a real JPEG.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
-    :param fx_asset_store: Asset store of the application.
-    :type fx_asset_store: AssetStore
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
     :param fx_databases: Function opening a new opener of the databases of the books of the test.
     :type fx_databases: BookDatabasesFactory
+    :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+    :type fx_file_stores: SharedBookFileStores
     :returns: The stored book.
     :rtype: Book
     """
@@ -156,13 +156,17 @@ async def fx_book(
             repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=version.id))
 
     await fx_databases().open(book_record.id).change(save_heads)
-    keys = BookKeys(book_record.id)
+    keys = BookKeys()
     for scan in scans:
-        async with fx_asset_store.writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:
+        async with fx_file_stores.assets(book_record.id).writable(
+            keys.scan_rendition(scan, Rendition.FULL_JPEG)
+        ) as path:
             path.write_bytes(_jpeg())
     for version in versions:
         for rendition in (Rendition.FULL_JPEG, Rendition.PREVIEW, Rendition.THUMBNAIL):
-            async with fx_asset_store.writable(keys.version_rendition(version, rendition)) as path:
+            async with fx_file_stores.assets(book_record.id).writable(
+                keys.version_rendition(version, rendition)
+            ) as path:
                 path.write_bytes(_jpeg())
     return Book(book_record=book_record, pages=pages)
 

@@ -18,7 +18,6 @@ from tests.helpers.builders import (
     make_scan,
     make_source,
     new_account_id,
-    open_for,
 )
 from tests.helpers.page_services import make_page_service
 from tests.helpers.seeding import ensure_account, store_book
@@ -28,7 +27,6 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
-    from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, BookRecord, Page, Source
     from bookreviver.domain.ids import BookId, PageId
     from bookreviver.ports.persistence import BookDatabases, UnitOfWork
@@ -161,7 +159,7 @@ async def _commit_book(uow: UnitOfWork, owner: Actor, *, databases: BookDatabase
     return Book(book_record=book_record, first=first, second=second, pages=pages)
 
 
-async def _book_order(service: PageService, actor: Actor, book_id: BookId, *, databases: BookDatabases) -> list[PageId]:
+async def _book_order(service: PageService, actor: Actor, book_id: BookId, *, opener: BookOpener) -> list[PageId]:
     """Read the identifiers of a book's pages in book order.
 
     :param service: Page service to read through.
@@ -170,12 +168,12 @@ async def _book_order(service: PageService, actor: Actor, book_id: BookId, *, da
     :type actor: Actor
     :param book_id: Identifier of the book.
     :type book_id: BookId
-    :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :param opener: Opens the books of the test with their databases and their files.
+    :type opener: BookOpener
     :returns: The identifiers of every page, first page first.
     :rtype: list[PageId]
     """
-    manifest = await service.manifest(open_for(actor, book_id, databases=databases), SliceRequest(limit=100))
+    manifest = await service.manifest(opener(actor, book_id), SliceRequest(limit=100))
     return [overview.page.id for overview in manifest.items]
 
 
@@ -222,7 +220,7 @@ class TestMove:
         )
 
         expect(
-            await _book_order(fx_service(), fx_actor, book.book_record.id, databases=fx_open_book.databases)
+            await _book_order(fx_service(), fx_actor, book.book_record.id, opener=fx_open_book)
             == [book.pages[index].id for index in expected]
         )
         expect(fx_page_writes.page_ids == {book.pages[4].id})
@@ -339,7 +337,6 @@ class TestMove:
         self,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
-        fx_asset_store: LocalAssetStore,
         fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
         fx_open_book: BookOpener,
     ) -> None:
@@ -349,8 +346,6 @@ class TestMove:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_asset_store: Local asset store over the test's storage root.
-        :type fx_asset_store: LocalAssetStore
         :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
         :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
         :param fx_open_book: Opens the books of the test with their databases.
@@ -359,7 +354,6 @@ class TestMove:
         book = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
         service = make_page_service(
             fx_open_book,
-            fx_asset_store,
             fx_runtime,
             order_keys=TakenKey(book.pages[2].order_key),
         )
@@ -453,7 +447,7 @@ class TestMoveGroup:
         )
 
         expect(
-            await _book_order(fx_service(), fx_actor, book.book_record.id, databases=fx_open_book.databases)
+            await _book_order(fx_service(), fx_actor, book.book_record.id, opener=fx_open_book)
             == [book.pages[index].id for index in expected]
         )
         expect(fx_page_writes.page_ids == {book.pages[index].id for index in chosen})
@@ -598,7 +592,7 @@ class TestMoveSource:
 
         group = [book.pages[index].id for index in range(FIRST_SOURCE_PAGES)]
         expect(
-            await _book_order(fx_service(), fx_actor, book.book_record.id, databases=fx_open_book.databases)
+            await _book_order(fx_service(), fx_actor, book.book_record.id, opener=fx_open_book)
             == [*(p.id for p in book.pages[3:]), *group]
         )
         expect(fx_page_writes.page_ids == set(group))

@@ -7514,7 +7514,7 @@ export type BookEventsApiV1BooksBookIdEventsGetResponses = {
     200: unknown;
 };
 
-export type IiifFileApiV1IiifKeyGetData = {
+export type IiifFileApiV1IiifBookIdKeyGetData = {
     body?: never;
     path: {
         /**
@@ -7523,12 +7523,18 @@ export type IiifFileApiV1IiifKeyGetData = {
          * Storage key of the file, as found in the image addresses of a page or a scan
          */
         key: string;
+        /**
+         * Book Id
+         *
+         * Identifier of the book
+         */
+        book_id: string;
     };
     query?: never;
-    url: '/api/v1/iiif/{key}';
+    url: '/api/v1/iiif/{book_id}/{key}';
 };
 
-export type IiifFileApiV1IiifKeyGetErrors = {
+export type IiifFileApiV1IiifBookIdKeyGetErrors = {
     /**
      * Validation Error
      */
@@ -7543,9 +7549,9 @@ export type IiifFileApiV1IiifKeyGetErrors = {
     '5XX': Problem;
 };
 
-export type IiifFileApiV1IiifKeyGetError = IiifFileApiV1IiifKeyGetErrors[keyof IiifFileApiV1IiifKeyGetErrors];
+export type IiifFileApiV1IiifBookIdKeyGetError = IiifFileApiV1IiifBookIdKeyGetErrors[keyof IiifFileApiV1IiifBookIdKeyGetErrors];
 
-export type IiifFileApiV1IiifKeyGetResponses = {
+export type IiifFileApiV1IiifBookIdKeyGetResponses = {
     /**
      * Successful Response
      */

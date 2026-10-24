@@ -7,7 +7,7 @@ from attrs import evolve
 
 from bookreviver.domain.enums import NewPageOrigin, PageKind, Side, Stage, StageState, ValueScope
 from bookreviver.domain.values import NewPage, PageAnchor
-from tests.helpers.builders import make_page, make_page_stage, make_record, make_step_values, open_for
+from tests.helpers.builders import make_page, make_page_stage, make_record, make_step_values
 from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
@@ -16,7 +16,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, BookRecord, Page
     from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
     from bookreviver.services.pages import PageService
-    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.builders import BookOpener
+    from tests.helpers.database import UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -43,11 +44,11 @@ class Reordering(NamedTuple):
     :ivar turned: Indexes of the pages whose place changed by an odd number.
     """
 
-    act: Callable[[PageService, Actor, Book, BookDatabases], Awaitable[None]]
+    act: Callable[[PageService, Actor, Book, BookOpener], Awaitable[None]]
     turned: set[int]
 
 
-async def _move(service: PageService, actor: Actor, book: Book, databases: BookDatabases) -> None:
+async def _move(service: PageService, actor: Actor, book: Book, opener: BookOpener) -> None:
     """Put the first page after the third, so the second and the third move up by one place.
 
     :param service: The page service.
@@ -56,17 +57,17 @@ async def _move(service: PageService, actor: Actor, book: Book, databases: BookD
     :type actor: Actor
     :param book: The book.
     :type book: Book
-    :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :param opener: Opens the books of the test with their databases and their files.
+    :type opener: BookOpener
     """
     await service.move(
-        open_for(actor, book.book_record.id, databases=databases),
+        opener(actor, book.book_record.id),
         book.pages[0].id,
         PageAnchor(page_id=book.pages[2].id, side=Side.AFTER),
     )
 
 
-async def _move_group(service: PageService, actor: Actor, book: Book, databases: BookDatabases) -> None:
+async def _move_group(service: PageService, actor: Actor, book: Book, opener: BookOpener) -> None:
     """Put the second and the third page after the fourth, so they move down by one place.
 
     :param service: The page service.
@@ -75,16 +76,14 @@ async def _move_group(service: PageService, actor: Actor, book: Book, databases:
     :type actor: Actor
     :param book: The book.
     :type book: Book
-    :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :param opener: Opens the books of the test with their databases and their files.
+    :type opener: BookOpener
     """
     anchor = PageAnchor(page_id=book.pages[3].id, side=Side.AFTER)
-    await service.move_group(
-        open_for(actor, book.book_record.id, databases=databases), [book.pages[1].id, book.pages[2].id], anchor
-    )
+    await service.move_group(opener(actor, book.book_record.id), [book.pages[1].id, book.pages[2].id], anchor)
 
 
-async def _delete(service: PageService, actor: Actor, book: Book, databases: BookDatabases) -> None:
+async def _delete(service: PageService, actor: Actor, book: Book, opener: BookOpener) -> None:
     """Delete the first page, so every page after it moves up by one place.
 
     :param service: The page service.
@@ -93,13 +92,13 @@ async def _delete(service: PageService, actor: Actor, book: Book, databases: Boo
     :type actor: Actor
     :param book: The book.
     :type book: Book
-    :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :param opener: Opens the books of the test with their databases and their files.
+    :type opener: BookOpener
     """
-    await service.delete(open_for(actor, book.book_record.id, databases=databases), book.pages[0].id)
+    await service.delete(opener(actor, book.book_record.id), book.pages[0].id)
 
 
-async def _insert(service: PageService, actor: Actor, book: Book, databases: BookDatabases) -> None:
+async def _insert(service: PageService, actor: Actor, book: Book, opener: BookOpener) -> None:
     """Add a placeholder before the second page, so every page from it on moves down by one place.
 
     :param service: The page service.
@@ -108,15 +107,15 @@ async def _insert(service: PageService, actor: Actor, book: Book, databases: Boo
     :type actor: Actor
     :param book: The book.
     :type book: Book
-    :param databases: Opens the databases of the books of the test.
-    :type databases: BookDatabases
+    :param opener: Opens the books of the test with their databases and their files.
+    :type opener: BookOpener
     """
     new_page = NewPage(
         origin=NewPageOrigin.PLACEHOLDER,
         kind=PageKind.TEXT,
         anchor=PageAnchor(page_id=book.pages[1].id, side=Side.BEFORE),
     )
-    await service.add(open_for(actor, book.book_record.id, databases=databases), new_page)
+    await service.add(opener(actor, book.book_record.id), new_page)
 
 
 REORDERINGS: dict[str, Reordering] = {
@@ -195,7 +194,7 @@ class TestPagesTurnedOver:
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
         reordering: Reordering,
-        fx_databases: BookDatabasesFactory,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a page whose place changed by an odd number goes stale in the stage of the value, and no other does.
 
@@ -207,19 +206,23 @@ class TestPagesTurnedOver:
         :type fx_actor: Actor
         :param reordering: The change of the places and the pages it turns over.
         :type reordering: Reordering
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
+        :param fx_open_book: Opens the books of the test with their databases and their files.
+        :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor, (ValueScope.ODD, Stage.GEOMETRY), databases=fx_databases())
-        await reordering.act(fx_service(), fx_actor, book, fx_databases())
-        assert await _stale(book, databases=fx_databases()) == {(place, Stage.GEOMETRY) for place in reordering.turned}
+        book = await _commit_book(
+            fx_uow(), fx_actor, (ValueScope.ODD, Stage.GEOMETRY), databases=fx_open_book.databases
+        )
+        await reordering.act(fx_service(), fx_actor, book, fx_open_book)
+        assert await _stale(book, databases=fx_open_book.databases) == {
+            (place, Stage.GEOMETRY) for place in reordering.turned
+        }
 
     async def test_only_the_stages_that_have_a_value_for_a_side_go_stale(
         self,
         fx_service: Callable[[], PageService],
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
-        fx_databases: BookDatabasesFactory,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify the stage the even pages have a value in is marked, and the stage that has none is left fresh.
 
@@ -229,12 +232,14 @@ class TestPagesTurnedOver:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
+        :param fx_open_book: Opens the books of the test with their databases and their files.
+        :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor, (ValueScope.EVEN, Stage.CLEANUP), databases=fx_databases())
-        await _move(fx_service(), fx_actor, book, databases=fx_databases())
-        assert await _stale(book, databases=fx_databases()) == {(1, Stage.CLEANUP), (2, Stage.CLEANUP)}
+        book = await _commit_book(
+            fx_uow(), fx_actor, (ValueScope.EVEN, Stage.CLEANUP), databases=fx_open_book.databases
+        )
+        await _move(fx_service(), fx_actor, book, opener=fx_open_book)
+        assert await _stale(book, databases=fx_open_book.databases) == {(1, Stage.CLEANUP), (2, Stage.CLEANUP)}
 
     @pytest.mark.parametrize('valued', [None, (ValueScope.GROUP, Stage.GEOMETRY)], ids=['no-value', 'group-value'])
     async def test_a_book_with_no_value_for_a_side_marks_nothing(
@@ -243,7 +248,7 @@ class TestPagesTurnedOver:
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
         valued: tuple[ValueScope, Stage] | None,
-        fx_databases: BookDatabasesFactory,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify moving a page leaves every stage fresh when no value is for the odd or the even pages.
 
@@ -255,9 +260,9 @@ class TestPagesTurnedOver:
         :type fx_actor: Actor
         :param valued: The one value the book has, or None.
         :type valued: tuple[ValueScope, Stage] | None
-        :param fx_databases: Function opening a new opener of the databases of the books of the test.
-        :type fx_databases: BookDatabasesFactory
+        :param fx_open_book: Opens the books of the test with their databases and their files.
+        :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor, valued, databases=fx_databases())
-        await _move(fx_service(), fx_actor, book, databases=fx_databases())
-        assert await _stale(book, databases=fx_databases()) == set()
+        book = await _commit_book(fx_uow(), fx_actor, valued, databases=fx_open_book.databases)
+        await _move(fx_service(), fx_actor, book, opener=fx_open_book)
+        assert await _stale(book, databases=fx_open_book.databases) == set()

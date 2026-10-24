@@ -23,8 +23,8 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, PageVersion
     from bookreviver.domain.entities import Page as BookPage
-    from bookreviver.ports.storage import AssetStore
     from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
+    from tests.helpers.storage import SharedBookFileStores
 
 pytestmark = pytest.mark.anyio
 
@@ -154,7 +154,7 @@ class TestListPages:
         assert_expectations()
 
     async def test_image_paths_have_no_scheme_or_host_and_lead_to_the_files(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_asset_store: AssetStore
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_file_stores: SharedBookFileStores
     ) -> None:
         """Verify every image address is a path of the IIIF route, and the thumbnail path serves the stored file.
 
@@ -162,12 +162,14 @@ class TestListPages:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_asset_store: Asset store of the application.
-        :type fx_asset_store: AssetStore
+        :param fx_file_stores: Opens the source store and the asset store of a book of the test.
+        :type fx_file_stores: SharedBookFileStores
         """
-        keys = BookKeys(fx_book.book_record.id)
+        keys = BookKeys()
         version = fx_book.versions[0]
-        async with fx_asset_store.writable(keys.version_rendition(version, Rendition.THUMBNAIL)) as path:
+        async with fx_file_stores.assets(fx_book.book_record.id).writable(
+            keys.version_rendition(version, Rendition.THUMBNAIL)
+        ) as path:
             path.write_bytes(THUMBNAIL_CONTENT)
         manifest = Page[PageSchema].model_validate_json((await _list_pages(fx_client, fx_book.path)).content)
 
@@ -175,8 +177,9 @@ class TestListPages:
         assert images is not None
         addresses = [images.full, images.preview, images.thumbnail, images.iiif_info]
         served = await fx_client.get(images.thumbnail)
-        expect(all(address.startswith(f'{IIIF_PATH}/{keys.prefix}') for address in addresses))
-        expect(images.iiif_info == f'{IIIF_PATH}/{keys.version_rendition(version, Rendition.TILES)}/info.json')
+        expect(all(address.startswith(f'{IIIF_PATH}/{fx_book.book_record.id}/assets/') for address in addresses))
+        tiles = keys.version_rendition(version, Rendition.TILES)
+        expect(images.iiif_info == f'{IIIF_PATH}/{fx_book.book_record.id}/{tiles}/info.json')
         expect(served.content == THUMBNAIL_CONTENT)
         assert_expectations()
 
@@ -216,7 +219,7 @@ class TestListPages:
 
         images = Page[PageSchema].model_validate_json(response.content).items[0].images
         assert images is not None
-        expected = f'{IIIF_PATH}/{BookKeys(book_record.id).version_rendition(version, full)}'
+        expected = f'{IIIF_PATH}/{book_record.id}/{BookKeys().version_rendition(version, full)}'
         assert images.full == expected
 
     async def test_pages_through_the_book_with_positions_of_the_whole_book(

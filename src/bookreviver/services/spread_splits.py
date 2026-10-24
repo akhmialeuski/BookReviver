@@ -162,7 +162,7 @@ class SpreadSplit:
         self._order_keys = runtime.order_keys
         self._records = records
         self._labels = PageLabels(clock=runtime.clock)
-        self._keys = BookKeys(book_record.id)
+        self._keys = BookKeys()
 
     def splits(self, recipe: Recipe) -> bool:
         """Tell whether a recipe splits scans: it is a recipe of the page split whose step makes a part for each half.
@@ -322,7 +322,7 @@ class SpreadSplit:
         :type undoing: Unsplit
         """
         for right in undoing.rights:
-            await self._runner.discard(self._keys.page(right.id))
+            await self._runner.discard(self._book, self._keys.page(right.id))
 
     def _halves(self, repos: BookRepositories, page: Page, right_id: PageId | None = None) -> Halves:
         """Work out the two pages of the spread, without storing any of them.
@@ -419,13 +419,13 @@ class SpreadSplit:
         :raises ConflictError: If the step makes neither one output nor two.
         :raises DomainError: If the step cannot run on this input.
         """
-        async with self._runner.execute(run) as result:
+        async with self._runner.execute(self._book, run) as result:
             outputs: list[StepOutput] = list(result.outputs)
             if not 0 < len(outputs) <= len(templates):
                 raise ConflictError(WRONG_HALVES.format(key=run.processor_key, count=len(outputs)))
             return [
                 await self._runner.store(
-                    self._keys, template, output, policy=self._book_record.image_policy, tiles=True
+                    self._book, template, output, policy=self._book_record.image_policy, tiles=True
                 )
                 for template, output in zip(templates, outputs, strict=False)
             ]
@@ -473,7 +473,7 @@ class SpreadSplit:
         :returns: The version with its pyramid cut.
         :rtype: PageVersion
         """
-        return version if version.tiles_ready else await self._runner.cut_tiles(self._keys, version)
+        return version if version.tiles_ready else await self._runner.cut_tiles(self._book, version)
 
     async def _commit(self, basis: SplitBasis, made: Sequence[PageVersion], undoing: Unsplit | None) -> bool:
         """Store the pages, the versions and the heads of a split in one change, if what the split went by still holds.
@@ -527,7 +527,7 @@ class SpreadSplit:
             # earlier run made ready
             for version, earlier in zip(made, basis.stored, strict=False):
                 if earlier is None or earlier.state is not VersionState.READY:
-                    cleanup.push_async_callback(self._runner.discard, self._keys.version_directory(version))
+                    cleanup.push_async_callback(self._runner.discard, self._book, self._keys.version_directory(version))
             stored = await self._book.change(work)
             if stored:
                 cleanup.pop_all()
