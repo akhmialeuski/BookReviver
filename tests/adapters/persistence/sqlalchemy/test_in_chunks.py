@@ -11,7 +11,7 @@ import pytest
 from delayed_assert import assert_expectations, expect
 from sqlalchemy import event
 
-from bookreviver.adapters.persistence.sqlalchemy.repositories import RowRepository
+from bookreviver.adapters.persistence.sqlalchemy.rows import RowRepository
 from tests.helpers.builders import make_page, make_page_stage, make_page_version, make_record
 from tests.helpers.seeding import store_book
 
