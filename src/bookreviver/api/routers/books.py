@@ -163,29 +163,24 @@ async def get_book(
     return BookSchema.from_overview(await stages.overview(book))
 
 
-@one_book.patch('/{book_id}')
+@one_book.patch('/{book_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def update_book(
     book: Annotated[Book, Depends(open_book)],
     body: Annotated[BookUpdate, Body()],
-    stages: FromDishka[StageSummaries],
-) -> BookSchema:
+) -> None:
     """Merge the body into the book, as JSON Merge Patch (RFC 7396) defines.
 
     A field left out keeps its value and a field sent as null is cleared to the value a new book has for it; the
-    title cannot be cleared, and the cover must be a page of the book.
+    title cannot be cleared, and the cover must be a page of the book. The answer has no body: the changed book
+    is announced on the event stream of the book and read from there.
 
     \N{FORM FEED}
     :param book: The book the path names, open for the signed-in account.
     :type book: Book
     :param body: Fields to change, with null for a field to clear.
     :type body: BookUpdate
-    :param stages: Stage summaries of the request, which give the changed book its progress.
-    :type stages: StageSummaries
-    :returns: The changed book.
-    :rtype: BookSchema
     """
     await book.update(body.to_changes())
-    return BookSchema.from_overview(await stages.overview(book))
 
 
 @one_book.get(

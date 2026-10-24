@@ -4129,7 +4129,7 @@ export type UpdateBookApiV1BooksBookIdPatchResponses = {
     /**
      * Successful Response
      */
-    200: BookSchema;
+    204: void;
 };
 
 export type UpdateBookApiV1BooksBookIdPatchResponse = UpdateBookApiV1BooksBookIdPatchResponses[keyof UpdateBookApiV1BooksBookIdPatchResponses];

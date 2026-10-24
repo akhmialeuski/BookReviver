@@ -207,7 +207,8 @@ export const bookApiV1BooksBookIdGetOptions = (options: Options<BookApiV1BooksBo
  * Merge the body into the book, as JSON Merge Patch (RFC 7396) defines.
  *
  * A field left out keeps its value and a field sent as null is cleared to the value a new book has for it; the
- * title cannot be cleared, and the cover must be a page of the book.
+ * title cannot be cleared, and the cover must be a page of the book. The answer has no body: the changed book
+ * is announced on the event stream of the book and read from there.
  */
 export const updateBookApiV1BooksBookIdPatchMutation = (options?: Partial<Options<UpdateBookApiV1BooksBookIdPatchData>>): UseMutationOptions<UpdateBookApiV1BooksBookIdPatchResponse, UpdateBookApiV1BooksBookIdPatchError, Options<UpdateBookApiV1BooksBookIdPatchData>> => {
     const mutationOptions: UseMutationOptions<UpdateBookApiV1BooksBookIdPatchResponse, UpdateBookApiV1BooksBookIdPatchError, Options<UpdateBookApiV1BooksBookIdPatchData>> = {

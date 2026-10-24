@@ -326,7 +326,7 @@
           "books"
         ],
         "summary": "Update Book",
-        "description": "Merge the body into the book, as JSON Merge Patch (RFC 7396) defines.\n\nA field left out keeps its value and a field sent as null is cleared to the value a new book has for it; the\ntitle cannot be cleared, and the cover must be a page of the book.",
+        "description": "Merge the body into the book, as JSON Merge Patch (RFC 7396) defines.\n\nA field left out keeps its value and a field sent as null is cleared to the value a new book has for it; the\ntitle cannot be cleared, and the cover must be a page of the book. The answer has no body: the changed book\nis announced on the event stream of the book and read from there.",
         "operationId": "update_book_api_v1_books__book_id__patch",
         "parameters": [
           {
@@ -353,15 +353,8 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BookSchema"
-                }
-              }
-            }
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",

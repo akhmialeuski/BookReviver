@@ -456,10 +456,9 @@ class TestUpdateBook:
 
         response = await fx_client.patch(_book_path(book_id), json={PUBLISHER_FIELD: ' Press '})
 
-        updated = BookSchema.model_validate_json(response.content)
-        expect(response.status_code == status.HTTP_200_OK)
+        updated = await _get_book(fx_client, book_id)
+        expect(response.status_code == status.HTTP_204_NO_CONTENT)
         expect((updated.details.title, updated.details.publisher) == (TITLE, 'Press'))
-        expect((await _get_book(fx_client, book_id)).details == updated.details)
         assert_expectations()
 
     async def test_a_sent_list_replaces_the_whole_list_and_omitted_fields_keep_their_values(
@@ -492,8 +491,8 @@ class TestUpdateBook:
             json={CONTRIBUTORS_FIELD: [AUTHOR], IDENTIFIERS_FIELD: [{'scheme': 'isbn', 'value': VALID_ISBN}]},
         )
 
-        details = BookSchema.model_validate_json(response.content).details
-        expect(response.status_code == status.HTTP_200_OK)
+        details = (await _get_book(fx_client, book_id)).details
+        expect(response.status_code == status.HTTP_204_NO_CONTENT)
         expect([person.name for person in details.contributors] == [AUTHOR['name']])
         expect(
             [(item.scheme, item.value) for item in details.identifiers] == [(IdentifierScheme.ISBN, NORMALIZED_ISBN)]
@@ -541,8 +540,8 @@ class TestUpdateBook:
             },
         )
 
-        details = BookSchema.model_validate_json(response.content).details
-        expect(response.status_code == status.HTTP_200_OK)
+        details = (await _get_book(fx_client, book_id)).details
+        expect(response.status_code == status.HTTP_204_NO_CONTENT)
         expect((details.contributors, details.languages, details.height_cm) == ([], [], None))
         expect((details.script.value, details.printer, details.primary_author) == ('unknown', '', ''))
         expect((details.publisher, details.subjects) == (FULL_DETAILS.publisher, ['Фольклор', 'Народные песни']))
@@ -578,8 +577,8 @@ class TestUpdateBook:
             headers={CONTENT_TYPE_HEADER: MERGE_PATCH_MEDIA_TYPE},
         )
 
-        updated = BookSchema.model_validate_json(response.content)
-        expect(response.status_code == status.HTTP_200_OK)
+        updated = await _get_book(fx_client, book_id)
+        expect(response.status_code == status.HTTP_204_NO_CONTENT)
         expect((updated.details.contributors, updated.details.orthography) == ([], Orthography.UNKNOWN))
         expect((updated.details.title, updated.details.notes) == (TITLE, NOTES))
         assert_expectations()
@@ -604,10 +603,10 @@ class TestUpdateBook:
         """
         book_id = await store_book(fx_uow(), make_record(), owner=fx_actor.account_id, databases=fx_databases())
 
-        set_response = await fx_client.patch(_book_path(book_id), json={IMAGE_POLICY_FIELD: ImagePolicy.LOSSLESS})
-        cleared_response = await fx_client.patch(_book_path(book_id), json={IMAGE_POLICY_FIELD: None})
-
-        was, now = (BookSchema.model_validate_json(response.content) for response in (set_response, cleared_response))
+        await fx_client.patch(_book_path(book_id), json={IMAGE_POLICY_FIELD: ImagePolicy.LOSSLESS})
+        was = await _get_book(fx_client, book_id)
+        await fx_client.patch(_book_path(book_id), json={IMAGE_POLICY_FIELD: None})
+        now = await _get_book(fx_client, book_id)
         expect(was.image_policy == ImagePolicy.LOSSLESS)
         expect(now.image_policy == ImagePolicy.COMPACT)
         assert_expectations()
