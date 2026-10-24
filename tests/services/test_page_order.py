@@ -31,8 +31,9 @@ if TYPE_CHECKING:
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, BookRecord, Page, Source
     from bookreviver.domain.ids import BookId, PageId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import BookDatabases, UnitOfWork
     from bookreviver.services.pages import PageService
+    from tests.helpers.builders import BookOpener
     from tests.helpers.clock import FixedClock
     from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fake_board import FakeJobBoard
@@ -131,13 +132,15 @@ class TakenKey(OrderKeys):
         return [self.key] * count
 
 
-async def _commit_book(uow: UnitOfWork, owner: Actor) -> Book:
+async def _commit_book(uow: UnitOfWork, owner: Actor, *, databases: BookDatabases) -> Book:
     """Commit a book of five pages, three from one source and two from another, in the order of upload.
 
     :param uow: Unit of work to commit through, over a database that stores the account of the owner.
     :type uow: UnitOfWork
     :param owner: Account owning the book.
     :type owner: Actor
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The stored book.
     :rtype: Book
     """
@@ -152,11 +155,13 @@ async def _commit_book(uow: UnitOfWork, owner: Actor) -> Book:
     ]
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(scans))
     pages = [make_page(order_key=key, scan=scan) for key, scan in zip(keys, scans, strict=True)]
-    await store_book(uow, book_record, *pages, owner=owner.account_id, sources=[first, second], scans=scans)
+    await store_book(
+        uow, book_record, *pages, owner=owner.account_id, sources=[first, second], scans=scans, databases=databases
+    )
     return Book(book_record=book_record, first=first, second=second, pages=pages)
 
 
-async def _book_order(service: PageService, actor: Actor, book_id: BookId) -> list[PageId]:
+async def _book_order(service: PageService, actor: Actor, book_id: BookId, *, databases: BookDatabases) -> list[PageId]:
     """Read the identifiers of a book's pages in book order.
 
     :param service: Page service to read through.
@@ -165,10 +170,12 @@ async def _book_order(service: PageService, actor: Actor, book_id: BookId) -> li
     :type actor: Actor
     :param book_id: Identifier of the book.
     :type book_id: BookId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The identifiers of every page, first page first.
     :rtype: list[PageId]
     """
-    manifest = await service.manifest(open_for(actor, book_id), SliceRequest(limit=100))
+    manifest = await service.manifest(open_for(actor, book_id, databases=databases), SliceRequest(limit=100))
     return [overview.page.id for overview in manifest.items]
 
 
@@ -186,34 +193,36 @@ class TestMove:
     async def test_puts_the_page_next_to_the_anchor_and_writes_one_row(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
         fx_page_writes: PageWrites,
         fx_actor: Actor,
         case: MoveCase,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify moving the last page changes its place and only its row.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_page_writes: Record of the pages the page repository writes.
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param case: Side of the first page the last page is put on, and the book order that follows.
         :type case: MoveCase
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         side, expected = case
-        book = await _commit_book(fx_uow(), fx_actor)
+        book = await _commit_book(fx_open_book.uow(), fx_actor, databases=fx_open_book.databases)
         fx_page_writes.start()
 
         moved = await fx_service().move(
-            open_for(fx_actor, book.book_record.id), book.pages[4].id, PageAnchor(page_id=book.pages[0].id, side=side)
+            fx_open_book(fx_actor, book.book_record.id),
+            book.pages[4].id,
+            PageAnchor(page_id=book.pages[0].id, side=side),
         )
 
         expect(
-            await _book_order(fx_service(), fx_actor, book.book_record.id)
+            await _book_order(fx_service(), fx_actor, book.book_record.id, databases=fx_open_book.databases)
             == [book.pages[index].id for index in expected]
         )
         expect(fx_page_writes.page_ids == {book.pages[4].id})
@@ -226,6 +235,7 @@ class TestMove:
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
         fx_clock: FixedClock,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a move changes only the key and the update time of a page, never its identifier or its scan.
 
@@ -237,17 +247,21 @@ class TestMove:
         :type fx_actor: Actor
         :param fx_clock: Clock the service stamps pages with.
         :type fx_clock: FixedClock
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor)
+        book = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
         fx_clock.moment = LATER
 
         await fx_service().move(
-            open_for(fx_actor, book.book_record.id),
+            fx_open_book(fx_actor, book.book_record.id),
             book.pages[2].id,
             PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE),
         )
 
-        stored = await fx_uow().read_book(book.book_record.id, lambda repos: repos.pages.get(book.pages[2].id))
+        stored = await fx_open_book.databases.open(book.book_record.id).read(
+            lambda repos: repos.pages.get(book.pages[2].id)
+        )
         expect(stored.updated_at == LATER)
         expect(evolve(stored, order_key=book.pages[2].order_key, updated_at=EPOCH) == book.pages[2])
         expect(stored.order_key < book.pages[0].order_key)
@@ -259,6 +273,7 @@ class TestMove:
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
         fx_book_changes: RecordingEventBus,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a move is one change of the book, which names its pages.
 
@@ -270,12 +285,14 @@ class TestMove:
         :type fx_actor: Actor
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
         :type fx_book_changes: RecordingEventBus
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor)
+        book = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
 
         fx_book_changes.published.clear()
         await fx_service().move(
-            open_for(fx_actor, book.book_record.id),
+            fx_open_book(fx_actor, book.book_record.id),
             book.pages[3].id,
             PageAnchor(page_id=book.pages[0].id, side=Side.AFTER),
         )
@@ -285,31 +302,31 @@ class TestMove:
     async def test_anchor_that_is_the_page_itself_conflicts(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
         fx_page_writes: PageWrites,
         fx_actor: Actor,
         fx_book_changes: RecordingEventBus,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a page cannot be put next to itself, which leaves the book and the events as they were.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_page_writes: Record of the pages the page repository writes.
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
         :type fx_book_changes: RecordingEventBus
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor)
+        book = await _commit_book(fx_open_book.uow(), fx_actor, databases=fx_open_book.databases)
         fx_page_writes.start()
 
         fx_book_changes.published.clear()
         with pytest.raises(AnchorInsideMovedPagesError):
             await fx_service().move(
-                open_for(fx_actor, book.book_record.id),
+                fx_open_book(fx_actor, book.book_record.id),
                 book.pages[1].id,
                 PageAnchor(page_id=book.pages[1].id, side=Side.AFTER),
             )
@@ -324,6 +341,7 @@ class TestMove:
         fx_actor: Actor,
         fx_asset_store: LocalAssetStore,
         fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a move that would give a page the key of another page is refused, as a lost race is.
 
@@ -335,13 +353,20 @@ class TestMove:
         :type fx_asset_store: LocalAssetStore
         :param fx_runtime: The recording bus, the stopped clock and the job board of the test.
         :type fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard]
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor)
-        service = make_page_service(fx_uow(), fx_asset_store, fx_runtime, order_keys=TakenKey(book.pages[2].order_key))
+        book = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
+        service = make_page_service(
+            fx_open_book,
+            fx_asset_store,
+            fx_runtime,
+            order_keys=TakenKey(book.pages[2].order_key),
+        )
 
         with pytest.raises(ConflictError):
             await service.move(
-                open_for(fx_actor, book.book_record.id),
+                fx_open_book(fx_actor, book.book_record.id),
                 book.pages[4].id,
                 PageAnchor(page_id=book.pages[0].id, side=Side.AFTER),
             )
@@ -354,6 +379,7 @@ class TestMove:
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a page and an anchor that are not pages of the book both answer not found.
 
@@ -365,18 +391,20 @@ class TestMove:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor)
+        book = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
         owner = evolve(fx_actor, account_id=new_account_id())
         await ensure_account(fx_database, owner.account_id)
-        stranger = await _commit_book(fx_uow(), owner)
+        stranger = await _commit_book(fx_uow(), owner, databases=fx_open_book.databases)
         known = PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)
         missing = PageAnchor(page_id=stranger.pages[0].id, side=Side.BEFORE)
 
         with pytest.raises(NotFoundError):
-            await fx_service().move(open_for(fx_actor, book.book_record.id), stranger.pages[1].id, known)
+            await fx_service().move(fx_open_book(fx_actor, book.book_record.id), stranger.pages[1].id, known)
         with pytest.raises(NotFoundError):
-            await fx_service().move(open_for(fx_actor, book.book_record.id), book.pages[1].id, missing)
+            await fx_service().move(fx_open_book(fx_actor, book.book_record.id), book.pages[1].id, missing)
 
 
 class TestMoveGroup:
@@ -394,10 +422,10 @@ class TestMoveGroup:
     async def test_puts_the_group_in_a_run_in_book_order_and_writes_only_its_rows(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
         fx_page_writes: PageWrites,
         fx_actor: Actor,
         case: GroupCase,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify the group stands together at the place, in the order it had, and no other row is written.
 
@@ -405,27 +433,27 @@ class TestMoveGroup:
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_page_writes: Record of the pages the page repository writes.
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param case: Pages to move, the page and side they go to, and the book order that follows.
         :type case: GroupCase
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         chosen, anchor_index, side, expected = case
-        book = await _commit_book(fx_uow(), fx_actor)
+        book = await _commit_book(fx_open_book.uow(), fx_actor, databases=fx_open_book.databases)
         fx_page_writes.start()
 
         await fx_service().move_group(
-            open_for(fx_actor, book.book_record.id),
+            fx_open_book(fx_actor, book.book_record.id),
             [book.pages[index].id for index in chosen],
             PageAnchor(page_id=book.pages[anchor_index].id, side=side),
         )
 
         expect(
-            await _book_order(fx_service(), fx_actor, book.book_record.id)
+            await _book_order(fx_service(), fx_actor, book.book_record.id, databases=fx_open_book.databases)
             == [book.pages[index].id for index in expected]
         )
         expect(fx_page_writes.page_ids == {book.pages[index].id for index in chosen})
@@ -437,6 +465,7 @@ class TestMoveGroup:
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
         fx_book_changes: RecordingEventBus,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify moving several pages is one change of the book, however many pages the group has.
 
@@ -448,12 +477,14 @@ class TestMoveGroup:
         :type fx_actor: Actor
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
         :type fx_book_changes: RecordingEventBus
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor)
+        book = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
 
         fx_book_changes.published.clear()
         await fx_service().move_group(
-            open_for(fx_actor, book.book_record.id),
+            fx_open_book(fx_actor, book.book_record.id),
             [book.pages[3].id, book.pages[1].id],
             PageAnchor(page_id=book.pages[4].id, side=Side.AFTER),
         )
@@ -463,31 +494,31 @@ class TestMoveGroup:
     async def test_anchor_inside_the_group_conflicts(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
         fx_page_writes: PageWrites,
         fx_actor: Actor,
         fx_book_changes: RecordingEventBus,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a group cannot be put next to one of its own pages, which changes nothing.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_page_writes: Record of the pages the page repository writes.
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
         :type fx_book_changes: RecordingEventBus
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor)
+        book = await _commit_book(fx_open_book.uow(), fx_actor, databases=fx_open_book.databases)
         fx_page_writes.start()
 
         fx_book_changes.published.clear()
         with pytest.raises(AnchorInsideMovedPagesError):
             await fx_service().move_group(
-                open_for(fx_actor, book.book_record.id),
+                fx_open_book(fx_actor, book.book_record.id),
                 [book.pages[1].id, book.pages[2].id],
                 PageAnchor(page_id=book.pages[2].id, side=Side.BEFORE),
             )
@@ -502,6 +533,7 @@ class TestMoveGroup:
         fx_uow: UnitOfWorkFactory,
         fx_page_writes: PageWrites,
         fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a group naming a page of another book is refused whole, without moving the others.
 
@@ -513,14 +545,16 @@ class TestMoveGroup:
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor)
-        other = await _commit_book(fx_uow(), fx_actor)
+        book = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
+        other = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
         fx_page_writes.start()
 
         with pytest.raises(NotFoundError):
             await fx_service().move_group(
-                open_for(fx_actor, book.book_record.id),
+                fx_open_book(fx_actor, book.book_record.id),
                 [book.pages[1].id, other.pages[0].id],
                 PageAnchor(page_id=book.pages[4].id, side=Side.AFTER),
             )
@@ -534,37 +568,38 @@ class TestMoveSource:
     async def test_puts_every_page_of_the_source_in_a_run_after_the_anchor(
         self,
         fx_service: Callable[[], PageService],
-        fx_uow: UnitOfWorkFactory,
         fx_page_writes: PageWrites,
         fx_actor: Actor,
         fx_book_changes: RecordingEventBus,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify the pages of the first source stand together after the last page, in one change and their rows only.
 
         :param fx_service: Function building the service for one request.
         :type fx_service: Callable[[], PageService]
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_page_writes: Record of the pages the page repository writes.
         :type fx_page_writes: PageWrites
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
         :type fx_book_changes: RecordingEventBus
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor)
+        book = await _commit_book(fx_open_book.uow(), fx_actor, databases=fx_open_book.databases)
         fx_page_writes.start()
 
         fx_book_changes.published.clear()
         await fx_service().move_source(
-            open_for(fx_actor, book.book_record.id),
+            fx_open_book(fx_actor, book.book_record.id),
             book.first.id,
             PageAnchor(page_id=book.pages[4].id, side=Side.AFTER),
         )
 
         group = [book.pages[index].id for index in range(FIRST_SOURCE_PAGES)]
         expect(
-            await _book_order(fx_service(), fx_actor, book.book_record.id) == [*(p.id for p in book.pages[3:]), *group]
+            await _book_order(fx_service(), fx_actor, book.book_record.id, databases=fx_open_book.databases)
+            == [*(p.id for p in book.pages[3:]), *group]
         )
         expect(fx_page_writes.page_ids == set(group))
         expect([BookResource.PAGES in parts for parts in fx_book_changes.changed_parts()] == [True])
@@ -576,6 +611,7 @@ class TestMoveSource:
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
         fx_book_changes: RecordingEventBus,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a source whose pages were all deleted or never made is no error and no event.
 
@@ -587,20 +623,28 @@ class TestMoveSource:
         :type fx_actor: Actor
         :param fx_book_changes: Where the units of work of the test announce the changes of the books.
         :type fx_book_changes: RecordingEventBus
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor)
+        book = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
         bare = make_source(name='bare.pdf')
-        await fx_uow().change_book(book.book_record.id, lambda repos, _book_record: repos.sources.add(bare))
+        await fx_open_book.databases.open(book.book_record.id).change(
+            lambda repos, _book_record: repos.sources.add(bare)
+        )
 
         fx_book_changes.published.clear()
         await fx_service().move_source(
-            open_for(fx_actor, book.book_record.id), bare.id, PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)
+            fx_open_book(fx_actor, book.book_record.id), bare.id, PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE)
         )
 
         assert fx_book_changes.published == []
 
     async def test_anchor_among_the_pages_of_the_source_conflicts(
-        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_service: Callable[[], PageService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify the source cannot be put next to one of its own pages.
 
@@ -610,18 +654,24 @@ class TestMoveSource:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor)
+        book = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
 
         with pytest.raises(AnchorInsideMovedPagesError):
             await fx_service().move_source(
-                open_for(fx_actor, book.book_record.id),
+                fx_open_book(fx_actor, book.book_record.id),
                 book.first.id,
                 PageAnchor(page_id=book.pages[1].id, side=Side.AFTER),
             )
 
     async def test_source_of_another_book_is_not_found(
-        self, fx_service: Callable[[], PageService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_service: Callable[[], PageService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a source is found only through the book that holds it.
 
@@ -631,13 +681,15 @@ class TestMoveSource:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        book = await _commit_book(fx_uow(), fx_actor)
-        other = await _commit_book(fx_uow(), fx_actor)
+        book = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
+        other = await _commit_book(fx_uow(), fx_actor, databases=fx_open_book.databases)
 
         with pytest.raises(NotFoundError):
             await fx_service().move_source(
-                open_for(fx_actor, book.book_record.id),
+                fx_open_book(fx_actor, book.book_record.id),
                 other.first.id,
                 PageAnchor(page_id=book.pages[0].id, side=Side.BEFORE),
             )

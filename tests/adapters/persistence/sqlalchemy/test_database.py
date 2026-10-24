@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.ids import AccountId
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -121,7 +121,7 @@ class TestSqlDatabase:
     """Tests for the engines SqlDatabase opens."""
 
     async def test_update_stores_the_updated_at_of_the_domain(
-        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId
+        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify a book updated with a new title keeps the ``updated_at`` the domain gave it, and no other.
 
@@ -132,13 +132,15 @@ class TestSqlDatabase:
         :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
         renamed = evolve(book_record, details=evolve(book_record.details, title=NEW_TITLE))
         uow = fx_uow()
-        await store_book(uow, book_record, owner=fx_owner_id)
-        await uow.change_book(book_record.id, lambda repos, _book_record: repos.book_record.update(renamed))
-        stored = await uow.read_book(book_record.id, lambda repos: repos.book_record.get(book_record.id))
+        await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
+        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.book_record.update(renamed))
+        stored = await fx_databases().open(book_record.id).read(lambda repos: repos.book_record.get(book_record.id))
         assert stored.updated_at == renamed.updated_at
 
     async def test_url_of_the_async_driver_gets_the_driver_of_the_standard_library(self, tmp_path: Path) -> None:
@@ -296,20 +298,22 @@ class TestSqliteTransactions:
             await uow.change(lambda repos: repos.library.add(entry))
         assert await uow.read(lambda repos: repos.library.get(entry.book_id)) == entry
 
-    async def test_change_book_hands_the_work_the_book_as_the_last_change_committed_it(
-        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId
+    async def test_book_change_hands_the_work_the_book_as_the_last_change_committed_it(
+        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_databases: BookDatabasesFactory
     ) -> None:
-        """Verify a ``change_book`` reads the book's record at its start, so it sees the title another change stored.
+        """Verify a ``Book.change`` reads the book's record at its start, so it sees the title another change stored.
 
         :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
         :type fx_uow: UnitOfWorkFactory
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
         renamed = evolve(book_record, details=evolve(book_record.details, title=NEW_TITLE))
         uow = fx_uow()
-        await store_book(uow, book_record, owner=fx_owner_id)
-        await uow.change_book(book_record.id, lambda repos, _book_record: repos.book_record.update(renamed))
-        held = await uow.change_book(book_record.id, lambda _repos, current: current)
+        await store_book(uow, book_record, owner=fx_owner_id, databases=fx_databases())
+        await fx_databases().open(book_record.id).change(lambda repos, _book_record: repos.book_record.update(renamed))
+        held = await fx_databases().open(book_record.id).change(lambda _repos, current: current)
         assert held.details.title == NEW_TITLE

@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, Page
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import PageNumbering, PaginationSectionDraft, SliceRequest
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import Clock
     from bookreviver.services.book import Book
 
@@ -76,15 +76,12 @@ class NumberingPlan:
 class PaginationService:
     """Lists, makes, changes and removes the pagination sections of the acting account's books."""
 
-    def __init__(self, *, uow: UnitOfWork, clock: Clock) -> None:
+    def __init__(self, *, clock: Clock) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose ``change_book`` ends every changing use case.
-        :type uow: UnitOfWork
         :param clock: Clock stamping the sections and pages it writes.
         :type clock: Clock
         """
-        self._uow = uow
         self._clock = clock
         self._labels = PageLabels(clock=clock)
 
@@ -114,7 +111,7 @@ class PaginationService:
             ordered = sorted(sections, key=lambda section: (position[section.first_page_id], section.is_series))
             return Slice(items=ordered[request.offset : request.offset + request.limit], total=len(ordered))
 
-        return await self._uow.read_book(book.id, work)
+        return await book.read(work)
 
     async def add(self, book: Book, draft: PaginationSectionDraft) -> PaginationSection:
         """Make a section, and renumber the pages it takes.
@@ -156,7 +153,7 @@ class PaginationService:
             self._labels.settle(repos)
             return stored
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     async def update(
         self, book: Book, section_id: PaginationSectionId, draft: PaginationSectionDraft
@@ -200,7 +197,7 @@ class PaginationService:
             self._labels.settle(repos)
             return stored
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     async def remove(self, book: Book, section_id: PaginationSectionId) -> None:
         """Remove a section, and renumber the pages it numbered, which fall to the section before it.
@@ -227,7 +224,7 @@ class PaginationService:
             repos.pagination_sections.delete(section.id)
             self._labels.settle(repos)
 
-        await self._uow.change_book(book.id, work)
+        await book.change(work)
 
     async def number(self, book: Book, numbering: PageNumbering) -> None:
         """Make the sections that number a range of pages, and drop the manual labels of the pages they number.
@@ -260,7 +257,7 @@ class PaginationService:
             repos.pagination_sections.add_many(plan.added)
             self._labels.settle(repos, unpin=plan.counted)
 
-        await self._uow.change_book(book.id, work)
+        await book.change(work)
 
     async def preview_numbers(self, book: Book, numbering: PageNumbering) -> list[NumberedPage]:
         """Give the labels a numbering would write, without writing any.
@@ -290,7 +287,7 @@ class PaginationService:
             """
             return self._plan(repos, numbering)
 
-        plan = await self._uow.read_book(book.id, work)
+        plan = await book.read(work)
         labels = plan.labels()
         return [NumberedPage(page_id=page.id, label=labels[page.id]) for page in plan.pages if page.id in plan.counted]
 

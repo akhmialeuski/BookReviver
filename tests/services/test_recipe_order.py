@@ -9,7 +9,6 @@ from bookreviver.domain.enums import OrderMode, OrderRuleKind, RecipeKind, Stage
 from bookreviver.domain.errors import InvalidParametersError
 from bookreviver.domain.values import ProfileDraft, RecipeDraft, Step
 from bookreviver.services.recipe_order import RecipeOrder
-from tests.helpers.builders import open_for
 from tests.helpers.fake_processing import FakeCatalogue
 from tests.helpers.processors import (
     FIRST_KEY,
@@ -26,6 +25,7 @@ from tests.helpers.processors import (
 )
 
 if TYPE_CHECKING:
+    from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 
 UNKNOWN_KEY: str = 'geometry.gone'
@@ -259,12 +259,14 @@ class TestSavePaths:
         assert [step.processor_key for step in saved.steps] == [FIRST_KEY, SECOND_KEY]
 
     async def test_a_profile_is_refused_a_required_place_unless_the_order_is_free(
-        self, fx_ordered_kit: ProcessingKit
+        self, fx_ordered_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
         """Verify RecipeProfiles.save keeps the order, and applying a profile saved in the free order is allowed.
 
         :param fx_ordered_kit: The kit over the processors that declare a place.
         :type fx_ordered_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_ordered_kit.seed_record()
         profiles = fx_ordered_kit.profiles()
@@ -273,5 +275,5 @@ class TestSavePaths:
         profile = await profiles.save(
             actor, Stage.GEOMETRY, profile_draft_of(THIRD_KEY, SECOND_KEY, order=OrderMode.FREE)
         )
-        applied = await profiles.apply(open_for(actor, book_record.id), profile, kind=RecipeKind.TEXT)
+        applied = await profiles.apply(fx_open_book(actor, book_record.id), profile, kind=RecipeKind.TEXT)
         assert [step.processor_key for step in applied.recipe.steps] == [THIRD_KEY, SECOND_KEY]

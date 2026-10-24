@@ -11,11 +11,12 @@ from bookreviver.domain.enums import PlaceMode, Stage, ViewMode
 from bookreviver.domain.ids import PageId
 from bookreviver.domain.values import CanvasPosition, NewBookPlace
 from bookreviver.services.places import PlaceService
-from tests.helpers.builders import make_record, new_account_id, open_for
+from tests.helpers.builders import make_record, new_account_id
 from tests.helpers.seeding import commit_record
 
 if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
+    from tests.helpers.builders import BookOpener
     from tests.helpers.clock import FixedClock
     from tests.helpers.database import UnitOfWorkFactory
 
@@ -24,18 +25,15 @@ pytestmark = pytest.mark.anyio
 MOVE: timedelta = timedelta(minutes=5)
 
 
-def _service(new_uow: UnitOfWorkFactory, clock: FixedClock) -> PlaceService:
+def _service(clock: FixedClock) -> PlaceService:
     """Build the place service for one request.
 
-    :param new_uow: Function opening a new unit of work over the database of the test.
-    :type new_uow: UnitOfWorkFactory
     :param clock: Clock stamping the places.
     :type clock: FixedClock
     :returns: The service over a new unit of work.
     :rtype: PlaceService
     """
-    uow = new_uow()
-    return PlaceService(uow=uow, clock=clock)
+    return PlaceService(clock=clock)
 
 
 def _place(stage: Stage = Stage.GEOMETRY) -> NewBookPlace:
@@ -59,7 +57,7 @@ class TestPlaceService:
     """Tests for the place service."""
 
     async def test_a_book_not_worked_on_has_no_place(
-        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_clock: FixedClock
+        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_clock: FixedClock, fx_open_book: BookOpener
     ) -> None:
         """Verify the place of a new book is none.
 
@@ -69,15 +67,19 @@ class TestPlaceService:
         :type fx_uow: UnitOfWorkFactory
         :param fx_clock: Clock stopped at the epoch.
         :type fx_clock: FixedClock
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor = Actor(account_id=new_account_id())
         book_record = make_record()
-        await commit_record(fx_database, fx_uow(), book_record, owner=actor.account_id)
-        places = _service(fx_uow, fx_clock)
-        assert await places.find(open_for(actor, book_record.id)) is None
+        await commit_record(
+            fx_database, fx_uow(), book_record, owner=actor.account_id, databases=fx_open_book.databases
+        )
+        places = _service(fx_clock)
+        assert await places.find(fx_open_book(actor, book_record.id)) is None
 
     async def test_save_stores_the_place_with_the_time_of_the_write(
-        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_clock: FixedClock
+        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_clock: FixedClock, fx_open_book: BookOpener
     ) -> None:
         """Verify a saved place is read by a later request, stamped with the clock.
 
@@ -87,18 +89,22 @@ class TestPlaceService:
         :type fx_uow: UnitOfWorkFactory
         :param fx_clock: Clock stopped at the epoch.
         :type fx_clock: FixedClock
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor = Actor(account_id=new_account_id())
         book_record = make_record()
-        await commit_record(fx_database, fx_uow(), book_record, owner=actor.account_id)
+        await commit_record(
+            fx_database, fx_uow(), book_record, owner=actor.account_id, databases=fx_open_book.databases
+        )
         new = _place()
-        saved = await _service(fx_uow, fx_clock).save(open_for(actor, book_record.id), new)
-        found = await _service(fx_uow, fx_clock).find(open_for(actor, book_record.id))
+        saved = await _service(fx_clock).save(fx_open_book(actor, book_record.id), new)
+        found = await _service(fx_clock).find(fx_open_book(actor, book_record.id))
         assert found == saved
         assert (found.updated_at, found.canvas, found.page_id) == (fx_clock.now(), new.canvas, new.page_id)
 
     async def test_save_replaces_the_place(
-        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_clock: FixedClock
+        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_clock: FixedClock, fx_open_book: BookOpener
     ) -> None:
         """Verify a later save replaces the earlier one whole, a canvas position included.
 
@@ -108,15 +114,19 @@ class TestPlaceService:
         :type fx_uow: UnitOfWorkFactory
         :param fx_clock: Clock stopped at the epoch.
         :type fx_clock: FixedClock
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor = Actor(account_id=new_account_id())
         book_record = make_record()
-        await commit_record(fx_database, fx_uow(), book_record, owner=actor.account_id)
-        await _service(fx_uow, fx_clock).save(open_for(actor, book_record.id), _place())
+        await commit_record(
+            fx_database, fx_uow(), book_record, owner=actor.account_id, databases=fx_open_book.databases
+        )
+        await _service(fx_clock).save(fx_open_book(actor, book_record.id), _place())
         fx_clock.moment += MOVE
         later = NewBookPlace(mode=PlaceMode.READING, stage=Stage.LAYOUT)
-        await _service(fx_uow, fx_clock).save(open_for(actor, book_record.id), later)
-        found = await _service(fx_uow, fx_clock).find(open_for(actor, book_record.id))
+        await _service(fx_clock).save(fx_open_book(actor, book_record.id), later)
+        found = await _service(fx_clock).find(fx_open_book(actor, book_record.id))
         assert found is not None
         assert (found.mode, found.stage, found.canvas, found.updated_at) == (
             PlaceMode.READING,
@@ -126,7 +136,7 @@ class TestPlaceService:
         )
 
     async def test_a_save_stamped_before_the_stored_place_changes_nothing(
-        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_clock: FixedClock
+        self, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_clock: FixedClock, fx_open_book: BookOpener
     ) -> None:
         """Verify a save stamped before the stored place answers with the stored place and leaves it.
 
@@ -136,17 +146,21 @@ class TestPlaceService:
         :type fx_uow: UnitOfWorkFactory
         :param fx_clock: Clock stopped at the epoch.
         :type fx_clock: FixedClock
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor = Actor(account_id=new_account_id())
         book_record = make_record()
-        await commit_record(fx_database, fx_uow(), book_record, owner=actor.account_id)
-        older_request = _service(fx_uow, fx_clock)
-        newer_request = _service(fx_uow, fx_clock)
+        await commit_record(
+            fx_database, fx_uow(), book_record, owner=actor.account_id, databases=fx_open_book.databases
+        )
+        older_request = _service(fx_clock)
+        newer_request = _service(fx_clock)
         fx_clock.moment += MOVE
         newer = await newer_request.save(
-            open_for(actor, book_record.id), NewBookPlace(mode=PlaceMode.READING, stage=Stage.LAYOUT)
+            fx_open_book(actor, book_record.id), NewBookPlace(mode=PlaceMode.READING, stage=Stage.LAYOUT)
         )
         fx_clock.moment -= MOVE
-        answered = await older_request.save(open_for(actor, book_record.id), _place())
-        found = await _service(fx_uow, fx_clock).find(open_for(actor, book_record.id))
+        answered = await older_request.save(fx_open_book(actor, book_record.id), _place())
+        found = await _service(fx_clock).find(fx_open_book(actor, book_record.id))
         assert (answered, found) == (newer, newer)

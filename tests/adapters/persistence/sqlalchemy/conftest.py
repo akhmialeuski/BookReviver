@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING
 import pytest
 from attrs import evolve
 
-from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabases
+from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.domain.enums import JobKind, JobState
@@ -30,9 +31,9 @@ if TYPE_CHECKING:
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import BookRecord, Job
     from bookreviver.domain.ids import AccountId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import BookDatabases, UnitOfWork
     from bookreviver.ports.runtime import JobControl
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.builders import BookOpener
 
 # Long enough that a block which wrongly waits for a lock that is never given fails the test, and does not hang it
 TRACED_WAIT_SECONDS: float = 10.0
@@ -54,11 +55,11 @@ async def fx_owner_id(fx_database: SqlDatabase) -> AccountId:
 
 
 @pytest.fixture
-def fx_book_sessions(fx_books: BookDatabases) -> BookSessions:
+def fx_book_sessions(fx_books: BookRegistry) -> BookSessions:
     """Give the sessions of the files of the books of the test, for the tests that read and write rows directly.
 
     :param fx_books: Registry of the books of the test.
-    :type fx_books: BookDatabases
+    :type fx_books: BookRegistry
     :returns: The sessions over the registry.
     :rtype: BookSessions
     """
@@ -66,7 +67,7 @@ def fx_book_sessions(fx_books: BookDatabases) -> BookSessions:
 
 
 @pytest.fixture
-def fx_import_rig(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, tmp_path: Path) -> Callable[..., ImportRig]:
+def fx_import_rig(fx_database: SqlDatabase, fx_open_book: BookOpener, tmp_path: Path) -> Callable[..., ImportRig]:
     """Give a function that builds the import rig over the database, whose board runs only the import jobs.
 
     The board of an ``ImportRig`` runs every job as an import. The rig this function builds cuts as many scans at once
@@ -75,8 +76,8 @@ def fx_import_rig(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, tmp_path:
 
     :param fx_database: Fresh SQLite database with every table created.
     :type fx_database: SqlDatabase
-    :param fx_uow: Function opening a unit of work over ``fx_database``.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_open_book: Opens the units of work and the databases of the books of the test.
+    :type fx_open_book: BookOpener
     :param tmp_path: Temporary directory of the test, which holds the storage root of the rig.
     :type tmp_path: Path
     :returns: Function taking the largest number of scans cut at once and returning the rig.
@@ -91,7 +92,7 @@ def fx_import_rig(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, tmp_path:
         :returns: The rig, whose board runs an import on the database.
         :rtype: ImportRig
         """
-        base = ImportRig.build(tmp_path / STORAGE_DIRECTORY, fx_database, fx_uow)
+        base = ImportRig.build(tmp_path / STORAGE_DIRECTORY, fx_database, fx_open_book)
         # The runner needs the service of the rig and the rig needs the runner, so the rig is found when a job runs
         built: list[ImportRig] = []
 
@@ -152,7 +153,7 @@ async def fx_traced_database(
 @pytest.fixture
 async def fx_open_books(
     fx_settings: Settings, fx_book_template: Path, fx_tracer: AskingTracer
-) -> AsyncIterator[Callable[[float], BookDatabases]]:
+) -> AsyncIterator[Callable[[float], BookRegistry]]:
     """Give a function that opens a registry of the books of the test, with the busy timeout it is told.
 
     Each registry opens a database of its own over the file of a book, with a write queue of its own, so the blocks of
@@ -165,20 +166,20 @@ async def fx_open_books(
     :param fx_tracer: Tracer of the test.
     :type fx_tracer: AskingTracer
     :returns: Iterator yielding the opening function and closing every registry it opened afterwards.
-    :rtype: AsyncIterator[Callable[[float], BookDatabases]]
+    :rtype: AsyncIterator[Callable[[float], BookRegistry]]
     """
-    opened: list[BookDatabases] = []
+    opened: list[BookRegistry] = []
 
-    def open_books(wait_seconds: float) -> BookDatabases:
+    def open_books(wait_seconds: float) -> BookRegistry:
         """Open a registry of the books of the test.
 
         :param wait_seconds: The busy timeout every connection of a book opens with.
         :type wait_seconds: float
         :returns: The registry, which the fixture closes.
-        :rtype: BookDatabases
+        :rtype: BookRegistry
         """
         opened.append(
-            BookDatabases(
+            BookRegistry(
                 fx_settings.storage_root,
                 tracer=fx_tracer,
                 wait_seconds=wait_seconds,
@@ -194,19 +195,19 @@ async def fx_open_books(
 
 
 @pytest.fixture
-def fx_traced_books(fx_open_books: Callable[[float], BookDatabases]) -> BookDatabases:
+def fx_traced_books(fx_open_books: Callable[[float], BookRegistry]) -> BookRegistry:
     """Open the registry of the books whose blocks are timed by the tracer of the test and wait long.
 
     :param fx_open_books: Function that opens a registry of the books of the test.
-    :type fx_open_books: Callable[[float], BookDatabases]
+    :type fx_open_books: Callable[[float], BookRegistry]
     :returns: The registry.
-    :rtype: BookDatabases
+    :rtype: BookRegistry
     """
     return fx_open_books(TRACED_WAIT_SECONDS)
 
 
 @pytest.fixture
-def fx_impatient_books(fx_open_books: Callable[[float], BookDatabases]) -> BookDatabases:
+def fx_impatient_books(fx_open_books: Callable[[float], BookRegistry]) -> BookRegistry:
     """Open a second registry over the books of the first, for the units of work that give up for the lock at once.
 
     Its databases have write queues of their own, so its blocks meet those of the first registry at the busy timeout of
@@ -214,21 +215,21 @@ def fx_impatient_books(fx_open_books: Callable[[float], BookDatabases]) -> BookD
     unit of work, so a test that wants a refusal opens its unit of work with ``IMPATIENT_SECONDS``.
 
     :param fx_open_books: Function that opens a registry of the books of the test.
-    :type fx_open_books: Callable[[float], BookDatabases]
+    :type fx_open_books: Callable[[float], BookRegistry]
     :returns: The registry.
-    :rtype: BookDatabases
+    :rtype: BookRegistry
     """
     return fx_open_books(IMPATIENT_SECONDS)
 
 
 @pytest.fixture
-def fx_traced_uow(fx_traced_database: SqlDatabase, fx_traced_books: BookDatabases) -> Callable[..., UnitOfWork]:
+def fx_traced_uow(fx_traced_database: SqlDatabase, fx_traced_books: BookRegistry) -> Callable[..., UnitOfWork]:
     """Give a function opening a unit of work over the traced catalogue and books, with the limit it is told.
 
     :param fx_traced_database: The traced catalogue.
     :type fx_traced_database: SqlDatabase
     :param fx_traced_books: The traced registry of the books.
-    :type fx_traced_books: BookDatabases
+    :type fx_traced_books: BookRegistry
     :returns: Function taking an optional wait limit and returning a new unit of work.
     :rtype: Callable[..., UnitOfWork]
     """
@@ -241,21 +242,19 @@ def fx_traced_uow(fx_traced_database: SqlDatabase, fx_traced_books: BookDatabase
         :returns: A new unit of work.
         :rtype: UnitOfWork
         """
-        return SqlAlchemyUnitOfWork(
-            fx_traced_database, fx_traced_books, publisher=RecordingEventBus(), wait_seconds=wait_seconds
-        )
+        return SqlAlchemyUnitOfWork(fx_traced_database, fx_traced_books, wait_seconds=wait_seconds)
 
     return open_unit_of_work
 
 
 @pytest.fixture
-def fx_impatient_uow(fx_traced_database: SqlDatabase, fx_impatient_books: BookDatabases) -> Callable[..., UnitOfWork]:
+def fx_impatient_uow(fx_traced_database: SqlDatabase, fx_impatient_books: BookRegistry) -> Callable[..., UnitOfWork]:
     """Give a function opening a unit of work over the traced catalogue and the impatient registry of the books.
 
     :param fx_traced_database: The traced catalogue.
     :type fx_traced_database: SqlDatabase
     :param fx_impatient_books: The registry over the same books whose connections give up for the lock at once.
-    :type fx_impatient_books: BookDatabases
+    :type fx_impatient_books: BookRegistry
     :returns: Function taking an optional wait limit and returning a new unit of work.
     :rtype: Callable[..., UnitOfWork]
     """
@@ -268,18 +267,65 @@ def fx_impatient_uow(fx_traced_database: SqlDatabase, fx_impatient_books: BookDa
         :returns: A new unit of work.
         :rtype: UnitOfWork
         """
-        return SqlAlchemyUnitOfWork(
-            fx_traced_database, fx_impatient_books, publisher=RecordingEventBus(), wait_seconds=wait_seconds
-        )
+        return SqlAlchemyUnitOfWork(fx_traced_database, fx_impatient_books, wait_seconds=wait_seconds)
 
     return open_unit_of_work
 
 
 @pytest.fixture
+def fx_traced_databases(fx_traced_books: BookRegistry) -> Callable[..., BookDatabases]:
+    """Give a function opening the databases of the traced books, with the limit it is told.
+
+    :param fx_traced_books: The traced registry of the books.
+    :type fx_traced_books: BookRegistry
+    :returns: Function taking an optional wait limit and returning a new opener of the databases of the books.
+    :rtype: Callable[..., BookDatabases]
+    """
+
+    def open_databases(*, wait_seconds: float = TRACED_WAIT_SECONDS) -> BookDatabases:
+        """Open the databases of the traced books.
+
+        :param wait_seconds: How long a change waits for its writer.
+        :type wait_seconds: float
+        :returns: A new opener of the databases of the books.
+        :rtype: BookDatabases
+        """
+        return SqlAlchemyBookDatabases(fx_traced_books, publisher=RecordingEventBus(), wait_seconds=wait_seconds)
+
+    return open_databases
+
+
+@pytest.fixture
+def fx_impatient_databases(fx_impatient_books: BookRegistry) -> Callable[..., BookDatabases]:
+    """Give a function opening the databases of the impatient registry of the books, with the limit it is told.
+
+    :param fx_impatient_books: The registry over the same books whose connections give up for the lock at once.
+    :type fx_impatient_books: BookRegistry
+    :returns: Function taking an optional wait limit and returning a new opener of the databases of the books.
+    :rtype: Callable[..., BookDatabases]
+    """
+
+    def open_databases(*, wait_seconds: float = TRACED_WAIT_SECONDS) -> BookDatabases:
+        """Open the databases of the impatient books.
+
+        :param wait_seconds: How long a change waits for its writer.
+        :type wait_seconds: float
+        :returns: A new opener of the databases of the books.
+        :rtype: BookDatabases
+        """
+        return SqlAlchemyBookDatabases(fx_impatient_books, publisher=RecordingEventBus(), wait_seconds=wait_seconds)
+
+    return open_databases
+
+
+@pytest.fixture
 async def fx_book(
-    fx_traced_database: SqlDatabase, fx_traced_uow: Callable[..., UnitOfWork], fx_tracer: AskingTracer
+    fx_traced_database: SqlDatabase,
+    fx_traced_uow: Callable[..., UnitOfWork],
+    fx_traced_databases: Callable[..., BookDatabases],
+    fx_tracer: AskingTracer,
 ) -> BookRecord:
-    """Commit an account and a book of it, which a ``change_book`` block needs to find.
+    """Commit an account and a book of it, which a ``Book.change`` block needs to find.
 
     The blocks that store the book are spans too, which are not what a test looks at, so they are forgotten.
 
@@ -287,12 +333,19 @@ async def fx_book(
     :type fx_traced_database: SqlDatabase
     :param fx_traced_uow: Function opening a unit of work over the traced catalogue and books.
     :type fx_traced_uow: Callable[..., UnitOfWork]
+    :param fx_traced_databases: Function opening the databases of the traced books.
+    :type fx_traced_databases: Callable[..., BookDatabases]
     :param fx_tracer: Tracer of the test.
     :type fx_tracer: AskingTracer
     :returns: The book.
     :rtype: BookRecord
     """
     book_record = make_record()
-    await store_book(fx_traced_uow(), book_record, owner=await commit_account(fx_traced_database))
+    await store_book(
+        fx_traced_uow(),
+        book_record,
+        owner=await commit_account(fx_traced_database),
+        databases=fx_traced_databases(),
+    )
     fx_tracer.finished.clear()
     return book_record

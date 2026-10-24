@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord
     from bookreviver.domain.entities import Page as BookPage
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -93,13 +93,15 @@ def fx_extra_providers(fx_board: FakeJobBoard) -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> Book:
     """Commit the book for the signed-in account.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
     :rtype: Book
     """
@@ -107,7 +109,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
     keys = FractionalOrderKeys().spread(lower=None, upper=None, count=len(LAYOUT))
     pages = [evolve(make_page(order_key=key), kind=kind) for key, kind in zip(keys, LAYOUT, strict=True)]
     pages[1] = evolve(pages[1], content_type=FOUND)
-    await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id)
+    await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id, databases=fx_databases())
     return Book(book_record=book_record, pages=pages)
 
 
@@ -275,7 +277,12 @@ class TestDetectContent:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_a_page_that_is_not_in_the_book_and_a_book_of_another_account_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_book: Book,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a page that does not exist and a book that is not the account's answer 404 and queue nothing.
 
@@ -287,10 +294,12 @@ class TestDetectContent:
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         stranger = make_record()
         page = make_page()
-        await commit_record(fx_database, fx_uow(), stranger, page, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), stranger, page, owner=new_account_id(), databases=fx_databases())
 
         missing = await fx_client.post(fx_book.detect_path, json={PAGE_IDS_FIELD: [str(uuid4())]})
         foreign = await fx_client.post(f'{BOOKS_PATH}/{stranger.id}{DETECT_SUFFIX}', json={})

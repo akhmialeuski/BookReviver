@@ -18,7 +18,7 @@ from sqlalchemy.pool import QueuePool
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.values import SliceRequest
-from tests.helpers.builders import make_record, open_for
+from tests.helpers.builders import make_record
 from tests.helpers.connections import checked_out_connections
 from tests.helpers.fakes_imports import IMPORT_TIMEOUT_SECONDS, pdf_upload
 from tests.helpers.seeding import store_book
@@ -30,10 +30,10 @@ if TYPE_CHECKING:
     from sqlalchemy.engine.interfaces import DBAPIConnection
     from sqlalchemy.pool import ConnectionPoolEntry, PoolProxiedConnection
 
-    from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+    from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.ids import AccountId
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.builders import BookOpener
     from tests.helpers.fakes_imports import ImportRig
 
 pytestmark = pytest.mark.anyio
@@ -111,11 +111,11 @@ class TestRunImportConnections:
 
     async def test_four_cutters_never_hold_more_than_one_pooled_connection(
         self,
-        fx_uow: UnitOfWorkFactory,
-        fx_books: BookDatabases,
+        fx_books: BookRegistry,
         fx_owner_id: AccountId,
         fx_import_rig: Callable[..., ImportRig],
         tmp_path: Path,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify an import with four cutters at once checks out one writer connection at a time, with all scans ready.
 
@@ -126,16 +126,16 @@ class TestRunImportConnections:
         shows one connection in use at a time. A change that opened its session before it had the writer would hold a
         connection while it waits, and the peak assertion would fail.
 
-        :param fx_uow: Function opening a unit of work over the catalogue and the books of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_books: Registry of the books of the test, which gives the database of the book whose pool is counted.
-        :type fx_books: BookDatabases
+        :type fx_books: BookRegistry
         :param fx_owner_id: Committed account owning the book.
         :type fx_owner_id: AccountId
         :param fx_import_rig: Function building the import rig whose board runs an import on the database.
         :type fx_import_rig: Callable[..., ImportRig]
         :param tmp_path: Temporary directory of the test, holding the sample file.
         :type tmp_path: Path
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         rig = fx_import_rig(PARALLEL_SCANS)
         all_writing = anyio.Event()
@@ -155,12 +155,12 @@ class TestRunImportConnections:
         samples.mkdir()
         owner = Actor(account_id=fx_owner_id)
         book_record = make_record()
-        uow = fx_uow()
-        await store_book(uow, book_record, owner=fx_owner_id)
+        uow = fx_open_book.uow()
+        await store_book(uow, book_record, owner=fx_owner_id, databases=fx_open_book.databases)
         async with fx_books.use(book_record.id) as book:
             with _counting_connections(book) as peak:
                 job = await rig.service(uow=uow).start_import(
-                    open_for(owner, book_record.id), [pdf_upload(samples, BOOK_PDF, pages=PARALLEL_SCANS)]
+                    fx_open_book(owner, book_record.id), [pdf_upload(samples, BOOK_PDF, pages=PARALLEL_SCANS)]
                 )
                 with anyio.fail_after(IMPORT_TIMEOUT_SECONDS):
                     await rig.fakes.board.run_queued()
@@ -169,8 +169,8 @@ class TestRunImportConnections:
             queued = isinstance(book.engine.pool, QueuePool)
 
         stored = rig.stored_job(job)
-        scans = await uow.read_book(
-            book_record.id, lambda repos: repos.scans.list_window(SliceRequest(limit=PARALLEL_SCANS)).items
+        scans = await fx_open_book.databases.open(book_record.id).read(
+            lambda repos: repos.scans.list_window(SliceRequest(limit=PARALLEL_SCANS)).items
         )
         expect(queued)
         expect(rig.rasterizer.peak == PARALLEL_SCANS)

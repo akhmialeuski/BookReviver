@@ -10,7 +10,7 @@ from fastapi import APIRouter, FastAPI
 from fastapi_pagination import add_pagination
 from fastapi_problem.handler import add_exception_handler
 
-from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.api.auth import signed_in_user
 from bookreviver.api.freshness import NotModifiedError, not_modified
@@ -53,8 +53,8 @@ async def prepare_start(container: AsyncContainer) -> None:
     is finished, so the catalogue and the stores of the books list the same books before any other pass reads them. The
     stages whose result a replaced version of a processor made are marked stale, so the workspace never shows them as up
     to date, and the blank leaves among them are given a pending version, which the next ``prepare-pages`` job of the
-    book writes. The three passes run in a request scope of their own, as a job does, and the last two write one book
-    at a time, in a ``change_book`` of that book.
+    book writes. The three passes run in a request scope of their own, as a job does, and the last two go over the books
+    the library lists and write one book at a time, in a ``Book.change`` of that book.
 
     :param container: Application container, which the passes take their services from.
     :type container: AsyncContainer
@@ -111,7 +111,7 @@ def create_app(
                 group = await stack.enter_async_context(anyio.create_task_group())
                 # Registered after the group, so it runs first on exit and the group has nothing left to wait for
                 stack.callback(group.cancel_scope.cancel)
-                group.start_soon((await container.get(BookDatabases)).keep_closing_idle)
+                group.start_soon((await container.get(BookRegistry)).keep_closing_idle)
                 if resolved.tracing.enabled:
                     probe = LoopLagProbe(
                         tracer=await container.get(Tracer),

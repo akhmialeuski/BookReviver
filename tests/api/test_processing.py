@@ -55,10 +55,10 @@ if TYPE_CHECKING:
     from dishka import Provider
 
     from bookreviver.domain.entities import Actor, BookRecord, Page, Scan
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookDatabases, BookRepositories
     from bookreviver.ports.storage import AssetStore
     from tests.helpers.board_idle import JobsIdle
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -108,7 +108,9 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_actor: Actor) -> Book:
+async def fx_book(
+    fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_actor: Actor, fx_databases: BookDatabasesFactory
+) -> Book:
     """Commit a book of one page and store the full image of its scan as a real JPEG.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
@@ -117,6 +119,8 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
     :type fx_asset_store: AssetStore
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
     :rtype: Book
     """
@@ -127,7 +131,9 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
         renditions=Renditions(ready=True),
     )
     page = make_page(scan=scan)
-    await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, sources=[source], scans=[scan])
+    await store_book(
+        fx_uow(), book_record, page, owner=fx_actor.account_id, sources=[source], scans=[scan], databases=fx_databases()
+    )
     await store_scan_images(fx_asset_store, book_record, scan)
     return Book(book_record=book_record, page=page)
 
@@ -379,8 +385,8 @@ class TestStageSummaries:
         fx_client: httpx.AsyncClient,
         fx_idle: JobsIdle,
         fx_book: Book,
-        fx_uow: UnitOfWorkFactory,
         fx_asset_store: AssetStore,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a text page and a plate are counted under the recipes of their kinds, and each row says its kind.
 
@@ -393,12 +399,12 @@ class TestStageSummaries:
         :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account with a text page.
         :type fx_book: Book
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
-        _, scan = await add_page(fx_uow(), fx_book, 'a1', PageKind.PLATE)
+        _, scan = await add_page(fx_book, 'a1', PageKind.PLATE, databases=fx_databases())
         await store_scan_images(fx_asset_store, fx_book.book_record, scan)
         await run_stage(fx_client, fx_idle, fx_book, 'geometry')
         recipes = await recipes_of(fx_client, fx_book, 'geometry')
@@ -654,8 +660,8 @@ class TestRunAndVersions:
         fx_client: httpx.AsyncClient,
         fx_idle: JobsIdle,
         fx_book: Book,
-        fx_uow: UnitOfWorkFactory,
         fx_asset_store: AssetStore,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the report names the versions a collection would delete and the bytes of their files, and deletes none.
 
@@ -665,22 +671,24 @@ class TestRunAndVersions:
         :type fx_idle: JobsIdle
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         await run_stage(fx_client, fx_idle, fx_book, 'page-split')
-        uow = fx_uow()
-        record = await uow.read_book(
-            fx_book.book_record.id,
-            lambda repos: repos.page_stages.get(PageStageKey(fx_book.page.id, Stage.PAGE_SPLIT)),
+        record = (
+            await fx_databases()
+            .open(fx_book.book_record.id)
+            .read(
+                lambda repos: repos.page_stages.get(PageStageKey(fx_book.page.id, Stage.PAGE_SPLIT)),
+            )
         )
         assert record.head_version_id is not None
         head_id = record.head_version_id
         # A version made from the current one and left behind: it reads the head, and no current chain reads it
         old = evolve(
-            await uow.read_book(fx_book.book_record.id, lambda repos: repos.page_versions.get(head_id)),
+            await fx_databases().open(fx_book.book_record.id).read(lambda repos: repos.page_versions.get(head_id)),
             id=PageVersionId(OLD_VERSION_ID),
             input_id=head_id,
         )
@@ -688,7 +696,9 @@ class TestRunAndVersions:
             BookKeys(fx_book.book_record.id).version_rendition(old, Rendition.FULL_JPEG)
         ) as path:
             path.write_bytes(OLD_VERSION_CONTENT)
-        await uow.change_book(fx_book.book_record.id, lambda repos, _book_record: repos.page_versions.add(old))
+        await (
+            fx_databases().open(fx_book.book_record.id).change(lambda repos, _book_record: repos.page_versions.add(old))
+        )
 
         first = await fx_client.get(f'{fx_book.path}{COLLECTABLE_PATH}')
         second = await fx_client.get(f'{fx_book.path}{COLLECTABLE_PATH}')
@@ -697,7 +707,10 @@ class TestRunAndVersions:
         expect(
             first.json() == {'versions': 1, 'size_bytes': len(OLD_VERSION_CONTENT)} and second.json() == first.json()
         )
-        expect(await uow.read_book(fx_book.book_record.id, lambda repos: repos.page_versions.find(old.id)) is not None)
+        expect(
+            await fx_databases().open(fx_book.book_record.id).read(lambda repos: repos.page_versions.find(old.id))
+            is not None
+        )
         assert_expectations()
 
     async def test_collectable_versions_of_another_account_are_a_404(self, fx_client: httpx.AsyncClient) -> None:
@@ -1083,17 +1096,19 @@ class TestPageHistory:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
-async def add_page(uow: UnitOfWork, book: Book, order_key: str, kind: PageKind = PageKind.TEXT) -> tuple[Page, Scan]:
+async def add_page(
+    book: Book, order_key: str, kind: PageKind = PageKind.TEXT, *, databases: BookDatabases
+) -> tuple[Page, Scan]:
     """Commit another page cut from a scan of the book, after the pages it has.
 
-    :param uow: Unit of work over the database of the test, which the application runs on.
-    :type uow: UnitOfWork
     :param book: Book of the signed-in account.
     :type book: Book
     :param order_key: Order key of the page, which places it in the book.
     :type order_key: str
     :param kind: The role of the page in the book, a text page unless given.
     :type kind: PageKind
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The page and the scan it shows.
     :rtype: tuple[Page, Scan]
     """
@@ -1113,7 +1128,7 @@ async def add_page(uow: UnitOfWork, book: Book, order_key: str, kind: PageKind =
         repos.scans.add(scan)
         repos.pages.add(page)
 
-    await uow.change_book(book.book_record.id, add_scan_page)
+    await databases.open(book.book_record.id).change(add_scan_page)
     return page, scan
 
 
@@ -1121,7 +1136,7 @@ class TestCarryOverOfAShape:
     """Tests for the endpoint that carries the shape a page set by hand over to other pages."""
 
     async def test_a_shape_is_carried_to_the_following_pages_in_one_batch_that_one_undo_takes_back(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_uow: UnitOfWorkFactory
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the shape reaches the pages after the source and one undo on any of them takes it from all.
 
@@ -1129,11 +1144,11 @@ class TestCarryOverOfAShape:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
-        pages = [(await add_page(fx_uow(), fx_book, order_key))[0] for order_key in ('a1', 'a2')]
+        pages = [(await add_page(fx_book, order_key, databases=fx_databases()))[0] for order_key in ('a1', 'a2')]
         await fx_client.put(
             f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}
         )
@@ -1157,7 +1172,7 @@ class TestCarryOverOfAShape:
         assert_expectations()
 
     async def test_a_page_set_by_hand_separately_is_skipped_unless_the_form_overwrites(
-        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_uow: UnitOfWorkFactory
+        self, fx_client: httpx.AsyncClient, fx_book: Book, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the page with a shape of its own is listed as skipped and keeps it, and overwriting takes it along.
 
@@ -1165,11 +1180,11 @@ class TestCarryOverOfAShape:
         :type fx_client: httpx.AsyncClient
         :param fx_book: Book of the signed-in account.
         :type fx_book: Book
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         step_id = await text_step_id(fx_client, fx_book, Stage.GEOMETRY)
-        page, _ = await add_page(fx_uow(), fx_book, 'a1')
+        page, _ = await add_page(fx_book, 'a1', databases=fx_databases())
         own = f'{fx_book.path}/pages/{page.id}/edits/geometry'
         await fx_client.put(
             f'{fx_book.page_path}/edits/geometry/{step_id}', data={'kind': 'rotation', 'geometry': '{"degrees": 1.5}'}

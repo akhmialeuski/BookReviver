@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, BookRecord, PageVersion
     from bookreviver.domain.entities import Page as BookPage
     from bookreviver.ports.storage import AssetStore
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -62,13 +62,15 @@ class Book(NamedTuple):
 
 
 @pytest.fixture
-async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> Book:
     """Commit the book of the signed-in account.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
     :rtype: Book
     """
@@ -83,7 +85,14 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
         make_page_version(page_id=pages[2].id),
     ]
     await store_book(
-        fx_uow(), book_record, *pages, owner=fx_actor.account_id, sources=[source], scans=scans, versions=versions
+        fx_uow(),
+        book_record,
+        *pages,
+        owner=fx_actor.account_id,
+        sources=[source],
+        scans=scans,
+        versions=versions,
+        databases=fx_databases(),
     )
     return Book(book_record, pages, versions)
 
@@ -173,7 +182,12 @@ class TestListPages:
 
     @pytest.mark.parametrize('full', [Rendition.FULL_JPEG, Rendition.FULL_PNG])
     async def test_full_image_path_has_the_extension_of_the_format_recorded_with_the_version(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, full: Rendition
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        full: Rendition,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the path of the full image names the format its version was stored in, whatever the book's policy.
 
@@ -187,12 +201,16 @@ class TestListPages:
         :type fx_actor: Actor
         :param full: Format the base version of the page records for its full image.
         :type full: Rendition
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         policy = ImagePolicy.LOSSLESS if full is Rendition.FULL_JPEG else ImagePolicy.COMPACT
         book_record = evolve(make_record(), image_policy=policy)
         page = make_page()
         version = evolve(make_page_version(page_id=page.id), renditions=Renditions(ready=True, full=full))
-        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, versions=[version])
+        await store_book(
+            fx_uow(), book_record, page, owner=fx_actor.account_id, versions=[version], databases=fx_databases()
+        )
 
         response = await _list_pages(fx_client, f'{BOOKS_PATH}/{book_record.id}/pages')
 
@@ -240,7 +258,11 @@ class TestListPages:
         assert (await _list_pages(fx_client, fx_book.path, **{PAGE_SIZE_PARAM: size})).status_code == expected
 
     async def test_another_accounts_book_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the pages of another account's book cannot be listed.
 
@@ -250,9 +272,13 @@ class TestListPages:
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
-        await commit_record(fx_database, fx_uow(), book_record, make_page(), owner=new_account_id())
+        await commit_record(
+            fx_database, fx_uow(), book_record, make_page(), owner=new_account_id(), databases=fx_databases()
+        )
 
         response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/pages')
 
@@ -301,7 +327,12 @@ class TestGetPage:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     async def test_missing_page_and_page_of_another_book_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_book: Book, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_book: Book,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify an identifier no page has, and a page of another book of the account, both answer 404.
 
@@ -313,17 +344,23 @@ class TestGetPage:
         :type fx_book: Book
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         other = make_record()
         foreign = make_page()
-        await store_book(fx_uow(), other, foreign, owner=fx_actor.account_id)
+        await store_book(fx_uow(), other, foreign, owner=fx_actor.account_id, databases=fx_databases())
 
         responses = [await fx_client.get(f'{fx_book.path}/{page_id}') for page_id in (uuid4(), foreign.id)]
 
         assert [response.status_code for response in responses] == [status.HTTP_404_NOT_FOUND] * 2
 
     async def test_page_of_another_accounts_book_is_not_found(
-        self, fx_client: httpx.AsyncClient, fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_database: SqlDatabase,
+        fx_uow: UnitOfWorkFactory,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a page of another account's book answers exactly like a missing one.
 
@@ -333,10 +370,12 @@ class TestGetPage:
         :type fx_database: SqlDatabase
         :param fx_uow: Function opening a new unit of work over the database of the test.
         :type fx_uow: UnitOfWorkFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
         page = make_page()
-        await commit_record(fx_database, fx_uow(), book_record, page, owner=new_account_id())
+        await commit_record(fx_database, fx_uow(), book_record, page, owner=new_account_id(), databases=fx_databases())
 
         response = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/pages/{page.id}')
 

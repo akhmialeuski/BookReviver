@@ -12,6 +12,7 @@ from attrs import evolve
 from delayed_assert import assert_expectations, expect
 from PIL import Image
 
+from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
 from bookreviver.domain.changes import PageChanges
 from bookreviver.domain.enums import (
     BlankFill,
@@ -63,11 +64,11 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import BookId, PageId
     from bookreviver.domain.values import JobEnd
     from bookreviver.ports.imaging import RenditionWriter
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import JobControl
     from bookreviver.services.pages import PageService
+    from tests.helpers.builders import BookOpener
     from tests.helpers.clock import FixedClock
-    from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fakes_jobs import RecordingEventBus
     from tests.helpers.page_writes import PageWrites
 
@@ -115,7 +116,9 @@ class LeafBook(NamedTuple):
 class LeafDesk:
     """What the tests of the choice of leaves share: the database, the stores, the services and what they reported.
 
+    :ivar stores: Opens the units of work and the databases of the books of the test.
     :ivar open_uow: Function opening a new unit of work over the database the requests and the jobs share.
+    :ivar databases: Opens the databases of the books of the test.
     :ivar assets: Asset store of the test.
     :ivar actor: Account acting.
     :ivar board: Board recording the jobs the service puts on it, which runs them when a test says so.
@@ -125,7 +128,7 @@ class LeafDesk:
 
     def __init__(
         self,
-        open_uow: UnitOfWorkFactory,
+        stores: BookOpener,
         assets: LocalAssetStore,
         actor: Actor,
         runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
@@ -133,8 +136,8 @@ class LeafDesk:
     ) -> None:
         """Keep the parts a request is built from.
 
-        :param open_uow: Function opening a new unit of work over the database of the test.
-        :type open_uow: UnitOfWorkFactory
+        :param stores: Opens the units of work and the databases of the books of the test.
+        :type stores: BookOpener
         :param assets: Local asset store of the test.
         :type assets: LocalAssetStore
         :param actor: Account the service acts for.
@@ -144,24 +147,24 @@ class LeafDesk:
         :param storage_root: Directory the asset store keeps its files under.
         :type storage_root: Path
         """
-        self.open_uow = open_uow
+        self.stores = stores
+        self.open_uow = stores.uow
+        self.databases = stores.databases
         self.storage_root = storage_root
         self.assets = assets
         self.actor = actor
         self.events, self._clock, self.board = runtime
         self._runtime = runtime
 
-    def service(self, *, renditions: RenditionWriter | None = None, uow: UnitOfWork | None = None) -> PageService:
+    def service(self, *, renditions: RenditionWriter | None = None) -> PageService:
         """Build the page service for one request or job.
 
         :param renditions: Writer of the files of a version, or None for the one that copies the image.
         :type renditions: RenditionWriter | None
-        :param uow: Unit of work the service runs over, or None for a new one.
-        :type uow: UnitOfWork | None
-        :returns: A service over the unit of work given, or over a new one.
+        :returns: A service over a new unit of work.
         :rtype: PageService
         """
-        return make_page_service(uow or self.open_uow(), self.assets, self._runtime, renditions=renditions)
+        return make_page_service(self.stores, self.assets, self._runtime, renditions=renditions)
 
     async def book(self, kinds: Sequence[PageKind]) -> LeafBook:
         """Commit a book with a page of each kind, cut from a scan of text on yellowed paper, and store the images.
@@ -190,6 +193,7 @@ class LeafDesk:
             sources=[source],
             scans=scans,
             versions=versions,
+            databases=self.databases,
         )
 
         def save_heads(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -205,7 +209,7 @@ class LeafDesk:
                     make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=version.id)
                 )
 
-        await self.open_uow().change_book(book_record.id, save_heads)
+        await self.databases.open(book_record.id).change(save_heads)
         keys = BookKeys(book_record.id)
         for version in versions:
             async with self.assets.writable(keys.version_rendition(version, Rendition.FULL_PNG)) as target:
@@ -223,7 +227,9 @@ class LeafDesk:
         :type fill: BlankFill
         """
         ids = [book.pages[position].id for position in positions]
-        await self.service().set_blank_fill(open_for(self.actor, book.book_record.id), ids, fill)
+        await self.service().set_blank_fill(
+            open_for(self.actor, book.book_record.id, databases=self.databases), ids, fill
+        )
 
     async def add_blank_page(self, book: LeafBook) -> PageOverview:
         """Add a generated blank page at the end of the book, which asks for a ``prepare-pages`` job as a request does.
@@ -234,7 +240,7 @@ class LeafDesk:
         :rtype: PageOverview
         """
         new_page = NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
-        return await self.service().add(open_for(self.actor, book.book_record.id), new_page)
+        return await self.service().add(open_for(self.actor, book.book_record.id, databases=self.databases), new_page)
 
     def prepare_jobs(self) -> list[Job]:
         """Read the ``prepare-pages`` jobs put on the board, as the board holds them now, in the order they were put.
@@ -289,7 +295,7 @@ class LeafDesk:
         :returns: The page as committed.
         :rtype: Page
         """
-        return await self.open_uow().read_book(book_id, lambda repos: repos.pages.get(page.id))
+        return await self.databases.open(book_id).read(lambda repos: repos.pages.get(page.id))
 
     async def versions(self, book_id: BookId, page: Page) -> list[PageVersion]:
         """Read every committed version of a page, the earliest first.
@@ -303,7 +309,7 @@ class LeafDesk:
         :returns: Its versions.
         :rtype: list[PageVersion]
         """
-        return list(await self.open_uow().read_book(book_id, lambda repos: repos.page_versions.list_for_page(page.id)))
+        return list(await self.databases.open(book_id).read(lambda repos: repos.page_versions.list_for_page(page.id)))
 
     async def leaves(self, book_id: BookId, page: Page) -> list[PageVersion]:
         """Read the committed versions of a page that ``pages.blank`` made, the earliest first.
@@ -332,7 +338,7 @@ class LeafDesk:
         :returns: Its records by stage.
         :rtype: dict[Stage, PageStage]
         """
-        records = await self.open_uow().read_book(book_id, lambda repos: repos.page_stages.list_for_page(page.id))
+        records = await self.databases.open(book_id).read(lambda repos: repos.page_stages.list_for_page(page.id))
         return {record.stage: record for record in records}
 
     def image(self, book: LeafBook, version: PageVersion) -> Image.Image:
@@ -353,7 +359,7 @@ class LeafDesk:
 
 @pytest.fixture
 def fx_desk(
-    fx_uow: UnitOfWorkFactory,
+    fx_open_book: BookOpener,
     fx_asset_store: LocalAssetStore,
     fx_actor: Actor,
     fx_runtime: tuple[RecordingEventBus, FixedClock, FakeJobBoard],
@@ -361,8 +367,8 @@ def fx_desk(
 ) -> LeafDesk:
     """Build the desk of a test over its database, its asset store and the account acting.
 
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
     :param fx_asset_store: Local asset store of the test.
     :type fx_asset_store: LocalAssetStore
     :param fx_actor: Account the service acts for.
@@ -374,7 +380,7 @@ def fx_desk(
     :returns: The desk.
     :rtype: LeafDesk
     """
-    return LeafDesk(fx_uow, fx_asset_store, fx_actor, fx_runtime, fx_storage_root)
+    return LeafDesk(fx_open_book, fx_asset_store, fx_actor, fx_runtime, fx_storage_root)
 
 
 class TestChooseALeaf:
@@ -403,11 +409,15 @@ class TestChooseALeaf:
         expect(book.versions[1] in await fx_desk.versions(book.book_record.id, blank))
         assert_expectations()
 
-    async def test_the_job_draws_the_leaf_and_the_page_shows_it(self, fx_desk: LeafDesk) -> None:
+    async def test_the_job_draws_the_leaf_and_the_page_shows_it(
+        self, fx_desk: LeafDesk, fx_open_book: BookOpener
+    ) -> None:
         """Verify the version is ready with a white 1-bit image, current in the page order, and shown by the page.
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK])
         blank = book.pages[1]
@@ -416,7 +426,7 @@ class TestChooseALeaf:
         await fx_desk.prepare()
 
         [leaf] = await fx_desk.leaves(book.book_record.id, blank)
-        shown = await fx_desk.service().get(open_for(fx_desk.actor, book.book_record.id), blank.id)
+        shown = await fx_desk.service().get(fx_open_book(fx_desk.actor, book.book_record.id), blank.id)
         image = fx_desk.image(book, leaf)
         expect(leaf.state is VersionState.READY)
         expect((await fx_desk.heads(book.book_record.id, blank))[Stage.PAGE_ORDER].head_version_id == leaf.id)
@@ -507,13 +517,12 @@ class TestChooseALeaf:
         step = Step(
             processor_key=NORMALIZE_KEY, params={NormalizeParam.PAGE_WIDTH: width, NormalizeParam.PAGE_HEIGHT: height}
         )
-        await fx_desk.open_uow().change_book(
-            book.book_record.id, lambda repos, _book_record: repos.recipes.add(evolve(recipe, steps=(step,)))
+        await fx_desk.databases.open(book.book_record.id).change(
+            lambda repos, _book_record: repos.recipes.add(evolve(recipe, steps=(step,)))
         )
 
         await fx_desk.choose(book, [1], BlankFill.WHITE)
-        await fx_desk.open_uow().change_book(
-            book.book_record.id,
+        await fx_desk.databases.open(book.book_record.id).change(
             lambda repos, _book_record: repos.recipes.update(evolve(recipe, steps=(evolve(step, enabled=False),))),
         )
         await fx_desk.choose(book, [2], BlankFill.WHITE)
@@ -525,30 +534,31 @@ class TestChooseALeaf:
         assert_expectations()
 
     async def test_a_leaf_does_not_change_the_size_a_new_blank_page_takes_from_the_book(
-        self, fx_desk: LeafDesk
+        self, fx_desk: LeafDesk, fx_open_book: BookOpener
     ) -> None:
         """Verify the leaves drawn in place of scans are no pages of the book to take a median size from.
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK])
         recipe = make_recipe(kind=RecipeKind.BLANK)
         step = Step(
             processor_key=NORMALIZE_KEY, params={NormalizeParam.PAGE_WIDTH: 500, NormalizeParam.PAGE_HEIGHT: 600}
         )
-        await fx_desk.open_uow().change_book(
-            book.book_record.id, lambda repos, _book_record: repos.recipes.add(evolve(recipe, steps=(step,)))
+        await fx_open_book.databases.open(book.book_record.id).change(
+            lambda repos, _book_record: repos.recipes.add(evolve(recipe, steps=(step,)))
         )
         await fx_desk.choose(book, [1], BlankFill.WHITE)
         await fx_desk.prepare()
-        await fx_desk.open_uow().change_book(
-            book.book_record.id,
+        await fx_open_book.databases.open(book.book_record.id).change(
             lambda repos, _book_record: repos.recipes.update(evolve(recipe, steps=(evolve(step, enabled=False),))),
         )
 
         added = await fx_desk.service().add(
-            open_for(fx_desk.actor, book.book_record.id), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
+            fx_open_book(fx_desk.actor, book.book_record.id), NewPage(origin=NewPageOrigin.BLANK, kind=PageKind.BLANK)
         )
 
         [made] = await fx_desk.leaves(book.book_record.id, added.page)
@@ -559,12 +569,14 @@ class TestGetTheScanBack:
     """Tests for PageService.set_blank_fill() choosing the scan, and for a change of kind."""
 
     async def test_choosing_the_scan_removes_the_leaf_from_the_page_order_and_keeps_the_scan(
-        self, fx_desk: LeafDesk
+        self, fx_desk: LeafDesk, fx_open_book: BookOpener
     ) -> None:
         """Verify the page order has no current version again, and the page shows the scan it keeps.
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK])
         blank = book.pages[1]
@@ -573,7 +585,7 @@ class TestGetTheScanBack:
 
         await fx_desk.choose(book, [1], BlankFill.SCAN)
 
-        shown = await fx_desk.service().get(open_for(fx_desk.actor, book.book_record.id), blank.id)
+        shown = await fx_desk.service().get(fx_open_book(fx_desk.actor, book.book_record.id), blank.id)
         stored = await fx_desk.page(book.book_record.id, blank)
         expect((stored.blank_fill, stored.scan_id, stored.origin) == (BlankFill.SCAN, blank.scan_id, PageOrigin.SCAN))
         expect(Stage.PAGE_ORDER not in await fx_desk.heads(book.book_record.id, blank))
@@ -606,12 +618,11 @@ class TestGetTheScanBack:
             repos.page_versions.add(geometry)
             repos.page_stages.save(make_page_stage(page_id=blank.id, head_version_id=geometry.id))
 
-        await fx_desk.open_uow().change_book(book.book_record.id, add_geometry)
+        await fx_desk.databases.open(book.book_record.id).change(add_geometry)
         await fx_desk.choose(book, [1], BlankFill.WHITE)
         await fx_desk.prepare()
         after_leaf = (await fx_desk.heads(book.book_record.id, blank))[Stage.GEOMETRY].state
-        await fx_desk.open_uow().change_book(
-            book.book_record.id,
+        await fx_desk.databases.open(book.book_record.id).change(
             lambda repos, _book_record: repos.page_stages.save(
                 make_page_stage(page_id=blank.id, head_version_id=geometry.id)
             ),
@@ -682,11 +693,15 @@ class TestGetTheScanBack:
         expect((await fx_desk.heads(book.book_record.id, blank))[Stage.PAGE_ORDER].head_version_id == leaf.id)
         assert_expectations()
 
-    async def test_a_page_that_stops_being_blank_gets_its_scan_back(self, fx_desk: LeafDesk) -> None:
+    async def test_a_page_that_stops_being_blank_gets_its_scan_back(
+        self, fx_desk: LeafDesk, fx_open_book: BookOpener
+    ) -> None:
         """Verify changing the kind drops the leaf, as the choice of the scan does, and reports the page as changed.
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK])
         blank = book.pages[1]
@@ -694,7 +709,7 @@ class TestGetTheScanBack:
         await fx_desk.prepare()
 
         changed = await fx_desk.service().update(
-            open_for(fx_desk.actor, book.book_record.id), blank.id, PageChanges(kind=PageKind.TEXT)
+            fx_open_book(fx_desk.actor, book.book_record.id), blank.id, PageChanges(kind=PageKind.TEXT)
         )
 
         expect((changed.page.kind, changed.page.blank_fill) == (PageKind.TEXT, BlankFill.SCAN))
@@ -704,11 +719,15 @@ class TestGetTheScanBack:
         expect(changed.image_version is not None and changed.image_version.id == book.versions[1].id)
         assert_expectations()
 
-    async def test_a_page_that_stays_blank_keeps_its_leaf_when_its_notes_change(self, fx_desk: LeafDesk) -> None:
+    async def test_a_page_that_stays_blank_keeps_its_leaf_when_its_notes_change(
+        self, fx_desk: LeafDesk, fx_open_book: BookOpener
+    ) -> None:
         """Verify a change that leaves the kind alone leaves the leaf in place.
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book = await fx_desk.book([PageKind.TEXT, PageKind.BLANK])
         blank = book.pages[1]
@@ -716,7 +735,7 @@ class TestGetTheScanBack:
         await fx_desk.prepare()
 
         await fx_desk.service().update(
-            open_for(fx_desk.actor, book.book_record.id), blank.id, PageChanges(notes='Verso is clean')
+            fx_open_book(fx_desk.actor, book.book_record.id), blank.id, PageChanges(notes='Verso is clean')
         )
 
         expect((await fx_desk.page(book.book_record.id, blank)).blank_fill is BlankFill.WHITE)
@@ -762,7 +781,7 @@ class TestRemakeOutdatedLeaves:
             repos.page_stages.save(stale)
             repos.page_versions.delete_many([leaf.id])
 
-        await desk.open_uow().change_book(book.book_record.id, replace_leaf)
+        await desk.databases.open(book.book_record.id).change(replace_leaf)
         keys = BookKeys(book.book_record.id)
         assert old.renditions is not None
         async with desk.assets.writable(keys.version_rendition(old, old.renditions.full)) as target:
@@ -872,7 +891,7 @@ class TestRefusals:
 
     @pytest.mark.parametrize('fill', [BlankFill.WHITE, BlankFill.SCAN])
     async def test_a_page_not_cut_from_a_scan_has_no_scan_to_replace_or_to_keep(
-        self, fx_desk: LeafDesk, fill: BlankFill
+        self, fx_desk: LeafDesk, fill: BlankFill, fx_open_book: BookOpener
     ) -> None:
         """Verify a generated leaf and a placeholder are refused whichever choice is made.
 
@@ -880,32 +899,40 @@ class TestRefusals:
         :type fx_desk: LeafDesk
         :param fill: The choice that is refused.
         :type fill: BlankFill
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book = await fx_desk.book([PageKind.TEXT])
         generated = evolve(make_page(order_key='b0', kind=PageKind.BLANK), origin=PageOrigin.BLANK)
         waiting = make_page(order_key='b1', kind=PageKind.BLANK)
-        await fx_desk.open_uow().change_book(
-            book.book_record.id, lambda repos, _book_record: repos.pages.add_many([generated, waiting])
+        await fx_open_book.databases.open(book.book_record.id).change(
+            lambda repos, _book_record: repos.pages.add_many([generated, waiting])
         )
 
         for page in (generated, waiting):
             with pytest.raises(ConflictError, match='not cut from a scan'):
-                await fx_desk.service().set_blank_fill(open_for(fx_desk.actor, book.book_record.id), [page.id], fill)
+                await fx_desk.service().set_blank_fill(
+                    fx_open_book(fx_desk.actor, book.book_record.id), [page.id], fill
+                )
 
-    async def test_a_page_the_book_lacks_is_not_found(self, fx_desk: LeafDesk) -> None:
+    async def test_a_page_the_book_lacks_is_not_found(self, fx_desk: LeafDesk, fx_open_book: BookOpener) -> None:
         """Verify a page of another book answers not found, and no leaf is chosen.
 
         :param fx_desk: What the tests of the choice of leaves share.
         :type fx_desk: LeafDesk
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book = await fx_desk.book([PageKind.BLANK])
         other = make_record()
         stranger = make_page(kind=PageKind.BLANK)
-        await store_book(fx_desk.open_uow(), other, stranger, owner=fx_desk.actor.account_id)
+        await store_book(
+            fx_desk.open_uow(), other, stranger, owner=fx_desk.actor.account_id, databases=fx_open_book.databases
+        )
 
         with pytest.raises(NotFoundError):
             await fx_desk.service().set_blank_fill(
-                open_for(fx_desk.actor, book.book_record.id), [stranger.id], BlankFill.WHITE
+                fx_open_book(fx_desk.actor, book.book_record.id), [stranger.id], BlankFill.WHITE
             )
 
         assert await fx_desk.leaves(book.book_record.id, book.pages[0]) == []
@@ -917,8 +944,7 @@ class TestRefusals:
         :type fx_desk: LeafDesk
         """
         book = await fx_desk.book([PageKind.BLANK])
-        await fx_desk.open_uow().change_book(
-            book.book_record.id,
+        await fx_desk.databases.open(book.book_record.id).change(
             lambda repos, _book_record: repos.page_versions.update(evolve(book.versions[0], data={})),
         )
 
@@ -971,7 +997,7 @@ class TestJobsReCheckWhatTheyApply:
         """Verify ``remake_outdated_leaves`` adds nothing and queues nothing for a page it finds changed in its change.
 
         The records are read to find the book of the page, and the choice of the scan is made after that read and
-        before the ``change_book`` of the book opens, so the pass has to find the choice in the change and leave the
+        before the ``Book.change`` of the book opens, so the pass has to find the choice in the change and leave the
         page alone.
 
         :param fx_desk: What the tests of the choice of leaves share.
@@ -985,29 +1011,30 @@ class TestJobsReCheckWhatTheyApply:
         await fx_desk.prepare()
         await TestRemakeOutdatedLeaves().outdate(fx_desk, book, 1)
         queued, leaves = len(fx_desk.prepare_jobs()), await fx_desk.leaves(book.book_record.id, blank)
-        uow = fx_desk.open_uow()
-        read = uow.read_book
+        read = SqlAlchemyBookDatabase.read
         raced = False
 
-        async def read_then_take_the_scan_back[T](book_id: BookId, work: Callable[[BookRepositories], T]) -> T:
-            """Read as the unit of work does, then choose the scan for the page in a change of another one, once.
+        async def read_then_take_the_scan_back[T](
+            database: SqlAlchemyBookDatabase, work: Callable[[BookRepositories], T]
+        ) -> T:
+            """Read as the book database does, then choose the scan for the page in a change of another one, once.
 
-            :param book_id: Book that is read.
-            :type book_id: BookId
+            :param database: The book database that is read.
+            :type database: SqlAlchemyBookDatabase
             :param work: Function over the repositories of the transaction.
             :type work: Callable[[BookRepositories], T]
             :returns: What the work returned, as it read before the choice.
             :rtype: T
             """
             nonlocal raced
-            result = await read(book_id, work)
+            result = await read(database, work)
             if not raced:
                 raced = True
                 await fx_desk.choose(book, [1], BlankFill.SCAN)
             return result
 
-        monkeypatch.setattr(uow, 'read_book', read_then_take_the_scan_back)
-        await fx_desk.service(uow=uow).remake_outdated_leaves()
+        monkeypatch.setattr(SqlAlchemyBookDatabase, 'read', read_then_take_the_scan_back)
+        await fx_desk.service().remake_outdated_leaves()
 
         expect(len(fx_desk.prepare_jobs()) == queued)
         expect(await fx_desk.leaves(book.book_record.id, blank) == leaves)

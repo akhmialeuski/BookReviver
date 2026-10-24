@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from dishka import Provider
 
     from bookreviver.domain.entities import Actor, BookRecord, Page
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -92,7 +92,9 @@ def fx_extra_providers() -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_book(fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> Book:
+async def fx_book(
+    fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory
+) -> Book:
     """Commit a book of three pages and read the step of its geometry recipe.
 
     :param fx_client: Client of the running application.
@@ -101,6 +103,8 @@ async def fx_book(fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_ac
     :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
     :rtype: Book
     """
@@ -108,7 +112,9 @@ async def fx_book(fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_ac
     sources = [make_source(name=f'{order_key}.pdf') for order_key in ORDER_KEYS]
     scans = [evolve(make_scan(source=source, number=0), renditions=Renditions(ready=True)) for source in sources]
     pages = [make_page(order_key=order_key, scan=scan) for order_key, scan in zip(ORDER_KEYS, scans, strict=True)]
-    await store_book(fx_uow(), book_record, *pages, owner=fx_actor.account_id, sources=sources, scans=scans)
+    await store_book(
+        fx_uow(), book_record, *pages, owner=fx_actor.account_id, sources=sources, scans=scans, databases=fx_databases()
+    )
     listed = await fx_client.get(f'{BOOKS_PATH}/{book_record.id}/stages/geometry/recipes')
     recipe = next(
         recipe

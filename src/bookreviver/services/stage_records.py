@@ -6,7 +6,7 @@ stale and their versions stay, which lets the interface show the old result with
 again. A record that already failed stays failed, since a stale mark would hide the failure.
 
 Every method that writes or reads records takes the ``BookRepositories`` of the transaction it runs in, so it is called
-from the work of ``UnitOfWork.change_book`` or ``UnitOfWork.read_book`` and opens no transaction of its own. It is
+from the work of ``Book.change`` or ``Book.read`` and opens no transaction of its own. It is
 synchronous, like the work that calls it, and announces nothing: the unit of work tells the browser that the stages
 changed once the transaction committed.
 
@@ -275,7 +275,7 @@ class SideWatch:
 
     The order of the book is read before the block and after it, so inserting, deleting and moving pages are all
     covered by the one comparison, and nothing is read when no side has values for a step. The watch is a synchronous
-    context manager entered inside the work of ``change_book`` and marks the records there. A block that raises marks
+    context manager entered inside the work of ``Book.change`` and marks the records there. A block that raises marks
     nothing.
     """
 

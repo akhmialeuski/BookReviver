@@ -35,8 +35,9 @@ if TYPE_CHECKING:
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Actor, BookOverview, BookRecord
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
-    from tests.helpers.database import UnitOfWorkFactory
+    from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
+    from tests.helpers.builders import BookOpener
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -47,7 +48,9 @@ NEW_TITLE: str = 'Renamed'
 DATABASE_NAME: str = 'book.db'
 
 
-def _service(uow: UnitOfWork, sources: LocalSourceStore, assets: LocalAssetStore, root: Path) -> BooksService:
+def _service(
+    uow: UnitOfWork, sources: LocalSourceStore, assets: LocalAssetStore, root: Path, *, databases: BookDatabases
+) -> BooksService:
     """Build the book service for one request, over a unit of work, a catalogue with no processors and no jobs.
 
     :param uow: Unit of work of the request.
@@ -58,6 +61,8 @@ def _service(uow: UnitOfWork, sources: LocalSourceStore, assets: LocalAssetStore
     :type assets: LocalAssetStore
     :param root: Storage root of the test, which the archive of the books packs and unpacks under.
     :type root: Path
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The service, with a clock standing at ``NOW``.
     :rtype: BooksService
     """
@@ -66,6 +71,7 @@ def _service(uow: UnitOfWork, sources: LocalSourceStore, assets: LocalAssetStore
     stages = StageSummaries(catalogue=FakeCatalogue([]), board=board)
     return BooksService(
         uow=uow,
+        databases=databases,
         clock=clock,
         files=BookStores(sources=sources, assets=assets, archive=LocalBookArchive(root=root)),
         stages=stages,
@@ -78,6 +84,7 @@ def fx_service(
     fx_source_store: LocalSourceStore,
     fx_asset_store: LocalAssetStore,
     fx_storage_root: Path,
+    fx_databases: BookDatabasesFactory,
 ) -> Callable[[], BooksService]:
     """Return a function building the service for one request, with a clock standing at ``NOW``.
 
@@ -89,10 +96,12 @@ def fx_service(
     :type fx_asset_store: LocalAssetStore
     :param fx_storage_root: Storage root of the test.
     :type fx_storage_root: Path
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: Function building a service over a new unit of work.
     :rtype: Callable[[], BooksService]
     """
-    return lambda: _service(fx_uow(), fx_source_store, fx_asset_store, fx_storage_root)
+    return lambda: _service(fx_uow(), fx_source_store, fx_asset_store, fx_storage_root, databases=fx_databases())
 
 
 class StoreFailedError(OSError):
@@ -127,7 +136,10 @@ class SourceStoreFailingOnce(LocalSourceStore):
 
 @pytest.fixture
 def fx_flaky_service(
-    fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore, fx_storage_root: Path
+    fx_uow: UnitOfWorkFactory,
+    fx_asset_store: LocalAssetStore,
+    fx_storage_root: Path,
+    fx_databases: BookDatabasesFactory,
 ) -> Callable[[], BooksService]:
     """Return a function building the service for one request over a source store whose first deletion fails.
 
@@ -137,24 +149,26 @@ def fx_flaky_service(
     :type fx_asset_store: LocalAssetStore
     :param fx_storage_root: Storage root both stores share.
     :type fx_storage_root: Path
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: Function building a service over a new unit of work and the one failing source store.
     :rtype: Callable[[], BooksService]
     """
     sources = SourceStoreFailingOnce(root=fx_storage_root)
-    return lambda: _service(fx_uow(), sources, fx_asset_store, fx_storage_root)
+    return lambda: _service(fx_uow(), sources, fx_asset_store, fx_storage_root, databases=fx_databases())
 
 
-async def _stored(uow: UnitOfWork, book_record: BookRecord) -> BookRecord:
+async def _stored(book_record: BookRecord, *, databases: BookDatabases) -> BookRecord:
     """Read the committed state of a book.
 
-    :param uow: Unit of work to read through.
-    :type uow: UnitOfWork
     :param book_record: Record of the book to read back.
     :type book_record: BookRecord
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The book as committed.
     :rtype: BookRecord
     """
-    return await uow.read_book(book_record.id, lambda repos: repos.book_record.get(book_record.id))
+    return await databases.open(book_record.id).read(lambda repos: repos.book_record.get(book_record.id))
 
 
 @pytest.fixture
@@ -182,6 +196,7 @@ class TestList:
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify another account's book is hidden and the actor's come most recently updated first.
 
@@ -193,6 +208,8 @@ class TestList:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         older, newer, other = make_record(minutes=1), make_record(minutes=2), make_record(minutes=3)
         for book_record, owner in (
@@ -200,7 +217,7 @@ class TestList:
             (newer, fx_actor.account_id),
             (other, new_account_id()),
         ):
-            await commit_record(fx_database, fx_uow(), book_record, owner=owner)
+            await commit_record(fx_database, fx_uow(), book_record, owner=owner, databases=fx_databases())
 
         result = await _listed(fx_service(), fx_uow(), fx_actor)
 
@@ -213,7 +230,11 @@ class TestCreate:
     """Tests for BooksService.create()."""
 
     async def test_creates_an_empty_book_owned_by_the_actor(
-        self, fx_service: Callable[[], BooksService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_service: Callable[[], BooksService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the book is committed with the actor as owner and the clock's time on both timestamps.
 
@@ -223,12 +244,14 @@ class TestCreate:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         details = BookDetails(title='Book', orthography=Orthography.PRE_REFORM)
 
         overview = await fx_service().create(fx_actor, details)
 
-        stored = await _stored(fx_uow(), overview.book_record)
+        stored = await _stored(overview.book_record, databases=fx_databases())
         entry = await fx_uow().read(lambda repos: repos.library.get(stored.id))
         expect(stored == overview.book_record)
         expect((entry.owner_id, entry.added_at) == (fx_actor.account_id, NOW))
@@ -242,7 +265,11 @@ class TestGet:
     """Tests for BooksService.get()."""
 
     async def test_returns_the_book_with_the_counts_of_its_book(
-        self, fx_service: Callable[[], BooksService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_service: Callable[[], BooksService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify the overview counts the included pages, the sources and the scans of the book.
 
@@ -252,6 +279,8 @@ class TestGet:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_record = make_record()
         source = make_source()
@@ -266,9 +295,10 @@ class TestGet:
             owner=fx_actor.account_id,
             sources=[source],
             scans=scans,
+            databases=fx_open_book.databases,
         )
 
-        overview = await fx_service().get(open_for(fx_actor, book_record.id))
+        overview = await fx_service().get(fx_open_book(fx_actor, book_record.id))
 
         assert (overview.book_record, overview.page_count, overview.source_count, overview.scan_count) == (
             book_record,
@@ -282,7 +312,11 @@ class TestUpdate:
     """Tests for BooksService.update()."""
 
     async def test_sets_the_image_policy(
-        self, fx_service: Callable[[], BooksService], fx_uow: UnitOfWorkFactory, fx_actor: Actor
+        self,
+        fx_service: Callable[[], BooksService],
+        fx_uow: UnitOfWorkFactory,
+        fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify the image policy of the book changes.
 
@@ -292,12 +326,14 @@ class TestUpdate:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
 
         changed = await fx_service().update(
-            open_for(fx_actor, book_record.id), BookChanges(image_policy=ImagePolicy.LOSSLESS)
+            fx_open_book(fx_actor, book_record.id), BookChanges(image_policy=ImagePolicy.LOSSLESS)
         )
 
         assert changed.book_record.image_policy == ImagePolicy.LOSSLESS
@@ -307,6 +343,7 @@ class TestUpdate:
         fx_service: Callable[[], BooksService],
         fx_uow: UnitOfWorkFactory,
         fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify the given fields change, the others stay, and only the update time moves.
 
@@ -316,15 +353,17 @@ class TestUpdate:
         :type fx_uow: UnitOfWorkFactory
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_record = make_record(title='Old')
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
 
         overview = await fx_service().update(
-            open_for(fx_actor, book_record.id), BookChanges(details=BookDetailsChanges(title=NEW_TITLE))
+            fx_open_book(fx_actor, book_record.id), BookChanges(details=BookDetailsChanges(title=NEW_TITLE))
         )
 
-        stored = await _stored(fx_uow(), book_record)
+        stored = await _stored(book_record, databases=fx_open_book.databases)
         expect(stored == overview.book_record)
         expect(stored.details == BookDetails(title=NEW_TITLE))
         expect((stored.created_at, stored.updated_at) == (book_record.created_at, NOW))
@@ -340,6 +379,7 @@ class TestDelete:
         fx_uow: UnitOfWorkFactory,
         fx_files: BookFiles,
         fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify the row, its pages, its source and its derived files go, and a neighbour's files stay.
 
@@ -351,14 +391,16 @@ class TestDelete:
         :type fx_files: BookFiles
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         doomed, kept = make_record(), make_record()
         doomed_page, kept_page = make_page(), make_page()
         for book_record, page in ((doomed, doomed_page), (kept, kept_page)):
-            await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id)
+            await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_open_book.databases)
             await fx_files.store(book_record.id, page)
 
-        await fx_service().delete(open_for(fx_actor, doomed.id))
+        await fx_service().delete(fx_open_book(fx_actor, doomed.id))
 
         remaining = await fx_uow().read(lambda repos: repos.library.list_for_owner(fx_actor.account_id, SliceRequest()))
         expect([entry.book_id for entry in remaining.items] == [kept.id])
@@ -373,6 +415,7 @@ class TestDelete:
         fx_uow: UnitOfWorkFactory,
         fx_files: BookFiles,
         fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a deletion stopped by a storage failure keeps the book, and repeating it removes everything.
 
@@ -384,21 +427,23 @@ class TestDelete:
         :type fx_files: BookFiles
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_record = make_record()
         page = make_page()
-        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_open_book.databases)
         await fx_files.store(book_record.id, page)
 
         with pytest.raises(StoreFailedError):
-            await fx_flaky_service().delete(open_for(fx_actor, book_record.id))
+            await fx_flaky_service().delete(fx_open_book(fx_actor, book_record.id))
 
-        expect(await _stored(fx_uow(), book_record) == book_record)
+        expect(await _stored(book_record, databases=fx_open_book.databases) == book_record)
         assert_expectations()
-        await fx_flaky_service().delete(open_for(fx_actor, book_record.id))
+        await fx_flaky_service().delete(fx_open_book(fx_actor, book_record.id))
 
         with pytest.raises(NotFoundError):
-            await _stored(fx_uow(), book_record)
+            await _stored(book_record, databases=fx_open_book.databases)
         assert fx_files.gone(book_record.id)
 
 
@@ -409,9 +454,9 @@ class TestDeleteAll:
         self,
         fx_service: Callable[[], BooksService],
         fx_database: SqlDatabase,
-        fx_uow: UnitOfWorkFactory,
         fx_files: BookFiles,
         fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify every book of the actor goes with its files, and another account's book stays.
 
@@ -419,27 +464,36 @@ class TestDeleteAll:
         :type fx_service: Callable[[], BooksService]
         :param fx_database: Database of the test.
         :type fx_database: SqlDatabase
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_files: Files of imported books in the stores the service deletes from.
         :type fx_files: BookFiles
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         owned = [make_record(minutes=minute) for minute in range(PAGE_COUNT + 1)]
         kept = make_record()
         pages = {book_record.id: make_page() for book_record in (*owned, kept)}
         for book_record in (*owned, kept):
             owner = new_account_id() if book_record is kept else fx_actor.account_id
-            await commit_record(fx_database, fx_uow(), book_record, pages[book_record.id], owner=owner)
+            await commit_record(
+                fx_database,
+                fx_open_book.uow(),
+                book_record,
+                pages[book_record.id],
+                owner=owner,
+                databases=fx_open_book.databases,
+            )
             await fx_files.store(book_record.id, pages[book_record.id])
 
-        await AccountBooks(uow=fx_uow(), books=fx_service()).delete_all(fx_actor.account_id)
+        await AccountBooks(uow=fx_open_book.uow(), books=fx_service()).delete_all(fx_actor.account_id)
 
-        remaining = await fx_uow().read(lambda repos: repos.library.list_for_owner(fx_actor.account_id, SliceRequest()))
+        remaining = await fx_open_book.uow().read(
+            lambda repos: repos.library.list_for_owner(fx_actor.account_id, SliceRequest())
+        )
         expect(remaining.total == 0)
         expect(all(fx_files.gone(book_record.id) for book_record in owned))
-        expect(await _stored(fx_uow(), kept) == kept)
+        expect(await _stored(kept, databases=fx_open_book.databases) == kept)
         expect(fx_files.kept(pages[kept.id]))
         assert_expectations()
 
@@ -470,11 +524,11 @@ async def _listed(service: BooksService, uow: UnitOfWork, actor: Actor) -> Slice
     :returns: The overviews of the actor's books, the latest added first, and their number.
     :rtype: Slice[BookOverview]
     """
-    books = await books_of(uow, actor.account_id)
+    books = await books_of(uow, service, actor.account_id)
     return await service.overviews(Slice(items=books, total=len(books)))
 
 
-async def _archive(service: BooksService, actor: Actor, book_id: BookId) -> io.BytesIO:
+async def _archive(service: BooksService, actor: Actor, book_id: BookId, *, databases: BookDatabases) -> io.BytesIO:
     """Read the whole archive of a book the actor owns, as the browser downloads it.
 
     :param service: The book service of the request.
@@ -483,10 +537,12 @@ async def _archive(service: BooksService, actor: Actor, book_id: BookId) -> io.B
     :type actor: Actor
     :param book_id: The book.
     :type book_id: BookId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The archive, ready to be read from its start.
     :rtype: io.BytesIO
     """
-    archived = await service.export(open_for(actor, book_id))
+    archived = await service.export(open_for(actor, book_id, databases=databases))
     return io.BytesIO(b''.join([piece async for piece in archived.pieces]))
 
 
@@ -499,6 +555,7 @@ class TestExportAndImport:
         fx_uow: UnitOfWorkFactory,
         fx_files: BookFiles,
         fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the import keeps the title, the page and its file, under a new identifier the actor owns.
 
@@ -510,16 +567,18 @@ class TestExportAndImport:
         :type fx_files: BookFiles
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record, page = make_record(), make_page()
-        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
         await fx_files.store(book_record.id, page)
-        archive = await _archive(fx_service(), fx_actor, book_record.id)
+        archive = await _archive(fx_service(), fx_actor, book_record.id, databases=fx_databases())
 
         imported = await fx_service().import_archive(fx_actor, archive)
 
         copy_id = imported.book_record.id
-        pages = await fx_uow().read_book(copy_id, lambda repos: repos.pages.list_window(SliceRequest()).items)
+        pages = await fx_databases().open(copy_id).read(lambda repos: repos.pages.list_window(SliceRequest()).items)
         listed = await _listed(fx_service(), fx_uow(), fx_actor)
         expect(copy_id != book_record.id)
         expect(imported.book_record.details == book_record.details)
@@ -562,6 +621,7 @@ class TestSweep:
         fx_uow: UnitOfWorkFactory,
         fx_files: BookFiles,
         fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a creation that stored the book and never listed it is undone, and a listed book stays.
 
@@ -573,11 +633,13 @@ class TestSweep:
         :type fx_files: BookFiles
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         broken, whole = make_record(), make_record()
         broken_page, whole_page = make_page(), make_page()
         await fx_uow().create_book(broken)
-        await store_book(fx_uow(), whole, whole_page, owner=fx_actor.account_id)
+        await store_book(fx_uow(), whole, whole_page, owner=fx_actor.account_id, databases=fx_databases())
         for book_record, page in ((broken, broken_page), (whole, whole_page)):
             await fx_files.store(book_record.id, page)
 
@@ -594,6 +656,7 @@ class TestSweep:
         fx_uow: UnitOfWorkFactory,
         fx_files: BookFiles,
         fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a deletion that removed the book and never removed its entry is finished.
 
@@ -605,10 +668,12 @@ class TestSweep:
         :type fx_files: BookFiles
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
         page = make_page()
-        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, page, owner=fx_actor.account_id, databases=fx_databases())
         await fx_files.store(book_record.id, page)
         await fx_uow().delete_book(book_record.id)
 
@@ -658,6 +723,7 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
         fx_asset_store: LocalAssetStore,
         fx_storage_root: Path,
         fx_actor: Actor,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a change of the book is not kept waiting by a slow store, and the deletion ends the row after it.
 
@@ -669,9 +735,11 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
         :type fx_storage_root: Path
         :param fx_actor: Account the service acts for.
         :type fx_actor: Actor
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_open_book.databases)
         sources = SourceStoreWaiting(root=fx_storage_root)
         opened = False
 
@@ -688,11 +756,12 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
 
         async def open_a_change() -> None:
             """Open and leave a change of the book, which has to be granted at once."""
-            await fx_uow().change_book(book_record.id, mark_opened)
+            await fx_open_book.databases.open(book_record.id).change(mark_opened)
 
         async with anyio.create_task_group() as group:
             group.start_soon(
-                _service(fx_uow(), sources, fx_asset_store, fx_storage_root).delete, open_for(fx_actor, book_record.id)
+                _service(fx_uow(), sources, fx_asset_store, fx_storage_root, databases=fx_open_book.databases).delete,
+                fx_open_book(fx_actor, book_record.id),
             )
             await sources.reached.wait()
             group.start_soon(open_a_change)
@@ -701,5 +770,5 @@ class TestDeleteHoldsNoTransactionOverTheFiles:
             sources.proceed.set()
 
         with pytest.raises(NotFoundError):
-            await _stored(fx_uow(), book_record)
+            await _stored(book_record, databases=fx_open_book.databases)
         assert_expectations()

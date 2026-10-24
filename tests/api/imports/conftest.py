@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from dishka import Provider
 
     from bookreviver.domain.entities import Actor, BookRecord
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 
 @pytest.fixture
@@ -59,18 +59,20 @@ def fx_extra_providers(fx_fakes: JobFakes) -> Sequence[Provider]:
 
 
 @pytest.fixture
-async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> BookRecord:
+async def fx_book(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> BookRecord:
     """Store a book of the signed-in account with no sources.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
     :type fx_uow: UnitOfWorkFactory
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
     :rtype: BookRecord
     """
     book_record = make_record()
-    await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+    await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
     return book_record
 
 

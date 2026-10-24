@@ -31,7 +31,7 @@ async def stage_rows(
     :raises NotFoundError: If no recipe of the stage has the step.
     """
     stages = kit.stages()
-    return await kit.uow().read_book(book_record.id, lambda repos: stages.rows(repos, stage, request, step_id))
+    return await kit.databases.open(book_record.id).read(lambda repos: stages.rows(repos, stage, request, step_id))
 
 
 async def book_summaries(kit: ProcessingKit, book_record: BookRecord) -> list[StageSummary]:
@@ -45,8 +45,8 @@ async def book_summaries(kit: ProcessingKit, book_record: BookRecord) -> list[St
     :rtype: list[StageSummary]
     """
     stages = kit.stages()
-    return await kit.uow().read_book(
-        book_record.id, lambda repos: stages.of_book(repos, repos.book_record.overview(book_record))
+    return await kit.databases.open(book_record.id).read(
+        lambda repos: stages.of_book(repos, repos.book_record.overview(book_record))
     )
 
 
@@ -70,8 +70,8 @@ async def books_with_progress(kit: ProcessingKit, *books: BookRecord) -> list[Bo
         :returns: The overview with the progress.
         :rtype: BookOverview
         """
-        return await kit.uow().read_book(
-            book_record.id, lambda repos: stages.with_progress(repos, repos.book_record.overview(book_record))
+        return await kit.databases.open(book_record.id).read(
+            lambda repos: stages.with_progress(repos, repos.book_record.overview(book_record))
         )
 
     return [await overview_of(book_record) for book_record in books]

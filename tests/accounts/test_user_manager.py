@@ -14,7 +14,7 @@ from bookreviver.app.container import build_container
 from bookreviver.app.providers.accounts import UserManager
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import AccountId
-from bookreviver.ports.persistence import UnitOfWork
+from bookreviver.ports.persistence import BookDatabases, UnitOfWork
 from bookreviver.ports.storage import AssetStore, SourceStore
 from tests.helpers.builders import make_page, make_record
 from tests.helpers.fakes_accounts import PASSWORD
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import BookRecord
-    from tests.helpers.database import SharedDatabaseProvider
+    from tests.helpers.database import BookDatabasesFactory, SharedDatabaseProvider
 
 pytestmark = pytest.mark.anyio
 
@@ -62,13 +62,15 @@ async def _stored(container: AsyncContainer, book_record: BookRecord) -> bool:
     :type container: AsyncContainer
     :param book_record: Record of the book to look up.
     :type book_record: BookRecord
-    :returns: True when a new unit of work still finds the book.
+    :returns: True when a new book database still finds the book.
     :rtype: bool
     """
     async with container() as scope:
         try:
-            await (await scope.get(UnitOfWork)).read_book(
-                book_record.id, lambda repos: repos.book_record.get(book_record.id)
+            await (
+                (await scope.get(BookDatabases))
+                .open(book_record.id)
+                .read(lambda repos: repos.book_record.get(book_record.id))
             )
         except NotFoundError:
             return False
@@ -79,7 +81,7 @@ class TestDelete:
     """Tests for UserManager.delete(), which runs the on_before_delete hook first."""
 
     async def test_deleting_an_account_deletes_its_books_with_their_files(
-        self, fx_container: AsyncContainer, fx_settings: Settings
+        self, fx_container: AsyncContainer, fx_settings: Settings, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the account's books go with their rows and files, then the account, and another's stay.
 
@@ -89,6 +91,8 @@ class TestDelete:
         :type fx_container: AsyncContainer
         :param fx_settings: Settings of the test, whose storage root the stores share.
         :type fx_settings: Settings
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         database = await fx_container.get(SqlDatabase)
         owner_id, neighbour_id = await commit_account(database), await commit_account(database)
@@ -99,7 +103,7 @@ class TestDelete:
             uow = await scope.get(UnitOfWork)
             for book_record in (*owned, kept):
                 owner = neighbour_id if book_record is kept else owner_id
-                await store_book(uow, book_record, pages[book_record.id], owner=owner)
+                await store_book(uow, book_record, pages[book_record.id], owner=owner, databases=fx_databases())
         files = BookFiles(
             sources=await fx_container.get(SourceStore),
             assets=await fx_container.get(AssetStore),

@@ -23,9 +23,10 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
     from bookreviver.domain.entities import BookRecord, PageVersion
-    from bookreviver.domain.ids import BookId, PageVersionId
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.domain.ids import PageVersionId
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.storage import AssetStore
+    from bookreviver.services.book import Book
 
 BEING_COLLECTED: str = 'The version is being deleted.'
 
@@ -35,26 +36,23 @@ logger = logging.getLogger(__name__)
 class VersionClearing:
     """Deletes batches of the versions of one book, and remembers the versions that must stay."""
 
-    def __init__(self, *, uow: UnitOfWork, assets: AssetStore, book_id: BookId) -> None:
+    def __init__(self, *, assets: AssetStore, book: Book) -> None:
         """Work over the ports of one collection of one book.
 
-        :param uow: Unit of work of the job, whose blocks write each batch.
-        :type uow: UnitOfWork
         :param assets: Store of the derived files, from which the directories of the versions are removed.
         :type assets: AssetStore
-        :param book_id: Book owning the versions.
-        :type book_id: BookId
+        :param book: The open book owning the versions, whose changes write each batch.
+        :type book: Book
         """
-        self._uow = uow
         self._assets = assets
-        self._book_id = book_id
-        self._keys = BookKeys(book_id)
+        self._book = book
+        self._keys = BookKeys(book.id)
         self._held: set[PageVersionId] = set()
 
     async def clear(self, batch: Sequence[PageVersion]) -> int:
         """Delete the versions of a batch that no version which stays reads.
 
-        It opens two ``change_book`` calls, the first marking the versions and the second deleting the rows of those
+        It opens two ``Book.change`` calls, the first marking the versions and the second deleting the rows of those
         whose files are gone, with the removal of the files between them, outside any transaction.
 
         :param batch: Versions that read none of each other and are read by none of the versions cleared later, taken
@@ -84,7 +82,7 @@ class VersionClearing:
                     )
                     repos.page_versions.update(marked)
 
-        await self._uow.change_book(self._book_id, mark)
+        await self._book.change(mark)
         gone: list[PageVersionId] = []
         for version in going:
             try:
@@ -94,7 +92,7 @@ class VersionClearing:
                 self._hold([version])
             else:
                 gone.append(version.id)
-        await self._uow.change_book(self._book_id, lambda repos, _book_record: repos.page_versions.delete_many(gone))
+        await self._book.change(lambda repos, _book_record: repos.page_versions.delete_many(gone))
         return len(gone)
 
     def _hold(self, staying: Iterable[PageVersion]) -> None:

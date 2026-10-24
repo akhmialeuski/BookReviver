@@ -42,9 +42,10 @@ if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
     from bookreviver.domain.entities import BookRecord, PageStage, PageVersion, Recipe
-    from bookreviver.domain.ids import BookId, PageId, PageVersionId
+    from bookreviver.domain.ids import PageId, PageVersionId
     from bookreviver.domain.values import MetadataMap, Step
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories
+    from bookreviver.services.book import Book
     from bookreviver.services.recipes import RecipeBook
     from bookreviver.services.stage_records import StageRecords
 
@@ -338,7 +339,7 @@ class BookBlocks:
     """Reads the content boxes the normalize step recorded on the current versions of the pages of a book.
 
     It reads through the repositories of the transaction its caller runs in, so it is made inside the work of
-    ``UnitOfWork.read`` or ``change_book``.
+    ``Book.read`` or ``Book.change``.
     """
 
     def __init__(self, repos: BookRepositories) -> None:
@@ -430,22 +431,18 @@ class BookBlocks:
 class BookMeasure:
     """Reads the content boxes of every page of a book and writes the largest into its normalize step."""
 
-    def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, records: StageRecords) -> None:
+    def __init__(self, *, recipes: RecipeBook, records: StageRecords) -> None:
         """Work over the ports of one job.
 
-        :param uow: Unit of work, whose ``read_book`` holds the reading of the boxes and whose ``change_book`` holds the
-                    writing of the measures once the job has them.
-        :type uow: UnitOfWork
         :param recipes: The recipes of the book, which supply the Geometry recipes and rewrite them.
         :type recipes: RecipeBook
         :param records: Writer of the stage records, which marks the stage of the pages stale.
         :type records: StageRecords
         """
-        self._uow = uow
         self._recipes = recipes
         self._records = records
 
-    async def run(self, book_id: BookId) -> int:
+    async def run(self, book: Book) -> int:
         """Measure the pages of the book and write the result into the parameters of the normalize step.
 
         The step is written into every recipe of the Geometry stage that has one. The margins and the line height of
@@ -455,11 +452,12 @@ class BookMeasure:
         own margins.
 
         The job reads and computes with no change open, since the boxes of the pages take long to read, and writes in
-        one short ``change_book`` that reads the recipes again. A recipe that was changed meanwhile, which a user may
+        one short ``Book.change`` that reads the recipes again. A recipe that was changed meanwhile, which a user may
         have done by hand while the pages were measured, is left as it is and nothing is written.
 
-        :param book_id: Book whose pages are measured.
-        :type book_id: BookId
+        :param book: The open book whose pages are measured, whose ``Book.read`` holds the reading of the boxes and
+                     whose ``Book.change`` holds the writing of the measures once the job has them.
+        :type book: Book
         :returns: The number of pages that were measured.
         :rtype: int
         :raises NotFoundError: If the Geometry stage has no recipe.
@@ -467,10 +465,8 @@ class BookMeasure:
                                changed or deleted while the pages were measured.
         :raises InvalidParametersError: If the measured page does not fit the bounds of the step.
         """
-        holders = await self._holders(book_id)
-        measures = list(
-            (await self._uow.read_book(book_id, lambda repos: BookBlocks(repos).read(Stage.GEOMETRY))).values()
-        )
+        holders = await self._holders(book)
+        measures = list((await book.read(lambda repos: BookBlocks(repos).read(Stage.GEOMETRY))).values())
         if not measures:
             raise ConflictError(NOTHING_TO_MEASURE)
         sizes = BookSize(measures)
@@ -501,21 +497,21 @@ class BookMeasure:
                 if written.params != step.params:
                     self._write(repos, recipe, position, written)
 
-        await self._uow.change_book(book_id, work)
+        await book.change(work)
         return len(measures)
 
-    async def _holders(self, book_id: BookId) -> list[tuple[Recipe, int]]:
+    async def _holders(self, book: Book) -> list[tuple[Recipe, int]]:
         """Return each recipe of the Geometry stage that has the normalize step, with the place of the step in it.
 
-        :param book_id: Book whose recipes are read.
-        :type book_id: BookId
+        :param book: The open book whose recipes are read.
+        :type book: Book
         :returns: The recipes and the positions of their normalize step.
         :rtype: list[tuple[Recipe, int]]
         :raises NotFoundError: If the Geometry stage has no recipe.
         :raises ConflictError: If no recipe has a normalize step.
         """
         holders: list[tuple[Recipe, int]] = []
-        for recipe in await self._recipes.recipes(book_id, Stage.GEOMETRY):
+        for recipe in await self._recipes.recipes(book, Stage.GEOMETRY):
             keys = [step.processor_key for step in recipe.steps]
             if NORMALIZE_KEY in keys:
                 holders.append((recipe, keys.index(NORMALIZE_KEY)))

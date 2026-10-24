@@ -19,7 +19,6 @@ from bookreviver.domain.values import StageRun
 from bookreviver.services.processing_jobs import NO_PAGE_PROCESSED
 from bookreviver.services.stage_runs import RecipeRun
 from bookreviver.services.steps import StepRunner
-from tests.helpers.builders import open_for
 from tests.helpers.processing import change_versions, stored_job
 
 if TYPE_CHECKING:
@@ -28,6 +27,8 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion
     from bookreviver.domain.enums import RunOutcome
     from bookreviver.domain.ids import BookId
+    from bookreviver.ports.persistence import BookDatabases
+    from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -50,48 +51,52 @@ async def untiled_version(kit: ProcessingKit) -> tuple[Actor, BookRecord, PageVe
     page, _ = await kit.seed_scan_page(book_record)
     base = await kit.seed_base_version(book_record.id, page)
     untiled = evolve(base, id=UNTILED_VERSION_ID, tiles_ready=False)
-    await kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.page_versions.add(untiled))
+    await kit.databases.open(book_record.id).change(lambda repos, _book_record: repos.page_versions.add(untiled))
     await kit.store_files(untiled, book_record.id)
     return actor, book_record, untiled
 
 
-async def delete_the_version(kit: ProcessingKit, book_id: BookId, version: PageVersion) -> None:
+async def delete_the_version(book_id: BookId, version: PageVersion, databases: BookDatabases) -> None:
     """Delete the version in a change of its own, as the removal of a page would.
 
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
     :param book_id: Book that holds the version.
     :type book_id: BookId
     :param version: The version to delete.
     :type version: PageVersion
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     """
-    await change_versions(kit, book_id, lambda versions: versions.delete(version.id))
+    await change_versions(book_id, lambda versions: versions.delete(version.id), databases=databases)
 
 
-async def fail_the_version(kit: ProcessingKit, book_id: BookId, version: PageVersion) -> None:
+async def fail_the_version(book_id: BookId, version: PageVersion, databases: BookDatabases) -> None:
     """Mark the version failed in a change of its own, as the collection of old versions would.
 
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
     :param book_id: Book that holds the version.
     :type book_id: BookId
     :param version: The version to mark.
     :type version: PageVersion
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     """
-    await change_versions(kit, book_id, lambda versions: versions.update(evolve(version, state=VersionState.FAILED)))
+    await change_versions(
+        book_id, lambda versions: versions.update(evolve(version, state=VersionState.FAILED)), databases=databases
+    )
 
 
-async def cut_the_tiles_elsewhere(kit: ProcessingKit, book_id: BookId, version: PageVersion) -> None:
+async def cut_the_tiles_elsewhere(book_id: BookId, version: PageVersion, databases: BookDatabases) -> None:
     """Mark the pyramid of the version cut in a change of its own, as the end of a run would.
 
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
     :param book_id: Book that holds the version.
     :type book_id: BookId
     :param version: The version to mark.
     :type version: PageVersion
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     """
-    await change_versions(kit, book_id, lambda versions: versions.update(evolve(version, tiles_ready=True)))
+    await change_versions(
+        book_id, lambda versions: versions.update(evolve(version, tiles_ready=True)), databases=databases
+    )
 
 
 class TestCutTiles:
@@ -109,7 +114,7 @@ class TestCutTiles:
         self,
         fx_kit: ProcessingKit,
         monkeypatch: pytest.MonkeyPatch,
-        change: Callable[[ProcessingKit, BookId, PageVersion], Awaitable[None]],
+        change: Callable[[BookId, PageVersion, BookDatabases], Awaitable[None]],
         kept: tuple[VersionState, bool] | None,
     ) -> None:
         """Verify a version changed after its pyramid was cut keeps the change, and the viewer is not told it is cut.
@@ -119,7 +124,7 @@ class TestCutTiles:
         :param monkeypatch: Fixture putting the change between the cut and the change that marks the version.
         :type monkeypatch: pytest.MonkeyPatch
         :param change: What another request does to the version while its pyramid is cut.
-        :type change: Callable[[ProcessingKit, BookId, PageVersion], Awaitable[None]]
+        :type change: Callable[[BookId, PageVersion, BookDatabases], Awaitable[None]]
         :param kept: The state of the version afterwards and whether it holds a cut pyramid, or None for a version that
                      is gone.
         :type kept: tuple[VersionState, bool] | None
@@ -142,14 +147,14 @@ class TestCutTiles:
             :rtype: PageVersion
             """
             cut_version = await cut(self, keys, version)
-            await change(fx_kit, book_record.id, version)
+            await change(book_record.id, version, fx_kit.databases)
             return cut_version
 
         monkeypatch.setattr(StepRunner, 'cut_tiles', cut_then_change)
 
         await fx_kit.work_queue()
 
-        stored = await fx_kit.uow().read_book(book_record.id, lambda repos: repos.page_versions.find(untiled.id))
+        stored = await fx_kit.databases.open(book_record.id).read(lambda repos: repos.page_versions.find(untiled.id))
         expect(stored_job(fx_kit, job.id).state is JobState.SUCCEEDED)
         expect((stored and (stored.state, stored.tiles_ready)) == kept)
         expect(not any(isinstance(event, PageVersionReady) for event in fx_kit.events.published))
@@ -165,7 +170,7 @@ class TestRunPage:
     """Tests for the run of a stage over a page that is deleted while its step fails."""
 
     async def test_page_deleted_while_its_stage_failed_gets_no_record(
-        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
+        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch, fx_open_book: BookOpener
     ) -> None:
         """Verify the record of a failed stage is not written for a page that is gone, and the job ends for its reason.
 
@@ -176,6 +181,8 @@ class TestRunPage:
         :type fx_kit: ProcessingKit
         :param monkeypatch: Fixture making the run of the page delete it and fail.
         :type monkeypatch: pytest.MonkeyPatch
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await kit_with_page(fx_kit)
 
@@ -196,12 +203,14 @@ class TestRunPage:
             :rtype: RunOutcome
             :raises ConflictError: Always.
             """
-            await fx_kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.pages.delete(page.id))
+            await fx_open_book.databases.open(book_record.id).change(
+                lambda repos, _book_record: repos.pages.delete(page.id)
+            )
             raise ConflictError(STEP_FAILURE)
 
         monkeypatch.setattr(RecipeRun, 'run', delete_the_page_and_fail)
         job = await fx_kit.service().start_run(
-            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
 
         await fx_kit.work_queue()

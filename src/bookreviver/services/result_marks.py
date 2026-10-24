@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, PageVersion
     from bookreviver.domain.ids import PageId, PageVersionId
     from bookreviver.domain.values import ResultNote
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book
 
 PREVIEW_TAKES_NO_MARK: str = 'The version {version_id} is a preview, which takes no mark and no comment.'
@@ -25,18 +25,6 @@ PREVIEW_TAKES_NO_MARK: str = 'The version {version_id} is a preview, which takes
 
 class ResultMarksService:
     """Sets the marks and comments of the results of the acting account's books."""
-
-    def __init__(
-        self,
-        *,
-        uow: UnitOfWork,
-    ) -> None:
-        """Work over the ports of one request.
-
-        :param uow: Unit of work of the request, whose ``change_book`` holds every changing use case.
-        :type uow: UnitOfWork
-        """
-        self._uow = uow
 
     async def set(
         self,
@@ -81,7 +69,7 @@ class ResultMarksService:
                 return version
             return repos.page_versions.update(evolve(version, mark=note.mark, comment=note.comment))
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     @staticmethod
     def _version(repos: BookRepositories, page_id: PageId, version_id: PageVersionId) -> PageVersion:

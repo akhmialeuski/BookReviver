@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion, Scan, Source
-    from bookreviver.ports.persistence import UnitOfWork
     from bookreviver.ports.storage import AssetStore, SourceStore
+    from tests.helpers.builders import BookOpener
 
 SCANS_PER_SOURCE: int = 3
 IMAGE: bytes = b'jpeg'
@@ -46,7 +46,7 @@ class Book(NamedTuple):
 
 
 async def commit_book(
-    database: SqlDatabase, uow: UnitOfWork, sources: SourceStore, assets: AssetStore, owner: Actor | None
+    database: SqlDatabase, stores: BookOpener, sources: SourceStore, assets: AssetStore, owner: Actor | None
 ) -> Book:
     """Commit and store a book of two sources with scans, and one page cut from a scan of the first source.
 
@@ -54,8 +54,8 @@ async def commit_book(
 
     :param database: Catalogue to commit into, which gets the account of the owner when it does not store it.
     :type database: SqlDatabase
-    :param uow: Unit of work to store the book through, over the same catalogue.
-    :type uow: UnitOfWork
+    :param stores: Opens the unit of work to store the book through, over the same catalogue, and the databases.
+    :type stores: BookOpener
     :param sources: Source store receiving the two sources.
     :type sources: SourceStore
     :param assets: Asset store receiving the renditions of the scans and the image of the page.
@@ -79,7 +79,15 @@ async def commit_book(
     version = evolve(make_page_version(page_id=page.id), renditions=ready)
     owner_id = new_account_id() if owner is None else owner.account_id
     await commit_record(
-        database, uow, book_record, page, owner=owner_id, sources=[first, second], scans=scans, versions=[version]
+        database,
+        stores.uow(),
+        book_record,
+        page,
+        owner=owner_id,
+        sources=[first, second],
+        scans=scans,
+        versions=[version],
+        databases=stores.databases,
     )
     keys = BookKeys(book_record.id)
     for source in (first, second):

@@ -6,7 +6,8 @@ import httpx
 import pytest
 from starlette.requests import Request
 
-from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabases
+from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlDatabase
 from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
 from bookreviver.adapters.tracing.null import NullTracer
@@ -14,7 +15,7 @@ from bookreviver.api.auth import current_actor
 from bookreviver.app.main import create_app
 from bookreviver.app.settings import AuthSettings, Settings
 from bookreviver.domain.entities import Actor
-from tests.helpers.builders import new_account_id
+from tests.helpers.builders import BookOpener, new_account_id
 from tests.helpers.database import SharedDatabaseProvider, copy_schema_template, create_schema_template, database_file
 from tests.helpers.fakes_jobs import RecordingEventBus
 from tests.helpers.processing import InProcessExecutorProvider
@@ -29,8 +30,8 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from httpx_oauth.oauth2 import BaseOAuth2
 
-    from bookreviver.ports.persistence import UnitOfWork
-    from tests.helpers.database import UnitOfWorkFactory
+    from bookreviver.ports.persistence import BookDatabases, UnitOfWork
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 TEST_BASE_URL: str = 'http://testserver'
 TEST_SECRET: str = 'test-secret-that-is-long-enough-for-signing'
@@ -169,7 +170,7 @@ async def fx_database(fx_settings: Settings, fx_schema_template: Path, fx_actor:
 
 
 @pytest.fixture
-async def fx_books(fx_settings: Settings, fx_book_template: Path) -> AsyncIterator[BookDatabases]:
+async def fx_books(fx_settings: Settings, fx_book_template: Path) -> AsyncIterator[BookRegistry]:
     """Open the registry of the books of the test, under the storage root of the settings, and close its books after.
 
     :param fx_settings: Settings naming the storage root.
@@ -177,9 +178,9 @@ async def fx_books(fx_settings: Settings, fx_book_template: Path) -> AsyncIterat
     :param fx_book_template: The blank file every new book copies.
     :type fx_book_template: Path
     :returns: Iterator yielding the registry and closing every book it opened afterwards.
-    :rtype: AsyncIterator[BookDatabases]
+    :rtype: AsyncIterator[BookRegistry]
     """
-    books = BookDatabases(
+    books = BookRegistry(
         fx_settings.storage_root,
         tracer=NullTracer(),
         wait_seconds=fx_settings.change_wait.job_seconds,
@@ -193,19 +194,15 @@ async def fx_books(fx_settings: Settings, fx_book_template: Path) -> AsyncIterat
 
 
 @pytest.fixture
-def fx_uow(
-    fx_database: SqlDatabase, fx_books: BookDatabases, fx_settings: Settings, fx_book_changes: RecordingEventBus
-) -> UnitOfWorkFactory:
+def fx_uow(fx_database: SqlDatabase, fx_books: BookRegistry, fx_settings: Settings) -> UnitOfWorkFactory:
     """Return a function opening a new unit of work over the catalogue and the books of the test, as a request would get.
 
     :param fx_database: Catalogue of the test.
     :type fx_database: SqlDatabase
     :param fx_books: Registry of the books of the test.
-    :type fx_books: BookDatabases
+    :type fx_books: BookRegistry
     :param fx_settings: Settings of the test, whose job limit is the wait of a unit of work opened with none.
     :type fx_settings: Settings
-    :param fx_book_changes: Where the units of work announce the committed changes of the books.
-    :type fx_book_changes: RecordingEventBus
     :returns: Function opening a unit of work over ``fx_database`` and ``fx_books``.
     :rtype: UnitOfWorkFactory
     """
@@ -219,9 +216,53 @@ def fx_uow(
         :rtype: UnitOfWork
         """
         seconds = fx_settings.change_wait.job_seconds if wait_seconds is None else wait_seconds
-        return SqlAlchemyUnitOfWork(fx_database, fx_books, publisher=fx_book_changes, wait_seconds=seconds)
+        return SqlAlchemyUnitOfWork(fx_database, fx_books, wait_seconds=seconds)
 
     return open_unit_of_work
+
+
+@pytest.fixture
+def fx_databases(
+    fx_books: BookRegistry, fx_settings: Settings, fx_book_changes: RecordingEventBus
+) -> BookDatabasesFactory:
+    """Return a function opening a new opener of the databases of the books of the test, as a request would get.
+
+    :param fx_books: Registry of the books of the test.
+    :type fx_books: BookRegistry
+    :param fx_settings: Settings of the test, whose job limit is the wait of an opener made with none.
+    :type fx_settings: Settings
+    :param fx_book_changes: Where the book databases announce the committed changes of the books.
+    :type fx_book_changes: RecordingEventBus
+    :returns: Function opening the databases of ``fx_books``.
+    :rtype: BookDatabasesFactory
+    """
+
+    def open_databases(*, wait_seconds: float | None = None) -> BookDatabases:
+        """Open the databases of the books of the test.
+
+        :param wait_seconds: How long a change waits for its turn, or None for the job limit of the settings.
+        :type wait_seconds: float | None
+        :returns: A new opener of the databases of the books.
+        :rtype: BookDatabases
+        """
+        seconds = fx_settings.change_wait.job_seconds if wait_seconds is None else wait_seconds
+        return SqlAlchemyBookDatabases(fx_books, publisher=fx_book_changes, wait_seconds=seconds)
+
+    return open_databases
+
+
+@pytest.fixture
+def fx_open_book(fx_uow: UnitOfWorkFactory, fx_databases: BookDatabasesFactory) -> BookOpener:
+    """Return the opener of the books of the test, which opens a book of an account with its database.
+
+    :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
+    :type fx_uow: UnitOfWorkFactory
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
+    :returns: The opener, called with the actor and the identifier of the book.
+    :rtype: BookOpener
+    """
+    return BookOpener(uow=fx_uow, databases=fx_databases())
 
 
 @pytest.fixture
@@ -245,13 +286,13 @@ def fx_social_clients() -> Sequence[BaseOAuth2[Any]] | None:
 
 
 @pytest.fixture
-def fx_shared_database(fx_database: SqlDatabase, fx_books: BookDatabases) -> SharedDatabaseProvider:
+def fx_shared_database(fx_database: SqlDatabase, fx_books: BookRegistry) -> SharedDatabaseProvider:
     """Hand the application the catalogue and the books of the test in place of its own.
 
     :param fx_database: Catalogue of the test.
     :type fx_database: SqlDatabase
     :param fx_books: Registry of the books of the test.
-    :type fx_books: BookDatabases
+    :type fx_books: BookRegistry
     :returns: The provider overriding the catalogue and the registry of the books of the application.
     :rtype: SharedDatabaseProvider
     """

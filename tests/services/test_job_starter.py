@@ -13,7 +13,6 @@ from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.events import JobChanged, PageVersionReady
 from bookreviver.domain.ids import PageVersionId
 from bookreviver.domain.values import StageRun, Step, StepPreview, TileCut
-from tests.helpers.builders import open_for
 from tests.helpers.held_steps import steps_held
 from tests.helpers.processors import FakeProcessor
 
@@ -25,6 +24,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.values import MetadataMap
     from bookreviver.services.book import Book
     from bookreviver.services.processing_parts import JobStarter
+    from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -126,7 +126,7 @@ class TestRunFollowUp:
     """Tests for the collection a run queues behind itself, and the jobs that wait for the book meanwhile."""
 
     async def test_book_is_never_free_between_the_run_and_its_collection(
-        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch
+        self, fx_kit: ProcessingKit, monkeypatch: pytest.MonkeyPatch, fx_open_book: BookOpener
     ) -> None:
         """Verify the collection is put while the run is still active, so no request finds the book free between.
 
@@ -134,10 +134,12 @@ class TestRunFollowUp:
         :type fx_kit: ProcessingKit
         :param monkeypatch: Fixture wrapping the board to note which jobs are active whenever a job is put.
         :type monkeypatch: pytest.MonkeyPatch
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, _ = await prepared_page(fx_kit)
         await fx_kit.service().start_run(
-            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         seen: list[tuple[JobKind, list[JobKind]]] = []
         put = fx_kit.board.put
@@ -161,7 +163,7 @@ class TestRunFollowUp:
 
     @pytest.mark.parametrize(HOUSEKEEPING_ARGUMENT, [JobKind.CUT_TILES, JobKind.COLLECT_VERSIONS])
     async def test_run_queues_no_collection_while_a_housekeeping_job_is_active(
-        self, fx_kit: ProcessingKit, housekeeping: JobKind
+        self, fx_kit: ProcessingKit, housekeeping: JobKind, fx_open_book: BookOpener
     ) -> None:
         """Verify a run that ends with a tile cutting or a collection queued behind it puts no second collection.
 
@@ -169,10 +171,12 @@ class TestRunFollowUp:
         :type fx_kit: ProcessingKit
         :param housekeeping: The kind of the job queued behind the run.
         :type housekeeping: JobKind
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, _ = await prepared_page(fx_kit)
         run = await fx_kit.service().start_run(
-            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         starter = fx_kit.parts(fx_kit.uow()).starter
         waiting = await starter.enqueue(book_record.id, housekeeping, params_of(starter, housekeeping))
@@ -181,7 +185,9 @@ class TestRunFollowUp:
         expect(began(fx_kit) == [run.id, waiting.id])
         assert_expectations()
 
-    async def test_cancelled_run_queues_no_collection_of_its_own(self, fx_kit: ProcessingKit) -> None:
+    async def test_cancelled_run_queues_no_collection_of_its_own(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify a run cancelled and replaced by another job puts no collection behind the replacement for itself.
 
         The replacement is a run of another stage, asked for while the cancelled run is still inside its task, and the
@@ -189,15 +195,17 @@ class TestRunFollowUp:
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, _ = await prepared_page(fx_kit)
         run = await fx_kit.service().start_run(
-            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         async with steps_held(fx_kit):
             await fx_kit.board.cancel(run.id)
             replacement = await fx_kit.service().start_run(
-                open_for(actor, book_record.id), Stage.CLEANUP, StageRun(stage=Stage.CLEANUP)
+                fx_open_book(actor, book_record.id), Stage.CLEANUP, StageRun(stage=Stage.CLEANUP)
             )
         expect([job.kind for job in fx_kit.board.put_jobs] == [JobKind.RUN_STAGE] * 2 + [JobKind.COLLECT_VERSIONS])
         expect(began(fx_kit)[:2] == [run.id, replacement.id])
@@ -210,7 +218,7 @@ class TestCancelledRunHoldsTheBook:
 
     @pytest.mark.parametrize('ask', [ASK_FOR_COLLECTION, ASK_FOR_MEASURE], ids=['collection', 'measure'])
     async def test_job_asked_for_after_the_cancel_starts_only_when_the_task_under_way_has_returned(
-        self, fx_kit: ProcessingKit, ask: attrgetter[Callable[[Book], Awaitable[Job]]]
+        self, fx_kit: ProcessingKit, ask: attrgetter[Callable[[Book], Awaitable[Job]]], fx_open_book: BookOpener
     ) -> None:
         """Verify the book is not worked on by two jobs at once, though the cancelled run no longer counts as active.
 
@@ -222,14 +230,16 @@ class TestCancelledRunHoldsTheBook:
         :type fx_kit: ProcessingKit
         :param ask: The way to ask for the job from the processing service.
         :type ask: attrgetter[Callable[[Book], Awaitable[Job]]]
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, _ = await prepared_page(fx_kit)
         run = await fx_kit.service().start_run(
-            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         async with steps_held(fx_kit):
             await fx_kit.board.cancel(run.id)
-            asked = await ask(fx_kit.service())(open_for(actor, book_record.id))
+            asked = await ask(fx_kit.service())(fx_open_book(actor, book_record.id))
             while_held = (fx_kit.board.get(run.id).state, fx_kit.board.get(asked.id).state, began(fx_kit))
         published = fx_kit.events.published
         step_returned = next(index for index, event in enumerate(published) if isinstance(event, PageVersionReady))
@@ -247,19 +257,23 @@ class TestCancelledRunHoldsTheBook:
 class TestRunHandOff:
     """Tests for the jobs a book queues behind a run, and the run it is asked for while it waits."""
 
-    async def test_second_run_is_refused_while_a_run_is_active(self, fx_kit: ProcessingKit) -> None:
+    async def test_second_run_is_refused_while_a_run_is_active(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify a run is refused with a readable reason while another run of the book is queued.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, _ = await prepared_page(fx_kit)
         await fx_kit.service().start_run(
-            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         with pytest.raises(ConflictError, match=BUSY_REASON):
             await fx_kit.service().start_run(
-                open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+                fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
             )
 
     @pytest.mark.parametrize(REQUESTED_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
@@ -287,15 +301,19 @@ class TestRunHandOff:
         expect(began(fx_kit)[:2] == [blocker.id, waiting.id])
         assert_expectations()
 
-    async def test_housekeeping_waits_behind_a_run_and_a_second_one_is_refused(self, fx_kit: ProcessingKit) -> None:
+    async def test_housekeeping_waits_behind_a_run_and_a_second_one_is_refused(
+        self, fx_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify a tile cutting asked for during a run is queued behind it, and a second cutting is refused.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, _ = await prepared_page(fx_kit)
         run = await fx_kit.service().start_run(
-            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         starter = fx_kit.parts(fx_kit.uow()).starter
         tiles = await starter.enqueue(book_record.id, JobKind.CUT_TILES, NO_SUCH_TILES)
@@ -333,7 +351,7 @@ class TestRunTakesTheBookFromAPreview:
 
     @pytest.mark.parametrize(REQUESTED_ARGUMENT, [JobKind.RUN_STAGE, JobKind.MEASURE_BOOK])
     async def test_running_preview_is_cancelled_and_the_request_waits_for_its_task(
-        self, fx_kit: ProcessingKit, requested: JobKind
+        self, fx_kit: ProcessingKit, requested: JobKind, fx_open_book: BookOpener
     ) -> None:
         """Verify a preview cancelled while its step is under way leaves the request queued until the step returned.
 
@@ -341,10 +359,12 @@ class TestRunTakesTheBookFromAPreview:
         :type fx_kit: ProcessingKit
         :param requested: The kind of job the user asks for.
         :type requested: JobKind
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, page = await prepared_page(fx_kit)
         starter = fx_kit.parts(fx_kit.uow()).starter
-        preview = await fx_kit.service().start_preview(open_for(actor, book_record.id), preview_of(page))
+        preview = await fx_kit.service().start_preview(fx_open_book(actor, book_record.id), preview_of(page))
         async with steps_held(fx_kit):
             asked = await starter.enqueue(book_record.id, requested, params_of(starter, requested))
             while_held = (fx_kit.board.get(preview.id).state, fx_kit.board.get(asked.id).state, began(fx_kit))
@@ -372,17 +392,19 @@ class TestRunTakesTheBookFromAPreview:
         expect(fx_kit.board.get(preview.id).state is JobState.CANCELLED)
         assert_expectations()
 
-    async def test_cancelled_preview_is_announced(self, fx_kit: ProcessingKit) -> None:
+    async def test_cancelled_preview_is_announced(self, fx_kit: ProcessingKit, fx_open_book: BookOpener) -> None:
         """Verify the browser is told the preview was cancelled, so it stops waiting for it.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, _ = await prepared_page(fx_kit)
         starter = fx_kit.parts(fx_kit.uow()).starter
         preview = await starter.enqueue(book_record.id, JobKind.PREVIEW_STEP, {})
         await fx_kit.service().start_run(
-            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         changes = [event.job for event in fx_kit.events.published if isinstance(event, JobChanged)]
         assert [(job.id, job.state) for job in changes] == [(preview.id, JobState.CANCELLED)]
@@ -489,15 +511,17 @@ class TestHousekeepingRequests:
         expect(fx_kit.board.put_jobs == [])
         assert_expectations()
 
-    async def test_tile_cutting_is_queued_behind_a_run(self, fx_kit: ProcessingKit) -> None:
+    async def test_tile_cutting_is_queued_behind_a_run(self, fx_kit: ProcessingKit, fx_open_book: BookOpener) -> None:
         """Verify a tile cutting asked for during a run is queued behind it, with the versions it must cut.
 
         :param fx_kit: What the processing services of the test share.
         :type fx_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, _ = await prepared_page(fx_kit)
         run = await fx_kit.service().start_run(
-            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         tiles = await fx_kit.parts(fx_kit.uow()).starter.enqueue_tiles(book_record.id, [NO_SUCH_VERSION])
         expect(tiles is not None and tiles.state is JobState.QUEUED)

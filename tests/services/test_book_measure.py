@@ -9,7 +9,7 @@ import pytest
 from attrs import evolve
 from delayed_assert import assert_expectations, expect
 
-from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyUnitOfWork
+from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
 from bookreviver.domain.enums import (
     JobKind,
     JobState,
@@ -35,7 +35,8 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import Actor, BookRecord, Job, Page, PageStage, Recipe
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookRepositories
+    from bookreviver.ports.persistence import BookDatabases, BookRepositories
+    from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -130,7 +131,7 @@ async def placed_page(
         repos.page_versions.add(normalize)
         repos.page_stages.save(make_page_stage(page_id=page.id, recipe_id=recipe.id, head_version_id=normalize.id))
 
-    await kit.uow().change_book(book_record.id, add_normalize)
+    await kit.databases.open(book_record.id).change(add_normalize)
     return page
 
 
@@ -174,25 +175,25 @@ async def measure(kit: ProcessingKit, actor: Actor, book_record: BookRecord) -> 
     :returns: The job as it stands when the board is done.
     :rtype: Job
     """
-    job = await kit.service().start_measure(open_for(actor, book_record.id))
+    job = await kit.service().start_measure(open_for(actor, book_record.id, databases=kit.databases))
     await kit.work_queue()
     return stored_job(kit, job.id)
 
 
-async def geometry_record(kit: ProcessingKit, book_id: BookId, page: Page) -> PageStage:
+async def geometry_record(book_id: BookId, page: Page, *, databases: BookDatabases) -> PageStage:
     """Read the committed record of the Geometry stage of a page.
 
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
     :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The record.
     :rtype: PageStage
     """
-    return await kit.uow().read_book(
-        book_id, lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
+    return await databases.open(book_id).read(
+        lambda repos: repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY))
     )
 
 
@@ -414,7 +415,7 @@ class TestMeasureBook:
             for index, (width, height, line_height) in enumerate(BLOCKS)
         ]
         await measure(fx_cv_kit, actor, book_record)
-        records = [await geometry_record(fx_cv_kit, book_record.id, page) for page in pages]
+        records = [await geometry_record(book_record.id, page, databases=fx_cv_kit.databases) for page in pages]
         assert all(record.state is StageState.STALE for record in records)
 
     async def test_measuring_again_changes_nothing_and_marks_nothing(self, fx_cv_kit: ProcessingKit) -> None:
@@ -427,7 +428,7 @@ class TestMeasureBook:
         recipe = await fx_cv_kit.recipe_of(actor, book_record, Stage.GEOMETRY)
         page = await placed_page(fx_cv_kit, book_record, recipe, FIRST_KEY, block_data(300, 600, 30))
         await measure(fx_cv_kit, actor, book_record)
-        written = await fx_cv_kit.uow().read_book(book_record.id, lambda repos: repos.recipes.get(recipe.id))
+        written = await fx_cv_kit.databases.open(book_record.id).read(lambda repos: repos.recipes.get(recipe.id))
 
         def make_fresh(repos: BookRepositories, _book_record: BookRecord) -> None:
             """Make the record of the Geometry stage of the page fresh again.
@@ -441,10 +442,10 @@ class TestMeasureBook:
                 evolve(repos.page_stages.get(PageStageKey(page.id, Stage.GEOMETRY)), state=StageState.FRESH)
             )
 
-        await fx_cv_kit.uow().change_book(book_record.id, make_fresh)
+        await fx_cv_kit.databases.open(book_record.id).change(make_fresh)
         job = await measure(fx_cv_kit, actor, book_record)
-        again = await fx_cv_kit.uow().read_book(book_record.id, lambda repos: repos.recipes.get(recipe.id))
-        record = await geometry_record(fx_cv_kit, book_record.id, page)
+        again = await fx_cv_kit.databases.open(book_record.id).read(lambda repos: repos.recipes.get(recipe.id))
+        record = await geometry_record(book_record.id, page, databases=fx_cv_kit.databases)
         expect(job.state is JobState.SUCCEEDED)
         expect(again.steps == written.steps)
         expect(again.updated_at == written.updated_at)
@@ -505,7 +506,7 @@ class TestMeasureBook:
         ]
         page = await placed_page(fx_cv_kit, book_record, recipes[0], FIRST_KEY, block_data(300, 600, 30))
         job = await measure(fx_cv_kit, actor, book_record)
-        record = await geometry_record(fx_cv_kit, book_record.id, page)
+        record = await geometry_record(book_record.id, page, databases=fx_cv_kit.databases)
         expect(job.state is JobState.FAILED)
         expect(NORMALIZE_KEY in job.error)
         expect(record.state is StageState.FRESH)
@@ -608,42 +609,54 @@ class TestMarginsSource:
 class TestMeasureIsProcessing:
     """Tests for the measure of the book being one of the jobs that run one at a time."""
 
-    async def test_a_run_is_refused_while_a_measure_is_queued(self, fx_cv_kit: ProcessingKit) -> None:
+    async def test_a_run_is_refused_while_a_measure_is_queued(
+        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify a run cannot start while a measure is queued, since the measure rewrites the parameters it reads.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_cv_kit.seed_record()
-        await fx_cv_kit.service().start_measure(open_for(actor, book_record.id))
+        await fx_cv_kit.service().start_measure(fx_open_book(actor, book_record.id))
         with pytest.raises(ConflictError, match='measure of the book'):
             await fx_cv_kit.service().start_run(
-                open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+                fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
             )
 
-    async def test_a_measure_is_refused_while_a_run_is_queued(self, fx_cv_kit: ProcessingKit) -> None:
+    async def test_a_measure_is_refused_while_a_run_is_queued(
+        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify a measure cannot start while a run is queued, since the run writes the versions that are measured.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_cv_kit.seed_record()
         await fx_cv_kit.service().start_run(
-            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         with pytest.raises(ConflictError, match=BUSY_MESSAGE):
-            await fx_cv_kit.service().start_measure(open_for(actor, book_record.id))
+            await fx_cv_kit.service().start_measure(fx_open_book(actor, book_record.id))
 
-    async def test_a_second_measure_is_refused_while_one_is_queued(self, fx_cv_kit: ProcessingKit) -> None:
+    async def test_a_second_measure_is_refused_while_one_is_queued(
+        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify two measures never overlap.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record = await fx_cv_kit.seed_record()
-        await fx_cv_kit.service().start_measure(open_for(actor, book_record.id))
+        await fx_cv_kit.service().start_measure(fx_open_book(actor, book_record.id))
         with pytest.raises(ConflictError, match=BUSY_MESSAGE):
-            await fx_cv_kit.service().start_measure(open_for(actor, book_record.id))
+            await fx_cv_kit.service().start_measure(fx_open_book(actor, book_record.id))
 
 
 class TestMeasureApplyStep:
@@ -662,8 +675,8 @@ class TestMeasureApplyStep:
         """Verify the measure does not write over a recipe a user saved after the measure read it, in any recipe.
 
         The boxes of the pages are read by a transaction that only reads, and the measure writes in the first
-        ``change_book`` that follows it, which no other change of the job precedes. The recipe is saved just before that
-        ``change_book`` begins, so the measure was made from steps that are not the ones stored any more. The recipe of
+        ``Book.change`` that follows it, which no other change of the job precedes. The recipe is saved just before that
+        ``Book.change`` begins, so the measure was made from steps that are not the ones stored any more. The recipe of
         the kind that comes first is written first inside the change, and the change is rolled back as a whole when a
         later one is found changed.
 
@@ -680,18 +693,16 @@ class TestMeasureApplyStep:
         before = {each: await normalize_params(fx_cv_kit, actor, book_record, each) for each in RecipeKind}
         # The save goes in before the first change of a book, and passes through the patched method itself, as the
         # measure's change does
-        change_book = SqlAlchemyUnitOfWork.change_book
+        change = SqlAlchemyBookDatabase.change
         saved = False
 
-        async def save_then_change_book[T](
-            uow: SqlAlchemyUnitOfWork, book_id: BookId, work: Callable[[BookRepositories, BookRecord], T]
+        async def save_then_change[T](
+            database: SqlAlchemyBookDatabase, work: Callable[[BookRepositories, BookRecord], T]
         ) -> T:
             """Save the recipe of a kind through the form's use case before the first change of a book, then change.
 
-            :param uow: The unit of work that changes the book.
-            :type uow: SqlAlchemyUnitOfWork
-            :param book_id: Book that is changed.
-            :type book_id: BookId
+            :param database: The book database that changes the book.
+            :type database: SqlAlchemyBookDatabase
             :param work: Function over the repositories of the transaction and the record of the book.
             :type work: Callable[[BookRepositories, BookRecord], T]
             :returns: What the work returns.
@@ -704,9 +715,9 @@ class TestMeasureApplyStep:
                 await set_normalize_params(
                     fx_cv_kit, actor, book_record, {NormalizeParam.LINE_HEIGHT: HAND_LINE_HEIGHT}, kind
                 )
-            return await change_book(uow, book_id, work)
+            return await change(database, work)
 
-        monkeypatch.setattr(SqlAlchemyUnitOfWork, 'change_book', save_then_change_book)
+        monkeypatch.setattr(SqlAlchemyBookDatabase, 'change', save_then_change)
         job = await measure(fx_cv_kit, actor, book_record)
         after = {each: await normalize_params(fx_cv_kit, actor, book_record, each) for each in RecipeKind}
         written_by_hand = {**before[kind], NormalizeParam.LINE_HEIGHT: HAND_LINE_HEIGHT}

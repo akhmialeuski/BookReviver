@@ -113,7 +113,7 @@ async def chain_of(kit: ProcessingKit, book_id: BookId, page: Page, stage: Stage
             chain.insert(0, version)
         return chain
 
-    return await kit.uow().read_book(book_id, walk)
+    return await kit.databases.open(book_id).read(walk)
 
 
 async def seed_staged_book(kit: ProcessingKit, case: StageCase) -> StagedBook:
@@ -134,7 +134,7 @@ async def seed_staged_book(kit: ProcessingKit, case: StageCase) -> StagedBook:
         pages.append(page)
     full, partial, idle, other = pages
     other = evolve(other, kind=PageKind.PLATE)
-    await kit.uow().change_book(book_record.id, lambda repos, _book_record: repos.pages.update(other))
+    await kit.databases.open(book_record.id).change(lambda repos, _book_record: repos.pages.update(other))
     if case.stage is Stage.CLEANUP:
         await run_stage(kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
     steps = [Step(processor_key=case.processor_key) for _ in range(STEP_COUNT)]
@@ -306,7 +306,12 @@ class TestPicture:
         """
         book = await seed_staged_book(fx_kit, case)
         later = [
-            await seed_head(fx_kit, book.book_record.id, PageStageKey(page.id, case.later), after=book.reads[page.id])
+            await seed_head(
+                book.book_record.id,
+                PageStageKey(page.id, case.later),
+                after=book.reads[page.id],
+                databases=fx_kit.databases,
+            )
             for page in book.pages
         ]
         step_id = None if step_index is None else book.step_ids[step_index]

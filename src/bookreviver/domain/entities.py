@@ -150,16 +150,6 @@ class LibraryEntry:
         """The identifier the entry is stored under, which is its book's: a book is in one library."""
         return self.book_id
 
-    def is_owned_by(self, actor: Actor) -> bool:
-        """Return whether the actor owns the book.
-
-        :param actor: Account acting in the current request.
-        :type actor: Actor
-        :returns: True when the actor's account is the book's owner.
-        :rtype: bool
-        """
-        return self.owner_id == actor.account_id
-
 
 @frozen(kw_only=True)
 class BookOverview:

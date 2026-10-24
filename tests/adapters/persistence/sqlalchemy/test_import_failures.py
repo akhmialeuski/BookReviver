@@ -8,7 +8,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.values import JobEnd, SliceRequest
-from tests.helpers.builders import make_record, open_for
+from tests.helpers.builders import make_record
 from tests.helpers.fakes_imports import pdf_upload
 from tests.helpers.seeding import store_book
 
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.domain.ids import AccountId
+    from tests.helpers.builders import BookOpener
     from tests.helpers.database import UnitOfWorkFactory
     from tests.helpers.fakes_imports import ImportRig
 
@@ -30,7 +31,12 @@ class TestFailedImportOnSqlAlchemy:
     """Tests for ImportService.run_import() against the database, when a source's files cannot be promoted."""
 
     async def test_source_whose_files_cannot_be_promoted_leaves_no_row_of_it(
-        self, fx_uow: UnitOfWorkFactory, fx_owner_id: AccountId, fx_import_rig: Callable[..., ImportRig], tmp_path: Path
+        self,
+        fx_uow: UnitOfWorkFactory,
+        fx_owner_id: AccountId,
+        fx_import_rig: Callable[..., ImportRig],
+        tmp_path: Path,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify the withdrawal removes the source, its scans and its pages, and the failed job counts none of them.
 
@@ -46,22 +52,23 @@ class TestFailedImportOnSqlAlchemy:
         :type fx_import_rig: Callable[..., ImportRig]
         :param tmp_path: Temporary directory of the test, holding the storage root.
         :type tmp_path: Path
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         rig = fx_import_rig()
         samples = tmp_path / 'samples'
         samples.mkdir()
         book_record = make_record()
         uow = fx_uow()
-        await store_book(uow, book_record, owner=fx_owner_id)
+        await store_book(uow, book_record, owner=fx_owner_id, databases=fx_open_book.databases)
         job = await rig.service(uow=uow).start_import(
-            open_for(Actor(account_id=fx_owner_id), book_record.id), [pdf_upload(samples, 'a.pdf', pages=PAGES)]
+            fx_open_book(Actor(account_id=fx_owner_id), book_record.id), [pdf_upload(samples, 'a.pdf', pages=PAGES)]
         )
         rig.sources.fail_on_promote = OSError('disk full')
 
         await rig.fakes.board.run_queued()
 
-        sources, unimported, scans, pages = await uow.read_book(
-            book_record.id,
+        sources, unimported, scans, pages = await fx_open_book.databases.open(book_record.id).read(
             lambda repos: (
                 repos.sources.list_all(),
                 repos.sources.list_unimported(),

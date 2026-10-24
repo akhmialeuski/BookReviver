@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import BookRecord
     from tests.api.imports.watch import ImportWatch
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -108,9 +108,9 @@ class TestUploadDirectories:
         self,
         fx_client: httpx.AsyncClient,
         fx_import: ImportWatch,
-        fx_uow: UnitOfWorkFactory,
         fx_book: BookRecord,
         tmp_path: Path,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the parts of a directory keep their order, which differs from the natural order of their names.
 
@@ -121,12 +121,12 @@ class TestUploadDirectories:
         :type fx_client: httpx.AsyncClient
         :param fx_import: Reader of the imports the application runs.
         :type fx_import: ImportWatch
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         parts = [
             _part(
@@ -140,7 +140,7 @@ class TestUploadDirectories:
         response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book.id), files=parts)
         finished = await fx_import.finished(response.json())
 
-        book = await stored_book(fx_uow(), fx_book.id)
+        book = await stored_book(fx_book.id, databases=fx_databases())
         sources, pages = book.sources, book.pages
         scans = {scan.id: scan for scan in book.scans}
         report = await fx_import.report(fx_book.id)
@@ -163,8 +163,8 @@ class TestUploadDirectories:
         self,
         fx_client: httpx.AsyncClient,
         fx_import: ImportWatch,
-        fx_uow: UnitOfWorkFactory,
         fx_book: BookRecord,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify more files than Starlette's default limit are accepted, each a source in the order of the list.
 
@@ -177,10 +177,10 @@ class TestUploadDirectories:
         :type fx_client: httpx.AsyncClient
         :param fx_import: Reader of the imports the application runs.
         :type fx_import: ImportWatch
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         suffixes = cycle(SCAN_FORMATS)
         names = []
@@ -197,7 +197,7 @@ class TestUploadDirectories:
         response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book.id), files=parts)
         finished = await fx_import.finished(response.json())
 
-        book = await stored_book(fx_uow(), fx_book.id)
+        book = await stored_book(fx_book.id, databases=fx_databases())
         sources, pages = book.sources, book.pages
         scans = {scan.id: scan for scan in book.scans}
         report = await fx_import.report(fx_book.id)
@@ -215,9 +215,9 @@ class TestUploadDirectories:
         self,
         fx_client: httpx.AsyncClient,
         fx_import: ImportWatch,
-        fx_uow: UnitOfWorkFactory,
         fx_book: BookRecord,
         tmp_path: Path,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a single file chosen alone, with no folder, becomes one source, as a directory of files does.
 
@@ -225,19 +225,19 @@ class TestUploadDirectories:
         :type fx_client: httpx.AsyncClient
         :param fx_import: Reader of the imports the application runs.
         :type fx_import: ImportWatch
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         cover = image_upload(tmp_path, COVER_NAME).file.read()
 
         response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book.id), files=[_part(COVER_NAME, cover)])
         finished = await fx_import.finished(response.json())
 
-        sources = (await stored_book(fx_uow(), fx_book.id)).sources
+        sources = (await stored_book(fx_book.id, databases=fx_databases())).sources
         expect(response.status_code == HTTPStatus.ACCEPTED)
         expect(finished[STATE_FIELD] == JobState.SUCCEEDED)
         expect([(source.file_name, source.scan_count) for source in sources] == [(COVER_NAME, 1)])
@@ -248,9 +248,9 @@ class TestUploadDirectories:
         self,
         fx_client: httpx.AsyncClient,
         fx_import: ImportWatch,
-        fx_uow: UnitOfWorkFactory,
         fx_book: BookRecord,
         tmp_path: Path,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a TIFF of three frames, each of its own width, is one source with three scans numbered from zero.
 
@@ -258,12 +258,12 @@ class TestUploadDirectories:
         :type fx_client: httpx.AsyncClient
         :param fx_import: Reader of the imports the application runs.
         :type fx_import: ImportWatch
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         widths = [96, 64, 80]
         book = write_tiff(
@@ -275,7 +275,7 @@ class TestUploadDirectories:
         )
         finished = await fx_import.finished(response.json())
 
-        stored = await stored_book(fx_uow(), fx_book.id)
+        stored = await stored_book(fx_book.id, databases=fx_databases())
         [source], pages = stored.sources, stored.pages
         scans = {scan.id: scan for scan in stored.scans}
         expect(finished[STATE_FIELD] == JobState.SUCCEEDED)
@@ -294,8 +294,8 @@ class TestUploadDirectories:
         self,
         fx_client: httpx.AsyncClient,
         fx_import: ImportWatch,
-        fx_uow: UnitOfWorkFactory,
         fx_book: BookRecord,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify ``vol1/001.tif`` and ``vol2/001.tif`` are two sources with those names, not a duplicate name.
 
@@ -303,10 +303,10 @@ class TestUploadDirectories:
         :type fx_client: httpx.AsyncClient
         :param fx_import: Reader of the imports the application runs.
         :type fx_import: ImportWatch
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         parts = [
             _part(FIRST_VOLUME_SCAN, _scan(1, image_format=TIFF_FORMAT)),
@@ -316,7 +316,7 @@ class TestUploadDirectories:
         response = await fx_client.post(SOURCES_PATH.format(book_id=fx_book.id), files=parts)
         finished = await fx_import.finished(response.json())
 
-        sources = (await stored_book(fx_uow(), fx_book.id)).sources
+        sources = (await stored_book(fx_book.id, databases=fx_databases())).sources
         expect(response.status_code == HTTPStatus.ACCEPTED)
         expect(finished[STATE_FIELD] == JobState.SUCCEEDED)
         expect([source.file_name for source in sources] == [FIRST_VOLUME_SCAN, 'vol2/001.tif'])
@@ -336,18 +336,22 @@ class TestUploadDirectories:
         ids=['parent-folder', 'parent-folder-in-the-middle', 'absolute-path', 'drive-relative', 'no-file-name'],
     )
     async def test_path_that_leaves_its_folder_is_a_400_problem_and_imports_nothing(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_book: BookRecord, case: UnsafePathCase
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_book: BookRecord,
+        case: UnsafePathCase,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify an unsafe path refuses the whole upload with a problem, before a job is put on the board.
 
         :param fx_client: Client of the signed-in account.
         :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_book: Book of the signed-in account.
         :type fx_book: BookRecord
         :param case: A file name the upload sends, and the problem it must be refused with.
         :type case: UnsafePathCase
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         parts = [
             _part('001.tif', _scan(1, image_format=TIFF_FORMAT)),
@@ -361,5 +365,5 @@ class TestUploadDirectories:
         expect(response.headers[CONTENT_TYPE_HEADER].startswith(PROBLEM_MEDIA_TYPE))
         expect(response.json()['detail'] == case.problem.label)
         expect(jobs['items'] == [])
-        expect((await stored_book(fx_uow(), fx_book.id)).sources == [])
+        expect((await stored_book(fx_book.id, databases=fx_databases())).sources == [])
         assert_expectations()

@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import BookRecord, Page
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.values import CarryRequest, PageStepKey
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import Clock
     from bookreviver.services.book import Book
     from bookreviver.services.stage_records import StageRecords
@@ -44,17 +44,14 @@ MASK_NOT_CARRIED: str = 'The edit of this step is a mask painted on one page, wh
 class CarryOverService:
     """Carries the shape a page has set by hand over to the following, the selected or the same kind pages."""
 
-    def __init__(self, *, uow: UnitOfWork, records: StageRecords, clock: Clock) -> None:
+    def __init__(self, *, records: StageRecords, clock: Clock) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose ``change_book`` ends the carry-over.
-        :type uow: UnitOfWork
         :param records: Writer of the stage records, which a changed edit marks stale.
         :type records: StageRecords
         :param clock: Clock stamping the states and the changes.
         :type clock: Clock
         """
-        self._uow = uow
         self._records = records
         self._clock = clock
 
@@ -114,7 +111,7 @@ class CarryOverService:
                 self._records.mark_stale(repos, change.page_id, change.stage)
             return CarryOver(batch_id=batch.batch_id, changes=tuple(changes), skipped=tuple(skipped))
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     @staticmethod
     def _hand_shape(repos: BookRepositories, key: PageStepKey) -> dict[str, Any] | None:

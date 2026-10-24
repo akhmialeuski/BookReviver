@@ -5,17 +5,18 @@ accounts: the library, which says which account owns which book, and the recipe 
 own that holds everything of the book and nothing of any account, so a book moves between instances as it is. Nothing
 refers across two stores by a key the store checks, and every list of books goes through the library.
 
-Services never see a database. They hand the ``UnitOfWork`` a function over the repositories of one store, and the unit
-of work runs that function whole on one transaction of that store: ``read`` and ``change`` over the
-``CatalogueRepositories``, ``read_book`` and ``change_book`` over the ``BookRepositories`` of one book. A read only
-reads, and a change commits when the function returns. The repositories are synchronous, because the function runs
-from its first statement to its commit without returning to the event loop, which is what keeps a write short: the
-adapter of a database runs it in a thread of its own.
+Services never see a database. They hand a function over the repositories of one store, and the store runs that
+function whole on one transaction: the ``UnitOfWork`` does so with ``read`` and ``change`` over the
+``CatalogueRepositories``, and the ``BookDatabase`` that ``BookDatabases.open`` returns for a book does so with
+``read`` and ``change`` over the ``BookRepositories`` of that book alone, beside ``version`` and ``snapshot``. A read
+only reads, and a change commits when the function returns. The repositories are synchronous, because the function
+runs from its first statement to its commit without returning to the event loop, which is what keeps a write short:
+the adapter of a database runs it in a thread of its own.
 
-The book is the aggregate. Every change of a book runs in ``change_book``, which waits for any other change of that
-book and reads the record of the book first, so it sees only what the previous change committed, and never for a change
-of another book. A repository write inside a read is a programming error, reported as ``NoChangeOpenError``. The
-function cannot open another transaction, because it holds repositories and not the unit of work, so changes never
+The book is the aggregate. Every change of a book runs in ``BookDatabase.change``, which waits for any other change of
+that book and reads the record of the book first, so it sees only what the previous change committed, and never for a
+change of another book. A repository write inside a read is a programming error, reported as ``NoChangeOpenError``. The
+function cannot open another transaction, because it holds repositories and not the store, so changes never
 nest, and a use case that needs both stores runs one transaction of each.
 """
 
@@ -84,7 +85,7 @@ class NoChangeOpenError(RuntimeError):
 
     def __init__(self) -> None:
         """Report the write with its fixed sentence."""
-        super().__init__('A repository write needs change_book or change, and read only reads.')
+        super().__init__('A repository write needs a change, and read only reads.')
 
 
 class Repository[EntityT, IdT](ABC):
@@ -922,7 +923,7 @@ class CatalogueRepositories(ABC):
 
 
 class BookRepositories(ABC):
-    """Every repository of one transaction of a book, which the work of ``read_book`` and ``change_book`` receives.
+    """Every repository of one transaction of a book, which the work of ``BookDatabase.read`` and ``change`` receives.
 
     :ivar book_record: Repository of the record of the book, of this transaction.
     :ivar sources: Source repository of this transaction.
@@ -954,18 +955,21 @@ class BookRepositories(ABC):
 
 
 class UnitOfWork(ABC):
-    """Runs the work of a use case on the repositories of one store, one transaction for each call.
+    """Runs the work of a use case on the repositories of the catalogue, one transaction for each call.
 
-    The work is a synchronous function over the repositories of the catalogue or of one book, and the unit of work runs
-    it whole: the transaction begins before its first statement and ends when it returns or raises, and nothing of it
-    is visible to others before it commits. A change commits when the work returns and rolls back when it raises, and
-    the exception goes on to the caller. Nothing holds a connection between two calls, so a caller may wait as long as
-    it needs between them.
+    The work is a synchronous function over the repositories of the catalogue, and the unit of work runs it whole: the
+    transaction begins before its first statement and ends when it returns or raises, and nothing of it is visible to
+    others before it commits. A change commits when the work returns and rolls back when it raises, and the exception
+    goes on to the caller. Nothing holds a connection between two calls, so a caller may wait as long as it needs
+    between them.
 
     A unit of work keeps no state between calls, so coroutines may share one and call it at once. Changes of one
     process that wait for the same store enter in the order they asked for it, so one that came early is never
     overtaken by one that came later, and each waits at most the wait limit of the unit of work before it gives up with
     ``BookBusyError``. Changes of different stores never wait for each other.
+
+    The stores of the books are made, removed and adopted here too, and the transactions of one book are the work of
+    its ``BookDatabase``.
     """
 
     @abstractmethod
@@ -997,40 +1001,6 @@ class UnitOfWork(ABC):
         """
 
     @abstractmethod
-    async def read_book[T](self, book_id: BookId, work: Callable[[BookRepositories], T]) -> T:
-        """Run ``work`` on a transaction of the book that only reads, and return what it returns.
-
-        Every read of the work sees the same committed state of the book. A write is refused with
-        ``NoChangeOpenError``.
-
-        :param book_id: Identifier of the book to read.
-        :type book_id: BookId
-        :param work: Function over the repositories of the transaction.
-        :type work: Callable[[BookRepositories], T]
-        :returns: What the work returns.
-        :rtype: T
-        :raises NotFoundError: If the book is not stored.
-        :raises NoChangeOpenError: If the work writes.
-        """
-
-    @abstractmethod
-    async def change_book[T](self, book_id: BookId, work: Callable[[BookRepositories, BookRecord], T]) -> T:
-        """Run ``work`` on a transaction of the book that writes, alone among its changes, with its record as it is.
-
-        The change waits for any other change of the same book to end, then reads the record of the book, so it sees
-        what the previous change committed. It never waits for a change of another book or of the catalogue.
-
-        :param book_id: Identifier of the book to change.
-        :type book_id: BookId
-        :param work: Function over the repositories of the transaction and the record of the book read at its start.
-        :type work: Callable[[BookRepositories, BookRecord], T]
-        :returns: What the work returns.
-        :rtype: T
-        :raises NotFoundError: If the book is not stored.
-        :raises BookBusyError: If the write did not begin within the wait limit of the unit of work.
-        """
-
-    @abstractmethod
     async def create_book(self, book_record: BookRecord) -> BookRecord:
         """Make the store of a new book, holding its record and nothing else yet.
 
@@ -1049,32 +1019,6 @@ class UnitOfWork(ABC):
 
         :param book_id: Identifier of the book to remove.
         :type book_id: BookId
-        """
-
-    @abstractmethod
-    async def book_version(self, book_id: BookId) -> int:
-        """Return the version of a book, which every committed change that wrote a part of the book raised by one.
-
-        :param book_id: The book.
-        :type book_id: BookId
-        :returns: The version of the book.
-        :rtype: int
-        :raises NotFoundError: If the book is not stored.
-        :raises BookTooNewError: If the store of the book is at a revision this code does not ship.
-        """
-
-    @abstractmethod
-    async def snapshot_book(self, book_id: BookId) -> bytes:
-        """Return a copy of the store of a book as one committed state of it, for the archive of the book.
-
-        The copy is the store in the form it keeps on disk, which :meth:`adopt_book` takes back in another instance.
-
-        :param book_id: Identifier of the book to copy.
-        :type book_id: BookId
-        :returns: The copy of the store.
-        :rtype: bytes
-        :raises NotFoundError: If the book is not stored.
-        :raises BookTooNewError: If the store of the book is at a revision this code does not ship.
         """
 
     @abstractmethod
@@ -1098,4 +1042,89 @@ class UnitOfWork(ABC):
 
         :returns: The identifiers of the stored books.
         :rtype: Collection[BookId]
+        """
+
+
+class BookDatabase(ABC):
+    """Runs the work of a use case on the repositories of one transaction of one book, one transaction for each call.
+
+    The work is a synchronous function over the ``BookRepositories`` of the book, and the database runs it whole: the
+    transaction begins before its first statement and ends when it returns or raises, and nothing of it is visible to
+    others before it commits. A change commits when the work returns and rolls back when it raises, and the exception
+    goes on to the caller. Nothing holds a connection between two calls, so a caller may wait as long as it needs
+    between them.
+
+    A book database keeps no state between calls, so coroutines may share one and call it at once. Changes of one
+    process that wait for the same book enter in the order they asked for it, so one that came early is never overtaken
+    by one that came later, and each waits at most the wait limit of the database before it gives up with
+    ``BookBusyError``. Changes of different books never wait for each other.
+    """
+
+    @abstractmethod
+    async def read[T](self, work: Callable[[BookRepositories], T]) -> T:
+        """Run ``work`` on a transaction of the book that only reads, and return what it returns.
+
+        Every read of the work sees the same committed state of the book. A write is refused with
+        ``NoChangeOpenError``.
+
+        :param work: Function over the repositories of the transaction.
+        :type work: Callable[[BookRepositories], T]
+        :returns: What the work returns.
+        :rtype: T
+        :raises NotFoundError: If the book is not stored.
+        :raises NoChangeOpenError: If the work writes.
+        """
+
+    @abstractmethod
+    async def change[T](self, work: Callable[[BookRepositories, BookRecord], T]) -> T:
+        """Run ``work`` on a transaction of the book that writes, alone among its changes, with its record as it is.
+
+        The change waits for any other change of the same book to end, then reads the record of the book, so it sees
+        what the previous change committed. It never waits for a change of another book or of the catalogue.
+
+        :param work: Function over the repositories of the transaction and the record of the book read at its start.
+        :type work: Callable[[BookRepositories, BookRecord], T]
+        :returns: What the work returns.
+        :rtype: T
+        :raises NotFoundError: If the book is not stored.
+        :raises BookBusyError: If the write did not begin within the wait limit of the database.
+        """
+
+    @abstractmethod
+    async def version(self) -> int:
+        """Return the version of the book, which every committed change that wrote a part of the book raised by one.
+
+        :returns: The version of the book.
+        :rtype: int
+        :raises NotFoundError: If the book is not stored.
+        :raises BookTooNewError: If the store of the book is at a revision this code does not ship.
+        """
+
+    @abstractmethod
+    async def snapshot(self) -> bytes:
+        """Return a copy of the store of the book as one committed state of it, for the archive of the book.
+
+        The copy is the store in the form it keeps on disk, which :meth:`UnitOfWork.adopt_book` takes back in another
+        instance.
+
+        :returns: The copy of the store.
+        :rtype: bytes
+        :raises NotFoundError: If the book is not stored.
+        :raises BookTooNewError: If the store of the book is at a revision this code does not ship.
+        """
+
+
+class BookDatabases(ABC):
+    """Opens the database of a book by its identifier, so a use case runs the transactions of one book on it."""
+
+    @abstractmethod
+    def open(self, book_id: BookId) -> BookDatabase:
+        """Return the database of a book, without touching the book.
+
+        A book that is not stored is found on the first call of the returned database, which raises ``NotFoundError``.
+
+        :param book_id: Identifier of the book.
+        :type book_id: BookId
+        :returns: The database of the book.
+        :rtype: BookDatabase
         """

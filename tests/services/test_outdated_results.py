@@ -7,10 +7,12 @@ from typing import TYPE_CHECKING, Self
 import pytest
 from attrs import evolve
 
+from bookreviver.adapters.persistence.sqlalchemy.book_database import SqlAlchemyBookDatabase
 from bookreviver.adapters.persistence.sqlalchemy.repositories import SqlAlchemyPageVersionRepository
 from bookreviver.domain.enums import Stage, StageState, VersionState
 from bookreviver.domain.values import PageStageKey, ProcessorRef
 from bookreviver.services.outdated_results import OutdatedResults
+from tests.helpers.books_service import make_books_service
 from tests.helpers.builders import EPOCH, make_page_stage, make_page_version
 from tests.helpers.processors import CleanupProcessor, FakeProcessor
 
@@ -118,7 +120,7 @@ class SeededPage:
             repos.page_versions.add(version)
             repos.page_stages.save(record)
 
-        await self.kit.uow().change_book(self.book_id, add_result)
+        await self.kit.databases.open(self.book_id).change(add_result)
         return version
 
     async def base(self) -> PageVersion:
@@ -128,7 +130,9 @@ class SeededPage:
         :rtype: PageVersion
         """
         return (
-            await self.kit.uow().read_book(self.book_id, lambda repos: repos.page_versions.list_for_page(self.page.id))
+            await self.kit.databases.open(self.book_id).read(
+                lambda repos: repos.page_versions.list_for_page(self.page.id)
+            )
         )[0]
 
     async def stored(self, stage: Stage) -> PageStage:
@@ -139,8 +143,8 @@ class SeededPage:
         :returns: The record.
         :rtype: PageStage
         """
-        return await self.kit.uow().read_book(
-            self.book_id, lambda repos: repos.page_stages.get(PageStageKey(self.page.id, stage))
+        return await self.kit.databases.open(self.book_id).read(
+            lambda repos: repos.page_stages.get(PageStageKey(self.page.id, stage))
         )
 
 
@@ -153,7 +157,10 @@ async def mark_stale(kit: ProcessingKit) -> list[PageStage]:
     :rtype: list[PageStage]
     """
     kit.clock.moment = CHECKED_AT
-    return await OutdatedResults(uow=kit.uow(), catalogue=kit.catalogue, clock=kit.clock).mark_stale()
+    uow = kit.uow()
+    return await OutdatedResults(
+        books=make_books_service(uow, databases=kit.databases), catalogue=kit.catalogue, clock=kit.clock
+    ).mark_stale()
 
 
 class TestMarkStale:
@@ -193,7 +200,7 @@ class TestMarkStale:
         record = await page.stored(Stage.GEOMETRY)
         left = meanwhile(record, (await page.base()).id)
         uow = fx_kit.uow()
-        read = uow.read_book
+        read = SqlAlchemyBookDatabase.read
         changed = False
 
         def request_changes_record(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -209,29 +216,31 @@ class TestMarkStale:
             else:
                 repos.page_stages.save(left)
 
-        async def read_then_change[T](book_id: BookId, work: Callable[[BookRepositories], T]) -> T:
-            """Read as the unit of work does, then let a request change the record in a change of its own, once.
+        async def read_then_change[T](self: SqlAlchemyBookDatabase, work: Callable[[BookRepositories], T]) -> T:
+            """Read as the book database does, then let a request change the record in a change of its own, once.
 
-            :param book_id: Book that is read.
-            :type book_id: BookId
+            :param self: The book database that is read.
+            :type self: SqlAlchemyBookDatabase
             :param work: Function over the repositories of the transaction.
             :type work: Callable[[BookRepositories], T]
             :returns: What the work returns.
             :rtype: T
             """
             nonlocal changed
-            found = await read(book_id, work)
+            found = await read(self, work)
             if not changed:
                 changed = True
-                await fx_kit.uow().change_book(book_id, request_changes_record)
+                await fx_kit.databases.open(page.book_id).change(request_changes_record)
             return found
 
-        monkeypatch.setattr(uow, 'read_book', read_then_change)
+        monkeypatch.setattr(SqlAlchemyBookDatabase, 'read', read_then_change)
         fx_kit.clock.moment = CHECKED_AT
 
-        marked = await OutdatedResults(uow=uow, catalogue=fx_kit.catalogue, clock=fx_kit.clock).mark_stale()
+        marked = await OutdatedResults(
+            books=make_books_service(uow, databases=fx_kit.databases), catalogue=fx_kit.catalogue, clock=fx_kit.clock
+        ).mark_stale()
 
-        stored = await fx_kit.uow().read_book(page.book_id, lambda repos: repos.page_stages.find(record.key))
+        stored = await fx_kit.databases.open(page.book_id).read(lambda repos: repos.page_stages.find(record.key))
         assert (marked, stored) == ([], left)
 
     async def test_fresh_stage_made_by_an_older_version_of_a_processor_becomes_stale(
@@ -382,7 +391,10 @@ class TestMarkStale:
         monkeypatch.setattr(SqlAlchemyPageVersionRepository, 'list_by_ids', counting_list_by_ids)
         fx_kit.clock.moment = CHECKED_AT
 
-        await OutdatedResults(uow=fx_kit.uow(), catalogue=fx_kit.catalogue, clock=fx_kit.clock).mark_stale()
+        uow = fx_kit.uow()
+        await OutdatedResults(
+            books=make_books_service(uow, databases=fx_kit.databases), catalogue=fx_kit.catalogue, clock=fx_kit.clock
+        ).mark_stale()
 
         assert asked == {(await page.base()).id: 1, geometry.id: 1, cleanup.id: 1}
 

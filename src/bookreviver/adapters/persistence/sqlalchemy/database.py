@@ -70,7 +70,7 @@ The schema of each kind of file is created and changed only by the revisions in 
 Those of the catalogue are applied by hand, and the application reads :meth:`SqlDatabase.schema_revisions` at start
 and refuses to run against a catalogue it was not written for, which costs one read of the version table. A book is
 brought to the head revision of its schema when it is opened, by
-:class:`~bookreviver.adapters.persistence.sqlalchemy.books.BookDatabases`.
+:class:`~bookreviver.adapters.persistence.sqlalchemy.books.BookRegistry`.
 """
 
 import enum

@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import PageId
     from bookreviver.domain.step_values import ValueField
     from bookreviver.domain.values import MetadataMap, Step
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
     from bookreviver.services.book import Book
@@ -201,11 +201,9 @@ class _Scene:
 class PageSettingsService:
     """Lists, sets and takes back the values of the steps for parts of the pages of the acting account's books."""
 
-    def __init__(self, *, uow: UnitOfWork, catalogue: ProcessorCatalog, records: StageRecords, clock: Clock) -> None:
+    def __init__(self, *, catalogue: ProcessorCatalog, records: StageRecords, clock: Clock) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, whose ``change_book`` ends every changing use case.
-        :type uow: UnitOfWork
         :param catalogue: The processors the application can run, which check the value of a field.
         :type catalogue: ProcessorCatalog
         :param records: Writer of the stage records, which a changed value marks stale.
@@ -213,7 +211,6 @@ class PageSettingsService:
         :param clock: Clock stamping the states, the values and the changes.
         :type clock: Clock
         """
-        self._uow = uow
         self._catalogue = catalogue
         self._records = records
         self._clock = clock
@@ -271,7 +268,7 @@ class PageSettingsService:
                 )
             return listed
 
-        return await self._uow.read_book(book.id, work)
+        return await book.read(work)
 
     async def change(self, book: Book, field: ValueField, value: object) -> ValueChanges:
         """Set one field of the parameters of a step for the pages the target names, and mark their stages stale.
@@ -331,7 +328,7 @@ class PageSettingsService:
                 own = {}
             return self._store(repos, scene, own=own, params=params)
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     async def reset(self, book: Book, field: ValueField) -> ValueChanges:
         """Take a field back from the pages the target names, so they take it from the next part, and mark them stale.
@@ -377,7 +374,7 @@ class PageSettingsService:
                 own = {}
             return self._store(repos, scene, own=own, params=params)
 
-        return await self._uow.change_book(book.id, work)
+        return await book.change(work)
 
     def _store(
         self, repos: BookRepositories, scene: _Scene, *, own: Mapping[PageId, MetadataMap], params: MetadataMap | None

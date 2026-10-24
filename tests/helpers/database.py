@@ -19,7 +19,7 @@ from attrs import frozen
 from dishka import Provider, Scope, provide
 from sqlalchemy.engine import make_url
 
-from bookreviver.adapters.persistence.sqlalchemy.books import BookDatabases
+from bookreviver.adapters.persistence.sqlalchemy.books import BookRegistry
 from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.domain.enums import BlockKind
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import Schema
     from bookreviver.app.settings import Settings
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import BookDatabases, UnitOfWork
 
 NO_DATABASE_FILE: str = (
     'The settings name a catalogue without a file, so there is nowhere to copy the schema template to.'
@@ -55,6 +55,21 @@ class UnitOfWorkFactory(Protocol):
         """
 
 
+class BookDatabasesFactory(Protocol):
+    """A function opening a new opener of the databases of the books of the test."""
+
+    def __call__(self, *, wait_seconds: float | None = None) -> BookDatabases:
+        """Open the databases of the books of the test.
+
+        :param wait_seconds: How long a change of a book waits for its turn before it gives up with
+                             ``BookBusyError``, which a request gets shorter than a job. None for the limit of a job
+                             in the settings of the test.
+        :type wait_seconds: float | None
+        :returns: A new opener of the databases of the books.
+        :rtype: BookDatabases
+        """
+
+
 class SharedDatabaseProvider(Provider):
     """Hands the application the catalogue and the books the test opened, so both have one write queue of each file.
 
@@ -65,13 +80,13 @@ class SharedDatabaseProvider(Provider):
 
     scope = Scope.APP
 
-    def __init__(self, database: SqlDatabase, books: BookDatabases) -> None:
+    def __init__(self, database: SqlDatabase, books: BookRegistry) -> None:
         """Provide ``database`` and ``books`` in place of the ones the application would open.
 
         :param database: Catalogue of the test.
         :type database: SqlDatabase
         :param books: Registry of the books of the test.
-        :type books: BookDatabases
+        :type books: BookRegistry
         """
         super().__init__()
         self._database = database
@@ -87,11 +102,11 @@ class SharedDatabaseProvider(Provider):
         return self._database
 
     @provide(override=True)
-    def books(self) -> BookDatabases:
+    def books(self) -> BookRegistry:
         """Return the registry of the books of the test.
 
         :returns: The registry every request and job of the application opens books through.
-        :rtype: BookDatabases
+        :rtype: BookRegistry
         """
         return self._books
 
@@ -152,7 +167,7 @@ class BookSessions:
     :ivar books: Registry of the books of the test.
     """
 
-    books: BookDatabases
+    books: BookRegistry
 
     async def read[T](self, book_id: BookId, work: Callable[[Session], T]) -> T:
         """Run ``work`` on a transaction of the book that only reads.

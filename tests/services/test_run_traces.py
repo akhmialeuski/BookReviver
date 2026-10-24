@@ -93,8 +93,8 @@ class TestRunSpans:
         actor, book_record, _ = await seeded_pages(fx_kit)
         recipe = await fx_kit.recipe_of(actor, book_record, Stage.GEOMETRY, RecipeKind.TEXT)
         refused = evolve(recipe.steps[0], params=fx_kit.params(**{UNKNOWN_PARAMETER: 1}))
-        await fx_kit.uow().change_book(
-            book_record.id, lambda repos, _book_record: repos.recipes.update(evolve(recipe, steps=(refused,)))
+        await fx_kit.databases.open(book_record.id).change(
+            lambda repos, _book_record: repos.recipes.update(evolve(recipe, steps=(refused,)))
         )
         await run_stage(fx_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
         outcomes = [span.attributes.get(SpanAttribute.STEP_OUTCOME) for span in fx_kit.tracer.named(SpanName.STEP)]

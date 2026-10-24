@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.entities import RecipeProfile
     from bookreviver.ports.persistence import BookRepositories, CatalogueRepositories, UnitOfWork
     from tests.contracts.conftest import OwnerFactory
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -278,7 +278,7 @@ class TestRecipeProfileRepository:
         assert await uow.read(orders) == [OrderMode.FREE, OrderMode.USUAL]
 
     async def test_a_recipe_reads_back_with_the_profile_it_was_made_from(
-        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory
+        self, fx_uow: UnitOfWorkFactory, fx_new_owner: OwnerFactory, fx_databases: BookDatabasesFactory
     ) -> None:
         """Verify the profile a recipe of a book names is stored, and a recipe made from none reads back with none.
 
@@ -289,6 +289,8 @@ class TestRecipeProfileRepository:
         :type fx_uow: UnitOfWorkFactory
         :param fx_new_owner: Function creating an account the catalogue accepts as an owner.
         :type fx_new_owner: OwnerFactory
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         owner_id = await fx_new_owner()
         profile = make_recipe_profile(account_id=owner_id)
@@ -307,6 +309,10 @@ class TestRecipeProfileRepository:
             return [repos.recipes.get(recipe.id).profile_id for recipe in (linked, unlinked)]
 
         uow = await _store(fx_uow, profile)
-        await store_book(uow, book_record, owner=owner_id)
-        await uow.change_book(book_record.id, lambda repos, _book_record: repos.recipes.add_many([linked, unlinked]))
-        assert await fx_uow().read_book(book_record.id, profile_ids) == [profile.id, None]
+        await store_book(uow, book_record, owner=owner_id, databases=fx_databases())
+        await (
+            fx_databases()
+            .open(book_record.id)
+            .change(lambda repos, _book_record: repos.recipes.add_many([linked, unlinked]))
+        )
+        assert await fx_databases().open(book_record.id).read(profile_ids) == [profile.id, None]

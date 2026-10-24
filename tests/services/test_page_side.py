@@ -21,9 +21,9 @@ if TYPE_CHECKING:
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Page, PageVersion
     from bookreviver.domain.ids import BookId
-    from bookreviver.ports.persistence import BookRepositories
+    from bookreviver.ports.persistence import BookDatabases, BookRepositories
     from bookreviver.ports.processing import StepInput
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.builders import BookOpener
 
 pytestmark = pytest.mark.anyio
 
@@ -51,13 +51,17 @@ class SidedProcessor(FakeProcessor):
 
 
 @pytest.fixture
-def fx_sided_kit(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_store: LocalAssetStore) -> ProcessingKit:
+def fx_sided_kit(
+    fx_database: SqlDatabase,
+    fx_open_book: BookOpener,
+    fx_asset_store: LocalAssetStore,
+) -> ProcessingKit:
     """Build a processing kit whose Geometry recipe is the one step that reads the side of the page.
 
     :param fx_database: Database of the test.
     :type fx_database: SqlDatabase
-    :param fx_uow: Function opening a new unit of work over the database of the test.
-    :type fx_uow: UnitOfWorkFactory
+    :param fx_open_book: Opens the books of the test with their databases.
+    :type fx_open_book: BookOpener
     :param fx_asset_store: Local asset store over the test's storage root.
     :type fx_asset_store: LocalAssetStore
     :returns: The kit.
@@ -70,19 +74,23 @@ def fx_sided_kit(fx_database: SqlDatabase, fx_uow: UnitOfWorkFactory, fx_asset_s
         }
     )
     return ProcessingKit(
-        fx_database, fx_uow, fx_asset_store, processors=[SplitNone(), SidedProcessor()], defaults=defaults
+        fx_database,
+        fx_open_book,
+        fx_asset_store,
+        processors=[SplitNone(), SidedProcessor()],
+        defaults=defaults,
     )
 
 
-async def head_of(kit: ProcessingKit, book_id: BookId, page: Page) -> PageVersion:
+async def head_of(book_id: BookId, page: Page, *, databases: BookDatabases) -> PageVersion:
     """Read the current version of the Geometry stage of a page.
 
-    :param kit: What the processing services of the test share.
-    :type kit: ProcessingKit
     :param book_id: Identifier of the book.
     :type book_id: BookId
     :param page: The page.
     :type page: Page
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The version the stage record names.
     :rtype: PageVersion
     """
@@ -99,7 +107,7 @@ async def head_of(kit: ProcessingKit, book_id: BookId, page: Page) -> PageVersio
         assert record.head_version_id is not None
         return repos.page_versions.get(record.head_version_id)
 
-    return await kit.uow().read_book(book_id, read_head)
+    return await databases.open(book_id).read(read_head)
 
 
 class TestPageSide:
@@ -123,14 +131,14 @@ class TestPageSide:
             await fx_sided_kit.seed_base_version(book_record.id, page)
             pages.append(page)
         await run_stage(fx_sided_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
-        before = [await head_of(fx_sided_kit, book_record.id, page) for page in pages]
+        before = [await head_of(book_record.id, page, databases=fx_sided_kit.databases) for page in pages]
         newcomer, _ = await fx_sided_kit.seed_scan_page(book_record, order_key='a0')
         await fx_sided_kit.seed_base_version(book_record.id, newcomer)
         # The second run names the pages, since a run of the whole book leaves out those whose result is fresh, and the
         # newcomer was added with no change of the stage of the others
         again = StageRun(stage=Stage.GEOMETRY, page_ids=tuple(page.id for page in pages))
         await run_stage(fx_sided_kit, actor, book_record, again)
-        after = [await head_of(fx_sided_kit, book_record.id, page) for page in pages]
+        after = [await head_of(book_record.id, page, databases=fx_sided_kit.databases) for page in pages]
         expect([version.data[SIDE_KEY] for version in before] == [PageSide.RIGHT.value, PageSide.LEFT.value])
         expect([version.data[SIDE_KEY] for version in after] == [PageSide.LEFT.value, PageSide.RIGHT.value])
         expect(all(old.id != new.id for old, new in zip(before, after, strict=True)))

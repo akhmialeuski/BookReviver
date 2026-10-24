@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.storage import AssetStore
     from tests.helpers.board_idle import JobsIdle
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -96,7 +96,9 @@ def _jpeg() -> bytes:
 
 
 @pytest.fixture
-async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_actor: Actor) -> Book:
+async def fx_book(
+    fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_actor: Actor, fx_databases: BookDatabasesFactory
+) -> Book:
     """Commit the book and store the full image of every scan and of every base version as a real JPEG.
 
     :param fx_uow: Function opening a new unit of work over the database of the test.
@@ -105,6 +107,8 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
     :type fx_asset_store: AssetStore
     :param fx_actor: The signed-in account.
     :type fx_actor: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The stored book.
     :rtype: Book
     """
@@ -130,7 +134,14 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
         for page, scan in zip(pages, scans, strict=True)
     ]
     await store_book(
-        fx_uow(), book_record, *pages, owner=fx_actor.account_id, sources=[source], scans=scans, versions=versions
+        fx_uow(),
+        book_record,
+        *pages,
+        owner=fx_actor.account_id,
+        sources=[source],
+        scans=scans,
+        versions=versions,
+        databases=fx_databases(),
     )
 
     def save_heads(repos: BookRepositories, _book_record: BookRecord) -> None:
@@ -144,7 +155,7 @@ async def fx_book(fx_uow: UnitOfWorkFactory, fx_asset_store: AssetStore, fx_acto
         for page, version in zip(pages, versions, strict=True):
             repos.page_stages.save(make_page_stage(page_id=page.id, stage=Stage.PAGE_SPLIT, head_version_id=version.id))
 
-    await fx_uow().change_book(book_record.id, save_heads)
+    await fx_databases().open(book_record.id).change(save_heads)
     keys = BookKeys(book_record.id)
     for scan in scans:
         async with fx_asset_store.writable(keys.scan_rendition(scan, Rendition.FULL_JPEG)) as path:

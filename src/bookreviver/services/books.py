@@ -2,8 +2,10 @@
 
 A use case works on the ``Book`` objects it is given and checks no owner: the access dependencies of the API open a
 book of the signed-in account, and they choose the books of a list. The lookups ``book_page`` and ``book_pages`` are
-synchronous functions over repositories: the work of ``UnitOfWork.read_book`` or ``change_book`` calls them with the
-repositories it receives, and a caller outside a transaction wraps the call in ``UnitOfWork.read_book``.
+synchronous functions over repositories: the work of ``Book.read`` or ``Book.change`` calls them with the repositories
+it receives, and a caller outside a transaction wraps the call in ``Book.read``. ``open`` opens the book of an
+identifier with its database, which the jobs use, and ``book`` does the same for a library entry that is already read,
+which the access dependencies of the API use. Neither checks an owner.
 
 A book is deleted files first, then its store, and the library entry last. Every use case of the book needs the entry,
 a repeated deletion included, so an entry deleted first would leave the files of a failed deletion out of every
@@ -21,6 +23,7 @@ from attrs import evolve, frozen
 from bookreviver.domain.entities import BookRecord, LibraryEntry
 from bookreviver.domain.ids import BookId
 from bookreviver.domain.values import ArchivedBook, Slice, SliceRequest
+from bookreviver.services.book import Book
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -32,10 +35,9 @@ if TYPE_CHECKING:
     from bookreviver.domain.ids import StepId
     from bookreviver.domain.stage_summaries import StageRow, StageSummary
     from bookreviver.domain.values import BookDetails
-    from bookreviver.ports.persistence import BookRepositories, PageRepository, UnitOfWork
+    from bookreviver.ports.persistence import BookDatabases, BookRepositories, PageRepository, UnitOfWork
     from bookreviver.ports.runtime import Clock
     from bookreviver.ports.storage import AssetStore, BookArchive, SourceStore
-    from bookreviver.services.book import Book
     from bookreviver.services.stage_summaries import StageSummaries
 
 # How many pages are read from the book at a time, when a use case needs all of them
@@ -79,14 +81,18 @@ class BooksService:
         self,
         *,
         uow: UnitOfWork,
+        databases: BookDatabases,
         clock: Clock,
         files: BookStores,
         stages: StageSummaries,
     ) -> None:
         """Work over the ports of one request.
 
-        :param uow: Unit of work of the request, which runs the work of every use case in one transaction.
+        :param uow: Unit of work of the request, which runs the work of every use case on the catalogue in one
+                    transaction.
         :type uow: UnitOfWork
+        :param databases: Opens the database of a book, which runs the transactions of that book.
+        :type databases: BookDatabases
         :param clock: Clock setting the creation and update times.
         :type clock: Clock
         :param files: Stores of the source files and the derived files, emptied when a book is deleted.
@@ -95,9 +101,43 @@ class BooksService:
         :type stages: StageSummaries
         """
         self._uow = uow
+        self._databases = databases
         self._clock = clock
         self._files = files
         self._stages = stages
+
+    def book(self, entry: LibraryEntry) -> Book:
+        """Open the book a library entry names with its database, without reading anything.
+
+        :param entry: The entry of the library.
+        :type entry: LibraryEntry
+        :returns: The book, whose owner is the one the entry names.
+        :rtype: Book
+        """
+        return Book(entry.book_id, entry.owner_id, self._databases.open(entry.book_id))
+
+    async def open(self, book_id: BookId) -> Book:
+        """Open the book of an identifier with its database, whoever owns it.
+
+        Who may work on the book is decided by the caller: the access dependencies of the API for a request, and
+        nobody for a job, which acts for no account.
+
+        :param book_id: Identifier of the book.
+        :type book_id: BookId
+        :returns: The book.
+        :rtype: Book
+        :raises NotFoundError: If the library has no such book.
+        """
+        return self.book(await self._uow.read(lambda repos: repos.library.get(book_id)))
+
+    async def listed(self) -> list[Book]:
+        """Open every book the library lists, whoever owns it, for the passes of the start.
+
+        :returns: The open books, one for each entry of the library.
+        :rtype: list[Book]
+        """
+        entries = await self._uow.read(lambda repos: repos.library.list_all())
+        return [self.book(entry) for entry in entries]
 
     async def overviews(self, books: Slice[Book]) -> Slice[BookOverview]:
         """Return the overview of each book of a window, in the order given.
@@ -107,7 +147,7 @@ class BooksService:
         :returns: The books of the window with their counts and progress, and the same total.
         :rtype: Slice[BookOverview]
         """
-        return Slice(items=[await self._overview(book.id) for book in books.items], total=books.total)
+        return Slice(items=[await self._overview(book) for book in books.items], total=books.total)
 
     async def create(self, owner: Actor, details: BookDetails) -> BookOverview:
         """Create an empty book of an account: its store first, then its entry in the library.
@@ -125,7 +165,7 @@ class BooksService:
         )
         entry = LibraryEntry(book_id=book_record.id, owner_id=owner.account_id, added_at=moment)
         await self._uow.change(lambda repos: repos.library.add(entry))
-        return await self._overview(book_record.id)
+        return await self._overview(self.book(entry))
 
     async def get(self, book: Book) -> BookOverview:
         """Return the book.
@@ -135,7 +175,7 @@ class BooksService:
         :returns: The book with its counts and progress.
         :rtype: BookOverview
         """
-        return await self._overview(book.id)
+        return await self._overview(book)
 
     async def stages(self, book: Book, request: SliceRequest) -> Slice[StageSummary]:
         """Return the stages of the book, each summed over its pages.
@@ -159,7 +199,7 @@ class BooksService:
             summaries = self._stages.of_book(repos, repos.book_record.overview(repos.book_record.get(book.id)))
             return Slice(items=summaries[request.offset : request.offset + request.limit], total=len(summaries))
 
-        return await self._uow.read_book(book.id, work)
+        return await book.read(work)
 
     async def stage_pages(
         self, book: Book, stage: Stage, request: SliceRequest, step_id: StepId | None = None
@@ -178,8 +218,7 @@ class BooksService:
         :rtype: Slice[StageRow]
         :raises NotFoundError: If no recipe of the stage has the step.
         """
-        return await self._uow.read_book(
-            book.id,
+        return await book.read(
             lambda repos: self._stages.rows(repos, stage, request, step_id),
         )
 
@@ -210,8 +249,8 @@ class BooksService:
             """
             return repos.book_record.update(evolve(changes.apply_to(book_record), updated_at=self._clock.now()))
 
-        await self._uow.change_book(book.id, change)
-        return await self._overview(book.id)
+        await book.change(change)
+        return await self._overview(book)
 
     async def export(self, book: Book) -> ArchivedBook:
         """Return the archive of the book, which another instance imports as a book of its own.
@@ -225,8 +264,8 @@ class BooksService:
         :returns: The title of the book and the stream of its archive.
         :rtype: ArchivedBook
         """
-        book_record = await self._uow.read_book(book.id, lambda repos: repos.book_record.get(book.id))
-        database = await self._uow.snapshot_book(book.id)
+        book_record = await book.read(lambda repos: repos.book_record.get(book.id))
+        database = await book.snapshot()
         return ArchivedBook(title=book_record.details.title, pieces=self._files.archive.export(book.id, database))
 
     async def import_archive(self, owner: Actor, archive: BinaryIO) -> BookOverview:
@@ -254,19 +293,18 @@ class BooksService:
             raise
         entry = LibraryEntry(book_id=book_id, owner_id=owner.account_id, added_at=self._clock.now())
         await self._uow.change(lambda repos: repos.library.add(entry))
-        return await self._overview(book_id)
+        return await self._overview(self.book(entry))
 
-    async def _overview(self, book_id: BookId) -> BookOverview:
+    async def _overview(self, book: Book) -> BookOverview:
         """Read one book with its counts and progress.
 
-        :param book_id: Identifier of the book.
-        :type book_id: BookId
+        :param book: The open book.
+        :type book: Book
         :returns: The book with its counts and progress.
         :rtype: BookOverview
         """
-        return await self._uow.read_book(
-            book_id,
-            lambda repos: self._stages.with_progress(repos, repos.book_record.overview(repos.book_record.get(book_id))),
+        return await book.read(
+            lambda repos: self._stages.with_progress(repos, repos.book_record.overview(repos.book_record.get(book.id)))
         )
 
     async def _erase(self, book_id: BookId) -> None:
@@ -320,7 +358,7 @@ class BooksService:
         open the book of either, so its files and what is left of it go.
         """
         stored = set(await self._uow.stored_books())
-        entries = {entry.book_id for entry in await self._uow.read(lambda repos: repos.library.list_all())}
+        entries = {book.id for book in await self.listed()}
         for book_id in sorted(stored - entries):
             await self._erase(book_id)
         for book_id in sorted(entries - stored):

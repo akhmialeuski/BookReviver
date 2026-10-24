@@ -23,9 +23,10 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, PageVersion
     from bookreviver.domain.ids import AccountId
-    from bookreviver.ports.persistence import UnitOfWork
+    from bookreviver.ports.persistence import BookDatabases, UnitOfWork
     from bookreviver.ports.storage import AssetStore, SourceStore
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.builders import BookOpener
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -58,7 +59,7 @@ class Book(NamedTuple):
         return BookKeys(self.book_record.id).version_rendition(self.version, Rendition.TILES)
 
 
-async def _store_book(uow: UnitOfWork, assets: AssetStore, owner: AccountId) -> Book:
+async def _store_book(uow: UnitOfWork, assets: AssetStore, owner: AccountId, *, databases: BookDatabases) -> Book:
     """Store a book with a page whose pyramid holds an ``info.json`` and one tile, and whose thumbnail exists.
 
     :param uow: Unit of work over the catalogue and the books of the test.
@@ -67,13 +68,15 @@ async def _store_book(uow: UnitOfWork, assets: AssetStore, owner: AccountId) -> 
     :type assets: AssetStore
     :param owner: Committed account that owns the book.
     :type owner: AccountId
+    :param databases: Opens the databases of the books of the test.
+    :type databases: BookDatabases
     :returns: The stored book.
     :rtype: Book
     """
     book_record = make_record()
     page = make_page()
     version = make_page_version(page_id=page.id)
-    await store_book(uow, book_record, page, owner=owner, versions=[version])
+    await store_book(uow, book_record, page, owner=owner, versions=[version], databases=databases)
     keys = BookKeys(book_record.id)
     for key, content in (
         (f'{keys.version_rendition(version, Rendition.TILES)}/{IIIF_INFO_FILE}', INFO_CONTENT),
@@ -95,6 +98,7 @@ class TestIiifFile:
         fx_uow: UnitOfWorkFactory,
         fx_asset_store: AssetStore,
         fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify the document keeps what the pyramid stores but its id, which is the address of the pyramid asked for.
 
@@ -106,8 +110,10 @@ class TestIiifFile:
         :type fx_asset_store: AssetStore
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
-        book = await _store_book(fx_uow(), fx_asset_store, fx_actor.account_id)
+        book = await _store_book(fx_uow(), fx_asset_store, fx_actor.account_id, databases=fx_databases())
 
         response = await fx_client.get(f'{IIIF_PATH}/{book.pyramid}/{IIIF_INFO_FILE}')
 
@@ -121,25 +127,27 @@ class TestIiifFile:
     async def test_streams_other_files_unchanged_as_immutable(
         self,
         fx_client: httpx.AsyncClient,
-        fx_uow: UnitOfWorkFactory,
         fx_asset_store: AssetStore,
         fx_actor: Actor,
         rendition: Rendition,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a thumbnail, and a tile addressed like a IIIF viewer does with commas in its path, stream unchanged.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param rendition: Rendition whose file is requested, a tile being a file inside the pyramid.
         :type rendition: Rendition
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        book = await _store_book(fx_uow(), fx_asset_store, fx_actor.account_id)
+        book = await _store_book(
+            fx_open_book.uow(), fx_asset_store, fx_actor.account_id, databases=fx_open_book.databases
+        )
         key = BookKeys(book.book_record.id).version_rendition(book.version, rendition)
         address = f'{key}/{TILE_PATH}' if rendition is Rendition.TILES else key
 
@@ -154,25 +162,27 @@ class TestIiifFile:
     async def test_key_without_a_file_is_not_found(
         self,
         fx_client: httpx.AsyncClient,
-        fx_uow: UnitOfWorkFactory,
         fx_asset_store: AssetStore,
         fx_actor: Actor,
         name: str,
+        fx_open_book: BookOpener,
     ) -> None:
         """Verify a key with nothing stored, and a key naming a directory, both answer 404.
 
         :param fx_client: Client of the running application.
         :type fx_client: httpx.AsyncClient
-        :param fx_uow: Function opening a new unit of work over the database of the test.
-        :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
         :param name: File or directory inside the version's directory that is requested.
         :type name: str
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
-        book = await _store_book(fx_uow(), fx_asset_store, fx_actor.account_id)
+        book = await _store_book(
+            fx_open_book.uow(), fx_asset_store, fx_actor.account_id, databases=fx_open_book.databases
+        )
         directory = BookKeys(book.book_record.id).version_directory(book.version)
 
         response = await fx_client.get(f'{IIIF_PATH}/{directory}/{name}')
@@ -185,6 +195,7 @@ class TestIiifFile:
         fx_database: SqlDatabase,
         fx_uow: UnitOfWorkFactory,
         fx_asset_store: AssetStore,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a stored file of another account's book is served by its key alone, with no owner checked.
 
@@ -196,15 +207,22 @@ class TestIiifFile:
         :type fx_uow: UnitOfWorkFactory
         :param fx_asset_store: Asset store of the application.
         :type fx_asset_store: AssetStore
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
-        book = await _store_book(fx_uow(), fx_asset_store, await commit_account(fx_database))
+        book = await _store_book(fx_uow(), fx_asset_store, await commit_account(fx_database), databases=fx_databases())
 
         response = await fx_client.get(f'{IIIF_PATH}/{book.pyramid}/{IIIF_INFO_FILE}')
 
         assert response.status_code == status.HTTP_200_OK
 
     async def test_source_and_upload_files_are_not_found(
-        self, fx_client: httpx.AsyncClient, fx_uow: UnitOfWorkFactory, fx_source_store: SourceStore, fx_actor: Actor
+        self,
+        fx_client: httpx.AsyncClient,
+        fx_uow: UnitOfWorkFactory,
+        fx_source_store: SourceStore,
+        fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a stored source file and a staged upload of the account's own book answer 404, not 500.
 
@@ -216,9 +234,11 @@ class TestIiifFile:
         :type fx_source_store: SourceStore
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
         book_record = make_record()
-        await store_book(fx_uow(), book_record, owner=fx_actor.account_id)
+        await store_book(fx_uow(), book_record, owner=fx_actor.account_id, databases=fx_databases())
         keys = BookKeys(book_record.id)
         promoted, staged = JobId(uuid4()), JobId(uuid4())
         source_id = SourceId(uuid4())
@@ -239,6 +259,7 @@ class TestIiifFile:
         fx_uow: UnitOfWorkFactory,
         fx_asset_store: AssetStore,
         fx_actor: Actor,
+        fx_databases: BookDatabasesFactory,
     ) -> None:
         """Verify a key climbing with an encoded ``..`` is refused by validation before any lookup.
 
@@ -250,8 +271,10 @@ class TestIiifFile:
         :type fx_asset_store: AssetStore
         :param fx_actor: The signed-in account.
         :type fx_actor: Actor
+        :param fx_databases: Function opening a new opener of the databases of the books of the test.
+        :type fx_databases: BookDatabasesFactory
         """
-        book = await _store_book(fx_uow(), fx_asset_store, fx_actor.account_id)
+        book = await _store_book(fx_uow(), fx_asset_store, fx_actor.account_id, databases=fx_databases())
 
         response = await fx_client.get(f'{IIIF_PATH}/{book.pyramid}/%2E%2E/{Rendition.THUMBNAIL}')
 

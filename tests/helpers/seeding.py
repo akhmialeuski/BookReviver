@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import BookRecord, Page, PageVersion, Scan, Source
     from bookreviver.domain.ids import AccountId
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookDatabases, BookRepositories, UnitOfWork
 
 # Domain of the addresses of seeded accounts, reserved for examples by RFC 2606
 ACCOUNT_DOMAIN: str = 'example.org'
@@ -84,11 +84,16 @@ async def ensure_account(database: SqlDatabase, account_id: AccountId) -> None:
 
 
 async def store_book(
-    uow: UnitOfWork, book_record: BookRecord, *pages: Page, owner: AccountId, **content: Unpack[BookContent]
+    uow: UnitOfWork,
+    book_record: BookRecord,
+    *pages: Page,
+    owner: AccountId,
+    databases: BookDatabases,
+    **content: Unpack[BookContent],
 ) -> None:
     """Store a book with its record, then its sources, their scans, its pages and their versions, and list it.
 
-    The store of the book is made first, then the content of the book is stored by ``change_book``, and the library entry
+    The store of the book is made first, then the content of the book is stored by ``Book.change``, and the library entry
     of the owner is added last, as the creation of a book does. The entry names an account, so the catalogue must store
     the owner.
 
@@ -100,6 +105,8 @@ async def store_book(
     :type pages: Page
     :param owner: Account owning the book.
     :type owner: AccountId
+    :param databases: Opens the database that stores the content.
+    :type databases: BookDatabases
     :param content: The sources of the book, their scans and the versions of the pages, as far as the book has them.
     :type content: Unpack[BookContent]
     """
@@ -118,7 +125,7 @@ async def store_book(
         repos.page_versions.add_many(content.get('versions', ()))
 
     await uow.create_book(book_record)
-    await uow.change_book(book_record.id, store_content)
+    await databases.open(book_record.id).change(store_content)
     entry = LibraryEntry(book_id=book_record.id, owner_id=owner, added_at=book_record.created_at)
     await uow.change(lambda repos: repos.library.add(entry))
 
@@ -129,6 +136,7 @@ async def commit_record(
     book_record: BookRecord,
     *pages: Page,
     owner: AccountId,
+    databases: BookDatabases,
     **content: Unpack[BookContent],
 ) -> None:
     """Store a book as ``store_project`` does, after committing its owner account when the catalogue lacks it.
@@ -143,8 +151,10 @@ async def commit_record(
     :type pages: Page
     :param owner: Account owning the book, which is committed first unless the catalogue stores it.
     :type owner: AccountId
+    :param databases: Opens the database that stores the content.
+    :type databases: BookDatabases
     :param content: The sources of the book, their scans and the versions of the pages, as far as the book has them.
     :type content: Unpack[BookContent]
     """
     await ensure_account(database, owner)
-    await store_book(uow, book_record, *pages, owner=owner, **content)
+    await store_book(uow, book_record, *pages, owner=owner, databases=databases, **content)

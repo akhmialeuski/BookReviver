@@ -16,7 +16,6 @@ from bookreviver.domain.enums import NormalizeParam, SpanName, Stage, TransformK
 from bookreviver.domain.geometry import ContentBox, Rect
 from bookreviver.domain.margins import NOMINAL_BLOCK_MM
 from bookreviver.domain.values import NewPageEdit, Progress, RecipeDraft, StageRun, Step
-from tests.helpers.builders import open_for
 from tests.helpers.page_batches import PageValues
 from tests.helpers.processing import stored_job
 from tests.helpers.samples import PAPER, png_bytes, text_page
@@ -25,6 +24,7 @@ from tests.helpers.spreads import book_of, head_of, run_stage, use_recipe
 if TYPE_CHECKING:
     from bookreviver.domain.entities import Actor, BookRecord, Page, PageVersion
     from bookreviver.domain.ids import BookId
+    from tests.helpers.builders import BookOpener
     from tests.helpers.processing import ProcessingKit
 
 pytestmark = pytest.mark.anyio
@@ -86,7 +86,7 @@ async def seed_book(kit: ProcessingKit) -> tuple[Actor, BookRecord, list[Page]]:
     await use_recipe(kit, actor, book_record, Stage.PAGE_SPLIT, SPLIT_NONE)
     await run_stage(kit, actor, book_record, StageRun(stage=Stage.PAGE_SPLIT))
     await use_recipe(kit, actor, book_record, Stage.GEOMETRY, NORMALIZE)
-    return actor, book_record, await book_of(kit, book_record)
+    return actor, book_record, await book_of(book_record, databases=kit.databases)
 
 
 async def margins_of(kit: ProcessingKit, book_id: BookId, page: Page) -> PageVersion:
@@ -145,7 +145,9 @@ class TestOnePageSizeForTheBook:
         expect(params[NormalizeParam.PAGE_WIDTH] == 0 and params[NormalizeParam.PAGE_HEIGHT] == 0)
         assert_expectations()
 
-    async def test_progress_counts_the_pass_that_measures_the_book_as_tasks(self, fx_cv_kit: ProcessingKit) -> None:
+    async def test_progress_counts_the_pass_that_measures_the_book_as_tasks(
+        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify a run of three pages plans a task for each step it makes, the first pass that measures them included.
 
         A page whose step leaves the page size to the book is taken as far as that step once to find its box, and then
@@ -153,11 +155,13 @@ class TestOnePageSizeForTheBook:
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, pages = await seed_book(fx_cv_kit)
         fx_cv_kit.tracer.finished.clear()
         job = await fx_cv_kit.service().start_run(
-            open_for(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
+            fx_open_book(actor, book_record.id), Stage.GEOMETRY, StageRun(stage=Stage.GEOMETRY)
         )
         await fx_cv_kit.work_queue()
         tasks = len(pages) * TASKS_PER_PAGE
@@ -181,18 +185,22 @@ class TestOnePageSizeForTheBook:
             expect(box.width <= size_x)
         assert_expectations()
 
-    async def test_a_page_run_alone_takes_the_size_of_the_book(self, fx_cv_kit: ProcessingKit) -> None:
+    async def test_a_page_run_alone_takes_the_size_of_the_book(
+        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify a page whose box was made smaller and that is run alone stays as large as the pages round it.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, pages = await seed_book(fx_cv_kit)
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
         before = size_of(await margins_of(fx_cv_kit, book_record.id, pages[CHANGED]))
         key = await fx_cv_kit.edit_key(book_record.id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
         await fx_cv_kit.edits().save(
-            open_for(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
+            fx_open_book(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
         )
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY, page_ids=(pages[CHANGED].id,)))
         changed = await margins_of(fx_cv_kit, book_record.id, pages[CHANGED])
@@ -204,16 +212,20 @@ class TestOnePageSizeForTheBook:
 class TestWhatTheUserSetsOnAPage:
     """Tests for the box and the margin a user gave to one page, which a run of every page keeps."""
 
-    async def test_a_box_and_a_margin_set_on_a_page_outlive_a_run_on_all_pages(self, fx_cv_kit: ProcessingKit) -> None:
+    async def test_a_box_and_a_margin_set_on_a_page_outlive_a_run_on_all_pages(
+        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
+    ) -> None:
         """Verify the run uses the box of the user and the margin the page changed, and the other pages use neither.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, pages = await seed_book(fx_cv_kit)
         key = await fx_cv_kit.edit_key(book_record.id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
         await fx_cv_kit.edits().save(
-            open_for(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
+            fx_open_book(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
         )
         await PageValues(fx_cv_kit, actor, book_record.id).set(key, NormalizeParam.MARGIN_TOP.value, MARGIN_TOP_BY_HAND)
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
@@ -223,21 +235,23 @@ class TestWhatTheUserSetsOnAPage:
         expect(changed.params[NormalizeParam.MARGIN_TOP] == MARGIN_TOP_BY_HAND)
         expect(other.params[NormalizeParam.MARGIN_TOP] != MARGIN_TOP_BY_HAND)
         expect(size_of(changed) == size_of(other))
-        expect(await fx_cv_kit.edits().list(open_for(actor, book_record.id), pages[CHANGED].id, Stage.GEOMETRY))
+        expect(await fx_cv_kit.edits().list(fx_open_book(actor, book_record.id), pages[CHANGED].id, Stage.GEOMETRY))
         assert_expectations()
 
     async def test_a_small_box_of_the_user_leaves_the_pages_of_the_book_of_one_size(
-        self, fx_cv_kit: ProcessingKit
+        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
         """Verify a box the user made small is placed on the page of the book, which the largest block still decides.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, pages = await seed_book(fx_cv_kit)
         key = await fx_cv_kit.edit_key(book_record.id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
         await fx_cv_kit.edits().save(
-            open_for(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
+            fx_open_book(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=MANUAL_BOX), None
         )
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
         versions = [await margins_of(fx_cv_kit, book_record.id, page) for page in pages]
@@ -247,7 +261,7 @@ class TestWhatTheUserSetsOnAPage:
         assert_expectations()
 
     async def test_a_box_set_after_a_run_resizes_the_pages_whose_result_was_fresh(
-        self, fx_cv_kit: ProcessingKit
+        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
         """Verify a box larger than every block, set on one page after a run, gives the next run one size for the book.
 
@@ -256,13 +270,15 @@ class TestWhatTheUserSetsOnAPage:
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, pages = await seed_book(fx_cv_kit)
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
         before = size_of(await margins_of(fx_cv_kit, book_record.id, pages[LARGEST]))
         key = await fx_cv_kit.edit_key(book_record.id, pages[CHANGED], Stage.GEOMETRY, NORMALIZE)
         await fx_cv_kit.edits().save(
-            open_for(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=LARGE_BOX), None
+            fx_open_book(actor, book_record.id), key, NewPageEdit(kind=ContentBox.editor, geometry=LARGE_BOX), None
         )
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
         sizes = [size_of(await margins_of(fx_cv_kit, book_record.id, page)) for page in pages]
@@ -332,17 +348,19 @@ class TestMarginsAfterSelectContent:
         assert_expectations()
 
     async def test_the_frame_the_user_gave_to_select_content_is_the_box_margins_places(
-        self, fx_cv_kit: ProcessingKit
+        self, fx_cv_kit: ProcessingKit, fx_open_book: BookOpener
     ) -> None:
         """Verify a frame set by hand on Select content is cut out of the whole sheet and placed by Margins.
 
         :param fx_cv_kit: The processing kit with the real OpenCV plugins.
         :type fx_cv_kit: ProcessingKit
+        :param fx_open_book: Opens the books of the test with their databases.
+        :type fx_open_book: BookOpener
         """
         actor, book_record, pages = await TestMarginsAfterSelectContent.seed_two_steps(fx_cv_kit)
         key = await fx_cv_kit.edit_key(book_record.id, pages[CHANGED], Stage.GEOMETRY, CROP)
         await fx_cv_kit.edits().save(
-            open_for(actor, book_record.id), key, NewPageEdit(kind=Rect.editor, geometry=HAND_FRAME), None
+            fx_open_book(actor, book_record.id), key, NewPageEdit(kind=Rect.editor, geometry=HAND_FRAME), None
         )
         await run_stage(fx_cv_kit, actor, book_record, StageRun(stage=Stage.GEOMETRY))
         margins = await margins_of(fx_cv_kit, book_record.id, pages[CHANGED])

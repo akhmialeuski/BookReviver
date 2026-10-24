@@ -15,10 +15,10 @@ stands off its usual place is saved, and the routes report it through ``RecipeOr
 The work of a transaction is synchronous and cannot await, so what a work needs from the book of recipes is synchronous
 and takes the ``BookRepositories`` of its transaction: ``recipes_in``, ``get``, ``rewrite`` and ``find_step``, with
 ``default_draft``, ``check`` and ``installed``, which read no repository. The asynchronous ``recipes``, ``of_kind`` and
-``for_pages`` run on the unit of work themselves, ``recipes`` opening a ``change_book`` of its own to store the
-defaults, so they are called outside any work, and inside a work the synchronous ``recipes_in`` is used. The default
-profile of the owner lives in the catalogue, not in the book, so a caller reads it with ``default_profile`` before the
-transaction of the book and passes it in.
+``for_pages`` run on the transactions of the book themselves, ``recipes`` opening a ``Book.change`` of its own to
+store the defaults, so they are called outside any work, and inside a work the synchronous ``recipes_in`` is used. The
+default profile of the owner lives in the catalogue, not in the book, so a caller reads it with ``default_profile``
+before the transaction of the book and passes it in.
 """
 
 from datetime import timedelta
@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from bookreviver.ports.persistence import BookRepositories, RecipeRepository, UnitOfWork
     from bookreviver.ports.processing import ProcessorCatalog
     from bookreviver.ports.runtime import Clock
+    from bookreviver.services.book import Book
     from bookreviver.services.recipe_order import RecipeOrder
 
 NO_STEPS: str = 'A recipe needs at least one step.'
@@ -197,8 +198,8 @@ class RecipeBook:
     ) -> None:
         """Work over the ports of one request or job.
 
-        :param uow: Unit of work, on which ``recipes`` reads and opens a ``change_book`` of its own to store the
-                    defaults. The synchronous methods use the repositories their caller passes and never this.
+        :param uow: Unit of work, on which ``default_profile`` reads the catalogue. The synchronous methods use the
+                    repositories their caller passes and never this.
         :type uow: UnitOfWork
         :param catalogue: The processors the application can run.
         :type catalogue: ProcessorCatalog
@@ -216,12 +217,12 @@ class RecipeBook:
         self._order = order
 
     async def recipes(
-        self, book_id: BookId, stage: Stage, *, checking: Callable[[BookRepositories], object] | None = None
+        self, book: Book, stage: Stage, *, checking: Callable[[BookRepositories], object] | None = None
     ) -> list[Recipe]:
         """Return the recipes of a stage, one for each kind of page, creating them when the stage is first asked for.
 
         Called outside any work, since it runs on the unit of work itself. It reads in a transaction that only reads,
-        and opens a ``change_book`` of its own only when the stage has no recipes yet, where ``recipes_in`` reads again,
+        and opens a ``Book.change`` of its own only when the stage has no recipes yet, where ``recipes_in`` reads again,
         since a task that ran at the same time may have stored them first, and adds the defaults only if they are still
         missing. The work of a transaction cannot call this, and calls ``recipes_in`` instead.
 
@@ -231,8 +232,8 @@ class RecipeBook:
         database. When the stage has no recipes yet, the default profile of the owner of the book is read first, in the
         catalogue, and the defaults are made from it.
 
-        :param book_id: Book owning the recipes.
-        :type book_id: BookId
+        :param book: The open book owning the recipes.
+        :type book: Book
         :param stage: The stage.
         :type stage: Stage
         :param checking: Function over the repositories of the reading transaction, run before the recipes are read,
@@ -256,10 +257,10 @@ class RecipeBook:
                 checking(repos)
             return self._stored(repos, stage)
 
-        if found := await self._uow.read_book(book_id, read):
+        if found := await book.read(read):
             return found
-        profile = await self.default_profile(book_id, stage)
-        return await self._uow.change_book(book_id, lambda repos, _book_record: self.recipes_in(repos, stage, profile))
+        profile = await self.default_profile(book.id, stage)
+        return await book.change(lambda repos, _book_record: self.recipes_in(repos, stage, profile))
 
     async def default_profile(self, book_id: BookId, stage: Stage) -> RecipeProfile | None:
         """Read the default profile of the owner of a book for a stage, in a read of the catalogue.
@@ -279,9 +280,9 @@ class RecipeBook:
     def recipes_in(self, repos: BookRepositories, stage: Stage, default: RecipeProfile | None) -> list[Recipe]:
         """Return the recipes of a stage, creating them when the stage is first asked for, in the transaction of a work.
 
-        This is the form to use inside the work of ``change_book`` or ``change``, where ``recipes`` cannot be awaited.
-        It reads the recipes and, when the stage has none, stores the defaults through the same repositories, so the
-        defaults are committed with the rest of the work.
+        This is the form to use inside the work of ``Book.change`` or ``UnitOfWork.change``, where ``recipes`` cannot be
+        awaited. It reads the recipes and, when the stage has none, stores the defaults through the same repositories,
+        so the defaults are committed with the rest of the work.
 
         :param repos: Repositories of the transaction the caller runs in.
         :type repos: BookRepositories
@@ -346,11 +347,11 @@ class RecipeBook:
                 steps.append(step)
         return evolve(recipe, steps=tuple(steps))
 
-    async def of_kind(self, book_id: BookId, stage: Stage, kind: RecipeKind) -> Recipe:
+    async def of_kind(self, book: Book, stage: Stage, kind: RecipeKind) -> Recipe:
         """Return the recipe of a stage for one kind of page, called outside any work as ``recipes`` is.
 
-        :param book_id: Book owning the recipe.
-        :type book_id: BookId
+        :param book: The open book owning the recipe.
+        :type book: Book
         :param stage: The stage.
         :type stage: Stage
         :param kind: The kind of page.
@@ -359,15 +360,15 @@ class RecipeBook:
         :rtype: Recipe
         :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
         """
-        return next(recipe for recipe in await self.recipes(book_id, stage) if recipe.kind is kind)
+        return next(recipe for recipe in await self.recipes(book, stage) if recipe.kind is kind)
 
-    async def for_pages(self, book_id: BookId, stage: Stage, pages: Sequence[Page]) -> dict[PageId, Recipe]:
+    async def for_pages(self, book: Book, stage: Stage, pages: Sequence[Page]) -> dict[PageId, Recipe]:
         """Choose the recipe of each page of a stage, which is the recipe of the kind of the page.
 
         Called outside any work, as ``recipes`` is.
 
-        :param book_id: Book owning the pages.
-        :type book_id: BookId
+        :param book: The open book owning the pages.
+        :type book: Book
         :param stage: The stage.
         :type stage: Stage
         :param pages: The pages.
@@ -376,7 +377,7 @@ class RecipeBook:
         :rtype: dict[PageId, Recipe]
         :raises NotFoundError: If the stage has no recipe by default, or none of its processors is installed.
         """
-        by_kind = {recipe.kind: recipe for recipe in await self.recipes(book_id, stage)}
+        by_kind = {recipe.kind: recipe for recipe in await self.recipes(book, stage)}
         return {page.id: by_kind[page.recipe_kind] for page in pages}
 
     def default_draft(self, stage: Stage, kind: RecipeKind, default: RecipeProfile | None) -> RecipeDraft:

@@ -24,9 +24,9 @@ if TYPE_CHECKING:
 
     from bookreviver.domain.entities import BookRecord, Page, PageHistoryEntry, PageStage, PageStepState, Recipe
     from bookreviver.domain.enums import Stage
-    from bookreviver.domain.ids import BookId, PageId, PageVersionId, StepId
+    from bookreviver.domain.ids import PageId, PageVersionId, StepId
     from bookreviver.domain.values import StageRun
-    from bookreviver.ports.persistence import BookRepositories, UnitOfWork
+    from bookreviver.ports.persistence import BookRepositories
     from bookreviver.ports.runtime import Clock
     from bookreviver.services.book import Book
     from bookreviver.services.recipes import RecipeBook
@@ -35,24 +35,22 @@ if TYPE_CHECKING:
 class RunPlan:
     """The pages of one run, the recipe of each, and what the mode of the run does to the work of the pages."""
 
-    def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, clock: Clock, book_id: BookId, run: StageRun) -> None:
+    def __init__(self, *, recipes: RecipeBook, clock: Clock, book: Book, run: StageRun) -> None:
         """Plan one run over the ports of a request or a job.
 
-        :param uow: Unit of work the pages and the states are read through and the work of the mode is written by.
-        :type uow: UnitOfWork
         :param recipes: The recipes of the book, which supply the recipe of each page.
         :type recipes: RecipeBook
         :param clock: Clock stamping the changes a mode writes.
         :type clock: Clock
-        :param book_id: Book owning the pages.
-        :type book_id: BookId
+        :param book: The open book owning the pages, which the pages and the states are read from and the work of the
+                     mode is written to.
+        :type book: Book
         :param run: What the run was asked to do.
         :type run: StageRun
         """
-        self._uow = uow
         self._recipes = recipes
         self._clock = clock
-        self._book_id = book_id
+        self._book = book
         self._run = run
         self._named_pages: Sequence[Page] | None = None
         self._pages: Sequence[Page] | None = None
@@ -111,7 +109,7 @@ class RunPlan:
     async def apply_mode(self) -> Sequence[PageHistoryEntry]:
         """Take the work the mode names away from the steps of the run on its pages, as one batch, in one transaction.
 
-        Called outside any transaction, and it opens a ``change_book`` of its own. The recipes are chosen before it,
+        Called outside any transaction, and it opens a ``Book.change`` of its own. The recipes are chosen before it,
         since choosing them may store the defaults in a transaction of their own, and the states of the steps are read
         inside it, so a page that was deleted meanwhile has none left to remove and a state a user changed is removed
         as it stands. A run that keeps the work changes nothing. The stage of a page is not marked stale, since the run
@@ -139,7 +137,7 @@ class RunPlan:
                 batch.clear_work(state)
             return batch.flush()
 
-        return await self._uow.change_book(self._book_id, work)
+        return await self._book.change(work)
 
     async def _named(self) -> Sequence[Page]:
         """Choose the pages the run names, or every page of the book that has an image, before any is left out.
@@ -163,7 +161,7 @@ class RunPlan:
                     return book_pages(repos.pages)
                 return list(repos.pages.list_by_ids(self._run.page_ids))
 
-            found = await self._uow.read_book(self._book_id, work)
+            found = await self._book.read(work)
             self._named_pages = [page for page in found if page.origin is not PageOrigin.PLACEHOLDER]
         return self._named_pages
 
@@ -202,7 +200,7 @@ class RunPlan:
             }
             return records, ready
 
-        records, ready = await self._uow.read_book(self._book_id, read)
+        records, ready = await self._book.read(read)
         by_page: dict[PageId, dict[Stage, PageStage]] = {}
         for record in records:
             by_page.setdefault(record.page_id, {})[record.stage] = record
@@ -257,7 +255,7 @@ class RunPlan:
         :raises NotFoundError: If the stage has no recipe.
         """
         if self._by_page is None:
-            self._by_page = await self._recipes.for_pages(self._book_id, self._run.stage, await self._named())
+            self._by_page = await self._recipes.for_pages(self._book, self._run.stage, await self._named())
         return self._by_page
 
     @staticmethod
@@ -280,7 +278,7 @@ class RunPlan:
         :rtype: list[PageStepState]
         """
         picked = await self._picked()
-        return await self._uow.read_book(self._book_id, lambda repos: self._states_in(repos, picked))
+        return await self._book.read(lambda repos: self._states_in(repos, picked))
 
     def _states_in(self, repos: BookRepositories, picked: Mapping[PageId, Recipe]) -> list[PageStepState]:
         """Read the states of the steps the run goes over in the transaction of the caller.
@@ -305,17 +303,14 @@ class RunPlan:
 class RunImpactService:
     """Counts the pages a run would take work from, for the user to confirm before the run is sent."""
 
-    def __init__(self, *, uow: UnitOfWork, recipes: RecipeBook, clock: Clock) -> None:
+    def __init__(self, *, recipes: RecipeBook, clock: Clock) -> None:
         """Count over the ports of one request.
 
-        :param uow: Unit of work of the request.
-        :type uow: UnitOfWork
         :param recipes: The recipes of the book.
         :type recipes: RecipeBook
         :param clock: Clock the plan of the run is built with.
         :type clock: Clock
         """
-        self._uow = uow
         self._recipes = recipes
         self._clock = clock
 
@@ -331,5 +326,5 @@ class RunImpactService:
         :rtype: RunImpact
         :raises NotFoundError: If the book has no such page, or the stage has no recipe.
         """
-        plan = RunPlan(uow=self._uow, recipes=self._recipes, clock=self._clock, book_id=book.id, run=run)
+        plan = RunPlan(recipes=self._recipes, clock=self._clock, book=book, run=run)
         return await plan.impact()

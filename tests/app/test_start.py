@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
     from bookreviver.app.settings import Settings
     from bookreviver.domain.entities import Actor, BookRecord
-    from tests.helpers.database import UnitOfWorkFactory
+    from tests.helpers.database import BookDatabasesFactory, UnitOfWorkFactory
 
 pytestmark = pytest.mark.anyio
 
@@ -96,19 +96,21 @@ class HalfWay(NamedTuple):
 
 
 @pytest.fixture
-async def fx_half_way(fx_uow: UnitOfWorkFactory, fx_actor: Actor) -> HalfWay:
+async def fx_half_way(fx_uow: UnitOfWorkFactory, fx_actor: Actor, fx_databases: BookDatabasesFactory) -> HalfWay:
     """Leave a creation and a deletion broken off half way before the application starts.
 
     :param fx_uow: Function opening a new unit of work over the catalogue and the books of the test.
     :type fx_uow: UnitOfWorkFactory
     :param fx_actor: Account that owns the book of the deletion.
     :type fx_actor: Actor
+    :param fx_databases: Function opening a new opener of the databases of the books of the test.
+    :type fx_databases: BookDatabasesFactory
     :returns: The two books.
     :rtype: HalfWay
     """
     created, deleted = make_record(), make_record()
     await fx_uow().create_book(created)
-    await store_book(fx_uow(), deleted, owner=fx_actor.account_id)
+    await store_book(fx_uow(), deleted, owner=fx_actor.account_id, databases=fx_databases())
     await fx_uow().delete_book(deleted.id)
     return HalfWay(created=created, deleted=deleted)
 
