@@ -29,6 +29,7 @@ from bookreviver.services.steps import StepRun, StepRunner
 from tests.helpers.books import IMAGE
 from tests.helpers.builders import (
     EPOCH,
+    directory_of,
     make_book_tools,
     make_page,
     make_scan,
@@ -91,7 +92,7 @@ class Rig:
             book_id,
             new_account_id(),
             database=Mock(spec=BookDatabase),
-            directory=files.directory(book_id),
+            directory=files.directory(directory_of(book_id)),
             tools=make_book_tools(),
         )
         self.assets = self.book.assets

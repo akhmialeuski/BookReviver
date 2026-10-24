@@ -16,7 +16,7 @@ from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import AccountId
 from bookreviver.ports.persistence import BookDatabases, UnitOfWork
 from bookreviver.ports.storage import BookDirectories
-from tests.helpers.builders import make_page, make_record
+from tests.helpers.builders import directory_of, make_page, make_record
 from tests.helpers.fakes_accounts import PASSWORD
 from tests.helpers.seeding import commit_account, store_book
 from tests.helpers.storage import BookFiles
@@ -67,7 +67,7 @@ async def _stored(container: AsyncContainer, book_id: BookId) -> bool:
     :rtype: bool
     """
     async with container() as scope:
-        directory = (await scope.get(BookDirectories)).directory(book_id)
+        directory = (await scope.get(BookDirectories)).directory(directory_of(book_id))
         try:
             await (
                 (await scope.get(BookDatabases))

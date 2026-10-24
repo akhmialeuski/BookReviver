@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from bookreviver.domain.geometry import EditGeometry
     from bookreviver.domain.ids import (
         AccountId,
+        BookDirectoryName,
         BookId,
         ChangeBatchId,
         JobId,
@@ -136,11 +137,13 @@ class LibraryEntry:
 
     :ivar book_id: The book.
     :ivar owner_id: Account owning the book.
+    :ivar directory: Name of the directory of the book in the storage, which holds its database and its files.
     :ivar added_at: When the book joined the library, which orders the owner's list of books, the newest first.
     """
 
     book_id: BookId
     owner_id: AccountId
+    directory: BookDirectoryName
     added_at: datetime
 
     @property

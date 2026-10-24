@@ -18,7 +18,7 @@ from bookreviver.adapters.persistence.sqlalchemy.database import Schema, SqlData
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.app.settings import ChangeWaitSettings
 from bookreviver.domain.entities import LibraryEntry
-from tests.helpers.builders import EPOCH, make_record, new_book_id
+from tests.helpers.builders import EPOCH, directory_of, make_record, new_book_id
 from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
@@ -288,7 +288,9 @@ class TestSqliteTransactions:
         :param fx_owner_id: Committed account the entry of the change names.
         :type fx_owner_id: AccountId
         """
-        entry = LibraryEntry(book_id=new_book_id(), owner_id=fx_owner_id, added_at=EPOCH)
+        entry = LibraryEntry(
+            book_id=new_book_id(), owner_id=fx_owner_id, directory=directory_of(new_book_id()), added_at=EPOCH
+        )
         uow = fx_uow()
         path = fx_database.engine.url.database
         assert path is not None

@@ -44,6 +44,7 @@ from bookreviver.domain.values import (
 from tests.helpers.builders import (
     EPOCH,
     FULL_DETAILS,
+    directory_of,
     make_page,
     make_page_version,
     make_record,
@@ -167,7 +168,12 @@ def _entry(owner_id: AccountId, *, minutes: int = 0) -> LibraryEntry:
     :returns: An entry of a book with a fresh identifier.
     :rtype: LibraryEntry
     """
-    return LibraryEntry(book_id=BookId(uuid4()), owner_id=owner_id, added_at=EPOCH + timedelta(minutes=minutes))
+    return LibraryEntry(
+        book_id=BookId(uuid4()),
+        owner_id=owner_id,
+        directory=directory_of(new_book_id()),
+        added_at=EPOCH + timedelta(minutes=minutes),
+    )
 
 
 class TestBookRecordRepository:

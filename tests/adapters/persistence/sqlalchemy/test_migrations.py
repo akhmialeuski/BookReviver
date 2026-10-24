@@ -53,6 +53,7 @@ from tests.helpers.builders import (
     make_scan,
     make_source,
     make_step_values,
+    new_book_id,
 )
 from tests.helpers.seeding import commit_account
 
@@ -101,6 +102,8 @@ SECOND_ORDER_KEY: str = 'b0'
 BEFORE_RELATIVE_KEYS: str = 'ba87bba973f4'
 # The revision before the record of a book lost the identifier of the book
 BEFORE_RECORD_KEY: str = '54f16295b19a'
+# The revision of the catalogue before the library entry kept the directory of its book
+BEFORE_DIRECTORIES: str = '0734365bee74'
 MESH_KEY: str = 'assets/pages/page/geometry/geometry.dewarp/version/mesh.json'
 MESH_PATH: str = '$.mesh_key'
 # The fields the change of that test sets
@@ -874,6 +877,32 @@ class TestRecordKeyRevision:
         expect(downgraded == [BOOK_ID.bytes])
         expect(upgraded == [1])
         assert_expectations()
+
+
+class TestDirectoriesRevision:
+    """Tests for the revision of the catalogue that keeps the directory of each book in its library entry."""
+
+    async def test_an_entry_of_an_earlier_release_names_the_directory_by_the_identifier_of_its_book(
+        self, fx_empty_catalogue: SqlDatabase
+    ) -> None:
+        """Verify the upgrade gives an entry written before the revision the directory the earlier releases made.
+
+        :param fx_empty_catalogue: Catalogue with no table.
+        :type fx_empty_catalogue: SqlDatabase
+        """
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, BEFORE_DIRECTORIES)
+        owner, book_id = await commit_account(fx_empty_catalogue), new_book_id()
+        with _session(fx_empty_catalogue) as session, session.begin():
+            session.execute(
+                text('INSERT INTO library (project_id, owner_id, added_at) VALUES (:book, :owner, :added)'),
+                {'book': book_id.bytes, 'owner': owner.bytes, 'added': EPOCH.isoformat()},
+            )
+
+        await _migrate(fx_empty_catalogue, fx_empty_catalogue.migrations.upgrade, HEAD)
+
+        with _session(fx_empty_catalogue) as session:
+            directories = session.scalars(text('SELECT directory FROM library')).all()
+        assert directories == [str(book_id)]
 
 
 class TestEnv:

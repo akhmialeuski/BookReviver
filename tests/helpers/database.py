@@ -25,6 +25,7 @@ from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.domain.enums import BlockKind
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
+from tests.helpers.builders import directory_of
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -94,7 +95,9 @@ class LocatedBookDatabases(SqlAlchemyBookDatabases):
         :returns: The database of the book.
         :rtype: SqlAlchemyBookDatabase
         """
-        return super().open(book_id, self.directories.directory(book_id).database if path is None else path)
+        return super().open(
+            book_id, self.directories.directory(directory_of(book_id)).database if path is None else path
+        )
 
     async def create_book(self, book_id: BookId, book_record: BookRecord) -> None:
         """Make the directory of a new book with the blank database, and store its record, as a creation does.
@@ -105,7 +108,7 @@ class LocatedBookDatabases(SqlAlchemyBookDatabases):
         :type book_record: BookRecord
         :raises ConflictError: If the book has a directory already.
         """
-        directory = await self.directories.create(book_id, await self.blank())
+        directory = await self.directories.create(directory_of(book_id), await self.blank())
         await self.open(book_id, directory.database).create(book_record)
 
     async def delete_book(self, book_id: BookId) -> None:
@@ -115,7 +118,7 @@ class LocatedBookDatabases(SqlAlchemyBookDatabases):
         :type book_id: BookId
         """
         await self.open(book_id).close()
-        await self.directories.directory(book_id).delete()
+        await self.directories.directory(directory_of(book_id)).delete()
 
 
 class BookDatabasesFactory(Protocol):
@@ -244,7 +247,7 @@ class BookSessions:
         :returns: What the work returns.
         :rtype: T
         """
-        async with self.books.use(book_id, self.directories.directory(book_id).database) as database:
+        async with self.books.use(book_id, self.directories.directory(directory_of(book_id)).database) as database:
             return await database.read(work)
 
     async def write[T](self, book_id: BookId, work: Callable[[Session], T]) -> T:
@@ -257,7 +260,7 @@ class BookSessions:
         :returns: What the work returns.
         :rtype: T
         """
-        async with self.books.use(book_id, self.directories.directory(book_id).database) as database:
+        async with self.books.use(book_id, self.directories.directory(directory_of(book_id)).database) as database:
             return await database.write(
                 work, kind=BlockKind.BOOK, book=book_id, wait_seconds=DEFAULT_CHANGE_WAIT_SECONDS
             )

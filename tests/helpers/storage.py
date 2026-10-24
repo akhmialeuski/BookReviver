@@ -10,14 +10,14 @@ from bookreviver.adapters.storage import LocalBookDirectories, LocalBookDirector
 from bookreviver.domain.enums import Rendition
 from bookreviver.domain.ids import JobId, SourceId
 from bookreviver.domain.keys import BookKeys, KeySegment
-from tests.helpers.builders import make_page_version
+from tests.helpers.builders import directory_of, make_page_version
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from bookreviver.adapters.storage import LocalAssetStore
     from bookreviver.domain.entities import Page
-    from bookreviver.domain.ids import BookId, PageId, StorageKey
+    from bookreviver.domain.ids import BookDirectoryName, BookId, PageId, StorageKey
     from bookreviver.ports.storage import AssetStore, BookDirectories
 
 # More than one read chunk of the local store, so staging has to stream
@@ -76,17 +76,17 @@ def book_directory(root: Path, book_id: BookId) -> Path:
 class SharedDirectory(LocalBookDirectory):
     """The local directory of one book, whose source store is one a test chose."""
 
-    def __init__(self, *, root: Path, book_id: BookId, sources: LocalSourceStore) -> None:
+    def __init__(self, *, root: Path, name: BookDirectoryName, sources: LocalSourceStore) -> None:
         """Keep the directory of one book under ``root``, with the given source store.
 
         :param root: Storage root of the directories of the books.
         :type root: Path
-        :param book_id: The book.
-        :type book_id: BookId
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
         :param sources: The source store of the book, such as one that fails or waits where a test asks.
         :type sources: LocalSourceStore
         """
-        super().__init__(root=root, book_id=book_id)
+        super().__init__(root=root, name=name)
         self._sources = sources
 
     @property
@@ -130,52 +130,52 @@ class SharedBookDirectories(LocalBookDirectories):
         self._files_root = root
         self._source_store = source_store
         self._directory_type = directory_type
-        self._directories: dict[BookId, SharedDirectory] = {}
+        self._directories: dict[BookDirectoryName, SharedDirectory] = {}
 
     @override
-    def directory(self, book_id: BookId) -> SharedDirectory:
+    def directory(self, name: BookDirectoryName) -> SharedDirectory:
         """Return the one directory of a book.
 
-        :param book_id: The book.
-        :type book_id: BookId
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
         :returns: The directory of the book, the same one on every call.
         :rtype: SharedDirectory
         """
-        if book_id not in self._directories:
-            self._directories[book_id] = self._directory_type(
-                root=self._files_root, book_id=book_id, sources=self._new_sources(book_id)
+        if name not in self._directories:
+            self._directories[name] = self._directory_type(
+                root=self._files_root, name=name, sources=self._new_sources(name)
             )
-        return self._directories[book_id]
+        return self._directories[name]
 
     def sources(self, book_id: BookId) -> LocalSourceStore:
         """Return the one source store of a book.
 
         :param book_id: The book.
         :type book_id: BookId
-        :returns: The source store of the directory of the book.
+        :returns: The source store of the directory of the book, which the test names by the book.
         :rtype: LocalSourceStore
         """
-        return self.directory(book_id).sources
+        return self.directory(directory_of(book_id)).sources
 
     def assets(self, book_id: BookId) -> LocalAssetStore:
         """Return the one asset store of a book.
 
         :param book_id: The book.
         :type book_id: BookId
-        :returns: The asset store of the directory of the book.
+        :returns: The asset store of the directory of the book, which the test names by the book.
         :rtype: LocalAssetStore
         """
-        return self.directory(book_id).assets
+        return self.directory(directory_of(book_id)).assets
 
-    def _new_sources(self, book_id: BookId) -> LocalSourceStore:
+    def _new_sources(self, name: BookDirectoryName) -> LocalSourceStore:
         """Build the source store of a book the first time its directory is handed out.
 
-        :param book_id: The book.
-        :type book_id: BookId
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
         :returns: A source store of the class the test chose.
         :rtype: LocalSourceStore
         """
-        return self._source_store(root=self._files_root, book_id=book_id)
+        return self._source_store(root=self._files_root, name=name)
 
 
 class BookFiles:
@@ -209,11 +209,11 @@ class BookFiles:
         """
         keys = BookKeys()
         job_id, source_id = JobId(uuid4()), SourceId(uuid4())
-        sources = self._stores.directory(book_id).sources
+        sources = self._stores.directory(directory_of(book_id)).sources
         staged = await sources.stage(job_id, [upload(SOURCE_NAME)], max_bytes=MAX_SOURCE_BYTES)
         await sources.promote(job_id, source_id, names=[file.name for file in staged])
         image = keys.version_rendition(make_page_version(page_id=page.id), Rendition.FULL_JPEG)
-        async with self._stores.directory(book_id).assets.writable(image) as path:
+        async with self._stores.directory(directory_of(book_id)).assets.writable(image) as path:
             path.write_bytes(PAGE_IMAGE_CONTENT)
         self._stored[page.id] = (book_id, keys.source(source_id), image)
 

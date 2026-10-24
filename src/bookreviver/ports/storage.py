@@ -1,7 +1,8 @@
 """Storage ports: the directory of each book, with its database file, its uploads and sources, and its derived files.
 
-``BookDirectories`` owns the directories of the books: it makes the directory of a new book from the blank database
-file, unpacks the archive of a book into a new directory, and opens the ``BookDirectory`` of a book, which deletes the
+``BookDirectories`` owns the directories of the books, which the library entry of each book names: it makes the
+directory of a new book from the blank database file, unpacks the archive of a book into a new directory, and opens the
+``BookDirectory`` of a book, which deletes the
 directory whole and packs it into an archive. The database file is a file of the directory like any other, so it is
 written, copied, archived and deleted only here, and the persistence port opens it by its path.
 
@@ -24,7 +25,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import BinaryIO
 
-    from bookreviver.domain.ids import BookId, JobId, SourceId, StorageKey
+    from bookreviver.domain.ids import BookDirectoryName, JobId, SourceId, StorageKey
     from bookreviver.domain.values import SourceFile
 
 
@@ -253,44 +254,44 @@ class BookDirectories(ABC):
     """The directories of the books: the one place that makes, walks and opens them."""
 
     @abstractmethod
-    def directory(self, book_id: BookId) -> BookDirectory:
+    def directory(self, name: BookDirectoryName) -> BookDirectory:
         """Return the directory of a book, without touching its files.
 
-        :param book_id: The book.
-        :type book_id: BookId
+        :param name: Name of the directory of the book, which its library entry keeps.
+        :type name: BookDirectoryName
         :returns: The directory of the book.
         :rtype: BookDirectory
         """
 
     @abstractmethod
-    async def create(self, book_id: BookId, blank: Path) -> BookDirectory:
-        """Make the directory of a new book, holding a copy of the blank database file and nothing else.
+    async def create(self, name: BookDirectoryName, blank: Path) -> BookDirectory:
+        """Make the directory of a new book, unless it exists, holding a copy of the blank database file.
 
-        :param book_id: The new book.
-        :type book_id: BookId
+        :param name: Name of the directory of the new book, which no other book has.
+        :type name: BookDirectoryName
         :param blank: A database file of a book with no rows, which the directory gets a copy of.
         :type blank: Path
         :returns: The directory of the new book.
         :rtype: BookDirectory
-        :raises ConflictError: If the book has a directory already.
+        :raises ConflictError: If the directory holds a database already.
         """
 
     @abstractmethod
-    async def unpack(self, book_id: BookId, archive: BinaryIO) -> BookDirectory:
+    async def unpack(self, name: BookDirectoryName, archive: BinaryIO) -> BookDirectory:
         """Place the content of an archive as the directory of a new book, its database first.
 
         Every name in the archive is checked before anything is written, and a failure while writing removes what was
         written, so a refused archive leaves nothing behind.
 
-        :param book_id: The new book, which has no directory yet.
-        :type book_id: BookId
+        :param name: Name of the directory of the new book, which does not exist yet.
+        :type name: BookDirectoryName
         :param archive: The archive, a file that can be read from any position.
         :type archive: BinaryIO
         :returns: The directory of the new book.
         :rtype: BookDirectory
         :raises InvalidArchiveError: If the file is not a ZIP archive, holds no database, or holds a file outside what
                                      the archive of a book carries.
-        :raises ConflictError: If the new book has a directory already.
+        :raises ConflictError: If the directory exists already.
         """
 
     @abstractmethod

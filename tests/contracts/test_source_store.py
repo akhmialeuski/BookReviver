@@ -11,6 +11,7 @@ from bookreviver.domain.enums import UploadProblem
 from bookreviver.domain.errors import ConflictError, NotFoundError, UploadRejectedError
 from bookreviver.domain.ids import BookId, JobId, SourceId
 from bookreviver.domain.values import SourceFile
+from tests.helpers.builders import directory_of
 from tests.helpers.storage import LARGE_CONTENT, upload
 
 if TYPE_CHECKING:
@@ -69,7 +70,7 @@ async def _stage(
     :returns: The staged files as the store reports them.
     :rtype: Sequence[SourceFile]
     """
-    return await stores.directory(book_id).sources.stage(job_id, files, max_bytes=UNLIMITED_BYTES)
+    return await stores.directory(directory_of(book_id)).sources.stage(job_id, files, max_bytes=UNLIMITED_BYTES)
 
 
 async def _import(stores: BookDirectories, source_id: SourceId, *files: UploadFile, book_id: BookId = BOOK_ID) -> None:
@@ -86,7 +87,9 @@ async def _import(stores: BookDirectories, source_id: SourceId, *files: UploadFi
     """
     job_id = JobId(uuid4())
     staged = await _stage(stores, job_id, *files, book_id=book_id)
-    await stores.directory(book_id).sources.promote(job_id, source_id, names=[file.name for file in staged])
+    await stores.directory(directory_of(book_id)).sources.promote(
+        job_id, source_id, names=[file.name for file in staged]
+    )
 
 
 async def _staged(stores: BookDirectories, job_id: JobId, *, book_id: BookId = BOOK_ID) -> dict[str, bytes]:
@@ -102,7 +105,7 @@ async def _staged(stores: BookDirectories, job_id: JobId, *, book_id: BookId = B
     :rtype: dict[str, bytes]
     :raises NotFoundError: If the job has no staged upload.
     """
-    async with stores.directory(book_id).sources.staged_files(job_id) as paths:
+    async with stores.directory(directory_of(book_id)).sources.staged_files(job_id) as paths:
         return {name: path.read_bytes() for name, path in paths.items()}
 
 
@@ -119,7 +122,7 @@ async def _source(stores: BookDirectories, source_id: SourceId, *, book_id: Book
     :rtype: dict[str, bytes]
     :raises NotFoundError: If the source has no files.
     """
-    async with stores.directory(book_id).sources.source_files(source_id) as paths:
+    async with stores.directory(directory_of(book_id)).sources.source_files(source_id) as paths:
         return {path.name: path.read_bytes() for path in paths}
 
 
@@ -137,7 +140,7 @@ class TestStage:
         files = [upload('scans/page1.png', content=OLD_CONTENT), upload('scans\\page2.png', content=LARGE_CONTENT)]
 
         # A limit equal to the upload size admits it
-        staged = await fx_stores.directory(BOOK_ID).sources.stage(
+        staged = await fx_stores.directory(directory_of(BOOK_ID)).sources.stage(
             JOB_ID, files, max_bytes=len(OLD_CONTENT) + len(LARGE_CONTENT)
         )
 
@@ -294,7 +297,7 @@ class TestStage:
         files = [upload(name, content=content) for name, content in case.files]
 
         with pytest.raises(UploadRejectedError) as error:
-            await fx_stores.directory(BOOK_ID).sources.stage(JOB_ID, files, max_bytes=case.max_bytes)
+            await fx_stores.directory(directory_of(BOOK_ID)).sources.stage(JOB_ID, files, max_bytes=case.max_bytes)
 
         assert error.value.problem == case.problem
         with pytest.raises(NotFoundError):
@@ -312,8 +315,8 @@ class TestPromote:
         """
         await _stage(fx_stores, JOB_ID, upload(OLD_NAME, content=OLD_CONTENT), upload(NEW_NAME, content=NEW_CONTENT))
 
-        await fx_stores.directory(BOOK_ID).sources.promote(JOB_ID, SOURCE_ID, names=[OLD_NAME])
-        await fx_stores.directory(BOOK_ID).sources.promote(JOB_ID, OTHER_SOURCE_ID, names=[NEW_NAME])
+        await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[OLD_NAME])
+        await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, OTHER_SOURCE_ID, names=[NEW_NAME])
 
         expect(await _source(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT})
         expect(await _source(fx_stores, OTHER_SOURCE_ID) == {NEW_NAME: NEW_CONTENT})
@@ -328,7 +331,7 @@ class TestPromote:
         """
         await _stage(fx_stores, JOB_ID, upload(OLD_NAME, content=OLD_CONTENT), upload(NEW_NAME, content=NEW_CONTENT))
 
-        await fx_stores.directory(BOOK_ID).sources.promote(JOB_ID, SOURCE_ID, names=[OLD_NAME, NEW_NAME])
+        await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[OLD_NAME, NEW_NAME])
 
         assert await _source(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT, NEW_NAME: NEW_CONTENT}
 
@@ -347,8 +350,10 @@ class TestPromote:
             upload(SECOND_VOLUME_PAGE, content=NEW_CONTENT),
         )
 
-        await fx_stores.directory(BOOK_ID).sources.promote(JOB_ID, SOURCE_ID, names=[FIRST_VOLUME_PAGE])
-        await fx_stores.directory(BOOK_ID).sources.promote(JOB_ID, OTHER_SOURCE_ID, names=[SECOND_VOLUME_PAGE])
+        await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[FIRST_VOLUME_PAGE])
+        await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(
+            JOB_ID, OTHER_SOURCE_ID, names=[SECOND_VOLUME_PAGE]
+        )
 
         expect(await _source(fx_stores, SOURCE_ID) == {'001.tif': OLD_CONTENT})
         expect(await _source(fx_stores, OTHER_SOURCE_ID) == {'001.tif': NEW_CONTENT})
@@ -371,7 +376,7 @@ class TestPromote:
         )
 
         with pytest.raises(ConflictError):
-            await fx_stores.directory(BOOK_ID).sources.promote(
+            await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(
                 JOB_ID, SOURCE_ID, names=[FIRST_VOLUME_PAGE, SECOND_VOLUME_PAGE]
             )
 
@@ -394,7 +399,7 @@ class TestPromote:
         await _stage(fx_stores, JOB_ID, upload(OLD_NAME, content=OLD_CONTENT))
 
         with pytest.raises(NotFoundError):
-            await fx_stores.directory(BOOK_ID).sources.promote(JOB_ID, SOURCE_ID, names=names)
+            await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=names)
 
         assert await _staged(fx_stores, JOB_ID) == {OLD_NAME: OLD_CONTENT}
         with pytest.raises(NotFoundError):
@@ -407,7 +412,7 @@ class TestPromote:
         :type fx_stores: BookDirectories
         """
         with pytest.raises(NotFoundError):
-            await fx_stores.directory(BOOK_ID).sources.promote(JOB_ID, SOURCE_ID, names=[OLD_NAME])
+            await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[OLD_NAME])
 
     async def test_existing_source_is_never_replaced(self, fx_stores: BookDirectories) -> None:
         """Verify a source keeps its files, and the refused files stay staged for another attempt.
@@ -419,7 +424,7 @@ class TestPromote:
         await _stage(fx_stores, JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
         with pytest.raises(ConflictError):
-            await fx_stores.directory(BOOK_ID).sources.promote(JOB_ID, SOURCE_ID, names=[NEW_NAME])
+            await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[NEW_NAME])
 
         expect(await _source(fx_stores, SOURCE_ID) == {OLD_NAME: OLD_CONTENT})
         expect(await _staged(fx_stores, JOB_ID) == {NEW_NAME: NEW_CONTENT})
@@ -435,7 +440,9 @@ class TestPromote:
         await _stage(fx_stores, JOB_ID, upload(FIRST_VOLUME_PAGE, content=NEW_CONTENT))
 
         with pytest.raises(ConflictError):
-            await fx_stores.directory(BOOK_ID).sources.promote(JOB_ID, SOURCE_ID, names=[FIRST_VOLUME_PAGE])
+            await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(
+                JOB_ID, SOURCE_ID, names=[FIRST_VOLUME_PAGE]
+            )
 
         assert await _staged(fx_stores, JOB_ID) == {FIRST_VOLUME_PAGE: NEW_CONTENT}
 
@@ -448,7 +455,7 @@ class TestPromote:
         await _stage(fx_stores, JOB_ID, upload(OLD_NAME, content=OLD_CONTENT))
 
         with pytest.raises(ValueError, match='needs at least one file'):
-            await fx_stores.directory(BOOK_ID).sources.promote(JOB_ID, SOURCE_ID, names=[])
+            await fx_stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[])
 
 
 class TestDiscard:
@@ -463,7 +470,7 @@ class TestDiscard:
         await _stage(fx_stores, JOB_ID, upload(OLD_NAME, content=OLD_CONTENT))
         await _stage(fx_stores, OTHER_JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
-        await fx_stores.directory(BOOK_ID).sources.discard(JOB_ID)
+        await fx_stores.directory(directory_of(BOOK_ID)).sources.discard(JOB_ID)
 
         assert await _staged(fx_stores, OTHER_JOB_ID) == {NEW_NAME: NEW_CONTENT}
         with pytest.raises(NotFoundError):
@@ -476,9 +483,9 @@ class TestDiscard:
         :type fx_stores: BookDirectories
         """
         await _stage(fx_stores, JOB_ID, upload(NEW_NAME, content=NEW_CONTENT))
-        await fx_stores.directory(BOOK_ID).sources.discard(JOB_ID)
+        await fx_stores.directory(directory_of(BOOK_ID)).sources.discard(JOB_ID)
 
-        await fx_stores.directory(BOOK_ID).sources.discard(JOB_ID)
+        await fx_stores.directory(directory_of(BOOK_ID)).sources.discard(JOB_ID)
 
         with pytest.raises(NotFoundError):
             await _staged(fx_stores, JOB_ID)
@@ -553,7 +560,7 @@ class TestDeleteSource:
         await _import(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
         await _import(fx_stores, OTHER_SOURCE_ID, upload(NEW_NAME, content=NEW_CONTENT))
 
-        await fx_stores.directory(BOOK_ID).sources.delete_source(SOURCE_ID)
+        await fx_stores.directory(directory_of(BOOK_ID)).sources.delete_source(SOURCE_ID)
 
         assert await _source(fx_stores, OTHER_SOURCE_ID) == {NEW_NAME: NEW_CONTENT}
         with pytest.raises(NotFoundError):
@@ -566,9 +573,9 @@ class TestDeleteSource:
         :type fx_stores: BookDirectories
         """
         await _import(fx_stores, SOURCE_ID, upload(OLD_NAME, content=OLD_CONTENT))
-        await fx_stores.directory(BOOK_ID).sources.delete_source(SOURCE_ID)
+        await fx_stores.directory(directory_of(BOOK_ID)).sources.delete_source(SOURCE_ID)
 
-        await fx_stores.directory(BOOK_ID).sources.delete_source(SOURCE_ID)
+        await fx_stores.directory(directory_of(BOOK_ID)).sources.delete_source(SOURCE_ID)
 
         with pytest.raises(NotFoundError):
             await _source(fx_stores, SOURCE_ID)

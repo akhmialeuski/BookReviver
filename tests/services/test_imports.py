@@ -2626,8 +2626,11 @@ async def make_the_scan_ready(book_id: BookId, databases: LocatedBookDatabases) 
 class TestRunImportOfAMissingBook:
     """Tests for an import job whose book is gone by the time the job runs."""
 
-    async def test_job_ends_failed_and_its_upload_is_removed(self, fx_rig: ImportRig) -> None:
-        """Verify the job of a book that is gone fails with the reason, and the staged upload it never used is removed.
+    async def test_job_ends_failed_and_leaves_the_storage_alone(self, fx_rig: ImportRig) -> None:
+        """Verify the job of a book the library no longer lists fails with the reason and touches no file.
+
+        The library entry names the directory of a book, so a job of a book without one cannot reach its directory. The
+        deletion of a book removes its upload with the directory, and the start removes one staged afterwards.
 
         :param fx_rig: Adapters of the import.
         :type fx_rig: ImportRig
@@ -2640,9 +2643,8 @@ class TestRunImportOfAMissingBook:
 
         ended = fx_rig.stored_job(job)
         expect((ended.state, ended.error) == (JobState.FAILED, str(NotFoundError(book_id))))
-        with pytest.raises(NotFoundError):
-            async with fx_rig.files.sources(book_id).staged_files(job.id):
-                pass
+        async with fx_rig.files.sources(book_id).staged_files(job.id) as staged:
+            expect(list(staged) == [STAGED_NAME])
         assert_expectations()
 
 

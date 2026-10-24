@@ -28,6 +28,7 @@ from tests.helpers.builders import (
     make_page_step_state,
     make_record,
     new_account_id,
+    new_book_id,
     open_for,
 )
 from tests.helpers.clock import FixedClock
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.adapters.storage import LocalSourceStore
     from bookreviver.domain.entities import Actor, BookOverview, BookRecord, Page
-    from bookreviver.domain.ids import BookId
+    from bookreviver.domain.ids import BookDirectoryName, BookId
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from tests.helpers.builders import BookOpener
     from tests.helpers.database import BookDatabasesFactory, LocatedBookDatabases, UnitOfWorkFactory
@@ -105,17 +106,17 @@ class StoreFailedError(OSError):
 class DirectoryFailingOnce(SharedDirectory):
     """The local directory of one book, whose first deletion fails before it removes anything."""
 
-    def __init__(self, *, root: Path, book_id: BookId, sources: LocalSourceStore) -> None:
+    def __init__(self, *, root: Path, name: BookDirectoryName, sources: LocalSourceStore) -> None:
         """Keep the directory of the book under ``root`` and fail its first deletion.
 
         :param root: Storage root of the directories.
         :type root: Path
-        :param book_id: The book.
-        :type book_id: BookId
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
         :param sources: The source store of the book.
         :type sources: LocalSourceStore
         """
-        super().__init__(root=root, book_id=book_id, sources=sources)
+        super().__init__(root=root, name=name, sources=sources)
         self._failed = False
 
     @override
@@ -276,6 +277,24 @@ class TestOpenAsset:
 
         async with fx_service().open_asset(book_id, key) as path:
             assert path.read_bytes() == FILE_CONTENT
+
+    async def test_a_file_of_a_book_the_library_does_not_list_is_not_found(
+        self, fx_service: Callable[[], BooksService], fx_directories: SharedBookDirectories
+    ) -> None:
+        """Verify a file left in a directory no library entry names, as a broken deletion leaves it, is not served.
+
+        :param fx_service: Function building the service for one request.
+        :type fx_service: Callable[[], BooksService]
+        :param fx_directories: The directories of the books of the test.
+        :type fx_directories: SharedBookDirectories
+        """
+        book_id, key = new_book_id(), BookKeys().book
+        async with fx_directories.assets(book_id).writable(key) as target:
+            target.write_bytes(FILE_CONTENT)
+
+        with pytest.raises(NotFoundError, match=str(book_id)):
+            async with fx_service().open_asset(book_id, key):
+                pass
 
     async def test_gives_a_file_of_another_accounts_book_with_no_owner_checked(
         self,

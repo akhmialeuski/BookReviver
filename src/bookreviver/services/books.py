@@ -22,7 +22,7 @@ from uuid import uuid4
 
 from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.errors import NotFoundError
-from bookreviver.domain.ids import BookId
+from bookreviver.domain.ids import BookDirectoryName, BookId
 from bookreviver.domain.keys import BookKeys
 from bookreviver.domain.values import SliceRequest
 from bookreviver.services.book import Book
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from typing import BinaryIO
 
     from bookreviver.domain.entities import Actor, Page
-    from bookreviver.domain.ids import JobId, StorageKey
+    from bookreviver.domain.ids import StorageKey
     from bookreviver.domain.values import BookDetails
     from bookreviver.ports.persistence import BookDatabases, PageRepository, UnitOfWork
     from bookreviver.ports.storage import BookDirectories
@@ -96,7 +96,7 @@ class BooksService:
         :returns: The book, whose owner is the one the entry names.
         :rtype: Book
         """
-        directory = self._directories.directory(entry.book_id)
+        directory = self._directories.directory(entry.directory)
         return Book(
             entry.book_id,
             entry.owner_id,
@@ -119,23 +119,13 @@ class BooksService:
         """
         return self.book(await self._uow.read(lambda repos: repos.library.get(book_id)))
 
-    async def discard_upload(self, book_id: BookId, job_id: JobId) -> None:
-        """Remove what is left of the upload of an import job whose book cannot be opened.
-
-        :param book_id: The book of the job, which the library may no longer list.
-        :type book_id: BookId
-        :param job_id: The import job whose upload is removed.
-        :type job_id: JobId
-        """
-        await self._directories.directory(book_id).sources.discard(job_id)
-
     @asynccontextmanager
     async def open_asset(self, book_id: BookId, key: StorageKey) -> AsyncIterator[Path]:
         """Give a local path of the derived file at ``key`` for as long as the context is open.
 
-        The derived files are read by anyone who has the identifier of their book and their key, with no owner checked.
-        A key under the book's ``incoming/`` or ``sources/`` belongs to no derived file and is reported as not found
-        without a look at the store.
+        The derived files are read by anyone who has the identifier of their book and their key, with no owner checked,
+        from the directory the library entry of the book names. A key under the book's ``incoming/`` or ``sources/``
+        belongs to no derived file and is reported as not found without a look at the library or the store.
 
         :param book_id: The book of the file, such as one taken from the address of an image.
         :type book_id: BookId
@@ -143,11 +133,13 @@ class BooksService:
         :type key: StorageKey
         :returns: Context manager yielding the path of the file, valid while the context is open.
         :rtype: AsyncIterator[Path]
-        :raises NotFoundError: If the key is not under the ``assets/`` of a book, or nothing is stored at it.
+        :raises NotFoundError: If the key is not under the ``assets/`` of a book, the library has no such book, or
+                               nothing is stored at the key.
         """
         if not BookKeys.is_asset(key):
             raise NotFoundError(key)
-        async with self._directories.directory(book_id).assets.readable(key) as path:
+        entry = await self._uow.read(lambda repos: repos.library.get(book_id))
+        async with self._directories.directory(entry.directory).assets.readable(key) as path:
             yield path
 
     async def listed(self) -> list[Book]:
@@ -169,9 +161,8 @@ class BooksService:
         :returns: The new book, open for its owner, which has no pages, sources or scans yet.
         :rtype: Book
         """
-        book_id = BookId(uuid4())
-        await self._directories.create(book_id, await self._databases.blank())
-        entry = LibraryEntry(book_id=book_id, owner_id=owner.account_id, added_at=self._tools.clock.now())
+        entry = self._new_entry(owner)
+        await self._directories.create(entry.directory, await self._databases.blank())
         book = self.book(entry)
         await book.describe(details)
         await self._uow.change(lambda repos: repos.library.add(entry))
@@ -193,17 +184,32 @@ class BooksService:
         :raises InvalidArchiveError: If the file is not the archive of a book.
         :raises BookTooNewError: If the book was exported by a newer release.
         """
-        book_id = BookId(uuid4())
-        directory = await self._directories.unpack(book_id, archive)
-        entry = LibraryEntry(book_id=book_id, owner_id=owner.account_id, added_at=self._tools.clock.now())
+        entry = self._new_entry(owner)
+        directory = await self._directories.unpack(entry.directory, archive)
         book = self.book(entry)
         try:
-            await self._databases.adopt(book_id, directory.database)
+            await self._databases.adopt(entry.book_id, directory.database)
         except Exception:
             await book.delete()
             raise
         await self._uow.change(lambda repos: repos.library.add(entry))
         return book
+
+    def _new_entry(self, owner: Actor) -> LibraryEntry:
+        """Build the library entry of a new book of an account, whose directory is named by its new identifier.
+
+        :param owner: Account the entry names as the owner.
+        :type owner: Actor
+        :returns: The entry, not stored yet, added now.
+        :rtype: LibraryEntry
+        """
+        book_id = BookId(uuid4())
+        return LibraryEntry(
+            book_id=book_id,
+            owner_id=owner.account_id,
+            directory=BookDirectoryName(str(book_id)),
+            added_at=self._tools.clock.now(),
+        )
 
     async def delete(self, book: Book) -> None:
         """Delete the book's entry in the library, then the book with its directory.

@@ -16,6 +16,7 @@ from bookreviver.domain.errors import NotFoundError
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
 from tests.helpers.builders import (
     EPOCH,
+    directory_of,
     make_page,
     make_page_history_entry,
     make_record,
@@ -166,7 +167,9 @@ class TestLibraryRow:
         :type fx_uow: UnitOfWorkFactory
         """
         owner_id = new_account_id()
-        entry = LibraryEntry(book_id=new_book_id(), owner_id=owner_id, added_at=EPOCH)
+        entry = LibraryEntry(
+            book_id=new_book_id(), owner_id=owner_id, directory=directory_of(new_book_id()), added_at=EPOCH
+        )
         with pytest.raises(NotFoundError, match=str(owner_id)):
             await fx_uow().change(lambda repos: repos.library.add(entry))
 

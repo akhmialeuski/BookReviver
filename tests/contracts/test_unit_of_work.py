@@ -28,6 +28,7 @@ from bookreviver.ports.persistence import BookRepositories, CatalogueRepositorie
 from tests.helpers.book_hold import hold_book_in_thread
 from tests.helpers.builders import (
     EPOCH,
+    directory_of,
     make_book_place,
     make_page,
     make_page_history_entry,
@@ -41,6 +42,7 @@ from tests.helpers.builders import (
     make_section,
     make_source,
     make_step_values,
+    new_book_id,
 )
 
 if TYPE_CHECKING:
@@ -179,7 +181,12 @@ class ChangeKind(NamedTuple):
             )
         return (
             make_recipe_profile(account_id=book.owner_id, minutes=number),
-            LibraryEntry(book_id=BookId(uuid4()), owner_id=book.owner_id, added_at=EPOCH + timedelta(minutes=number)),
+            LibraryEntry(
+                book_id=BookId(uuid4()),
+                owner_id=book.owner_id,
+                directory=directory_of(new_book_id()),
+                added_at=EPOCH + timedelta(minutes=number),
+            ),
         )
 
     def add(self, repos: Any, rows: tuple[Any, Any]) -> None:
@@ -446,7 +453,12 @@ async def fx_rows(fx_uow: UnitOfWorkFactory, fx_book: Book, fx_book_rows: dict[s
         'library': Row(
             entry,
             evolve(entry, added_at=entry.added_at + ONE_MINUTE),
-            LibraryEntry(book_id=BookId(uuid4()), owner_id=owner_id, added_at=entry.added_at),
+            LibraryEntry(
+                book_id=BookId(uuid4()),
+                owner_id=owner_id,
+                directory=directory_of(new_book_id()),
+                added_at=entry.added_at,
+            ),
             entry.book_id,
         ),
         'recipe_profiles': Row(

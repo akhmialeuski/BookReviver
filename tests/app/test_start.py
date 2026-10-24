@@ -9,6 +9,7 @@ from delayed_assert import assert_expectations, expect
 from bookreviver.adapters.storage import LocalBookDirectories
 from bookreviver.domain.errors import NotFoundError
 from bookreviver.domain.ids import BookId, JobId, SourceId
+from tests.helpers.builders import directory_of
 from tests.helpers.fakes_jobs import FakeBoardProvider, JobFakes, JobFakesProvider
 from tests.helpers.storage import upload
 
@@ -48,15 +49,15 @@ class Uploads:
         """Stage an upload in each of two books, and promote the files of a source in a third."""
         for _ in range(2):
             book_id, job_id = BookId(uuid4()), JobId(uuid4())
-            await self.stores.directory(book_id).sources.stage(
+            await self.stores.directory(directory_of(book_id)).sources.stage(
                 job_id, [upload(UPLOAD_NAME)], max_bytes=UPLOAD_LIMIT_BYTES
             )
             self.interrupted.append((book_id, job_id))
         book_id, job_id, source_id = BookId(uuid4()), JobId(uuid4()), SourceId(uuid4())
-        await self.stores.directory(book_id).sources.stage(
+        await self.stores.directory(directory_of(book_id)).sources.stage(
             job_id, [upload(PROMOTED_NAME)], max_bytes=UPLOAD_LIMIT_BYTES
         )
-        await self.stores.directory(book_id).sources.promote(job_id, source_id, names=[PROMOTED_NAME])
+        await self.stores.directory(directory_of(book_id)).sources.promote(job_id, source_id, names=[PROMOTED_NAME])
         self.kept = (book_id, source_id)
 
 
@@ -114,13 +115,13 @@ class TestStart:
         gone: list[bool] = []
         for book_id, job_id in fx_uploads.interrupted:
             try:
-                async with fx_uploads.stores.directory(book_id).sources.staged_files(job_id):
+                async with fx_uploads.stores.directory(directory_of(book_id)).sources.staged_files(job_id):
                     gone.append(False)
             except NotFoundError:
                 gone.append(True)
         assert fx_uploads.kept is not None
         kept_book, kept_source = fx_uploads.kept
-        async with fx_uploads.stores.directory(kept_book).sources.source_files(kept_source) as files:
+        async with fx_uploads.stores.directory(directory_of(kept_book)).sources.source_files(kept_source) as files:
             kept = [file.name for file in files]
         expect(gone == [True, True])
         expect(kept == [PROMOTED_NAME])

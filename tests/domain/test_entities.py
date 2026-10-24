@@ -44,6 +44,7 @@ from bookreviver.domain.values import BookDetails, ProcessorRef, Progress, Rendi
 from tests.helpers.builders import (
     EPOCH,
     SPLIT_NONE,
+    directory_of,
     make_job,
     make_page,
     make_page_edit,
@@ -69,7 +70,9 @@ class TestLibraryEntry:
 
     def test_the_entry_is_stored_under_the_identifier_of_its_book(self) -> None:
         """Verify a book is in one library, so the identifier of the entry is the identifier of the book."""
-        entry = LibraryEntry(book_id=new_book_id(), owner_id=new_account_id(), added_at=EPOCH)
+        entry = LibraryEntry(
+            book_id=new_book_id(), owner_id=new_account_id(), directory=directory_of(new_book_id()), added_at=EPOCH
+        )
         assert entry.id == entry.book_id
 
 

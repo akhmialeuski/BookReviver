@@ -16,7 +16,7 @@ from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import ConflictError, InvalidArchiveError, NotFoundError
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId
 from bookreviver.domain.keys import BookKeys
-from tests.helpers.builders import make_page_version
+from tests.helpers.builders import directory_of, make_page_version
 from tests.helpers.storage import SOURCE_NAME, upload
 
 if TYPE_CHECKING:
@@ -81,13 +81,13 @@ async def _book(stores: BookDirectories) -> tuple[BookId, SourceId, PageVersion]
     :rtype: tuple[BookId, SourceId, PageVersion]
     """
     book_id, source_id, version = BookId(uuid4()), SourceId(uuid4()), make_page_version(page_id=PageId(uuid4()))
-    sources = stores.directory(book_id).sources
+    sources = stores.directory(directory_of(book_id)).sources
     job_id = JobId(uuid4())
     staged = await sources.stage(job_id, [upload(SOURCE_NAME, content=SOURCE_CONTENT)], max_bytes=UNLIMITED_BYTES)
     await sources.promote(job_id, source_id, names=[file.name for file in staged])
     await sources.stage(JobId(uuid4()), [upload(UPLOAD_NAME)], max_bytes=UNLIMITED_BYTES)
     key = BookKeys().version_rendition(version, Rendition.FULL_JPEG)
-    async with stores.directory(book_id).assets.writable(key) as path:
+    async with stores.directory(directory_of(book_id)).assets.writable(key) as path:
         path.write_bytes(IMAGE_CONTENT)
     return book_id, source_id, version
 
@@ -102,7 +102,7 @@ async def _exported(stores: BookDirectories, book_id: BookId) -> bytes:
     :returns: The archive.
     :rtype: bytes
     """
-    return b''.join([piece async for piece in stores.directory(book_id).export(DATABASE)])
+    return b''.join([piece async for piece in stores.directory(directory_of(book_id)).export(DATABASE)])
 
 
 class TestExportAndUnpack:
@@ -120,16 +120,16 @@ class TestExportAndUnpack:
         exported = await _exported(fx_stores, book_id)
         copy_id = BookId(uuid4())
 
-        await fx_stores.unpack(copy_id, io.BytesIO(exported))
+        await fx_stores.unpack(directory_of(copy_id), io.BytesIO(exported))
 
         with zipfile.ZipFile(io.BytesIO(exported)) as archive:
             names = archive.namelist()
             expect(names[0] == DATABASE_NAME and archive.read(DATABASE_NAME) == DATABASE)
         expect(not any(UPLOAD_NAME in name for name in names))
-        async with fx_stores.directory(copy_id).sources.source_files(source_id) as paths:
+        async with fx_stores.directory(directory_of(copy_id)).sources.source_files(source_id) as paths:
             expect({path.name: path.read_bytes() for path in paths} == {SOURCE_NAME: SOURCE_CONTENT})
         key = BookKeys().version_rendition(version, Rendition.FULL_JPEG)
-        async with fx_stores.directory(copy_id).assets.readable(key) as path:
+        async with fx_stores.directory(directory_of(copy_id)).assets.readable(key) as path:
             expect(path.read_bytes() == IMAGE_CONTENT)
         assert_expectations()
 
@@ -142,10 +142,10 @@ class TestExportAndUnpack:
         book_id, _, _ = await _book(fx_stores)
         exported = await _exported(fx_stores, book_id)
         copy_id = BookId(uuid4())
-        await fx_stores.unpack(copy_id, io.BytesIO(exported))
+        await fx_stores.unpack(directory_of(copy_id), io.BytesIO(exported))
 
         with pytest.raises(ConflictError):
-            await fx_stores.unpack(copy_id, io.BytesIO(exported))
+            await fx_stores.unpack(directory_of(copy_id), io.BytesIO(exported))
 
 
 class TestRefusedArchive:
@@ -165,12 +165,12 @@ class TestRefusedArchive:
         copy_id = BookId(uuid4())
 
         with pytest.raises(InvalidArchiveError, match=case.match):
-            await fx_stores.unpack(copy_id, io.BytesIO(case.content))
+            await fx_stores.unpack(directory_of(copy_id), io.BytesIO(case.content))
 
         with pytest.raises(NotFoundError):
-            async with fx_stores.directory(copy_id).sources.source_files(SourceId(uuid4())):
+            async with fx_stores.directory(directory_of(copy_id)).sources.source_files(SourceId(uuid4())):
                 pass
-        await fx_stores.unpack(copy_id, io.BytesIO(_zip(DATABASE_NAME)))
+        await fx_stores.unpack(directory_of(copy_id), io.BytesIO(_zip(DATABASE_NAME)))
 
 
 class TestCreate:
@@ -189,7 +189,7 @@ class TestCreate:
         blank = tmp_path / DATABASE_NAME
         blank.write_bytes(DATABASE)
 
-        directory = await fx_stores.create(BookId(uuid4()), blank)
+        directory = await fx_stores.create(directory_of(BookId(uuid4())), blank)
 
         expect(directory.database.read_bytes() == DATABASE)
         expect(blank.read_bytes() == DATABASE)
@@ -211,11 +211,11 @@ class TestCreate:
         blank = tmp_path / DATABASE_NAME
         blank.write_bytes(DATABASE)
         book_id = BookId(uuid4())
-        directory = await fx_stores.create(book_id, blank)
+        directory = await fx_stores.create(directory_of(book_id), blank)
         directory.database.write_bytes(IMAGE_CONTENT)
 
         with pytest.raises(ConflictError, match=str(book_id)):
-            await fx_stores.create(book_id, blank)
+            await fx_stores.create(directory_of(book_id), blank)
         assert directory.database.read_bytes() == IMAGE_CONTENT
 
 
@@ -232,17 +232,17 @@ class TestDelete:
         """
         book_id, source_id, version = await _book(fx_stores)
         other_id, other_source_id, other_version = await _book(fx_stores)
-        fx_stores.directory(book_id).database.write_bytes(DATABASE)
+        fx_stores.directory(directory_of(book_id)).database.write_bytes(DATABASE)
         key = BookKeys().version_rendition(version, Rendition.FULL_JPEG)
-        directory = fx_stores.directory(book_id)
+        directory = fx_stores.directory(directory_of(book_id))
 
         await directory.delete()
 
         expect(not directory.database.exists())
         expect(not directory.database.parent.exists())
-        async with fx_stores.directory(other_id).sources.source_files(other_source_id) as paths:
+        async with fx_stores.directory(directory_of(other_id)).sources.source_files(other_source_id) as paths:
             expect([path.name for path in paths] == [SOURCE_NAME])
-        async with fx_stores.directory(other_id).assets.readable(
+        async with fx_stores.directory(directory_of(other_id)).assets.readable(
             BookKeys().version_rendition(other_version, Rendition.FULL_JPEG)
         ) as path:
             expect(path.read_bytes() == IMAGE_CONTENT)
@@ -262,8 +262,8 @@ class TestDelete:
         """
         book_id, _, _ = await _book(fx_stores)
 
-        await fx_stores.directory(book_id).delete()
-        await fx_stores.directory(book_id).delete()
-        await fx_stores.directory(BookId(uuid4())).delete()
+        await fx_stores.directory(directory_of(book_id)).delete()
+        await fx_stores.directory(directory_of(book_id)).delete()
+        await fx_stores.directory(directory_of(BookId(uuid4()))).delete()
 
-        assert not fx_stores.directory(book_id).database.parent.exists()
+        assert not fx_stores.directory(directory_of(book_id)).database.parent.exists()

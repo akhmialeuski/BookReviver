@@ -22,7 +22,7 @@ from bookreviver.adapters.persistence.sqlalchemy.tables import BOOK_RECORDS_TABL
 from bookreviver.domain.enums import ImagePolicy
 from bookreviver.domain.errors import ConflictError, InvalidArchiveError, NotFoundError
 from tests.helpers.book_hold import hold_book_in_thread
-from tests.helpers.builders import make_page, make_record, new_book_id
+from tests.helpers.builders import directory_of, make_page, make_record, new_book_id
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -219,7 +219,7 @@ class TestCreateAndClose:
         :type fx_directories: SharedBookDirectories
         """
         databases, book_id, book_record = fx_databases(), new_book_id(), make_record()
-        await fx_directories.create(book_id, await databases.blank())
+        await fx_directories.create(directory_of(book_id), await databases.blank())
         database = databases.open(book_id)
         with pytest.raises(NotFoundError):
             await database.read(lambda repos: repos.book_record.get())
@@ -330,7 +330,7 @@ class TestAdopt:
         :type fx_book: Book
         """
         databases, copy_id = fx_databases(), new_book_id()
-        directory = await fx_directories.create(copy_id, await databases.blank())
+        directory = await fx_directories.create(directory_of(copy_id), await databases.blank())
         directory.database.write_bytes(await databases.open(fx_book.book_id).snapshot())
 
         await databases.adopt(copy_id, directory.database)
@@ -353,7 +353,7 @@ class TestAdopt:
         :type case: bytes | None
         """
         databases, copy_id = fx_databases(), new_book_id()
-        directory = await fx_directories.create(copy_id, await databases.blank())
+        directory = await fx_directories.create(directory_of(copy_id), await databases.blank())
         if case is not None:
             directory.database.write_bytes(case)
 

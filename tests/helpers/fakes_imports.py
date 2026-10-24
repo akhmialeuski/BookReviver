@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Job, Page, PaginationSection, Scan, Source
     from bookreviver.domain.enums import Rendition, SourceKind
-    from bookreviver.domain.ids import BookId, JobId, SourceId
+    from bookreviver.domain.ids import BookDirectoryName, BookId, JobId, SourceId
     from bookreviver.domain.values import JobEnd, SourceAnalysis, UploadedSource
     from bookreviver.ports.persistence import BookRepositories, UnitOfWork
     from bookreviver.ports.processing import Processor
@@ -390,31 +390,31 @@ class CrashingBookDirectories(SharedBookDirectories):
         self.fail_on_promote: Exception | None = None
 
     @override
-    def _new_sources(self, book_id: BookId) -> CrashingSourceStore:
+    def _new_sources(self, name: BookDirectoryName) -> CrashingSourceStore:
         """Build the source store of a book, which reads the faults of these directories.
 
-        :param book_id: The book.
-        :type book_id: BookId
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
         :returns: The source store of the book.
         :rtype: CrashingSourceStore
         """
-        return CrashingSourceStore(root=self._files_root, book_id=book_id, faults=self)
+        return CrashingSourceStore(root=self._files_root, name=name, faults=self)
 
 
 class CrashingSourceStore(LocalSourceStore):
     """The local source store of one book, whose next promotion can crash the worker or fail with an error."""
 
-    def __init__(self, *, root: Path, book_id: BookId, faults: CrashingBookDirectories) -> None:
+    def __init__(self, *, root: Path, name: BookDirectoryName, faults: CrashingBookDirectories) -> None:
         """Keep the uploads and sources of one book under ``root``, failing as ``faults`` asks.
 
         :param root: Storage root of the stores.
         :type root: Path
-        :param book_id: The book.
-        :type book_id: BookId
+        :param name: Name of the directory of the book.
+        :type name: BookDirectoryName
         :param faults: The directories that hold the faults a test asks for.
         :type faults: CrashingBookDirectories
         """
-        super().__init__(root=root, book_id=book_id)
+        super().__init__(root=root, name=name)
         self._faults = faults
 
     @override

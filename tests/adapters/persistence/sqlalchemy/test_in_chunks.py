@@ -12,7 +12,7 @@ from delayed_assert import assert_expectations, expect
 from sqlalchemy import event
 
 from bookreviver.adapters.persistence.sqlalchemy.rows import RowRepository
-from tests.helpers.builders import make_page, make_page_stage, make_page_version, make_record
+from tests.helpers.builders import directory_of, make_page, make_page_stage, make_page_version, make_record
 from tests.helpers.seeding import store_book
 
 if TYPE_CHECKING:
@@ -206,7 +206,7 @@ class TestListsLongerThanAChunk:
                 repos.page_versions.delete_many(version_ids)
             return counted
 
-        async with fx_books.use(book_id, fx_databases().directories.directory(book_id).database) as book:
+        async with fx_books.use(book_id, fx_databases().directories.directory(directory_of(book_id)).database) as book:
             reading = await fx_databases().open(book_id).read(list_versions)
             deleting = await fx_databases().open(book_id).change(delete_versions)
         remaining = (

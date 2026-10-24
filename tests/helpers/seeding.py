@@ -6,7 +6,7 @@ from bookreviver.adapters.persistence.sqlalchemy.accounts import AccountTable
 from bookreviver.domain.entities import LibraryEntry
 from bookreviver.domain.enums import BlockKind
 from bookreviver.ports.persistence import DEFAULT_CHANGE_WAIT_SECONDS
-from tests.helpers.builders import new_account_id, new_book_id
+from tests.helpers.builders import directory_of, new_account_id, new_book_id
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -135,7 +135,9 @@ async def store_book(
         book_id = new_book_id()
     await databases.create_book(book_id, book_record)
     await databases.open(book_id).change(store_content)
-    entry = LibraryEntry(book_id=book_id, owner_id=owner, added_at=book_record.created_at)
+    entry = LibraryEntry(
+        book_id=book_id, owner_id=owner, directory=directory_of(book_id), added_at=book_record.created_at
+    )
     await uow.change(lambda repos: repos.library.add(entry))
     return book_id
 

@@ -11,7 +11,7 @@ from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import ConflictError, NotFoundError
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId, StorageKey
 from bookreviver.domain.keys import BookKeys
-from tests.helpers.builders import make_page_version
+from tests.helpers.builders import directory_of, make_page_version
 from tests.helpers.storage import WriterFailedError, abandon_write
 
 if TYPE_CHECKING:
@@ -72,7 +72,7 @@ def fx_asset_store(fx_stores: BookDirectories) -> AssetStore:
     :returns: The asset store of the book.
     :rtype: AssetStore
     """
-    return fx_stores.directory(BOOK_ID).assets
+    return fx_stores.directory(directory_of(BOOK_ID)).assets
 
 
 def _fill_file(path: Path, content: bytes) -> None:

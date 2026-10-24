@@ -31,6 +31,7 @@ from bookreviver.adapters.persistence.sqlalchemy.unit_of_work import SqlAlchemyU
 from bookreviver.adapters.tracing.null import NullTracer
 from bookreviver.domain.values import SliceRequest
 from tests.helpers.builders import (
+    directory_of,
     make_book_place,
     make_page,
     make_page_stage,
@@ -479,7 +480,7 @@ class TestRefusal:
         :param fx_directories: The directories of the books of the test, which the split makes.
         :type fx_directories: SharedBookDirectories
         """
-        await fx_directories.create(fx_shared.first_id, await fx_books.blank())
+        await fx_directories.create(directory_of(fx_shared.first_id), await fx_books.blank())
         with pytest.raises(SplitRefusedError, match=str(fx_shared.first_id)):
             await SharedDatabaseSplit(
                 fx_shared.path, catalogue=fx_empty_catalogue, books=fx_books, directories=fx_directories

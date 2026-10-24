@@ -9,7 +9,7 @@ from typing import override
 from bookreviver.adapters.persistence.sqlalchemy.catalogue import LibraryRow, RecipeProfileRow
 from bookreviver.adapters.persistence.sqlalchemy.mappers import RowMapper
 from bookreviver.domain.entities import LibraryEntry, RecipeProfile
-from bookreviver.domain.ids import AccountId, BookId, RecipeProfileId
+from bookreviver.domain.ids import AccountId, BookDirectoryName, BookId, RecipeProfileId
 from bookreviver.domain.values import Step
 
 
@@ -25,7 +25,12 @@ class LibraryEntryMapper(RowMapper[LibraryEntry, LibraryRow]):
         :returns: The entry.
         :rtype: LibraryEntry
         """
-        return LibraryEntry(book_id=BookId(row.book_id), owner_id=AccountId(row.owner_id), added_at=row.added_at)
+        return LibraryEntry(
+            book_id=BookId(row.book_id),
+            owner_id=AccountId(row.owner_id),
+            directory=BookDirectoryName(row.directory),
+            added_at=row.added_at,
+        )
 
     @override
     def to_row(self, entity: LibraryEntry) -> LibraryRow:
@@ -36,7 +41,9 @@ class LibraryEntryMapper(RowMapper[LibraryEntry, LibraryRow]):
         :returns: Transient library row.
         :rtype: LibraryRow
         """
-        return LibraryRow(book_id=entity.book_id, owner_id=entity.owner_id, added_at=entity.added_at)
+        return LibraryRow(
+            book_id=entity.book_id, owner_id=entity.owner_id, directory=entity.directory, added_at=entity.added_at
+        )
 
 
 class RecipeProfileMapper(RowMapper[RecipeProfile, RecipeProfileRow]):

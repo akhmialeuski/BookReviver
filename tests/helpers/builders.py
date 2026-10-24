@@ -55,6 +55,7 @@ from bookreviver.domain.events import BookChanged
 from bookreviver.domain.geometry import Rotation
 from bookreviver.domain.ids import (
     AccountId,
+    BookDirectoryName,
     BookId,
     JobId,
     PageHistoryEntryId,
@@ -168,6 +169,17 @@ def new_book_id() -> BookId:
     return BookId(uuid4())
 
 
+def directory_of(book_id: BookId) -> BookDirectoryName:
+    """Name the directory of a book of a test as the books service names a new one, by the text of its identifier.
+
+    :param book_id: The book.
+    :type book_id: BookId
+    :returns: The name of the directory of the book.
+    :rtype: BookDirectoryName
+    """
+    return BookDirectoryName(str(book_id))
+
+
 def make_record(*, title: str = 'Book', minutes: int = 0) -> BookRecord:
     """Build the record of a book updated ``minutes`` after the epoch.
 
@@ -225,7 +237,7 @@ def open_for(actor: Actor, book_id: BookId, *, databases: BookDatabases, files: 
     :returns: The open book, with the tools of ``make_book_tools``.
     :rtype: Book
     """
-    directory = files.directory(book_id)
+    directory = files.directory(directory_of(book_id))
     return Book(
         book_id,
         actor.account_id,

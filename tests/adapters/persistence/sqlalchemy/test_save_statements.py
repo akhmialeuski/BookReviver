@@ -11,6 +11,7 @@ from attrs import evolve
 
 from bookreviver.domain.enums import Stage
 from tests.helpers.builders import (
+    directory_of,
     make_page,
     make_page_stage,
     make_page_step_state,
@@ -82,7 +83,7 @@ async def _statements_of(
     :returns: The number of statements of each call, in the order given.
     :rtype: list[int]
     """
-    async with books.use(book_id, databases.directories.directory(book_id).database) as book:
+    async with books.use(book_id, databases.directories.directory(directory_of(book_id)).database) as book:
         with StatementLog(book.engine) as log:
 
             def work(repos: BookRepositories, _book_record: BookRecord) -> list[int]:

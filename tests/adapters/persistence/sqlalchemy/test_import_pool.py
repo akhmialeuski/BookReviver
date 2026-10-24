@@ -18,7 +18,7 @@ from sqlalchemy.pool import QueuePool
 from bookreviver.domain.entities import Actor
 from bookreviver.domain.enums import JobState
 from bookreviver.domain.values import SliceRequest
-from tests.helpers.builders import make_record, open_for
+from tests.helpers.builders import directory_of, make_record, open_for
 from tests.helpers.connections import checked_out_connections
 from tests.helpers.fakes_imports import IMPORT_TIMEOUT_SECONDS, pdf_upload
 from tests.helpers.seeding import store_book
@@ -156,7 +156,7 @@ class TestRunImportConnections:
         owner = Actor(account_id=fx_owner_id)
         uow = fx_open_book.uow()
         book_id = await store_book(uow, make_record(), owner=fx_owner_id, databases=fx_open_book.databases)
-        async with fx_books.use(book_id, fx_open_book.files.directory(book_id).database) as book:
+        async with fx_books.use(book_id, fx_open_book.files.directory(directory_of(book_id)).database) as book:
             with _counting_connections(book) as peak:
                 job = await rig.service(uow=uow).start_import(
                     open_for(owner, book_id, databases=rig.databases, files=rig.files),

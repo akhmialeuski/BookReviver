@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
     from bookreviver.adapters.persistence.sqlalchemy.database import SqlDatabase
     from bookreviver.domain.entities import Actor, BookRecord, Source
-    from bookreviver.domain.ids import BookId
+    from bookreviver.domain.ids import BookDirectoryName, BookId
     from bookreviver.ports.persistence import BookRepositories
     from bookreviver.services.book import Book as OpenedBook
     from tests.helpers.books import Book
@@ -47,15 +47,15 @@ class StoreFailedError(OSError):
 class SourceStoreFailingOnce(LocalSourceStore):
     """The local source store of one book, whose first source deletion fails before it removes anything."""
 
-    def __init__(self, *, root: Path, book_id: BookId) -> None:
+    def __init__(self, *, root: Path, name: BookDirectoryName) -> None:
         """Keep the sources under ``root`` and fail the first deletion.
 
         :param root: Storage root shared with the asset store.
         :type root: Path
-        :param book_id: The book whose sources the store holds.
-        :type book_id: BookId
+        :param name: Name of the directory of the book whose sources the store holds.
+        :type name: BookDirectoryName
         """
-        super().__init__(root=root, book_id=book_id)
+        super().__init__(root=root, name=name)
         self._failed = False
 
     @override

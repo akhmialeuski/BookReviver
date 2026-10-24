@@ -13,7 +13,7 @@ from bookreviver.domain.enums import Rendition
 from bookreviver.domain.errors import ConflictError
 from bookreviver.domain.ids import BookId, JobId, PageId, SourceId
 from bookreviver.domain.keys import BookKeys
-from tests.helpers.builders import make_page_version
+from tests.helpers.builders import directory_of, make_page_version
 from tests.helpers.storage import WriterFailedError, abandon_write, upload
 
 if TYPE_CHECKING:
@@ -48,7 +48,7 @@ class TestLocalSourceStore:
         """
         stores = LocalBookDirectories(root=tmp_path)
 
-        await stores.directory(BOOK_ID).sources.stage(
+        await stores.directory(directory_of(BOOK_ID)).sources.stage(
             JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
         )
 
@@ -63,11 +63,11 @@ class TestLocalSourceStore:
         :type tmp_path: Path
         """
         stores = LocalBookDirectories(root=tmp_path)
-        await stores.directory(BOOK_ID).sources.stage(
+        await stores.directory(directory_of(BOOK_ID)).sources.stage(
             JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
         )
 
-        await stores.directory(BOOK_ID).sources.promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+        await stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
         sources_dir = tmp_path / 'projects' / str(BOOK_ID) / 'sources'
         assert [path.name for path in sources_dir.iterdir()] == [str(SOURCE_ID)]
@@ -80,7 +80,7 @@ class TestLocalSourceStore:
         :type tmp_path: Path
         """
         stores = LocalBookDirectories(root=tmp_path)
-        await stores.directory(BOOK_ID).sources.stage(
+        await stores.directory(directory_of(BOOK_ID)).sources.stage(
             JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
         )
         sources_dir = tmp_path / BOOK_DIRECTORY / KEYS.sources_area
@@ -88,7 +88,7 @@ class TestLocalSourceStore:
         (sources_dir / str(SOURCE_ID) / PAGE_NAME).write_bytes(PAGE_CONTENT)
 
         with pytest.raises(ConflictError):
-            await stores.directory(BOOK_ID).sources.promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+            await stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
         assert [path.name for path in sources_dir.iterdir()] == [str(SOURCE_ID)]
 
@@ -104,12 +104,12 @@ class TestLocalSourceStore:
         """
         monkeypatch.setattr(local, '_publish', AsyncMock(side_effect=ConflictError(SOURCE_TAKEN)))
         stores = LocalBookDirectories(root=tmp_path)
-        await stores.directory(BOOK_ID).sources.stage(
+        await stores.directory(directory_of(BOOK_ID)).sources.stage(
             JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
         )
 
         with pytest.raises(ConflictError):
-            await stores.directory(BOOK_ID).sources.promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+            await stores.directory(directory_of(BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
 
         expect((tmp_path / BOOK_DIRECTORY / KEYS.incoming(JOB_ID) / PAGE_NAME).read_bytes() == PAGE_CONTENT)
         expect(list((tmp_path / BOOK_DIRECTORY / KEYS.sources_area).iterdir()) == [])
@@ -123,14 +123,14 @@ class TestLocalSourceStore:
         """
         stores = LocalBookDirectories(root=tmp_path)
         other_sources_dir = tmp_path / 'projects' / str(OTHER_BOOK_ID) / BookKeys().sources_area
-        await stores.directory(BOOK_ID).sources.stage(
+        await stores.directory(directory_of(BOOK_ID)).sources.stage(
             JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
         )
-        await stores.directory(OTHER_BOOK_ID).sources.stage(
+        await stores.directory(directory_of(OTHER_BOOK_ID)).sources.stage(
             JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
         )
-        await stores.directory(OTHER_BOOK_ID).sources.promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
-        await stores.directory(OTHER_BOOK_ID).sources.stage(
+        await stores.directory(directory_of(OTHER_BOOK_ID)).sources.promote(JOB_ID, SOURCE_ID, names=[PAGE_NAME])
+        await stores.directory(directory_of(OTHER_BOOK_ID)).sources.stage(
             JOB_ID, [upload(PAGE_NAME, content=PAGE_CONTENT)], max_bytes=MAX_BYTES
         )
 
@@ -150,7 +150,7 @@ class TestLocalAssetStore:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        store = LocalAssetStore(root=tmp_path, book_id=BOOK_ID)
+        store = LocalAssetStore(root=tmp_path, name=directory_of(BOOK_ID))
 
         async with store.writable(FILE_KEY) as path:
             path.write_bytes(PAGE_CONTENT)
@@ -163,7 +163,7 @@ class TestLocalAssetStore:
         :param tmp_path: Temporary directory of the test.
         :type tmp_path: Path
         """
-        store = LocalAssetStore(root=tmp_path, book_id=BOOK_ID)
+        store = LocalAssetStore(root=tmp_path, name=directory_of(BOOK_ID))
 
         with pytest.raises(WriterFailedError):
             await abandon_write(store, key=FILE_KEY, content=PAGE_CONTENT)
